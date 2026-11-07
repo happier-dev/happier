@@ -12,7 +12,7 @@ import {
   resolveUsageQueryPeriod,
   type UsageQuery,
 } from '@happier-dev/protocol/inputs/usageQuery';
-import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { Modal, type CustomModalConfig, type CustomModalInjectedProps } from '@/modal';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -23,6 +23,9 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import {
   getUsagePeriodDefinition,
   type UsagePeriod,
@@ -71,12 +74,15 @@ export type UsageRecapComposerProps = Readonly<{
   initialPeriod?: UsagePeriod;
   /** Where the sheet opens: a just-published page lands on its badge. Ignored where public profiles are off. */
   initialOutput?: UsageRecapPublicOutputKind;
+  callerContext?: ActionExecutorContext;
 }>;
 
 /** The one way to open Share: the recap widget's button and the published profile's Badge both arrive here. */
-export function openUsageRecapComposer(props: UsageRecapComposerProps): void {
+export function openUsageRecapComposer(props: UsageRecapComposerProps,
+  Bridge: NonNullable<CustomModalConfig['commandBridge']>): void {
   Modal.show({
     component: UsageRecapComposer,
+    commandBridge: Bridge,
     props,
     chrome: {
       kind: 'card',
@@ -140,7 +146,14 @@ export function UsageRecapComposer(
   const [fields, setFields] =
     React.useState<readonly UsageRecapField[]>(DEFAULT_FIELDS);
   const [sourceSelection, setSourceSelection] = React.useState<UsageRecapSourceSelection>('whole_usage');
+  // A selection keeps its caller policy; the mounted output supplies its own read lifetime.
+  const callerContext = React.useRef(props.callerContext);
   const shown = publicProfiles ? output : 'image';
+  const commands = useCurrentUiContextLocalCommands([
+    ...(publicProfiles ? OUTPUTS.map(({ id }) => ({ key: `output:${id}`,
+      title: `${t('publicIdentity.share.outputLabel')}: ${t(`publicIdentity.share.output_${id}`)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { callerContext.current = context; setOutput(id); } })) : []),
+  ], { foregroundOverlay: true });
   return (
     <View style={styles.root} testID="usage-recap-composer">
       {publicProfiles ? (
@@ -151,7 +164,7 @@ export function UsageRecapComposer(
             segmentSizing="content"
             iconPlacement="leading"
             activeTabId={output}
-            onSelectTab={setOutput}
+            onSelectTab={id => { void commands.invoke(`output:${id}`); }}
             accessibilityLabel={t('publicIdentity.share.outputLabel')}
             tabs={OUTPUTS.map(({ id, icon }) => ({
               id,
@@ -166,6 +179,7 @@ export function UsageRecapComposer(
         <UsageRecapImageOutput
           query={props.query}
           serverId={props.serverId}
+          callerContext={callerContext}
           selection={{ style, format, period, fields, sourceSelection }}
           setStyle={setStyle}
           setFormat={setFormat}
@@ -174,7 +188,7 @@ export function UsageRecapComposer(
           setSourceSelection={setSourceSelection}
         />
       ) : (
-        <UsageRecapPublicOutput kind={shown} serverId={props.serverId} onClose={props.onClose} />
+        <UsageRecapPublicOutput kind={shown} serverId={props.serverId} onClose={props.onClose} callerContext={callerContext} />
       )}
     </View>
   );
@@ -199,6 +213,7 @@ function UsageRecapImageOutput(
   props: Readonly<{
     query: UsageQuery;
     serverId: string;
+    callerContext: React.MutableRefObject<ActionExecutorContext | undefined>;
     selection: Readonly<{ style: UsageRecapStyle; format: UsageRecapFormat; period: UsagePeriod; fields: readonly UsageRecapField[];
       sourceSelection: UsageRecapSourceSelection }>;
     setStyle: (style: UsageRecapStyle) => void;
@@ -222,6 +237,7 @@ function UsageRecapImageOutput(
   const [notice, setNotice] = React.useState<string | null>(null);
   const cardRef = React.useRef<React.ElementRef<typeof View>>(null);
   const execution = useMountedActionExecution(props.serverId);
+  const CommandBridge = useCurrentUiContextCommandBridge();
   const { execute: runAction, isCurrent: executionIsCurrent } = execution;
   // The compose effect keys on the selection, never on the hook's per-render callbacks.
   const executionRef = React.useRef(execution);
@@ -240,6 +256,7 @@ function UsageRecapImageOutput(
   React.useEffect(() => {
     const controller = new AbortController();
     const { execute, isCurrent, binding, resolution } = executionRef.current;
+    const origin = props.callerContext.current;
     const retirement = binding?.onRetire(() => {
       controller.abort();
       setState({ kind: 'failed', code: 'usage_scope_unavailable' });
@@ -272,7 +289,7 @@ function UsageRecapImageOutput(
           format,
           selectedFields: [...selectedFields],
         },
-        { signal: controller.signal },
+        { signal: controller.signal, callerContext: origin ? { ...origin, signal: undefined } : undefined },
       );
       if (controller.signal.aborted || !isCurrent()) return;
       if (!executed.ok) {
@@ -315,7 +332,7 @@ function UsageRecapImageOutput(
   );
 
   const deliver = React.useCallback(
-    async (intent: 'copy' | 'save' | 'share') => {
+    async (intent: 'copy' | 'save' | 'share', context?: ActionExecutorContext) => {
       if (!composed || state.kind !== 'ready' || !cardRef.current) return;
       if (!executionIsCurrent()) return;
       const controller = new AbortController();
@@ -327,10 +344,10 @@ function UsageRecapImageOutput(
         // The render port captures this mounted preview, so it travels with the invocation.
         const executed = await runAction('usage.recap.private.deliver',
           { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent },
-          { signal: controller.signal, executorOptions: { usageRecapRender: async (result, context) => {
+          { signal: controller.signal, callerContext: context, executorOptions: { usageRecapRender: async (result, context) => {
             // Capture the existing preview only when its exact selected/as-of model is still current.
             if (JSON.stringify(result) !== JSON.stringify(composed) || !cardRef.current) {
-              return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context);
+              return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context, CommandBridge);
             }
             return { kind: 'rendered', base64: await captureUsageViewPng(cardRef.current,
               { signal: context.signal, isCurrent: executionIsCurrent }) };
@@ -359,7 +376,7 @@ function UsageRecapImageOutput(
         }
       }
     },
-    [composed, state, runAction, executionIsCurrent, sourceSelection, style, format, fields],
+    [composed, state, runAction, executionIsCurrent, sourceSelection, style, format, fields, CommandBridge],
   );
 
   const toggle = React.useCallback((field: UsageRecapField, on: boolean) => {
@@ -371,6 +388,28 @@ function UsageRecapImageOutput(
         : current.filter((candidate) => candidate !== field),
     );
   }, [setFields]);
+
+  const commands = useCurrentUiContextLocalCommands([
+    ...USAGE_STAT_CARD_STYLES.map(id => ({ key: `style:${id}`,
+      title: `${t('usage.board.recap.styleLabel')}: ${t(`usage.board.recap.style_${id}`)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setStyle(id); } })),
+    ...FORMATS.map(id => ({ key: `format:${id}`,
+      title: t(`usage.board.recap.format_${id === 'link-preview' ? 'linkPreview' : id}`),
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setFormat(id); } })),
+    ...PERIODS.map(id => ({ key: `period:${id}`,
+      title: `${t('usage.board.recap.periodLabel')}: ${t(getUsagePeriodDefinition(id).shortTranslationKey)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setPeriod(id); } })),
+    ...USAGE_RECAP_SOURCE_SELECTIONS.map(id => ({ key: `source:${id}`,
+      title: `${t('usage.board.recap.sourceLabel')}: ${t(`usage.board.recap.source_${id}`)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setSourceSelection(id); } })),
+    ...USAGE_RECAP_FIELDS.map(field => ({ key: `field:${field}`,
+      title: `${t('usage.board.recap.fieldsLabel')}: ${t(`usage.board.recap.field_${field}`)}`,
+      invoke: (input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; toggle(field, typeof input === 'boolean' ? input : !fields.includes(field)); } })),
+    ...(state.kind === 'failed' ? [{ key: 'retry', title: t('common.retry'),
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; retryCompose(); } }] : []),
+    ...(composed && delivery === null ? (['copy', 'save', 'share'] as const).map(intent => ({ key: `deliver:${intent}`,
+      title: t(`usage.board.recap.${intent}`), invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => deliver(intent, context) })) : []),
+  ], { foregroundOverlay: true });
 
   const styleOptions = React.useMemo(
     () =>
@@ -394,7 +433,7 @@ function UsageRecapImageOutput(
       compact
       segmentSizing="content"
       activeTabId={format}
-      onSelectTab={setFormat}
+      onSelectTab={id => { void commands.invoke(`format:${id}`); }}
       tabs={FORMATS.map((id) => ({
         id,
         label: t(
@@ -433,7 +472,7 @@ function UsageRecapImageOutput(
           diagnosticCode={state.code}
           action={{
             label: t('common.retry'),
-            onPress: retryCompose,
+            onPress: () => { void commands.invoke('retry'); },
           }}
         />
       ) : model ? (
@@ -475,7 +514,7 @@ function UsageRecapImageOutput(
           variant="visual"
           density="compact"
           value={style}
-          onChange={(next) => next && setStyle(next)}
+          onChange={next => { if (next) void commands.invoke(`style:${next}`); }}
           options={styleOptions}
           testIdPrefix="usage-recap-style"
           accessibilityLabel={t('usage.board.recap.styleLabel')}
@@ -487,7 +526,7 @@ function UsageRecapImageOutput(
           compact
           segmentSizing="content"
           activeTabId={period}
-          onSelectTab={setPeriod}
+          onSelectTab={id => { void commands.invoke(`period:${id}`); }}
           tabs={PERIODS.map((id) => ({
             id,
             label: t(getUsagePeriodDefinition(id).shortTranslationKey),
@@ -506,7 +545,7 @@ function UsageRecapImageOutput(
           compact
           segmentSizing="content"
           activeTabId={sourceSelection}
-          onSelectTab={setSourceSelection}
+          onSelectTab={id => { void commands.invoke(`source:${id}`); }}
           accessibilityLabel={t('usage.board.recap.sourceLabel')}
           tabs={USAGE_RECAP_SOURCE_SELECTIONS.map((id) => ({ id, label: t(`usage.board.recap.source_${id}`) }))}
         />
@@ -530,7 +569,7 @@ function UsageRecapImageOutput(
               rightElement={
                 <Switch
                   value={on}
-                  onValueChange={(next) => toggle(field, next)}
+                  onValueChange={next => { void commands.invoke(`field:${field}`, next); }}
                   accessibilityLabel={t(`usage.board.recap.field_${field}`)}
                   testID={`usage-recap-field-${field}.switch`}
                 />
@@ -553,7 +592,7 @@ function UsageRecapImageOutput(
           disabled={!composed || delivery !== null}
           loading={delivery === 'copy'}
           onPress={() => {
-            void deliver('copy');
+            void commands.invoke('deliver:copy');
           }}
           testID="usage-recap-composer.copy"
         />
@@ -564,7 +603,7 @@ function UsageRecapImageOutput(
           disabled={!composed || delivery !== null}
           loading={delivery === 'save'}
           onPress={() => {
-            void deliver('save');
+            void commands.invoke('deliver:save');
           }}
           testID="usage-recap-composer.save"
         />
@@ -575,7 +614,7 @@ function UsageRecapImageOutput(
           disabled={!composed || delivery !== null}
           loading={delivery === 'share'}
           onPress={() => {
-            void deliver('share');
+            void commands.invoke('deliver:share');
           }}
           testID="usage-recap-composer.share"
         />

@@ -9,7 +9,10 @@ import { normalizeUsageQuery, getUsageQueryKey, usageQueryToAnalyticsRequest } f
 import { buildUsageFileResult } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, standardCleanup } from '@/dev/testkit';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -17,12 +20,14 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { UsageRecapWidget } from './UsageRecapWidget';
 import { Modal } from '@/modal';
-import { UsageRecapComposer } from './recap/UsageRecapComposer';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { UsageBodyProps } from './usageBodyKit';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { ChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
+import { t } from '@/text';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { storage } from '@/sync/domains/state/storageStore';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
@@ -35,6 +40,7 @@ const shownQuery = normalizeUsageQuery({ period: { startMs: 100, endMs: 900 }, a
   workspaceIds: ['workspace'], modelIds: ['model'], backendModes: ['remote'], timeZoneOffsetMinutes: 120,
   metric: 'cost', costBasis: 'reported', breakdown: ['agent'] });
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+let commandReader: CurrentUiContextReader | null = null;
 let restoreFrames: (() => void) | undefined;
 let portal: ReturnType<typeof installReactDomPortalBoundaryForTests> | undefined;
 beforeEach(() => {
@@ -64,7 +70,8 @@ async function mount(denied = false, queryResponse?: () => Response | Promise<Re
       shownQuery: { query: shownQuery, authority }, slice,
       pending: true, error: null, freshness: 'stale', updatingPreviousPeriod: true, refreshing: false, refresh: async () => {} };
   const props: UsageBodyProps = { id: 'usage_recap', serverId: server.id, testID: 'recap', query: requestedQuery, slice, model };
-  return await renderScreen(<UsageRecapWidget {...props} />);
+  function Body() { commandReader = useOptionalCurrentUiContextReader(); return <UsageRecapWidget {...props} />; }
+  return await renderMountedCurrentUiContext(<Body />);
 }
 
 /** The exports live behind the widget's one overflow control. */
@@ -86,7 +93,7 @@ describe('Recap table/text controls through the admitted export Action', () => {
     const opened = vi.spyOn(Modal, 'show').mockReturnValue('recap-composer');
     const screen = await mount(false, undefined, true, normalizeUsageQuery({ agents: ['codex'], machines: ['different-machine'] }));
     await screen.pressByTestIdAsync('recap.share');
-    expect(opened).toHaveBeenCalledWith(expect.objectContaining({ component: UsageRecapComposer,
+    expect(opened).toHaveBeenCalledWith(expect.objectContaining({ component: expect.any(Function),
       props: expect.objectContaining({ query: shownQuery }) }));
   });
   it('keeps the admitted single-session autopsy visible when summary accounting is unavailable', async () => {
@@ -119,8 +126,11 @@ describe('Recap table/text controls through the admitted export Action', () => {
   });
   it('copies the Action text bytes for the exact shown query with explicit summary fields', async () => {
     const clipboard = vi.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
-    const screen = await mount();
-    await pressExport(screen, 'recap.copySummary');
+    await mount();
+    const summary = commandReader!.readCurrentUiContext()?.commands.find(command => command.title === t('common.copyWithLabel', { label: t('usage.summary.title') }));
+    expect(summary).toBeDefined();
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: summary!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
     await vi.waitFor(() => expect(home!.requests.filter(request => request.path === '/v2/usage/query')).not.toHaveLength(0));
     expect(home!.requests.filter(request => request.path === '/v2/usage/query').map(request => request.body))
       .toContainEqual(usageQueryToAnalyticsRequest(shownQuery));
@@ -134,6 +144,23 @@ describe('Recap table/text controls through the admitted export Action', () => {
     await pressExport(screen, 'recap.copySummary');
     await vi.waitFor(() => expect(Boolean(screen.findByTestId('recap.exportNotice'))).toBe(true));
     expect(clipboard).not.toHaveBeenCalled();
+  });
+
+  it('keeps agent clipboard policy after preparing the recap export and exposes a refused delivery', async () => {
+    const clipboard = vi.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+    const screen = await mount();
+    act(() => { storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { 'clipboard.write': { disabledSurfaces: ['agent'] } },
+    }) } })); });
+    const summary = commandReader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.copyWithLabel', { label: t('usage.summary.title') }));
+    expect(summary).toBeDefined();
+    await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: summary!.id }, context: { surface: 'agent' } }); });
+    expect(home!.requests.some(request => request.path === '/v2/usage/query')).toBe(true);
+    expect(clipboard).not.toHaveBeenCalled();
+    expect(screen.findByTestId('recap.exportNotice')).toBeTruthy();
+    await pressExport(screen, 'recap.copySummary');
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalled());
   });
 
   it('retires pending preparation before delivering clipboard bytes after Account authority is lost', async () => {

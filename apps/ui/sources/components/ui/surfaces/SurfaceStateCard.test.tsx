@@ -3,7 +3,13 @@ import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectUnexpectedRawTextNodes, createDeferred, renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { resolveBrowseProjectionFailureCopy } from '@/components/sessions/external/browse/browseProjectionFailureCopy';
 import { lightTheme } from '@/theme';
 import { SurfaceStateCard } from './SurfaceStateCard';
@@ -38,6 +44,29 @@ vi.mock('react-native', async () => {
  * only).
  */
 describe('SurfaceStateCard', () => {
+    it.each([undefined, 'line'] as const)('shares the %s diagnostic disclosure state with mounted agent commands', async size => {
+        const home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://state-details.test', accountId: 'a' }], route: () => undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        let reader: CurrentUiContextReader | null = null;
+        function Reader() { reader = useOptionalCurrentUiContextReader(); return null; }
+        try {
+            const screen = await renderMountedCurrentUiContext(<><Reader /><SurfaceStateCard testID="agent-details"
+                size={size} kind="error" title="Could not read usage" diagnosticCode="usage_query_failed" /></>);
+            expect(screen.findByTestId('agent-details-details-code')).toBeNull();
+            const command = reader!.readCurrentUiContext()!.commands.find(row => row.title.startsWith('Could not read usage: '));
+            expect(command).toBeDefined();
+            await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+            expect(screen.findByTestId('agent-details-details-code')?.props.children).toBe('usage_query_failed');
+            await screen.pressByTestIdAsync('agent-details-details-toggle');
+            expect(screen.findByTestId('agent-details-details-code')).toBeNull();
+            await screen.update(<Reader />);
+            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false });
+        } finally { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home.dispose(); }
+    });
+
     it('renders the Browse projection failure without raw text under a View', async () => {
         const copy = resolveBrowseProjectionFailureCopy({
             phase: 'error', failureReason: 'timeout', machineName: 'Devin box',

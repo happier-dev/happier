@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { projectUsageAnalyticsBatchDelivery, repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
-import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, standardCleanup } from '@/dev/testkit';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -19,6 +19,9 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 // The platform clipboard and the router are the effect boundaries; Action admission stays real.
 const clipboard = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
@@ -31,6 +34,7 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+let commandReader: CurrentUiContextReader | null = null;
 afterEach(async () => { standardCleanup(); clipboard.mockReset(); routerPush.mockReset(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; vi.restoreAllMocks(); });
 const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
   tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
@@ -52,17 +56,64 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], qu
   await getServerFeaturesSnapshot({ serverId: server.id, force: true });
   let updateQuery!: (next: UsageQuery) => void;
   function Host() {
+    commandReader = useOptionalCurrentUiContextReader();
     const [shownQuery, setQuery] = React.useState(query);
     updateQuery = setQuery;
     return <UsageRecapComposer query={shownQuery} serverId={server.id} onClose={options.onClose ?? (() => {})}
       {...(options.initialOutput ? { initialOutput: options.initialOutput } : {})} />;
   }
   beforeRender?.();
-  const screen = await renderScreen(<Host />);
+  const screen = await renderMountedCurrentUiContext(<Host />);
   return { screen, updateQuery };
 }
 
 describe('recap composer through authorized query and composition', () => {
+  it('retains agent policy when a source choice composes its selected preview', async () => {
+    const reads: unknown[] = [];
+    const { screen } = await mount(request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      reads.push(request.body);
+      return Response.json(accounting);
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    act(() => { storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { 'usage.recap.private.compose': { disabledSurfaces: ['agent'] } },
+    }) } })); });
+    const before = reads.length;
+    const source = commandReader!.readCurrentUiContext()!.commands.find(command => command.title === 'usage.board.recap.sourceLabel: usage.board.recap.source_happier_only');
+    expect(source).toBeDefined();
+    await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: source!.id }, context: { surface: 'agent' } }); });
+    await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).some(node =>
+      String(node.props.diagnosticCode).includes('disabled'))).toBe(true));
+    expect(reads).toHaveLength(before);
+    await act(async () => { choice(screen, 'usage-recap-source').props.onSelectTab('whole_usage'); });
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    expect(reads.length).toBeGreaterThan(before);
+  });
+
+  it('lets agents and visible controls choose the same mounted image presentation, retiring departed output commands', async () => {
+    const { screen } = await mount(publicHome(true, []), undefined, undefined, { publicProfiles: true });
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
+    const command = (title: string) => commandReader!.readCurrentUiContext()?.commands.find(row => row.title === title);
+    const sourceTitle = 'usage.board.recap.sourceLabel: usage.board.recap.source_happier_only';
+    expect(command(sourceTitle)).toBeDefined();
+    const sourceId = command(sourceTitle)!.id;
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: sourceId }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+    expect(choice(screen, 'usage-recap-source').props.activeTabId).toBe('happier_only');
+    await act(async () => { choice(screen, 'usage-recap-source').props.onSelectTab('whole_usage'); });
+    expect(choice(screen, 'usage-recap-source').props.activeTabId).toBe('whole_usage');
+    await act(async () => { outputTabs(screen)!.props.onSelectTab('badge'); });
+    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: sourceId }, context: { surface: 'agent' } })).toMatchObject({ ok: false });
+    const themeTitle = 'publicIdentity.share.theme: publicIdentity.share.theme_dark';
+    await vi.waitFor(() => expect(command(themeTitle)).toBeDefined());
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: command(themeTitle)!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+    expect(choice(screen, 'usage-recap-share-theme').props.activeTabId).toBe('dark');
+    await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.snippet'))).toBe('markdown|badge|tokens|dark'));
+  });
   it('composes All personal usage without inventing an epoch start', async () => {
     const reads: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
     const { screen } = await mount(request => {
@@ -104,6 +155,11 @@ describe('recap composer through authorized query and composition', () => {
     expect(details).toContain('usage_query_result_invalid');
     expect(details).toContain('invalid_type');
     expect(details).not.toContain('private-invalid-value');
+    const disclosure = commandReader!.readCurrentUiContext()?.commands.find(command => command.title.endsWith(': common.details'));
+    expect(disclosure).toBeDefined();
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: disclosure!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+    expect(screen.findAllByType(SurfaceStateCard)[0]!.findAll(node => node.props.children === details).length).toBeGreaterThan(0);
   });
 
   it('composes the Overview compact read with its own selected facts instead of inheriting widget omissions', async () => {
@@ -324,6 +380,23 @@ const choice = (screen: Awaited<ReturnType<typeof mount>>['screen'], prefix: str
 const textOf = (node: { props: { children?: unknown } } | null) => [node?.props.children].flat().join('');
 
 describe('recap composer public outputs', () => {
+  it('retains agent policy when the mounted Copy command reaches the clipboard Action', async () => {
+    const { screen } = await mount(publicHome(true, []), undefined, undefined, { publicProfiles: true, initialOutput: 'badge' });
+    await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.snippet'))).toBe('markdown|badge|tokens|auto'));
+    act(() => { storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { 'clipboard.write': { disabledSurfaces: ['agent'] } },
+    }) } })); });
+    const copy = commandReader!.readCurrentUiContext()!.commands.find(command => command.title === 'common.copy');
+    expect(copy).toBeDefined();
+    await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: copy!.id }, context: { surface: 'agent' } }); });
+    expect(clipboard).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.note'))).toBe('publicIdentity.share.copyFailed'));
+    clipboard.mockResolvedValueOnce(undefined);
+    await screen.pressByTestIdAsync('usage-recap-share.copy');
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith('markdown|badge|tokens|auto'));
+  });
+
   it('offers Image, Profile link, Badge and Card only where public profiles are enabled', async () => {
     const { screen } = await mount(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
     await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());

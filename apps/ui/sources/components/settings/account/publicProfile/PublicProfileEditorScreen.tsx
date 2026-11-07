@@ -8,11 +8,12 @@ import type {
 import {
   PUBLIC_PROFILE_FIELDS_V1,
   type PublicProfileField,
-  type PublicProfileMetadataV1,
   type PublicProfilePolicyV1,
 } from '@happier-dev/protocol/account/publicProfile';
-import { projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
-import { PublicProfilePreviewResultV1Schema, type PublicProfilePreparationUnavailableReasonV1 } from '@happier-dev/protocol/account/publicProfileIntents';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { createPublicProfileProjector, projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
+import { PublicProfilePreviewResultV1Schema, type PublicProfilePreparationUnavailableReasonV1,
+  type PublicProfileUpdateIntentV1 } from '@happier-dev/protocol/account/publicProfileIntents';
 import type {
   PublicProfileAppearanceV1,
   PublicProfileContextV1,
@@ -20,11 +21,13 @@ import type {
   PublicProfileOwnerRecordV1,
   PublicProfilePreparedAppearanceV1,
 } from '@happier-dev/protocol/account/publicProfilePublication';
+import type { PublicProfilePreviewAdmission } from '@happier-dev/protocol/actions/executor/publicProfileActions';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BuiltinUsagePublicPresentationV1 } from '@happier-dev/protocol/widgets';
 
 import { AtmospherePreview, PublicPictureBand } from '@/components/atmosphere/look/AtmospherePreview';
 import { pictureCreditLine } from '@/components/atmosphere/look/pictureCredit';
+import { usePublicProfileAtmospherePreviewValue } from '@/sync/store/settingsPreview';
 import { useAtmospherePictureCatalog } from '@/components/atmosphere/useAtmospherePictureCatalog';
 import { LookPopover } from '@/components/atmosphere/look/LookChip';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -51,27 +54,33 @@ import {
 import { PublicProfileConsentStatus } from './PublicProfileConsentStatus';
 import { PublicProfileDetailsPanel } from './PublicProfileDetailsPanel';
 import { PublicProfileHiddenBlockNote } from './PublicProfileHiddenBlockNote';
+import { publicProfileFigureControls } from './PublicProfileFigureEye';
 import { PublicProfilePublicData } from './PublicProfilePublicData';
 import { PublicProfileReview } from './PublicProfileReview';
-import { preparedPictureCopy, useAppliedPictureCopy } from './publicPictureCopy';
+import { prepareAppliedProfileAppearance, preparedPictureCopy, useAppliedPictureCopy } from './publicPictureCopy';
 import {
   createPublicProfileDraft,
   draftLookPresentation,
   draftPreviewMetadata,
   draftVisitorTheme,
   publicProfileDraftQuery,
+  publicProfileRecordPeriod,
   setPublicProfileDraftTheme,
   resolvePublicFieldPlacements,
   resolvePublicProfileDraftChanges,
   type PublicProfileDraft,
+  type PublicProfilePeriod,
 } from './publicProfileDraft';
-import { publicProfileMutationNotice } from './publicProfileMutation';
+import { publicProfileMutationNotice, settlePublicProfileMutation } from './publicProfileMutation';
 import { usePublicProfileOwnerRead } from './usePublicProfileOwnerRead';
 import { usePublicProfileWidgetArea } from './usePublicProfileWidgetArea';
 import { PublicProfileWidgetArea, publicProfilePresetNames, usePublicProfileUsageContext } from './PublicProfileWidgetArea';
 import { usePublicProfileConsent } from './usePublicProfileConsent';
-import { publicProfilePageLabels, usePublicProfileUsageHost } from './publicProfilePresentation';
-import { PublicProfileWidgetPreviewContext, type PublicProfileWidgetPreview } from './PublicProfileWidgetSurface';
+import { publicProfileLinkLabel, publicProfilePageLabels, usePublicProfileUsageHost } from './publicProfilePresentation';
+import { openUsageRecapComposer } from '@/components/settings/usage/widgets/recap/UsageRecapComposer';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { PublishRiseBand } from './publicProfilePublishRise';
+import { PublicProfileWidgetPreviewProvider, type PublicProfileWidgetPreview } from './PublicProfileWidgetSurface';
 
 /** The owner's own values for every item: computed locally, never uploaded or published. */
 const OWNER_POLICY: PublicProfilePolicyV1 = {
@@ -110,13 +119,6 @@ function blockIds(view: PublicProfileEditorView | null): ReadonlySet<string> {
   );
 }
 
-function withoutAppearance(
-  view: PublicProfileLocalPreviewViewV1,
-): PublicProfileEditorView {
-  const { appearance: _appearance, ...rest } = view;
-  return rest;
-}
-
 /**
  * What the preview needs to compile the page. The band is drawn locally from the draft, so a picture
  * is prepared only at review time; the preview itself never carries pixels.
@@ -141,7 +143,7 @@ function previewAppearance(
 
 /**
  * Settings → Account → Public profile → Edit: the owner's page with Edit and Preview, Public data,
- * Look, and one reviewed Publish or Apply. Published consent has its own acknowledged update.
+ * Look, a reviewed first Publish and direct Apply. Published consent has its own acknowledged update.
  */
 export function PublicProfileEditorScreen(): React.ReactElement {
   const scope = useAccountSettingsScope();
@@ -150,9 +152,10 @@ export function PublicProfileEditorScreen(): React.ReactElement {
 
 /** Private snapshot, consent and Look memory belong to the captured publishing Account. */
 function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnType<typeof useAccountSettingsScope> }>): React.ReactElement {
+  const RecapCommandBridge = useCurrentUiContextCommandBridge();
   const execution = useMountedActionExecution(scope);
   const serverId = scope?.serverId ?? '';
-  const { state, reload, acknowledge } = usePublicProfileOwnerRead(execution);
+  const { state, reload, acknowledge } = usePublicProfileOwnerRead(execution, scope);
   const read = state.kind === 'ready' ? state.read : null;
   const record = read?.kind === 'ready' ? read.record : null;
   const context = read?.context ?? null;
@@ -168,9 +171,18 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   const draft = React.useMemo(() => privateDraft && widgetArea.candidate
     ? { ...privateDraft, layout: widgetArea.candidate.layout } : privateDraft, [privateDraft, widgetArea.candidate?.layout]);
   const [mode, setMode] = React.useState<'edit' | 'preview'>('edit');
+  // The local preview and the period it was prepared for, so the title never names a period its numbers don't cover.
   const [snapshotView, setSnapshotView] =
-    React.useState<PublicProfileLocalPreviewViewV1 | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
+    React.useState<Readonly<{ view: PublicProfileLocalPreviewViewV1; period: PublicProfilePeriod }> | null>(null);
+  // The outcome line: a failure or uncertainty is a warning; a completed Publish, Apply or Undo is a success.
+  // A first Publish ends on its result: the page's link, with Copy link and Badge (lab ppflow-F2ok).
+  const [noticeState, setNoticeState] = React.useState<Readonly<{ text: string; tone: 'success' | 'warning'; link?: string; copied?: boolean }> | null>(null);
+  const setNotice = React.useCallback((text: string | null, tone: 'success' | 'warning' = 'warning') =>
+    setNoticeState(text ? { text, tone } : null), []);
+  const notice = noticeState?.text ?? null;
+  const [publishMoment, setPublishMoment] = React.useState<number | null>(null);
+  // The moment lives until its result line has entered; then Edit/Preview remounts show the settled page.
+  const settlePublishMoment = React.useCallback(() => setPublishMoment(null), []);
   // Why the page's own Usage preview is missing: said once, on the page's period line.
   const [previewReason, setPreviewReason] = React.useState<PublicProfilePreparationUnavailableReasonV1 | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -178,8 +190,15 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   const lookAnchor = React.useRef<View>(null);
   const dataAnchor = React.useRef<View>(null);
   const detailsAnchor = React.useRef<View>(null);
-  // The edition an Apply replaced, kept on this device only so its Undo can be reviewed and applied again.
-  const [undoable, setUndoable] = React.useState<PublicProfileUndo | null>(null);
+  // The edition an Apply replaced, kept on this device for its direct Undo.
+  const [undoable, setUndoable] = React.useState<PublicProfileUpdateIntentV1 | null>(null);
+  React.useEffect(() => {
+    if (record?.state === 'published') return;
+    // A local result belongs to the live publication, including when another Session withdraws it.
+    setNoticeState(null);
+    setPublishMoment(null);
+    setUndoable(null);
+  }, [record?.state]);
   const prepareLook = usePreparePublicProfileLook(serverId);
   const consent = usePublicProfileConsent({ record, draft, setDraft, execution, onAcknowledged: acknowledge });
 
@@ -197,14 +216,16 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
 
   const query = publicProfileDraftQuery({ period: areaPeriod });
   const previewMetadata = React.useMemo(() => draft ? draftPreviewMetadata(draft, record) : {}, [draft?.metadata, record]);
-  const recordAppearance = record?.appearance ?? null;
+  // The private draft owns its reviewed Look even after withdrawal deletes the public edition.
+  const recordAppearance = draft?.appearance.kind === 'applied' ? draft.appearance.value : record?.appearance ?? null;
+  const appliedPicture = recordAppearance?.atmosphere.source === 'picture' ? recordAppearance.atmosphere.picture : null;
+  const appliedPictureData = useAppliedPictureCopy(
+    appliedPicture && context?.urls?.page ? `${context.urls.page}/background` : null,
+    appliedPicture?.ref.id ?? null,
+  );
   const appliedAppearance = React.useMemo<PublicProfilePreparedAppearanceV1 | null>(() => {
-    // A planet or none look is its own prepared form; an applied picture has no local pixels.
-    const atmosphere = recordAppearance?.atmosphere;
-    if (!recordAppearance || !atmosphere || atmosphere.source === 'picture') return null;
-    return { theme: recordAppearance.theme,
-      atmosphere: atmosphere.source === 'planet' ? { source: 'planet', planet: atmosphere.planet } : { source: 'none' } };
-  }, [recordAppearance]);
+    return prepareAppliedProfileAppearance(recordAppearance, appliedPictureData);
+  }, [recordAppearance, appliedPictureData]);
 
   // One local preview with every item gives the owner's own values; visitors are projected from it.
   // The snapshot depends only on the period; blocks, consent and look are compiled locally from it,
@@ -215,12 +236,14 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   const queryKey = JSON.stringify(query);
   const hasDraft = draft !== null;
   const [attempt, setAttempt] = React.useState(0);
+  const previewAdmission = React.useRef<Readonly<{ queryKey: string; pending: Promise<PublicProfilePreviewAdmission | null> }> | null>(null);
   React.useEffect(() => {
     const { draft: seed } = latest.current;
     if (!ready || !hasDraft || !seed) return;
     let current = true;
     setPreviewReason(null);
-    void (async () => {
+    const pending = (async () => {
+      let admitted: PublicProfilePreviewAdmission | null = null;
       try {
         const result = PublicProfilePreviewResultV1Schema.parse(
           await latest.current.executeValue('account.public_profile.preview', {
@@ -230,37 +253,36 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
             // Facts are independent of placement; composing the private area never re-queries Usage.
             layout: { v: 1, items: [] },
             appearance: previewAppearance(seed, latest.current.appliedAppearance),
-          }),
+          }, { capturePublicProfilePreview: preview => { if (current) admitted = preview; } }),
         );
-        if (!current) return;
-        if (result.kind === 'ready') setSnapshotView(result.view);
+        if (!current) return null;
+        if (result.kind === 'ready') setSnapshotView({ view: result.view, period: JSON.parse(queryKey).period.relative });
         else setPreviewReason(result.reason);
+        return admitted;
       } catch {
         if (current) setPreviewReason('preparation_unavailable');
+        return null;
       }
     })();
+    previewAdmission.current = { queryKey, pending };
     return () => {
       current = false;
+      previewAdmission.current = null;
     };
   }, [ready, queryKey, hasDraft, attempt]);
 
   // Revocation never requires unlocked/fresh Usage: the acknowledged public snapshot is sufficient.
-  const previewSnapshot = snapshotView?.snapshot ?? record?.snapshot ?? null;
+  const previewSnapshot = snapshotView?.view.snapshot ?? record?.snapshot ?? null;
+  const previewPeriod = snapshotView?.period ?? publicProfileRecordPeriod(record);
+  const projector = React.useMemo(() => previewSnapshot ? createPublicProfileProjector(previewSnapshot) : null, [previewSnapshot]);
+  const ownerProjection = React.useMemo(() => context && projector ? projector.project({ context, metadata: previewMetadata, policy: OWNER_POLICY,
+    relativePeriod: previewPeriod }) : null, [projector, context, previewMetadata, previewPeriod]);
+  const visitorProjection = React.useMemo(() => context && projector && draft ? projector.project({ context, metadata: previewMetadata, policy: draft.policy,
+    relativePeriod: previewPeriod }) : null, [projector, context, previewMetadata, draft?.policy, previewPeriod]);
   const views = React.useMemo(() => {
-    if (!previewSnapshot || !draft || !context) return null;
-    const project = (policy: PublicProfilePolicyV1) => {
-      const view = projectPublicProfilePreview({
-        context,
-        policy,
-        metadata: previewMetadata,
-        snapshot: previewSnapshot,
-        layout: draft.layout,
-        appearance: previewAppearance(draft, appliedAppearance),
-      });
-      return view ? withoutAppearance(view) : null;
-    };
-    const owner = project(OWNER_POLICY);
-    const visitor = project(draft.policy);
+    if (!ownerProjection || !visitorProjection || !draft || !context || !previewSnapshot) return null;
+    const owner = { ...ownerProjection.view, layout: ownerProjection.projectLayout(draft.layout) };
+    const visitor = { ...visitorProjection.view, layout: visitorProjection.projectLayout(draft.layout) };
     const visible = blockIds(visitor);
     return {
       owner,
@@ -272,7 +294,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
         draft,
       }),
     };
-  }, [previewSnapshot, draft, context, appliedAppearance, previewMetadata]);
+  }, [ownerProjection, visitorProjection, draft?.layout, draft?.policy, context, previewSnapshot]);
 
   const changes = draft
     ? resolvePublicProfileDraftChanges(record, draft)
@@ -289,13 +311,15 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
     previewSnapshot?.period ?? null,
   );
   const pictures = useAtmospherePictureCatalog();
-  const lookPresentation = draft ? draftLookPresentation(draft, record?.appearance ?? null) : null;
+  const lookPresentation = draft ? draftLookPresentation(draft) : null;
   const pictureRef = lookPresentation?.source === 'picture' ? lookPresentation.picture.ref : null;
   const creditPicture = pictureRef?.kind === 'builtin' ? pictures.find(picture => picture.id === pictureRef.id) : undefined;
   const credit = creditPicture ? pictureCreditLine(creditPicture) : null;
   const awaitingReason = previewReason ? t(`publicIdentity.profile.reasons.${previewReason}`) : t('publicIdentity.editor.preparing');
-  const labels = React.useMemo(() => context ? publicProfilePageLabels(context, previewSnapshot, credit) : null,
-    [context, previewSnapshot, credit]);
+  // While preparing, the period line says so; a known reason is said by the unavailable line with its Retry instead.
+  const pendingLine = previewReason ? undefined : t('publicIdentity.editor.preparing');
+  const labels = React.useMemo(() => context ? publicProfilePageLabels(context, previewSnapshot, credit, previewPeriod, pendingLine) : null,
+    [context, previewSnapshot, credit, previewPeriod, pendingLine]);
   // Until the page has its own preview, it is still this person's page: their name, handle and band.
   const shellView = React.useMemo(() => context?.handle ? {
     v: 1 as const, handle: context.handle, indexable: false, state: 'published' as const, identity: context.identity,
@@ -308,39 +332,45 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   const hiddenBlockIds = views?.hidden;
   // Edit draws every block with the owner's values; one visitors don't see stays in place, quieted,
   // with the one item it needs and its Share, exactly as the page draws it for its owner (lab ppcomp-E).
+  const consentPending = consent.state.kind === 'pending';
+  const policy = draft?.policy;
+  const toggleField = React.useCallback((field: PublicProfileField, shown: boolean) => {
+    void consentLatest.current.updateField(field, shown);
+  }, []);
+  const figureControls = React.useMemo(() => policy
+    ? publicProfileFigureControls({ policy, disabled: consentPending, onToggle: toggleField }) : null, [policy, consentPending, toggleField]);
   const owner = React.useMemo(() => hiddenBlockIds && draft && context && previewSnapshot ? {
-    hiddenBlockIds, onlyYou: t('publicIdentity.editor.onlyYou'),
+    hiddenBlockIds, onlyYou: t('publicIdentity.editor.onlyYou'), ...figureControls,
     renderHiddenNote: (blockId: string) => <PublicProfileHiddenBlockNote blockId={blockId} layout={draft.layout} context={context}
-      snapshot={previewSnapshot} policy={draft.policy} disabled={consent.state.kind === 'pending'}
+      snapshot={previewSnapshot} policy={draft.policy} projector={projector ?? undefined} disabled={consent.state.kind === 'pending'}
       onShare={shareField} />,
-  } : undefined, [hiddenBlockIds, draft, context, previewSnapshot, consent.state.kind, shareField]);
+  } : undefined, [hiddenBlockIds, draft, context, previewSnapshot, consent.state.kind, shareField, projector, figureControls]);
   const widgetPreview = React.useMemo<PublicProfileWidgetPreview | null>(() => !(context && draft && labels) ? null
     : !previewSnapshot ? { kind: 'unavailable', reason: awaitingReason } : {
     kind: 'ready',
     source: { context, policy: mode === 'edit' ? OWNER_POLICY : draft.policy, metadata: previewMetadata, snapshot: previewSnapshot,
       appearance: previewAppearance(draft, appliedAppearance) },
+    projection: (mode === 'edit' ? ownerProjection : visitorProjection) ?? undefined,
     labels, usage, ...(mode === 'edit' && owner ? { owner } : {}),
-  }, [context, previewSnapshot, draft, labels, mode, appliedAppearance, usage, awaitingReason, previewMetadata, owner]);
-
-  const appliedPicture = record?.appearance?.atmosphere.source === 'picture' ? record.appearance.atmosphere.picture : null;
-  const appliedPictureData = useAppliedPictureCopy(
-    appliedPicture && context?.urls?.page ? `${context.urls.page}/background` : null,
-    appliedPicture?.ref.id ?? null,
-  );
+  }, [context, previewSnapshot, draft, labels, mode, appliedAppearance, usage, awaitingReason, previewMetadata, owner, ownerProjection, visitorProjection]);
 
   const submit = React.useCallback(async () => {
     const candidate = widgetArea.candidate;
     if (!draft || !context?.service) return;
-    if (!candidate?.isCurrent()) {
+    if (!candidate) {
       setNotice(t('publicIdentity.profile.reasons.preparation_unavailable'));
       return;
     }
     const publishing = !record || record.state === 'draft';
+    if (publishing && draft.appearance.kind === 'applied' && !appliedAppearance) {
+      setNotice(t('publicIdentity.profile.reasons.asset_unavailable'));
+      return;
+    }
     const changesNow = resolvePublicProfileDraftChanges(record, draft);
     let appearance: PublicProfilePreparedAppearanceV1 | undefined;
     // A new theme on the applied planet or None look reuses that look's own prepared form.
     if (draft.appearance.kind === 'applied' && changesNow.appearance && appliedAppearance)
-      appearance = { ...appliedAppearance, theme: draftVisitorTheme(draft, record?.appearance ?? null) };
+      appearance = { ...appliedAppearance, theme: draftVisitorTheme(draft) };
     if (draft.appearance.kind === 'candidate') {
       const prepared = await prepareLook({
         serverId,
@@ -361,12 +391,11 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
         theme: draft.appearance.theme,
       };
     }
-    if (!candidate.isCurrent()) return;
-    const review = (disclosure: PublicProfileEditorView | null,
+    const review = (disclosure: PublicProfileLocalPreviewViewV1 | null,
       policy: PublicProfilePolicyV1, prepared: PublicProfilePreparedAppearanceV1,
       period: string, reviewContext: PublicProfileContextV1 = context): Promise<boolean> => {
       const service = reviewContext.service;
-      if (!service || !candidate.isCurrent() || !execution.isCurrent()) return Promise.resolve(false);
+      if (!service) return Promise.resolve(false);
       const picture = prepared.atmosphere.source === 'picture' ? prepared.atmosphere.picture : null;
       const pictureCopy = picture ? preparedPictureCopy(picture) : null;
       const signal = execution.getSignal();
@@ -377,16 +406,13 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
           if (settled) return;
           settled = true;
           signal.removeEventListener('abort', abort);
-          const current = candidate.isCurrent() && execution.isCurrent();
-          if (confirmed && !current) setNotice(t('publicIdentity.profile.reasons.preparation_unavailable'));
-          resolve(confirmed && current && !signal.aborted);
+          resolve(confirmed && !signal.aborted);
         };
         const abort = () => { finish(false); Modal.hide(modalId); };
         if (signal.aborted) { resolve(false); return; }
         modalId = Modal.show({
           component: PublicProfileReviewModal,
           props: {
-            kind: publishing ? 'publish' : 'apply', service: service.displayName,
             pageUrl: reviewContext.urls?.page ?? null, period,
             sharedFields: PUBLIC_PROFILE_FIELDS_V1.filter(field => policy.fields[field]),
             disclosure, preparationReason: !disclosure ? previewReason : null,
@@ -398,7 +424,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
           },
           onRequestClose: () => finish(false), onHostUnmount: () => finish(false),
           chrome: { kind: 'card', phonePresentation: 'sheet', testID: 'public-profile-review-modal',
-            title: publishing ? t('publicIdentity.review.titlePublish') : t('publicIdentity.review.titleApply') },
+            title: t('publicIdentity.review.titlePublish') },
           closeOnBackdrop: true,
         });
         signal.addEventListener('abort', abort, { once: true });
@@ -412,38 +438,45 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
       const outcome = publishing
         ? await execution.execute('account.public_profile.publish', {
             intent: 'publish', policy: draft.policy, metadataSelection: draft.metadata, query,
-            layout: draft.layout, appearance: preparedAppearance,
+            layout: candidate.selection, appearance: preparedAppearance,
           }, {
+            ...(previewAdmission.current?.queryKey === queryKey
+              ? { publicProfilePreviewAdmission: previewAdmission.current.pending } : {}),
             // Canonical preparation happens once before F2. Ask and dispatch retain
             // that exact effect; neither may silently reread different Usage facts.
             reviewPublicProfilePreparedAction: async effect => {
               if (effect.request.operation !== 'publish') return false;
               const body = effect.request.body;
               const view = projectPublicProfilePreview({ context: effect.publicationContext, policy: body.policy,
-                metadata: body.metadata, snapshot: body.snapshot, layout: body.layout, appearance: body.appearance });
-              return view ? review(withoutAppearance(view), body.policy, body.appearance,
+                metadata: body.metadata, snapshot: body.snapshot, layout: body.layout, appearance: body.appearance,
+                relativePeriod: body.query.period.relative });
+              return view ? review(view, body.policy, body.appearance,
                 formatUsageCalendarPeriod(body.snapshot.period), effect.publicationContext) : false;
             },
           })
-        : await review(views?.visitor ?? null, draft.policy, preparedAppearance,
-            formatUsageCalendarPeriod(snapshotView?.snapshot.period ?? query.period))
-          ? await execution.execute('account.public_profile.update', {
-              ...(changed.layout ? { layout: draft.layout } : {}), ...(appearance ? { appearance } : {}),
-              ...(changed.metadata ? { metadataSelection: draft.metadata } : {}), ...(changed.period ? { query } : {}),
-            }) : null;
-      if (!outcome) return;
+        : await execution.execute('account.public_profile.update', {
+            ...(changed.layout ? { layout: candidate.selection } : {}), ...(appearance ? { appearance } : {}),
+            ...(changed.metadata ? { metadataSelection: draft.metadata } : {}), ...(changed.period ? { query } : {}),
+          });
       if (!outcome.ok) {
         if (!isActionApprovalDeclinedErrorCode(outcome.errorCode)) setNotice(publicProfileMutationNotice(outcome));
         return;
       }
-      const outcomeNotice = publicProfileMutationNotice(outcome.result);
-      setNotice(outcomeNotice ??
-        (publishing ? t('publicIdentity.editor.published') : t('publicIdentity.editor.applied')));
-      // Undo is another reviewed Apply of the edition this one replaced; a picture it no longer has
+      const outcomeNotice = settlePublicProfileMutation(outcome.result, record => {
+        seeded.current = false;
+        acknowledge(record);
+      });
+      if (outcomeNotice) setNotice(outcomeNotice);
+      else if (publishing && context?.urls?.page) {
+        setNoticeState({ text: t('publicIdentity.editor.statusPublished'), tone: 'success', link: context.urls.page });
+        // The first Publish in front of the owner plays the page's one signature; a reload or an Apply never does.
+        setPublishMoment(moment => (moment ?? 0) + 1);
+      }
+      else setNotice(publishing ? t('publicIdentity.editor.published') : t('publicIdentity.editor.applied'), 'success');
+      // Undo applies the edition this one replaced; a picture it no longer has
       // on this device cannot be put back, so a changed picture look offers no Undo.
       setUndoable(!publishing && !outcomeNotice && record ? publicProfileUndo(record, changed, appliedAppearance) : null);
-      seeded.current = false;
-      await reload();
+      // The publication push owns the edition read; a confirmed write is not another invalidation.
     } catch {
       setNotice(t('publicIdentity.profile.actionUncertain'));
       await reload();
@@ -461,53 +494,40 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
     execution,
     query,
     appliedAppearance,
+    acknowledge,
     reload,
-    snapshotView,
-    views,
   ]);
 
+  // "Copied" only when the platform clipboard took the link; otherwise the link stays on the line to select.
+  const copyLink = React.useCallback(async (link: string) => {
+    const result = await execution.execute('clipboard.write', { text: link }).catch(() => null);
+    if (result?.ok) setNoticeState(current => current?.link === link ? { ...current, copied: true } : current);
+  }, [execution]);
   const undo = React.useCallback(async () => {
     const prior = undoable;
-    if (!prior || !context?.service) return;
-    const service = context.service;
-    const disclosure = previewSnapshot && prior.policy ? projectPublicProfilePreview({ context, policy: prior.policy,
-      metadata: prior.metadata, snapshot: previewSnapshot, layout: prior.layout ?? draft?.layout ?? { v: 1, items: [] },
-      appearance: prior.appearance ?? previewAppearance(draft ?? createPublicProfileDraft(record, { layout: { v: 1, items: [] } }), appliedAppearance) }) : null;
-    const confirmed = await new Promise<boolean>(resolve => {
-      let settled = false;
-      const finish = (value: boolean) => { if (!settled) { settled = true; resolve(value); } };
-      Modal.show({
-        component: PublicProfileReviewModal,
-        props: { kind: 'apply', service: service.displayName, pageUrl: context.urls?.page ?? null,
-          period: formatUsageCalendarPeriod(previewSnapshot?.period ?? query.period),
-          sharedFields: PUBLIC_PROFILE_FIELDS_V1.filter(field => prior.policy?.fields[field]),
-          disclosure: disclosure ? withoutAppearance(disclosure) : null, preparationReason: null,
-          endToEndEncrypted: encryption === 'e2ee', indexable: prior.policy?.indexable ?? false,
-          confirm: async () => { finish(true); }, cancel: () => finish(false) },
-        onRequestClose: () => finish(false), onHostUnmount: () => finish(false),
-        chrome: { kind: 'card', phonePresentation: 'sheet', testID: 'public-profile-undo-review-modal', title: t('publicIdentity.editor.undoTitle') },
-        closeOnBackdrop: true,
-      });
-    });
-    if (!confirmed || !execution.isCurrent()) return;
+    if (!prior) return;
     setSubmitting(true);
     try {
-      const outcome = await execution.execute('account.public_profile.update', prior.update);
+      const outcome = await execution.execute('account.public_profile.update', prior);
       if (!outcome.ok) {
         if (!isActionApprovalDeclinedErrorCode(outcome.errorCode)) setNotice(publicProfileMutationNotice(outcome));
         return;
       }
       setUndoable(null);
-      setNotice(publicProfileMutationNotice(outcome.result) ?? t('publicIdentity.editor.undone'));
-      seeded.current = false;
-      await reload();
+      const undoNotice = settlePublicProfileMutation(outcome.result, record => {
+        seeded.current = false;
+        acknowledge(record);
+      });
+      if (undoNotice) setNotice(undoNotice);
+      else setNotice(t('publicIdentity.editor.undone'), 'success');
+      // The same publication push settles Undo's edition without a second read.
     } catch {
       setNotice(t('publicIdentity.profile.actionUncertain'));
       await reload();
     } finally {
       setSubmitting(false);
     }
-  }, [undoable, context, previewSnapshot, draft, record, appliedAppearance, query.period, encryption, execution, reload]);
+  }, [undoable, execution, acknowledge, reload]);
 
   if (state.kind === 'failed') {
     return (
@@ -524,7 +544,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
     );
   }
   const renderBand = draft
-    ? profileBand(draft, record?.appearance ?? null, appliedPictureData)
+    ? profileBand(draft, recordAppearance, appliedPictureData, serverId, publishMoment)
     : undefined;
   const consentStatus = (
     <PublicProfileConsentStatus
@@ -537,7 +557,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   return (
     <ItemList style={{ paddingTop: 0 }} pageColumn="wide">
       {draft && labels ? (
-        <PublicProfileWidgetPreviewContext.Provider value={widgetPreview}>
+        <PublicProfileWidgetPreviewProvider value={widgetPreview}>
         <PublicProfileEditor
           status={record?.state ?? 'draft'}
           renderEditBlocks={() => <PublicProfileWidgetArea widgetArea={widgetArea} clauses={areaUsage.clauses} />}
@@ -554,9 +574,17 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
           usage={usage}
           renderBand={renderBand}
           singleColumn={singleColumn}
-          notice={widgetArea.status === 'unavailable' ? t('publicIdentity.profile.reasons.preparation_unavailable') : notice}
-          noticeAction={undoable && widgetArea.status !== 'unavailable' && notice
-            ? { label: t('publicIdentity.publicData.consent.undo'), onPress: () => { void undo(); } } : null}
+          notice={notice}
+          noticeTone={noticeState?.tone}
+          noticeAction={undoable && notice
+            ? { label: t('publicIdentity.publicData.consent.undo'), onPress: () => { void undo(); } }
+            : noticeState?.link ? { testID: 'public-profile-editor-copy-link', onPress: () => { void copyLink(noticeState.link!); },
+                label: noticeState.copied ? t('publicIdentity.share.copied') : t('publicIdentity.share.copyLink') } : null}
+          noticeDetail={noticeState?.link ? publicProfileLinkLabel(noticeState.link) : null}
+          noticeMoment={noticeState?.link ? publishMoment : null}
+          onNoticeEntered={settlePublishMoment}
+          noticeSecondaryAction={noticeState?.link ? { testID: 'public-profile-editor-badge', label: t('publicIdentity.share.output_badge'),
+            onPress: () => openUsageRecapComposer({ query: normalizeUsageQuery(query), serverId, initialOutput: 'badge' }, RecapCommandBridge) } : null}
           submitting={submitting || consent.state.kind === 'pending'}
           canSubmit={widgetArea.candidate !== null}
           consentStatus={panel === 'publicData' ? null : consentStatus}
@@ -599,7 +627,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
               >
                 <PublicProfileLookPanel
                   serverId={serverId}
-                  value={draftLookPresentation(draft, record?.appearance ?? null)}
+                  value={draftLookPresentation(draft)}
                   onChange={(atmosphere) =>
                     setDraft((current) =>
                       current
@@ -608,7 +636,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
                             appearance: {
                               kind: 'candidate',
                               atmosphere,
-                              theme: draftVisitorTheme(current, record?.appearance ?? null),
+                              theme: draftVisitorTheme(current),
                             },
                           }
                         : current,
@@ -620,7 +648,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
                 open={panel === 'details'}
                 anchorRef={detailsAnchor}
                 onRequestClose={() => setPanel(null)}
-                accessibilityLabel={t('publicIdentity.details.aboutTitle')}
+                accessibilityLabel={t('publicIdentity.details.button')}
               >
                 {scope ? (
                   <PublicProfileDetailsPanel
@@ -630,8 +658,8 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
                     onMetadataChange={(metadata) => setDraft((current) => current ? { ...current, metadata } : current)}
                     period={draft.period}
                     onPeriodChange={(period) => setDraft((current) => current ? { ...current, period } : current)}
-                    theme={draftVisitorTheme(draft, record?.appearance ?? null)}
-                    themeUnavailableReason={draft.appearance.kind === 'applied' && record?.appearance?.atmosphere.source === 'picture'
+                    theme={draftVisitorTheme(draft)}
+                    themeUnavailableReason={draft.appearance.kind === 'applied' && recordAppearance?.atmosphere.source === 'picture'
                       ? t('publicIdentity.details.themePicture') : null}
                     onThemeChange={(theme) => setDraft((current) => current ? setPublicProfileDraftTheme(current, theme) : current)}
                     hasAccountPhoto={Boolean(context?.identity.avatarUrl)}
@@ -655,7 +683,7 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
             </>
           )}
         />
-        </PublicProfileWidgetPreviewContext.Provider>
+        </PublicProfileWidgetPreviewProvider>
       ) : (
         <>
           <SettingsPageHeader title={t('publicIdentity.editor.title')} />
@@ -671,42 +699,46 @@ function CapturedPublicProfileEditorScreen({ scope }: Readonly<{ scope: ReturnTy
   );
 }
 
-function profileBand(draft: PublicProfileDraft, applied: PublicProfileAppearanceV1 | null, appliedPictureData: string | null)
+function profileBand(draft: PublicProfileDraft, applied: PublicProfileAppearanceV1 | null, appliedPictureData: string | null, serverId: string,
+  publishMoment: number | null)
   : ((geometry: HappierPublicProfileHeroGeometry) => React.ReactNode) | undefined {
-  if (draft.appearance.kind === 'applied' && applied?.atmosphere.source === 'picture') {
-    // The applied picture is the reviewed public copy, painted with its frozen look as visitors' pages are.
-    const picture = applied.atmosphere.picture;
-    return geometry => <View style={[styles.band, { height: geometry.bandHeightPx }]}>
-      <PublicPictureBand picture={picture} data={appliedPictureData} copyId={picture.ref.id} /></View>;
-  }
-  const presentation = draftLookPresentation(draft, applied);
+  const presentation = draftLookPresentation(draft);
   if (presentation.source === 'none') return undefined;
-  const target = { publicProfile: presentation };
-  return geometry => <View style={[styles.band, { height: geometry.bandHeightPx }]}><AtmospherePreview target={target} frame="band" /></View>;
+  return geometry => <View style={[styles.band, { height: geometry.bandHeightPx }]}>
+    <PublishRiseBand moment={publishMoment} bandHeightPx={geometry.bandHeightPx}>
+      <ProfileLookBand draft={draft} applied={applied} appliedPictureData={appliedPictureData} serverId={serverId} />
+    </PublishRiseBand>
+  </View>;
 }
 
-type PublicProfileUndo = Readonly<{
-  update: Readonly<Record<string, unknown>>;
-  policy: PublicProfilePolicyV1 | null;
-  metadata: PublicProfileMetadataV1;
-  layout: PublicProfileOwnerRecordV1['layout'];
-  appearance: PublicProfilePreparedAppearanceV1 | null;
-}>;
+/** Only the band follows a drag; the profile editor and its draft stay untouched until admission. */
+function ProfileLookBand(props: Readonly<{ draft: PublicProfileDraft; applied: PublicProfileAppearanceV1 | null;
+  appliedPictureData: string | null; serverId: string }>) {
+  const { draft, applied, appliedPictureData, serverId } = props;
+  const preview = usePublicProfileAtmospherePreviewValue(serverId);
+  if (!preview && draft.appearance.kind === 'applied' && applied?.atmosphere.source === 'picture') {
+    // The applied picture is the reviewed public copy, painted with its frozen look as visitors' pages are.
+    const picture = applied.atmosphere.picture;
+    return <PublicPictureBand picture={picture} data={appliedPictureData} copyId={picture.ref.id} />;
+  }
+  const presentation = preview ?? draftLookPresentation(draft);
+  const target = { publicProfile: presentation, draftServerId: serverId };
+  return <AtmospherePreview target={target} frame="band" />;
+}
 
 /** The members an Apply changed, as the edition it replaced held them; null when they cannot be put back. */
 function publicProfileUndo(record: PublicProfileOwnerRecordV1, changed: ReturnType<typeof resolvePublicProfileDraftChanges>,
-  appliedAppearance: PublicProfilePreparedAppearanceV1 | null): PublicProfileUndo | null {
+  appliedAppearance: PublicProfilePreparedAppearanceV1 | null): PublicProfileUpdateIntentV1 | null {
   if (changed.appearance && !appliedAppearance) return null;
   const prior = createPublicProfileDraft(record, { layout: { v: 1, items: [] } });
   const update = {
     ...(changed.layout && record.layout ? { layout: record.layout } : {}),
     ...(changed.appearance && appliedAppearance ? { appearance: appliedAppearance } : {}),
     ...(changed.metadata ? { metadataSelection: prior.metadata } : {}),
-    ...(changed.period ? { query: publicProfileDraftQuery(prior) } : {}),
+    ...(changed.period ? { query: normalizeUsageQuery(publicProfileDraftQuery(prior)) } : {}),
   };
   if (!Object.keys(update).length) return null;
-  return { update, policy: record.policy, metadata: record.metadata ?? {}, layout: record.layout,
-    appearance: changed.appearance ? appliedAppearance : null };
+  return update;
 }
 
 /** The review's picture at the public band's proportion, so the owner judges the crop visitors get. */
@@ -718,12 +750,10 @@ function ReviewPictureBand(props: React.ComponentProps<typeof PublicPictureBand>
 function PublicProfileReviewModal(
   props: CustomModalInjectedProps &
     Readonly<{
-      kind: 'publish' | 'apply';
-      service: string;
       pageUrl: string | null;
       period: string;
       sharedFields: readonly (typeof PUBLIC_PROFILE_FIELDS_V1)[number][];
-      disclosure: unknown;
+      disclosure: PublicProfileLocalPreviewViewV1 | null;
       preparationReason: PublicProfilePreparationUnavailableReasonV1 | null;
       renderPicture?: () => React.ReactNode;
       endToEndEncrypted: boolean;
@@ -735,8 +765,7 @@ function PublicProfileReviewModal(
   const [confirming, setConfirming] = React.useState(false);
   return (
     <PublicProfileReview
-      kind={props.kind}
-      service={props.service}
+      kind="publish"
       pageUrl={props.pageUrl}
       period={props.period}
       sharedFields={props.sharedFields}
@@ -757,7 +786,8 @@ function PublicProfileReviewModal(
 }
 
 const styles = StyleSheet.create(() => ({
-  band: { width: '100%' },
+  // The band's own frame is the horizon the first-publish rise comes up from.
+  band: { width: '100%', overflow: 'hidden' },
   reviewBand: {
     width: '100%',
     aspectRatio:

@@ -1,6 +1,6 @@
 import React from 'react';
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { Pressable, type View as RNView } from 'react-native';
+import { type View as RNView } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { SelectionList } from '@/components/ui/selectionList';
 import { useMachineSelectionListModel } from './machineSelection/useMachineSelectionListModel';
@@ -19,6 +19,7 @@ import { buildMachineSelectionBuckets } from './machineSelection/buildMachineSel
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
 import { describeMachineDestinationEligibility, resolveMachineDestinationPurposeEligibility, type MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
 import { useMachineDestinationWorkerStatus, type MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EMPTY_MACHINES: readonly Machine[] = [];
 
@@ -57,6 +58,7 @@ export interface MachineSelectorProps {
     allSectionTitle?: string;
     noItemsMessage?: string;
     testIdPrefix?: string;
+    currentUiContextCommandScope?: string;
     /**
      * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
      */
@@ -99,6 +101,7 @@ export function MachineSelector({
     allSectionTitle: allSectionTitleProp,
     noItemsMessage: noItemsMessageProp,
     testIdPrefix,
+    currentUiContextCommandScope,
     disableOfflineMachines = true,
     includeSelectedUnavailableMachine = false,
     describeMachine,
@@ -177,10 +180,10 @@ export function MachineSelector({
 
         const selectedColor = theme.colors.button.primary.background;
         return (
-            <Pressable
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            <HappierPressable
+                hitReach={0}
                 onPress={(event) => {
-                    event.stopPropagation?.();
+                    event?.stopPropagation?.();
                     onToggleFavorite(machine);
                 }}
             >
@@ -190,7 +193,7 @@ export function MachineSelector({
                     color={isFavorite ? selectedColor : theme.colors.text.secondary}
                     weight={isFavorite ? 'fill' : 'regular'}
                 />
-            </Pressable>
+            </HappierPressable>
         );
     }, [onToggleFavorite, showFavorites, theme.colors.button.primary.background, theme.colors.text.secondary]);
 
@@ -312,6 +315,7 @@ export function MachineSelector({
         onSelect={onSelect} onToggleFavorite={onToggleFavorite} showFavorites={showFavorites} showRecent={showRecent}
         showSearch={showSearch} showCliGlyphs={showCliGlyphs} autoDetectCliGlyphs={autoDetectCliGlyphs} serverId={serverId}
         favoriteGroupPlacement={favoriteGroupPlacement} testIdPrefix={testIdPrefix} disableOfflineMachines={disableOfflineMachines}
+        currentUiContextCommandScope={currentUiContextCommandScope}
         includeSelectedUnavailableMachine={includeSelectedUnavailableMachine} searchPlaceholder={searchPlaceholder}
         recentSectionTitle={recentSectionTitle} favoritesSectionTitle={favoritesSectionTitle} allSectionTitle={allSectionTitle}
         noItemsMessage={noItemsMessage}
@@ -369,5 +373,6 @@ function MachineSelectorList(props: MachineSelectorProps) {
             }) };
     }, [groupServerId, model.rootStep, model.offlineOnlyMachineIdsByServerId, offlineOpen, theme]);
     return <SelectionList testID={props.testIdPrefix ? `${props.testIdPrefix}-list` : 'machine-selector-list'}
+        currentUiContextCommandScope={props.currentUiContextCommandScope}
         rootStep={rootStep} selectedOptionId={model.selectedOptionId} onSelect={() => {}} onRequestClose={() => {}} />;
 }

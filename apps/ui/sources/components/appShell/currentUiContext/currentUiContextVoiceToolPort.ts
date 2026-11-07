@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { Disposable } from '@happier-dev/plugin-sdk';
+import type { BaseModalConfig } from '@/modal/types';
 
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -44,6 +45,7 @@ import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
+import { useCurrentUiContextCommandBridge } from './CurrentUiContextCommands';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
@@ -100,6 +102,8 @@ export type CurrentUiContextVoiceActionSchemas = Readonly<{
 }>;
 
 export type CurrentUiContextVoiceToolPort = CurrentUiContextReader & Readonly<{
+    /** Host-private React composition for client dialogs opened by an Action. */
+    commandBridge?: BaseModalConfig['commandBridge'];
     invokeVoiceDictation?: (request: Readonly<{ actionId: VoiceDictationActionId; input: Readonly<{ commandId: string }>; context: ActionExecutorContext }>) => Promise<ActionExecuteResult>;
     /** Only the ordinary typed Action may reach this admitted mounted effect. */
     invokeAccountHomeContinuation?: (request: Readonly<{ input: AccountHomeContinuationInputV1; context: ActionExecutorContext }>) => Promise<ActionExecuteResult>;
@@ -125,6 +129,7 @@ export type CurrentUiContextVoiceToolPort = CurrentUiContextReader & Readonly<{
 }>;
 
 type CurrentUiContextVoiceToolPortInput = Readonly<{
+    commandBridge?: BaseModalConfig['commandBridge'];
     /** Voice callers omit this; ordinary host Actions retain their real surface. */
     invocationSurface?: PluginSurfaceActionInvocationSurface;
     hostAction?: PluginSurfaceHostActionBinding;
@@ -504,6 +509,7 @@ export function createCurrentUiContextVoiceToolPort(
 
     return Object.freeze({
         ...input.reader,
+        commandBridge: input.commandBridge,
         invokeVoiceDictation: async (request: Readonly<{ actionId: VoiceDictationActionId; input: Readonly<{ commandId: string }>; context: ActionExecutorContext }>): Promise<ActionExecuteResult> => {
             const resolved = input.reader.resolveCurrentUiCommand(request.input.commandId);
             const command = resolved?.command;
@@ -564,6 +570,7 @@ export function createCurrentUiContextVoiceToolPort(
  */
 function useCurrentUiContextToolPortFactory() {
     const reader = useOptionalCurrentUiContextReader();
+    const commandBridge = useCurrentUiContextCommandBridge();
     const appShellProjection = useAppShellPluginUiProjectionSubscription();
     const navigationBinding = usePluginSurfaceDestinationNavigationBinding();
     const navigationBindingRef = React.useRef(navigationBinding);
@@ -573,6 +580,7 @@ function useCurrentUiContextToolPortFactory() {
         (invocationSurface: PluginSurfaceActionInvocationSurface, hostAction?: PluginSurfaceHostActionBinding) => reader
             ? createCurrentUiContextVoiceToolPort({
                 reader,
+                commandBridge,
                 invocationSurface,
                 hostAction,
                 readProjection: () => appShellProjection.getSnapshot().pluginUiProjection,
@@ -589,7 +597,7 @@ function useCurrentUiContextToolPortFactory() {
                 readNavigationBinding: () => navigationBindingRef.current,
             })
             : null,
-        [reader, appShellProjection],
+        [reader, commandBridge, appShellProjection],
     );
 }
 

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, createMachineFixture } from '@/dev/testkit';
@@ -49,29 +49,43 @@ describe('openExternalSessionCandidate', () => {
         expect(readExternalSessionBrowseCandidatePath({ details: { path: ' /repo/legacy path ' } })).toBe('/repo/legacy path');
         expect(readExternalSessionBrowseCandidatePath({})).toBeNull();
     });
-    it('uses the admitted existing link Action and never grants capture consent', async () => {
+    it('rejects a disabled link Action without issuing a Machine import', async () => {
+        const actionsSettingsV1 = normalizeActionsSettingsV1({ v: 1,
+            actions: { 'sessions.external.link.ensure': { enabled: false } } });
+        storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1 } }));
+        homes.answer(profileScope!.serverId, '/v2/account/settings', {
+            body: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 2 },
+        });
+        const params = input();
+        expect(await openExternalSessionCandidate(params)).toBe('failed');
+        expect(boundary.ensure).not.toHaveBeenCalled();
+        expect(params.openSession).not.toHaveBeenCalled();
+    });
+    it('links a human choice through the Action and never grants capture consent', async () => {
         boundary.ensure.mockResolvedValueOnce({ ok: true, sessionId: 'continued', created: true });
-        const frontDoor = createFrontDoorActionExecute();
-        // Observe invocation without substituting policy, admission or dispatch.
-        const execute = Object.assign(vi.fn(frontDoor), { confirmed: frontDoor.confirmed, prepare: frontDoor.prepare });
         const params = input();
         expect(await openExternalSessionCandidate({ ...params,
-            candidate: { ...params.candidate, cwd: ' /repo/native cwd ', details: { cwd: '/legacy/should-not-win' } },
-            linkActionExecute: execute })).toBe('opened');
-        expect(execute.mock.calls.map(([actionId]) => actionId)).toEqual(['sessions.external.link.ensure']);
+            candidate: { ...params.candidate, cwd: ' /repo/native cwd ', details: { cwd: '/legacy/should-not-win' } } })).toBe('opened');
         expect(params.openSession).toHaveBeenCalledWith('continued', params.resolveCurrentTarget(), undefined);
         expect(requests).toMatchObject([{ method: `machine-a:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
             params: { directoryHint: '/repo/native cwd' } }]);
         expect(boundary.ensure).toHaveBeenCalledOnce();
         expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });
+    it('keeps the real Agent link Action adapter on the same Machine operation', async () => {
+        expect(await createFrontDoorActionExecute()('sessions.external.link.ensure', {
+            machineId: 'machine-a', agentId: 'fixture-agent', source: { kind: 'fixture-source' }, remoteSessionId: 'native-session',
+        }, { surface: 'agent', serverId: profileScope!.serverId, expectedAccountId: 'account-a', bypassApprovals: true }))
+            .toMatchObject({ ok: true, result: { ok: true, sessionId: 'happier-session' } });
+        expect(requests).toMatchObject([{ method: `machine-a:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
+            params: { remoteSessionId: 'native-session' } }]);
+    });
     it('does not navigate or grant capture when the admitted link Account retires', async () => {
         const pending = createDeferred<{ ok: true; sessionId: string; created: boolean }>();
         let current = true;
         boundary.ensure.mockImplementationOnce(() => pending.promise);
         const params = input();
-        const opening = openExternalSessionCandidate({ ...params, accountCurrentness: { isCurrent: () => current },
-            linkActionExecute: createFrontDoorActionExecute() });
+        const opening = openExternalSessionCandidate({ ...params, accountCurrentness: { isCurrent: () => current } });
         await vi.waitFor(() => expect(boundary.ensure).toHaveBeenCalledOnce());
         current = false;
         pending.resolve({ ok: true, sessionId: 'retired-account-session', created: true });

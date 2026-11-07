@@ -1,4 +1,3 @@
-import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -12,6 +11,12 @@ import type { CurrentUiContextReader } from './CurrentUiContextProvider';
 import type { CurrentUiContextMountedCommand } from './currentUiContextModel';
 import { isVoiceDictationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { executeCapturedScopeContributedAction } from './contributedActionInvocation';
+import type { CurrentUiContextCommandInvokeInput } from '@happier-dev/protocol/actions/actionSpecs';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 type PortFactory = (surface: PluginSurfaceActionInvocationSurface, hostAction?: PluginSurfaceHostActionBinding) => CurrentUiContextVoiceToolPort | null;
 let mountedPortFactory: PortFactory | null = null;
@@ -20,6 +25,7 @@ let mountedPortFactory: PortFactory | null = null;
 export async function executeMountedCurrentUiContextCommand(input: Readonly<{
     reader: CurrentUiContextReader | null;
     command: CurrentUiContextMountedCommand | undefined;
+    input?: PluginUiJsonValueV1;
     execute(actionId: 'ui.current_context.read' | 'ui.current_context.command.invoke', input: unknown): Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult> {
     const unavailable = (): ActionExecuteResult => ({ ok: false, errorCode: 'unsupported_action', error: 'current_ui_command_unavailable' });
@@ -32,7 +38,8 @@ export async function executeMountedCurrentUiContextCommand(input: Readonly<{
         const resolved = input.reader?.resolveCurrentUiCommand(candidate.id);
         return resolved != null && resolved.command === input.command && !resolved.retirementSignal.aborted;
     });
-    return descriptor ? input.execute('ui.current_context.command.invoke', { commandId: descriptor.id }) : unavailable();
+    return descriptor ? input.execute('ui.current_context.command.invoke', { commandId: descriptor.id,
+        ...(input.input === undefined ? {} : { input: input.input }) }) : unavailable();
 }
 
 /** Borrows the provider's reader/dispatcher for this AppShell lifetime, without copying its context. */
@@ -48,11 +55,43 @@ export function listCurrentUiContextContributedActionDefinitions(
     return mountedPortFactory?.('ui')?.listCurrentContributedActionDefinitions?.('allSurfaces', selection) ?? [];
 }
 
+/** Ordinary host reads observe through the same exact current registration as invocation. */
+export async function observeCurrentUiContextContributedAction(
+    request: Parameters<NonNullable<CurrentUiContextVoiceToolPort['observeAction']>>[0],
+    hostAction: PluginSurfaceHostActionBinding,
+): Promise<Disposable> {
+    const surface = PluginActionSurfaceV2Schema.safeParse(hostAction.context?.surface);
+    const port = surface.success ? mountedPortFactory?.(surface.data, hostAction) : null;
+    if (!port?.observeAction || request.signal?.aborted || !request.isCurrent()) {
+        throw new PluginError({ code: 'contributed_action_unavailable' });
+    }
+    return port.observeAction(request);
+}
+
 /** Typed host Actions resolve through the incumbent current record, never a second mount registry. */
 export function readCurrentUiContextActionReader(context: Pick<ActionExecutorContext, 'surface' | 'signal'>): CurrentUiContextVoiceToolPort | null {
     const surface = PluginActionSurfaceV2Schema.safeParse(context.surface);
     return surface.success && surface.data !== 'plugin' && !context.signal?.aborted
         ? mountedPortFactory?.(surface.data) ?? null : null;
+}
+
+/** A declared Settings operation borrows its exact current command; no focus or retained-controller fallback. */
+export async function invokeCurrentUiContextSettingCommand(input: Readonly<{
+    anchor: string;
+    accountScope?: ServerAccountScope;
+    context: ActionExecutorContext;
+}>): Promise<boolean> {
+    const port = readCurrentUiContextActionReader(input.context);
+    if (!port || !input.accountScope) return false;
+    const descriptor = port.readCurrentUiContext()?.commands.find(candidate => {
+        const record = port.resolveCurrentUiCommand(candidate.id);
+        const command = record?.command;
+        return record && !record.retirementSignal.aborted && command?.kind === 'hostLocal'
+            && command.setting?.anchor === input.anchor
+            && areServerAccountScopesEqual(command.setting.scope, input.accountScope);
+    });
+    if (!descriptor) return false;
+    return (await port.invokeCurrentUiCommand?.({ commandId: descriptor.id, signal: input.context.signal }))?.ok === true;
 }
 
 export async function executeCurrentUiContextAction(
@@ -89,8 +128,9 @@ export async function executeCurrentUiContextAction(
             ?? { ok: false, errorCode: 'unsupported_action', error: 'current_account_continuation_unavailable' };
     }
     // The ordinary Action executor has already admitted this strict input.
-    const input = request.input as Readonly<{ commandId: string }>;
-    const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, signal: request.context.signal });
+    const input = request.input as CurrentUiContextCommandInvokeInput;
+    const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, signal: request.context.signal,
+        ...(input.input === undefined ? {} : { input: input.input }) });
     if (outcome?.ok) return { ok: true, result: outcome.result ?? null };
     const errorCode = outcome?.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome?.errorCode ?? (outcome?.code === 'denied' ? 'permission_denied'
@@ -102,11 +142,18 @@ export async function executeCurrentUiContextAction(
 export async function executeCurrentUiContextContributedAction(
     request: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0],
     hostAction: PluginSurfaceHostActionBinding,
+    accountLifetime?: ServerAccountScopeLifetime,
 ): Promise<ActionExecuteResult> {
+    // Session preparation already selected this exact live dispatcher. A
+    // mounted AppShell is presentation, not a replacement execution origin.
     const retained = hostAction.context?.contributedActionInvocation;
     if (retained?.resume) return retained.resume(request, hostAction);
     const surface = PluginActionSurfaceV2Schema.safeParse(request.context.surface);
-    const port = surface.success && surface.data !== 'plugin' ? mountedPortFactory?.(surface.data, hostAction) : null;
+    const port = surface.success ? mountedPortFactory?.(surface.data, hostAction) : null;
+    if (accountLifetime && surface.success && surface.data === 'ui'
+        && (!port?.invokeAction || request.context.interactivePresentation === 'unavailable')) {
+        return executeCapturedScopeContributedAction(request, hostAction, accountLifetime);
+    }
     const input = PluginJsonValueV2Schema.safeParse(request.input ?? null);
     if (!port?.invokeAction || request.signal?.aborted || !input.success) {
         return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_context_not_mounted', details: { actionHandlerInvocation: 'notStarted' } };
@@ -125,23 +172,4 @@ export async function executeCurrentUiContextContributedAction(
         : outcome.errorCode ?? (outcome.code === 'denied' ? 'permission_denied' : 'contributed_action_unavailable');
     return { ok: false as const, errorCode, error: errorCode,
         ...(outcome.actionHandlerInvocation ? { details: { actionHandlerInvocation: outcome.actionHandlerInvocation } } : {}) };
-}
-
-/** A declared Settings operation borrows its exact current command; no focus or retained-controller fallback. */
-export async function invokeCurrentUiContextSettingCommand(input: Readonly<{
-    anchor: string;
-    accountScope?: ServerAccountScope;
-    context: ActionExecutorContext;
-}>): Promise<boolean> {
-    const port = readCurrentUiContextActionReader(input.context);
-    if (!port || !input.accountScope) return false;
-    const descriptor = port.readCurrentUiContext()?.commands.find(candidate => {
-        const record = port.resolveCurrentUiCommand(candidate.id);
-        const command = record?.command;
-        return record && !record.retirementSignal.aborted && command?.kind === 'hostLocal'
-            && command.setting?.anchor === input.anchor
-            && areServerAccountScopesEqual(command.setting.scope, input.accountScope);
-    });
-    if (!descriptor) return false;
-    return (await port.invokeCurrentUiCommand?.({ commandId: descriptor.id, signal: input.context.signal }))?.ok === true;
 }

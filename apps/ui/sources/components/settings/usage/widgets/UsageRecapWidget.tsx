@@ -14,10 +14,13 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import type { UsageFilterState } from '@/sync/api/account/usageAnalytics';
 import { buildUsageRecapCardModels } from '@/sync/domains/usage/recap/buildUsageRecapCardModels';
-import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { ClipboardWriteResultSchema } from '@happier-dev/protocol/actions/clipboardActionFamily';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { getPreferredLanguage, t } from '@/text';
 import { exportUsageTextDocument } from '../usageExportFile';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import {
   UsageBodyInsufficient,
@@ -52,6 +55,8 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
   const delivery = React.useRef<AbortController | null>(null);
   const [exporting, setExporting] = React.useState<UsageExportInput['format'] | null>(null);
   const [exportFailed, setExportFailed] = React.useState(false);
+  const [exportsOpen, setExportsOpen] = React.useState(false);
+  const Bridge = useCurrentUiContextCommandBridge();
   React.useEffect(() => {
     setExportFailed(false);
     setExporting(null);
@@ -62,8 +67,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     return field.success ? [field.data] : [];
   }), [props.slice.accounting]);
   const execution = useMountedActionExecution(props.serverId);
-  const writeClipboard = useClipboardWrite(props.serverId);
-  const exportFacts = async (format: UsageExportInput['format']) => {
+  const exportFacts = async (format: UsageExportInput['format'], context?: ActionExecutorContext) => {
     if (!execution.isCurrent()) return;
     const controller = new AbortController();
     delivery.current?.abort();
@@ -75,7 +79,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       const executed = await execution.execute('usage.export', {
         query: shownQuery, format, fields: format === 'text' ? ['totals']
           : [...new Set([...exportFields, 'contributions' as const])],
-      }, { signal: controller.signal });
+      }, { signal: controller.signal, callerContext: context });
       if (!isCurrent()) return;
       if (!executed.ok) {
         // A declined approval is the person's own answer, not a failed export.
@@ -84,8 +88,13 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       }
       const file = UsageFileResultSchema.parse(executed.result);
       const content = new TextDecoder().decode(decodeBase64(file.base64));
-      const delivered = format === 'text' ? await writeClipboard(content, { signal: controller.signal })
-        : await exportUsageTextDocument({ content, fileName: file.fileName, mimeType: file.mediaType, isCurrent });
+      let delivered: boolean;
+      if (format === 'text') {
+        const copied = await execution.execute('clipboard.write', { text: content }, { signal: controller.signal, callerContext: context });
+        delivered = copied.ok && ClipboardWriteResultSchema.safeParse(copied.result).success;
+      } else {
+        delivered = await exportUsageTextDocument({ content, fileName: file.fileName, mimeType: file.mediaType, isCurrent });
+      }
       if (isCurrent()) setExportFailed(!delivered);
     } catch {
       if (isCurrent()) setExportFailed(true);
@@ -93,13 +102,13 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       if (delivery.current === controller) { delivery.current = null; setExporting(null); }
     }
   };
-  const exportActions: ItemAction[] = [
-    { id: `${props.testID}.copySummary`, title: t('common.copyWithLabel', { label: t('usage.summary.title') }), icon: 'copy',
-      disabled: exporting !== null, onPress: () => { void exportFacts('text'); } },
-    { id: `${props.testID}.json`, title: t('files.repositoryTree.actions.download'), icon: 'download',
-      disabled: exporting !== null, onPress: () => { void exportFacts('json'); } },
-    { id: `${props.testID}.csv`, title: t('usage.exportCsv'), icon: 'file-arrow-down',
-      disabled: exporting !== null, onPress: () => { void exportFacts('csv'); } },
+  const exportActions: (ItemAction & { format: UsageExportInput['format'] })[] = [
+    { format: 'text', id: `${props.testID}.copySummary`, title: t('common.copyWithLabel', { label: t('usage.summary.title') }), icon: 'copy',
+      disabled: exporting !== null, onPress: () => { void commands.invoke('export:text'); } },
+    { format: 'json', id: `${props.testID}.json`, title: t('files.repositoryTree.actions.download'), icon: 'download',
+      disabled: exporting !== null, onPress: () => { void commands.invoke('export:json'); } },
+    { format: 'csv', id: `${props.testID}.csv`, title: t('usage.exportCsv'), icon: 'file-arrow-down',
+      disabled: exporting !== null, onPress: () => { void commands.invoke('export:csv'); } },
   ];
   const viewModel = useUsageAnalyticsView(props.slice, props.query);
   // Legacy story shaping consumes the admitted response; it does not select a new period.
@@ -146,9 +155,10 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     }),
   );
 
-  const openComposer = React.useCallback(() => {
-    openUsageRecapComposer({ query: shownQuery, serverId: props.serverId });
-  }, [shownQuery, props.serverId]);
+  const openComposer = React.useCallback((context?: ActionExecutorContext) => {
+    openUsageRecapComposer({ query: shownQuery, serverId: props.serverId,
+      callerContext: context ? { ...context, signal: undefined } : undefined }, Bridge);
+  }, [shownQuery, props.serverId, Bridge]);
   const playStory = React.useCallback(() => {
     if (!viewModel) return;
     let modalId: string | null = null;
@@ -160,6 +170,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     };
     modalId = Modal.show({
       component: RecapStorySurface,
+      commandBridge: Bridge,
       onRequestClose: close,
       props: {
         viewModel,
@@ -168,10 +179,18 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
         cacheSavings: viewModel.cacheSavings,
         sessionId,
         onDismiss: close,
-        onShare: () => { close(); openComposer(); },
+        onShare: (context?: ActionExecutorContext) => { close(); openComposer(context); },
       },
     });
-  }, [viewModel, filters, shownQuery, sessionId, openComposer]);
+  }, [viewModel, filters, shownQuery, sessionId, openComposer, Bridge]);
+  const commands = useCurrentUiContextLocalCommands(viewModel && highlights.length ? [
+    { key: 'composer', title: t('usage.board.recap.shareCard'),
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => openComposer(context) },
+    { key: 'story', title: t('usage.recap.play'), invoke: playStory },
+    { key: 'exports', title: t('common.moreActions'), invoke: (input?: PluginUiJsonValueV1) => setExportsOpen(typeof input === 'boolean' ? input : !exportsOpen) },
+    ...(exporting === null ? exportActions.map(action => ({ key: `export:${action.format}`, title: action.title,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => exportFacts(action.format, context) })) : []),
+  ] : []);
   if (!viewModel)
     return (
       <UsageRecapBody theme={theme} model={{ highlights }} testID={props.testID}
@@ -198,20 +217,22 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
         <RoundButton
           size="small"
           title={t('usage.board.recap.shareCard')}
-          onPress={openComposer}
+          onPress={() => { void commands.invoke('composer'); }}
           testID={`${props.testID}.share`}
         />
         <RoundButton
           size="small"
           display="secondary"
           title={t('usage.recap.play')}
-          onPress={playStory}
+          onPress={() => { void commands.invoke('story'); }}
           testID={`${props.testID}.play`}
         />
         {/* The facts behind the card are three quiet exports behind one overflow, not three more buttons. */}
         <ItemRowActions
           title={t('common.moreActions')}
           overflowOnly
+          overflowOpen={exportsOpen}
+          onOverflowOpenChange={open => { void commands.invoke('exports', open); }}
           overflowTriggerTestID={`${props.testID}.exports`}
           overflowTriggerAccessibilityLabel={t('common.moreActions')}
           actions={exportActions}

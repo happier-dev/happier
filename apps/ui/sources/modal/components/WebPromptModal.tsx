@@ -9,6 +9,8 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { t } from '@/text';
 import { ModalCardFrame } from './card/ModalCardFrame';
 import { ModalChoiceRow } from './card/ModalChoiceRow';
+import { ModalCommands } from './ModalCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 
 interface WebPromptModalProps {
@@ -52,15 +54,17 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const didResolveRef = useRef(false);
 
-    const resolveAndClose = React.useCallback((value: string | null) => {
+    const resolveAndClose = React.useCallback((value: string | null, context?: ActionExecutorContext) => {
         if (didResolveRef.current) {
-            return;
+            return false;
         }
 
+        if (value !== null && context) config.onConfirmContext?.(context);
         didResolveRef.current = true;
         onConfirm(value);
         onClose();
-    }, [onClose, onConfirm]);
+        return true;
+    }, [config.onConfirmContext, onClose, onConfirm]);
 
     useEffect(() => {
         // Auto-focus the input when modal opens. A prompt closed before the timer fires must not
@@ -71,14 +75,6 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
         }, 100);
         return () => clearTimeout(timer);
     }, [visible]);
-
-    const handleCancel = () => {
-        resolveAndClose(null);
-    };
-
-    const handleConfirm = () => {
-        resolveAndClose(inputValue);
-    };
 
     const getKeyboardType = (): KeyboardTypeOptions => {
         switch (config.inputType) {
@@ -91,49 +87,63 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
         }
     };
 
-    return (
-        <BaseModal
-            visible={visible}
-            onClose={handleCancel}
-            accessibilityLabel={config.accessibilityLabel ?? config.title}
-            focusReturnRef={config.focusReturnRef}
-            closeOnBackdrop={false}
-            showBackdrop={showBackdrop}
-            zIndexBase={zIndexBase}
-        >
-            <ModalCardFrame dimensions={{ width: HAPPIER_PAGE_METRICS.dialogWidthPx.narrow, maxHeightRatio: 0.48 }}>
-                <View style={styles.content}>
-                    <Text variant="heading" style={styles.title}>
-                        {config.title}
-                    </Text>
-                    {config.message ? (
-                        <Text variant="body" style={styles.message}>
-                            {config.message}
+    return <ModalCommands bridge={config.commandBridge} commands={[
+        { key: 'input', title: config.title, invoke: input => {
+            if (input === undefined) return { ok: true, result: { value: inputValue } };
+            if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+            setInputValue(input.value);
+            return { ok: true, result: { value: input.value } };
+        } },
+        { key: 'confirm', title: config.confirmText || t('common.ok'),
+            invoke: (_input, context) => resolveAndClose(inputValue, context) },
+        { key: 'cancel', title: config.cancelText || t('common.cancel'), invoke: () => resolveAndClose(null) },
+    ]}>{invoke => {
+        const handleCancel = () => { void invoke('cancel'); };
+        const handleConfirm = () => { void invoke('confirm'); };
+        return (
+            <BaseModal
+                visible={visible}
+                onClose={handleCancel}
+                accessibilityLabel={config.accessibilityLabel ?? config.title}
+                focusReturnRef={config.focusReturnRef}
+                closeOnBackdrop={false}
+                showBackdrop={showBackdrop}
+                zIndexBase={zIndexBase}
+            >
+                <ModalCardFrame dimensions={{ width: HAPPIER_PAGE_METRICS.dialogWidthPx.narrow, maxHeightRatio: 0.48 }}>
+                    <View style={styles.content}>
+                        <Text variant="heading" style={styles.title}>
+                            {config.title}
                         </Text>
-                    ) : null}
-                    <FieldTextInput
-                        ref={inputRef}
-                        testID="web-prompt-input"
-                        style={styles.field}
-                        accessibilityLabel={config.title}
-                        value={inputValue}
-                        onChangeText={setInputValue}
-                        placeholder={config.placeholder}
-                        keyboardType={getKeyboardType()}
-                        secureTextEntry={config.inputType === 'secure-text'}
-                        autoCapitalize="none"
-                        autoFocus={Platform.OS === 'web'}
-                        onSubmitEditing={handleConfirm}
-                        returnKeyType="done"
-                    />
-                </View>
+                        {config.message ? (
+                            <Text variant="body" style={styles.message}>
+                                {config.message}
+                            </Text>
+                        ) : null}
+                        <FieldTextInput
+                            ref={inputRef}
+                            testID="web-prompt-input"
+                            style={styles.field}
+                            accessibilityLabel={config.title}
+                            value={inputValue}
+                            onChangeText={value => { void invoke('input', { value }); }}
+                            placeholder={config.placeholder}
+                            keyboardType={getKeyboardType()}
+                            secureTextEntry={config.inputType === 'secure-text'}
+                            autoCapitalize="none"
+                            autoFocus={Platform.OS === 'web'}
+                            onSubmitEditing={handleConfirm}
+                            returnKeyType="done"
+                        />
+                    </View>
                 
-                <ModalChoiceRow choices={[
-                    { text: config.cancelText || t('common.cancel'), testID: 'web-prompt-cancel', role: 'cancel', onPress: handleCancel },
-                    // Confirm on press-in too: the typed value is read before a blur or close can race it.
-                    { text: config.confirmText || t('common.ok'), testID: 'web-prompt-confirm', onPressIn: handleConfirm, onPress: handleConfirm },
-                ]} />
-            </ModalCardFrame>
-        </BaseModal>
-    );
+                    <ModalChoiceRow choices={[
+                        { text: config.cancelText || t('common.cancel'), testID: 'web-prompt-cancel', role: 'cancel', onPress: handleCancel },
+                        // Confirm on press-in too: the typed value is read before a blur or close can race it.
+                        { text: config.confirmText || t('common.ok'), testID: 'web-prompt-confirm', onPressIn: handleConfirm, onPress: handleConfirm },
+                    ]} />
+                </ModalCardFrame>
+            </BaseModal>
+        );
+    }}</ModalCommands>;
 }

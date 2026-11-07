@@ -1,4 +1,4 @@
-import { HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -16,6 +16,7 @@ import { t } from '@/text';
 
 import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from './surfaceStateSize';
 import { useSurfaceStateElapsedSeconds } from './useSurfaceStateElapsedSeconds';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 export type SurfaceStateKind = HappierSurfaceStateKind;
 /**
@@ -120,6 +121,8 @@ export function SurfaceStateCard(props: Readonly<{
     size?: SurfaceStateSize;
     /** Existing inline anatomy for a state inside a sheet; whole-pane states stay centered. */
     layout?: 'centered' | 'inline';
+    /** `menu`: a line state among a transient menu's rows (a picker's empty or failed list) sits on their label edge. */
+    lineDensity?: 'menu';
     /** Already-translated title: what is here, or what failed, in the person's words. */
     title: string;
     /** Optional glyph decoration inside the existing title Text; semantic copy stays in `title`. */
@@ -198,7 +201,7 @@ export function SurfaceStateCard(props: Readonly<{
         announceAccessibilityMessage(accessibilityAnnouncement);
     }, [accessibilityAnnouncement, props.accessibilitySemantics]);
 
-    const bindings = useSurfaceStateBindings(props.testID, animationEnabled);
+    const bindings = useSurfaceStateBindings(props.testID, animationEnabled, props.title);
     // A container that never owns its page's primary (a widget card) offers every state's way forward quiet:
     // the shared composition draws a step that is not an invitation in the secondary tone.
     const quietActions = useSurfaceStateQuietActions();
@@ -236,6 +239,7 @@ export function SurfaceStateCard(props: Readonly<{
                 {...shared}
                 size="line"
                 fillsContainer={props.replacesContent}
+                lineDensity={props.lineDensity}
                 glyph={lineGlyph}
                 lineText={<>{props.titleContent ?? props.title}{props.reason ? (props.reasonContent != null ? <>{' · '}{props.reasonContent}</> : ` · ${props.reason}`) : null}</>}
             />
@@ -320,7 +324,7 @@ export function SurfaceStateCard(props: Readonly<{
 }
 
 /** Core's typography, buttons, spinner and disclosure for the shared state composition. */
-function useSurfaceStateBindings(testID: string | undefined, animationEnabled: boolean): HappierSurfaceStateBindings {
+function useSurfaceStateBindings(testID: string | undefined, animationEnabled: boolean, title: string): HappierSurfaceStateBindings {
     const { theme } = useUnistyles();
     const disclosure = useCoreDisclosureToggleBinding();
     return React.useMemo<HappierSurfaceStateBindings>(() => ({
@@ -346,7 +350,7 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
                 title={action.label}
                 accessibilityLabel={action.label}
                 style={fullWidth ? stylesheet.fullWidth : undefined}
-                action={() => Promise.resolve(action.onPress())}
+                action={(event) => Promise.resolve(action.onPress(event))}
             />
         ),
         renderSpinner: (sizePx) => (
@@ -357,12 +361,21 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
         // Quiet disclosure for the raw reason code: collapsed by default so the card leads with human
         // copy, one tap away when someone needs to report or debug.
         renderDetailsCaret: disclosure.renderCaret,
+        renderDetailsToggle: props => <SurfaceStateDetailsToggle {...props} title={title} />,
         focusRing: disclosure.focusColor,
         renderDetailsCode: (detail, align = 'center') => (
             <DisclosedCodeText testID={testID ? `${testID}-details-code` : undefined} align={align === 'center' ? 'center' : undefined}>{detail}</DisclosedCodeText>
         ),
         pressedFill: theme.colors.surface.pressed,
-    }), [animationEnabled, disclosure, testID, theme]);
+    }), [animationEnabled, disclosure, testID, theme, title]);
+}
+
+/** The shared disclosure owns its state; core exposes that same intent through the mounted command. */
+function SurfaceStateDetailsToggle(props: React.ComponentProps<typeof HappierDisclosureToggle> & Readonly<{ title: string }>) {
+    const { title, ...toggleProps } = props;
+    const commands = useCurrentUiContextLocalCommands([{ key: 'toggle', title: `${title}: ${props.label}`, invoke: props.onPress }],
+        { foregroundOverlay: true, unbound: 'local' });
+    return <HappierDisclosureToggle {...toggleProps} onPress={() => { void commands.invoke('toggle'); }} />;
 }
 
 /**

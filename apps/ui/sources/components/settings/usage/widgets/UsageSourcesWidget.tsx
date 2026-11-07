@@ -44,6 +44,9 @@ import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui
 import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
+import { useUsageDisclosureCommand } from './usageMountedControls';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /**
  * Sources (lab d2src/usrc): agent usage already on your machines, found by reading metadata only.
@@ -136,8 +139,8 @@ export function UsageSourcesMachines(
   const [stateProjection, setStateProjection] = React.useState<Readonly<{
     lifetime: ServerAccountScopeLifetime; key: string; states: ReadonlyMap<string, UsageSourcesMachineReport>;
   }> | null>(null);
-  const retries = React.useRef(new Map<string, () => void>());
-  const reportState = React.useCallback((machineId: string, report: UsageSourcesMachineReport, retry?: () => void) => {
+  const retries = React.useRef(new Map<string, (context?: ActionExecutorContext) => void>());
+  const reportState = React.useCallback((machineId: string, report: UsageSourcesMachineReport, retry?: (context?: ActionExecutorContext) => void) => {
     if (retry) retries.current.set(machineId, retry); else retries.current.delete(machineId);
     setStateProjection(previous => {
       const current = previous?.lifetime === props.lifetime && previous.key === projectionKey ? previous : null;
@@ -155,6 +158,9 @@ export function UsageSourcesMachines(
   const unreadable = online.filter(machine => states?.get(machine.id)?.state === 'unreadable');
   // The server disclosure is said once for the page, beside the sources it governs.
   const consentable = online.some(machine => states?.get(machine.id)?.consentable === true);
+  const commands = useCurrentUiContextLocalCommands(!props.compact && unreadable.length ? [{ key: 'retry',
+    title: `${t('usage.board.sources.machinesUnreadable')}: ${t('common.retry')}`,
+    invoke: (_input, context) => { for (const machine of unreadable) retries.current.get(machine.id)?.(context); } }] : []);
   if (machines.length === 0)
     return (
       <SurfaceStateCard
@@ -208,7 +214,7 @@ export function UsageSourcesMachines(
             testID={`${props.testID}.unreadableMachines`}
             tone="warning"
             reason={`${t('projects.identity.machineCount', { count: unreadable.length })} · ${t('usage.board.sources.machinesUnreadable')}`}
-            action={{ label: t('common.retry'), onPress: () => { for (const machine of unreadable) retries.current.get(machine.id)?.(); } }}
+            action={{ label: t('common.retry'), onPress: () => { void commands.invoke('retry'); } }}
           />
         ) : null}
         {emptyCount > 0 ? groupLine('emptyMachines', emptyCount, t('usage.board.sources.machineNone')) : null}
@@ -299,7 +305,7 @@ const MachineSources = React.memo(function MachineSources(
     agentIds: readonly string[];
     accountingSources: readonly string[];
     wide: boolean;
-    onState(machineId: string, report: UsageSourcesMachineReport, retry?: () => void): void;
+    onState(machineId: string, report: UsageSourcesMachineReport, retry?: (context?: ActionExecutorContext) => void): void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -339,7 +345,7 @@ const MachineSources = React.memo(function MachineSources(
   // Consent is asked where a source can be added or resumed (or is counted and can be stopped).
   const consentable = state === 'content' && [...tracked, ...found].some(row => row.status.kind !== 'unsupported' && row.status.kind !== 'failed'
     || row.source.consent === 'enabled');
-  const retry = React.useCallback(() => { void controller?.discover(); }, [controller]);
+  const retry = React.useCallback((context?: ActionExecutorContext) => { void controller?.discover(context); }, [controller]);
   React.useEffect(() => { props.onState(props.machineId, { state, consentable }, state === 'unreadable' ? retry : undefined); },
     [props.onState, props.machineId, state, consentable, retry]);
   React.useEffect(() => { if (state === 'content') measure(); }, [state, measure]);
@@ -392,22 +398,28 @@ type SourceRowProps = Readonly<{
 }>;
 
 /** Shared identity and effects of one source row: its name, folder and the Actions behind its controls. */
-function useSourceRow(props: SourceRowProps) {
+function useSourceRow(props: SourceRowProps, visible = true) {
   const { source, controller } = props;
   const agentId = usageSourceAgentKey(source);
   const agent = usageAgentTitle(agentId);
   const busy = props.snapshot.pending.some(operation => operation.sourceId === source.sourceId && operation.actionId !== 'usage.sources.get');
   const folder = source.root.path ? formatPathRelativeToHome(source.root.path, props.homeDir) : t('usage.board.sources.defaultFolder');
-  const changeFolder = React.useCallback(async () => {
+  const Bridge = useCurrentUiContextCommandBridge();
+  const changeFolder = React.useCallback(async (context: ActionExecutorContext) => {
+    let confirmedContext: ActionExecutorContext | undefined;
     const next = await Modal.prompt(
       t('usage.board.sources.folderPromptTitle'),
       t('usage.board.sources.folderPromptMessage', { agent, machine: props.machineName }),
-      { defaultValue: source.root.path ?? '', placeholder: source.root.path ?? '~' },
+      { defaultValue: source.root.path ?? '', placeholder: source.root.path ?? '~', commandBridge: Bridge,
+        onConfirmContext: confirming => { confirmedContext = confirming; } },
     );
     // The Machine expands and validates the path with its own home-directory owner.
-    if (next !== null && next.trim().length > 0 && next.trim() !== source.root.path) await controller.setRoot(source.sourceId, next.trim());
-  }, [controller, source.sourceId, source.root.path, agent, props.machineName]);
-  return { agentId, agent, busy, folder, changeFolder };
+    if (next !== null && next.trim().length > 0 && next.trim() !== source.root.path) await controller.setRoot(source.sourceId, next.trim(), confirmedContext ?? context);
+  }, [controller, source.sourceId, source.root.path, agent, props.machineName, Bridge]);
+  const commands = useCurrentUiContextLocalCommands(visible && !busy ? [{ key: 'change-folder',
+    title: t('usage.board.sources.changeFolder'), description: `${props.testID}.folder`,
+    invoke: (_input, context) => changeFolder(context) }] : []);
+  return { agentId, agent, busy, folder, changeFolder: async () => { await commands.invoke('change-folder'); } };
 }
 
 function SourceIdentity(props: Readonly<{ agentId: string; agent: string; folder: string; serverId: string; children?: React.ReactNode }>) {
@@ -427,7 +439,7 @@ function SourceIdentity(props: Readonly<{ agentId: string; agent: string; folder
 function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSourceRowStatus; wide: boolean; visible: boolean }>) {
   const { theme } = useUnistyles();
   const { source, controller, status } = props;
-  const { agentId, agent, busy, folder, changeFolder } = useSourceRow(props);
+  const { agentId, agent, busy, folder, changeFolder } = useSourceRow(props, props.visible);
   const deletion = props.snapshot.historyDeletion?.sourceId === source.sourceId ? props.snapshot.historyDeletion : null;
   const enabled = source.consent === 'enabled';
   const retained = enabled || source.status === 'stopped' || source.pendingCount > 0 || source.asOfMs !== null;
@@ -501,7 +513,10 @@ function folderActions(testID: string, source: UsageSourceV1, controller: UsageS
 
 function SourceOptions(props: Readonly<{ testID: string; agent: string; actions: ItemAction[] }>) {
   const label = t('usage.board.sources.sourceOptions', { agent: props.agent });
+  const [open, setOpen] = React.useState(false);
+  const toggle = useUsageDisclosureCommand(label, open, () => setOpen(value => !value));
   return <ItemRowActions title={label} actions={props.actions} overflowOnly
+    overflowOpen={open} onOverflowOpenChange={next => { if (next !== open) toggle(); }}
     overflowTriggerTestID={`${props.testID}.options`} overflowTriggerAccessibilityLabel={label} />;
 }
 
@@ -516,6 +531,7 @@ function MissingSources(props: Readonly<{
   visible: boolean;
 }>) {
   const [open, setOpen] = React.useState(false);
+  const toggle = useUsageDisclosureCommand(t('usage.board.sources.chooseFolders'), open, () => setOpen(value => !value), props.visible);
   if (!props.visible) return null;
   const agents = [...new Set(props.sources.map(source => usageAgentTitle(usageSourceAgentKey(source))))];
   const line = t('usage.board.sources.notFoundAgents', { agents: agents.join(', ') });
@@ -524,7 +540,7 @@ function MissingSources(props: Readonly<{
       <View style={styles.missingLine}>
         <Text style={[styles.note, styles.missingText]} accessibilityLabel={line}>{line}</Text>
         <RoundButton size="small" display="inverted" title={t(open ? 'common.done' : 'usage.board.sources.chooseFolders')}
-          onPress={() => setOpen(value => !value)} testID={`${props.testID}.toggle`} />
+          onPress={toggle} testID={`${props.testID}.toggle`} />
       </View>
       {open ? props.sources.map(source => (
         <MissingSourceRow key={source.sourceId} source={source} controller={props.controller} machineName={props.machineName}
@@ -539,17 +555,24 @@ function MissingSourceRow(props: Readonly<{ source: UsageSourceV1; controller: U
   serverId: string; busy: boolean; testID: string }>) {
   const agentId = usageSourceAgentKey(props.source);
   const agent = usageAgentTitle(agentId);
-  const choose = async () => {
+  const Bridge = useCurrentUiContextCommandBridge();
+  const choose = async (context: ActionExecutorContext) => {
+    let confirmedContext: ActionExecutorContext | undefined;
     const next = await Modal.prompt(t('usage.board.sources.folderPromptTitle'),
-      t('usage.board.sources.folderPromptMessage', { agent, machine: props.machineName }), { defaultValue: '', placeholder: '~' });
-    if (next !== null && next.trim().length > 0) await props.controller.setRoot(props.source.sourceId, next.trim());
+      t('usage.board.sources.folderPromptMessage', { agent, machine: props.machineName }),
+      { defaultValue: '', placeholder: '~', commandBridge: Bridge,
+        onConfirmContext: confirming => { confirmedContext = confirming; } });
+    if (next !== null && next.trim().length > 0) await props.controller.setRoot(props.source.sourceId, next.trim(), confirmedContext ?? context);
   };
+  const commands = useCurrentUiContextLocalCommands(!props.busy ? [{ key: 'choose-folder',
+    title: t('usage.board.sources.changeFolder'), description: `${props.testID}.folder`,
+    invoke: (_input, context) => choose(context) }] : []);
   return (
     <View testID={props.testID} style={styles.missingRow}>
       <UsageAgentMark agentId={agentId} serverId={props.serverId} />
       <Text style={[styles.sourceSubtitle, styles.missingText]} numberOfLines={1}>{agent}</Text>
       <RoundButton size="small" display="inverted" title={t('usage.board.sources.changeFolder')} disabled={props.busy}
-        onPress={() => { void choose(); }} testID={`${props.testID}.folder`} />
+        onPress={() => { void commands.invoke('choose-folder'); }} testID={`${props.testID}.folder`} />
     </View>
   );
 }

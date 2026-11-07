@@ -6,13 +6,13 @@ import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSche
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import { loadConnectedMetadataCatalogV1, type ConnectedMetadataCatalogV1, type ConnectedMetadataSourceTransferV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
+import { loadConnectedMetadataCatalogV1, connectedMetadataDiagnosticsForRootsV1, type ConnectedMetadataCatalogV1, type ConnectedMetadataSourceTransferV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import {
   ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema,
   ConnectedPresentationRowMutationV1Schema, ConnectedAcknowledgementsRowMutationV1Schema,
   ConnectedMetadataRowMutationResponseV1Schema, sealConnectedPresentationContentV1, sealConnectedAcknowledgementsContentV1,
   applyConnectedPresentationMutationV1, applyConnectedSubscriptionPriceMutationV1, applyConnectedAcknowledgementMutationV1, removeConnectedMetadataSubjectV1,
-  removeLegacyConnectedMetadataSubjectV1,
+  removeLegacyConnectedMetadataSubjectV1, readLegacyConnectedMetadataV1, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1,
   CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
   connectedEntitySubjectKeyV1, type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1,
   type QualifiedConnectedEntityRef, type QualifiedAcknowledgementSubject, type LegacyConnectedMetadataInventoryV1,
@@ -245,12 +245,24 @@ export function createCliConnectedMetadataStore(input: MetadataStoreInput) {
         throw Object.assign(new Error('Connected metadata subject unavailable'), { code: 'connected_metadata_subject_unavailable' });
       }
       const admitted = await readCatalog(undefined, false);
-      const catalog = requirePresentation(admitted.presentation.status === 'unavailable' && admitted.presentation.reason === 'authority-not-confirmed'
-        ? await readCatalog() : admitted);
-      const record = applyConnectedSubscriptionPriceMutationV1(catalog.record, { account: value.account,
+      let mutation: WriteInput<ConnectedPresentationRecordV1>;
+      if (admitted.presentation.status === 'unavailable' && admitted.presentation.reason === 'authority-not-confirmed') {
+        const source = await readSourceSnapshot();
+        const retained = readLegacyConnectedMetadataV1(source.raw, await readInventory());
+        if (connectedMetadataDiagnosticsForRootsV1(retained.diagnostics, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1).length) {
+          throw Object.assign(new Error('Connected presentation catalog unavailable'), { code: 'connected_metadata_catalog_incomplete' });
+        }
+        // Initialize the canonical projection and this finite effect together.
+        // Raw Settings/acknowledgement/history maintenance belongs to hydration.
+        mutation = { record: retained.presentation, expectedRevision: 'absent', sourceSettingsVersion: source.version };
+      } else {
+        const catalog = requirePresentation(admitted);
+        mutation = { record: catalog.record, expectedRevision: catalog.revision };
+      }
+      const record = applyConnectedSubscriptionPriceMutationV1(mutation.record, { account: value.account,
         price: value.price ? { ...value.price, enteredAtMs: Date.now() } : null });
-      if (isDeepStrictEqual(record, catalog.record)) return;
-      requireUpdated(await writePresentation({ record, expectedRevision: catalog.revision }));
+      if (isDeepStrictEqual(record, mutation.record)) return;
+      requireUpdated(await writePresentation({ ...mutation, record }));
       await publishAfterMutation();
     },
     setAcknowledgement: async (value: Readonly<{ subject: QualifiedAcknowledgementSubject; acknowledged: boolean | null }>) => {

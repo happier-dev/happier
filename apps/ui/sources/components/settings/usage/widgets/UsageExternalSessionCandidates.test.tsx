@@ -10,7 +10,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { createDeferred, createMachineFixture, flushHookEffects, PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, flushHookEffects, PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -20,6 +20,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { OutsideBrowsePage, UsageExternalSessionCandidates, UsageOutsideSessions } from './UsageExternalSessionCandidates';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
+import { renderMountedCurrentUiContext as renderScreen } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 const rpc = vi.hoisted(() => vi.fn());
 const homes = createHomeGovernanceHarness();
@@ -79,7 +81,66 @@ afterEach(async () => { standardCleanup(); restoreExecutorModuleLoader?.(); rest
     resetRuntimeFetch(); publishAppliedActiveServerRuntimeAvailability(false); vi.restoreAllMocks(); await homes.reset(); });
 
 describe('Usage shared outside-session candidates', () => {
-    it('links one human choice through the Machine owner while the agent link Action is disabled', async () => {
+    it('keeps an agent Browse subject to the candidate Action surface restriction', async () => {
+        restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+        storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { 'sessions.external.candidates.list': { disabledSurfaces: ['agent'] } },
+        }) } }));
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'usage-account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const source = { serverId, machineId: 'machine-1', sourceId: 'source', agent: { pluginId: 'acme.review', localId: 'archive' },
+            externalSessionSource: { kind: 'archive' }, root: { kind: 'default' as const, path: '/root' },
+            consent: 'disabled' as const, status: 'found' as const, coverage: 'unknown' as const, pendingCount: 0, asOfMs: null };
+        await renderScreen(<UsageExternalSessionCandidates source={source} lifetime={lifetime} online testID="outside" />);
+        const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+        if (!read.ok) throw new Error(read.errorCode);
+        const parsed = (await import('@happier-dev/protocol/plugins/ui/currentUiContext')).CurrentUiContextSnapshotV1Schema.parse(read.result);
+        const command = parsed.commands.find(row => row.title === 'externalSessions.browseTitle');
+        expect(command).toBeDefined();
+        await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+            input: { commandId: command!.id }, context: { surface: 'agent' } }); });
+        await flushHookEffects({ cycles: 20 });
+        expect(rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toBe(false);
+    });
+    it('lets an agent browse the same mounted outside sessions and continue the chosen candidate', async () => {
+        restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+        storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, approvalWaivedSurfaces: { 'sessions.external.link.ensure': ['ui', 'agent'] },
+        }) } }));
+        const originalRpc = rpc.getMockImplementation();
+        rpc.mockImplementation(async call => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE
+            ? { ok: true, sessionId: 'continued', created: true } : originalRpc?.(call));
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'usage-account' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const source = { serverId, machineId: 'machine-1', sourceId: 'source', agent: { pluginId: 'acme.review', localId: 'archive' },
+            externalSessionSource: { kind: 'archive' }, root: { kind: 'default' as const, path: '/root' },
+            consent: 'disabled' as const, status: 'found' as const, coverage: 'unknown' as const, pendingCount: 0, asOfMs: null };
+        const screen = await renderScreen(<UsageExternalSessionCandidates source={source} lifetime={lifetime} online testID="outside" />);
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.browse')).toBeTruthy(); });
+        const invoke = async (title: string) => {
+            const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+            if (!read.ok) throw new Error(read.errorCode);
+            const parsed = (await import('@happier-dev/protocol/plugins/ui/currentUiContext')).CurrentUiContextSnapshotV1Schema.parse(read.result);
+            const command = parsed.commands.find(row => row.title === title);
+            expect(command, `mounted command for ${title}`).toBeDefined();
+            await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+            return command!.id;
+        };
+        await invoke('externalSessions.browseTitle');
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.continue.outside')).toBeTruthy(); });
+        const previousContinue = await invoke('usage.board.sources.continueInHappier: Native work');
+        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toHaveLength(1);
+        await screen.update(<UsageExternalSessionCandidates source={{ ...source, sourceId: 'next-source' }} lifetime={lifetime} online testID="outside" />);
+        expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+            input: { commandId: previousContinue }, context: { surface: 'agent' } })).toMatchObject({ ok: false });
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.browse')).toBeTruthy(); });
+        await invoke('externalSessions.browseTitle');
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.continue.outside')).toBeTruthy(); });
+        await screen.pressByTestIdAsync('outside.continue.outside');
+        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toHaveLength(2);
+    });
+    it('refuses a human Continue while the canonical link Action is disabled', async () => {
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
         storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
             v: 1, actions: { 'sessions.external.link.ensure': { enabled: false } },
@@ -97,9 +158,8 @@ describe('Usage shared outside-session candidates', () => {
         await screen.pressByTestIdAsync('outside.browse');
         await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.continue.outside')).toBeTruthy(); });
         await screen.pressByTestIdAsync('outside.continue.outside');
-        await waitForHomeGovernance(() => expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE))
-            .toMatchObject([[{ serverId, accountId: 'usage-account', machineId: 'machine-1', payload: { remoteSessionId: 'outside' } }]]));
-        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toHaveLength(1);
+        await flushHookEffects({ cycles: 20 });
+        expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toHaveLength(0);
         expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });
     it('withdraws Work source discovery after a machine request failure', async () => {

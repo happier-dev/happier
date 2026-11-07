@@ -22,11 +22,15 @@
  *      orchestrator's `onSelect` reads it.
  */
 
+import type { GestureResponderEvent } from 'react-native';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { SelectionListOption, SelectionListStep } from './_types';
 
 export type ActivateSelectionListRowArgs = Readonly<{
     option: SelectionListOption;
-    onSelect: (id: string, option: SelectionListOption) => void;
+    event?: GestureResponderEvent;
+    onSelect: (id: string, option: SelectionListOption, context?: ActionExecutorContext) => void;
+    context?: ActionExecutorContext;
     onPushStep: (step: SelectionListStep) => void;
     /**
      * Invoked instead of select/navigate when the option declares
@@ -37,17 +41,23 @@ export type ActivateSelectionListRowArgs = Readonly<{
     onRequiresInput?: () => void;
 }>;
 
-export function activateSelectionListRow(args: ActivateSelectionListRowArgs): void {
+export function activateSelectionListRow(args: ActivateSelectionListRowArgs): boolean {
     const { option, onSelect, onPushStep, onRequiresInput } = args;
-    if (option.disabled === true) return;
+    if (option.disabled === true) return false;
     if (option.requiresInputValue === true) {
         onRequiresInput?.();
-        return;
+        return true;
     }
     if (option.openStep !== undefined) {
         onPushStep(option.openStep);
-        return;
+        return true;
     }
-    option.onSelect?.();
-    onSelect(option.id, option);
+    if (args.context) {
+        option.onSelect?.(args.event, args.context);
+        onSelect(option.id, option, args.context);
+    } else {
+        option.onSelect?.(args.event);
+        onSelect(option.id, option);
+    }
+    return true;
 }

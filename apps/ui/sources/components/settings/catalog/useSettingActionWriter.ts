@@ -35,46 +35,52 @@ export function useSettingActionWriter(options: Readonly<{ serverId?: string; be
         return () => controller.abort();
     }, [localLifetime]);
     const serverId = options.serverId;
-    const isCurrent = React.useCallback((setting?: SettingActionAddress) => {
+    const isAccountCurrent = React.useCallback((setting?: SettingActionAddress) => {
         if (!scope && !lifetime && serverId === undefined && !getActiveServerAccountScope()
-            && !localLifetime.controller.signal.aborted && setting
+            && setting
             && readBuiltInSettingDeclarationV1(setting.anchor)?.storage?.scope === 'local') return true;
         return Boolean(scope && lifetime?.isCurrent()
         && areAccountSettingsScopesEqual(scope, lifetime.scope)
         && areAccountSettingsScopesEqual(scope, getStorage().getState().settingsScope)
-        && (serverId === undefined || selectActiveServerAccountScopeForServer(scope, serverId))
-        && mounted.isCurrent());
-    }, [lifetime, localLifetime, mounted.isCurrent, scope, serverId]);
+        && (serverId === undefined || selectActiveServerAccountScopeForServer(scope, serverId)));
+    }, [lifetime, scope, serverId]);
+    const isCurrent = React.useCallback((setting?: SettingActionAddress) => isAccountCurrent(setting)
+        && (!lifetime ? !localLifetime.controller.signal.aborted : mounted.isCurrent()),
+    [isAccountCurrent, lifetime, localLifetime, mounted.isCurrent]);
     const write = React.useCallback(async (setting: SettingActionAddress, value: SettingValue,
-        operation?: Readonly<{ signal?: AbortSignal }>): Promise<ActionExecuteResult> => {
+        operation?: Readonly<{ signal?: AbortSignal; expectedSettingsVersion?: number;
+            callerContext?: NonNullable<Parameters<typeof mounted.execute>[2]>['callerContext'];
+            onApprovalPending?: () => void;
+            executorOptions?: NonNullable<Parameters<typeof useMountedActionExecution>[1]>['executorOptions'];
+        }>): Promise<ActionExecuteResult> => {
+        const revision = operation?.expectedSettingsVersion === undefined ? {}
+            : { expectedSettingsVersion: operation.expectedSettingsVersion };
         // Device preferences remain available before sign-in, through the same executor policy.
         if (!lifetime && isCurrent(setting)) {
-            const cancellation = mergeAbortSignals([localLifetime.controller.signal, operation?.signal]);
+            const cancellation = mergeAbortSignals([operation?.signal, operation?.callerContext?.signal]);
             try {
                 return await localFrontDoor('settings.set', { anchor: setting.anchor,
+                    ...revision,
                     ...(setting.key !== undefined ? { key: setting.key } : {}),
                     ...(setting.target ? { target: setting.target } : {}), value }, {
-                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, signal: cancellation.signal,
+                    ...(operation?.callerContext ?? { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } }),
+                    signal: cancellation.signal,
                 });
             } finally { cancellation.dispose(); }
         }
         if (!lifetime || !isCurrent()) {
             return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         }
-        const controller = new AbortController();
-        const retirement = lifetime.onRetire(() => controller.abort());
-        const cancellation = mergeAbortSignals([controller.signal, operation?.signal]);
-        try {
-            return await mounted.execute('settings.set', { anchor: setting.anchor, ...(setting.key !== undefined ? { key: setting.key } : {}),
-                ...(setting.target ? { target: setting.target } : {}), value }, {
-                signal: cancellation.signal,
-                ...(setting.target?.kind === 'public_profile_draft' || readBuiltInSettingDeclarationV1(setting.anchor)?.storage?.scope === 'local'
-                    ? { retainInvocation: true as const } : {}),
-            });
-        } finally {
-            cancellation.dispose();
-            retirement.dispose();
-        }
-    }, [isCurrent, lifetime, localFrontDoor, localLifetime, mounted.execute, scope, serverId]);
-    return React.useMemo(() => Object.assign(write, { isCurrent }), [isCurrent, write]);
+        return await mounted.execute('settings.set', { anchor: setting.anchor, ...revision, ...(setting.key !== undefined ? { key: setting.key } : {}),
+            ...(setting.target ? { target: setting.target } : {}), value }, {
+            signal: operation?.signal,
+            callerContext: operation?.callerContext,
+            onApprovalPending: operation?.onApprovalPending,
+            ...(operation?.executorOptions ? { executorOptions: operation.executorOptions } : {}),
+            ...(setting.target?.kind === 'public_profile_draft' || readBuiltInSettingDeclarationV1(setting.anchor)?.storage?.scope === 'local'
+                ? { retainInvocation: true as const } : {}),
+        });
+    }, [isCurrent, lifetime, localFrontDoor, mounted.execute, scope, serverId]);
+    return React.useMemo(() => Object.assign(write, { isCurrent, isAccountCurrent,
+        ready: mounted.ready, approval: mounted.approval }), [isCurrent, isAccountCurrent, write, mounted.ready, mounted.approval]);
 }

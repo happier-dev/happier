@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { HappierDisclosureToggle } from '../collection/DisclosureToggle.js';
+import { HappierDisclosureToggle, type HappierDisclosureToggleProps } from '../collection/DisclosureToggle.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_TYPE_SCALE } from '../text/typeScale.js';
@@ -19,7 +19,7 @@ import {
 /** One way forward from a state: already-translated label, the press, and caller-owned pending work. */
 export type HappierSurfaceStateAction = Readonly<{
   label: string;
-  onPress: () => void | Promise<unknown>;
+  onPress: (event?: unknown) => void | Promise<unknown>;
   testID?: string;
   disabled?: boolean;
   /** Pending work owned by the caller; a returned promise also drives the shared pending behaviour. */
@@ -27,6 +27,8 @@ export type HappierSurfaceStateAction = Readonly<{
   /**
    * The next step continues the person's work (open the page again, go where it now lives) rather
    * than retrying a failure, so as the primary action it takes the filled tone whatever the kind.
+   * `false` says the step is not an invitation (an empty state that only points to where its content
+   * comes from, "Review guard settings"), so it takes the quiet secondary tone. Unset, the kind decides.
    */
   invitation?: boolean;
 }>;
@@ -49,7 +51,9 @@ export type HappierSurfaceStateQuietMetrics = Readonly<{
 /**
  * The text roles the composition draws through the host's typography:
  * `line` the sentence of a line state, `lineAction` its inline recovery, `live` the present and the
- * action caption, `quiet` the note under the actions and `quietLink` its "How it works" link.
+ * action caption, `quiet` the note under the actions, `quietLink` its "How it works" link and
+ * `details` the quiet meta label of the Details disclosure (the button carries its name, so the text
+ * is not a second accessible element).
  */
 export type HappierSurfaceStateTextRole =
   | 'line'
@@ -114,6 +118,8 @@ export type HappierSurfaceStateBindings = Readonly<{
   renderDetailsCaret: (open: boolean) => ReactNode;
   /** The opened code; `start` on a line's sentence edge, `center` (default) under a centred card. */
   renderDetailsCode?: (details: string, align?: 'start' | 'center') => ReactNode;
+  /** Bind the existing disclosure intent; the shared composition retains its open state. */
+  renderDetailsToggle?: (props: HappierDisclosureToggleProps) => ReactNode;
   detailsLabel: string;
   /** The keyboard focus ring's ink; absent, the environment theme's. */
   focusRing?: string;
@@ -133,6 +139,8 @@ export type HappierSurfaceStateProps = Readonly<{
   glyph?: ReactNode;
   /** A line that replaces a body sits in the middle of the room it holds. */
   fillsContainer?: boolean;
+  /** `menu`: a line among a transient menu's rows takes their height, inset and label edge. */
+  lineDensity?: 'menu';
   /** The present; a caller-owned node (a ticking "Still waiting") replaces the model. */
   live?: HappierSurfaceStateLive | ReactNode;
   /** Caller-owned domain summary, after copy and live, before the actions. Lines omit it. */
@@ -260,6 +268,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
       renderLabel={(label) => bindings.renderText({ role: 'details', children: label })}
       focusColor={bindings.focusRing}
       renderDetails={bindings.renderDetailsCode}
+      renderToggle={bindings.renderDetailsToggle}
     />
   ) : diagnosticMarker;
 
@@ -366,7 +375,8 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
     ) : null;
   const supplemental = (
     <>
-      {props.actionFooter}
+      {/* Sits under the actions at the same step as the note, so a footer never touches the buttons. */}
+      {props.actionFooter ? <View style={{ alignSelf: 'stretch', alignItems: 'center', marginTop: quiet.gapPx }}>{props.actionFooter}</View> : null}
       {quietLine}
       {diagnosticDetails}
     </>
@@ -507,20 +517,23 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
       style={{ width: 0, height: 0 }}
     />
   ) : null;
-  const details = props.diagnosticCode && disclosesDiagnostic(props.kind)
+  // A line among a menu's rows stays one sentence; a failure line anywhere else keeps its code one press away.
+  const details = props.diagnosticCode && disclosesDiagnostic(props.kind) && props.lineDensity !== 'menu'
     ? props.diagnosticDetail ? `${props.diagnosticCode}\n${props.diagnosticDetail}` : props.diagnosticCode
     : null;
-  const detailsToggle = details ? (
-    <HappierDisclosureToggle
-      testID={props.testID ? `${props.testID}-details-toggle` : undefined}
-      label={bindings.detailsLabel}
-      open={detailsOpen}
-      onPress={() => setDetailsOpen((value) => !value)}
-      caret={bindings.renderDetailsCaret(detailsOpen)}
-      renderLabel={(label) => bindings.renderText({ role: 'details', children: label })}
-      focusColor={bindings.focusRing}
-    />
-  ) : null;
+  const toggleProps: HappierDisclosureToggleProps = {
+    testID: props.testID ? `${props.testID}-details-toggle` : undefined,
+    label: bindings.detailsLabel,
+    // Centred on the row like the recovery beside it, so Details and Retry share one baseline.
+    align: 'center',
+    open: detailsOpen,
+    onPress: () => setDetailsOpen(value => !value),
+    caret: bindings.renderDetailsCaret(detailsOpen),
+    renderLabel: label => bindings.renderText({ role: 'details', children: label }),
+    focusColor: bindings.focusRing,
+  };
+  const detailsToggle = details ? bindings.renderDetailsToggle
+    ? bindings.renderDetailsToggle(toggleProps) : <HappierDisclosureToggle {...toggleProps} /> : null;
   const lineActions = actions.some(Boolean) || detailsToggle ? (
     <View
       style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_STATE_LINE_METRICS.gapPx }}
@@ -575,6 +588,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           testID={props.testID}
           icon={props.glyph}
           action={lineActions}
+          density={props.lineDensity}
           below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (
             <HappierText testID={props.testID ? `${props.testID}-details-code` : undefined} variant="code" tone="secondary" selectable>{details}</HappierText>
           ) : undefined}

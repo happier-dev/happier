@@ -994,17 +994,19 @@ encrypted operands: the receiving daemon still resolves the exact placement
 from schema-admitted input. Native-purpose metadata selects the existing strict
 transport checks; it does not grant authority or relax their target binding.
 
-In 0.3 development, `approvalPolicy.uiConfirmation: 'direct'` declares direct
-default admission for a present user on the UI surface. Reversible capability
-settings use this declaration; Agent, CLI and MCP callers retain the dangerous
-default, and unknown surfaces fail closed. Explicit Ask settings still win.
-Present-user UI authority comes from a host-mediated control. A raw plugin
+In 0.3 development, a trusted person's direct app UI press is their decision:
+the shared approval owner does not add a second approval card from the Action's
+default policy. Explicit per-Action/per-surface Ask settings and profile Require
+still win. Agent, CLI and MCP callers retain their declared defaults, and unknown
+surfaces fail closed. Present-user UI authority comes from a host-mediated control,
+excluding external credentials, external execution authorization and Session RPC
+authority. A raw plugin
 `hostApi.executeAction` call retains plugin/automation authority, including when
 a plugin click handler starts it; declaring a direct UI policy does not upgrade
-that caller or its nested Actions.
-`uiConfirmation: 'policy'` retains the shared confirmation policy. Plugin install
-uses that policy for the first Install & Trust trusted-code disclosure. A designed
-in-flow confirmation answers the default Ask for the exact operation. An explicit
+that caller or its nested Actions. Action declarations retain their confirmation
+metadata for callers that do not represent a direct person UI press. Plugin install
+still owns its first Install & Trust trusted-code disclosure. A designed in-flow
+confirmation answers the default Ask for the exact operation. An explicit
 per-surface Ask the person set, or a new consequence discovered at preflight,
 still asks in place through the existing inline approval decision. Internal
 steps of the reviewed operation consume its parent admission, rather than asking
@@ -1043,7 +1045,10 @@ normalization retain unchanged keyed rows; changing one scope does not wake
 exact CLI subscribers for sibling scopes. Explicit orphan-row
 removal uses `actions.policy.set` with `change.kind: 'scoped_approval_remove'`.
 
-`uiConfirmationForInput` is evaluated only for a present person's UI request.
+Declared `uiConfirmationForInput` does not add a second card to a trusted person's
+direct app press. A host-discovered consequence uses `defaultUiConfirmation`
+through the shared approval owner and still asks unless that exact consequence
+was already confirmed or the person waived it.
 In unreleased 0.3 source, reversible own-Session Board upserts and layout writes
 default to Allow on Agent, MCP and CLI surfaces. A visual with no network or
 host Actions therefore needs no approval by default. Visual preparation retains
@@ -1108,19 +1113,21 @@ Default in-place UI confirmation and app-owned approval replay share the same
 present-user host predicate, excluding external credentials, external execution
 authorization and Session RPC authority.
 
-Connected-account authentication declares the same direct present-user UI
-default for starting, continuing, submitting and cancelling an attempt. The
+Connected-account authentication uses the shared direct present-user UI
+rule for starting, continuing, submitting and cancelling an attempt. The
 service's OAuth, device or credential step owns the connection flow. Explicit
 per-Action Ask settings still apply, and Agent, MCP and CLI authentication
 calls retain the danger default.
 
 Connected-account defaults and names, Resource-purpose defaults, pool creation
 and edits, member add/edit/removal, switching and ordering, pool defaults, and
-the user's entered subscription price also declare direct present-user UI
-defaults. These declarations use the same shared approval policy: explicit Ask
+the user's entered subscription price use the same direct present-user UI
+rule: explicit Ask
 still asks, and Agent, MCP and CLI requests retain their approval defaults.
-Credential replacement, account revocation, pool deletion and quota reset
-retain their confirmation defaults.
+Credential replacement, account revocation, pool deletion, quota reset and Saved
+Secret changes follow that same UI rule; their automation confirmation defaults
+remain unchanged. Provider Save and Test likewise execute the person's press
+without creating a default approval Artifact.
 
 In 0.3 development, a New Session seed that names a Machine without a folder
 keeps that folder unresolved through draft hydration. The existing placement
@@ -1235,11 +1242,11 @@ Reversible or recoverable writes (stage, unstage, commit, commit revert, undoing
 branch create and checkout, remotes add, edit and remove, publishing a branch, worktree create,
 opening a pull request, publishing or initializing a repository, continuing a merge or rebase, stash
 create, apply and pop, fetch, pull, push) declare `approvalPolicy.uiConfirmation: 'direct'` in
-`scmGitActionSpecs.ts` and have no dialog of their own. Irreversible writes (discard, merge, rebase, skipping a
-rebase step, aborting a merge or rebase, stash drop, worktree removal and pruning) keep the single
-in-place confirmation, each with a plain title and an `approvalPresentation` summary so the dialog
-says what will happen instead of repeating the title. UI callers must not add a second dialog in
-front of either kind.
+`scmGitActionSpecs.ts` and have no dialog of their own. The shared direct app-press
+rule also covers irreversible writes (discard, merge, rebase, skipping a rebase
+step, aborting a merge or rebase, stash drop, worktree removal and pruning).
+Explicit Ask still uses the Action's plain title and `approvalPresentation`
+summary. UI callers must not add a second dialog in front of the Action.
 
 Remote pull and push are `direct` by default, and two inputs make the executor's one in-place
 confirmation apply. The person's 0.2 `scmRemoteConfirmPolicy` preference (Source Control settings;
@@ -1249,7 +1256,8 @@ the UI host's approval hook (`isActionApprovalRequiredByAccountSettings` in
 asks for a present person's UI press unless the Action is set to Allowed or the caller already
 recorded the person's answer to this exact press (`confirmedByPerson` on the SCM facades selects
 the shared `.confirmed` dispatch; used when a pull choice dialog or a pull-then-push already asked). A force
-push with lease is input-confirmed by the spec (`uiConfirmationForInput`), whatever the preference.
+push with lease retains its declaration for automation; a direct UI press follows
+the person's Source Control and explicit Action preferences.
 `executeScmRemoteOperation` and its callers hold no confirmation; a declined press returns
 `declined` and stays silent, and the pane's busy label ("Pushing to origin/main…") starts only when the
 admitted Action reaches the Machine (`onDispatched`, a surface-local notification of the UI SCM terminal),
@@ -3837,7 +3845,12 @@ amount and currency for an exact qualified connected account through ordinary
 write approval. Its captured UI/CLI adapter encodes the amount in the Account's
 persisted encryption mode; the Connected personal metadata owner writes only
 the exact-account price facet in its existing Account-row catalog, even before
-any quota observation exists. The quota reader retains it even when the provider
+any quota observation exists. Session Agent/MCP execution retains its admitted
+Home/Account origin: the host signs the finite writer's preparation reads and
+presentation CAS under the same Action root. First use merges the existing legacy
+presentation projection and the price in one source-versioned CAS. Independent
+Settings, acknowledgement and history maintenance remains with catalog hydration.
+The quota reader retains it even when the provider
 reports no subscription facet, using the existing unavailable subscription state.
 Plans displays that monthly amount as “you entered”, separately from provider-paid
 and published list-price facts. Period-qualified value and fit still require their
@@ -5475,10 +5488,23 @@ The Workflow Action census also includes `workflow.definition.import`,
 `workflow.definition.export`, and `workflow.trigger.run_now`. Document import takes
 `{ json }` and delegates the sole `workflowDocumentV1` codec, returning an
 `unsaved_definition` carrier or its typed document failure. It never saves, starts,
-or schedules anything. Export takes `{ definitionId }`, opens the authorized saved
-Artifact at its current revision, and returns canonical `happier.workflow` JSON;
+or schedules anything. Export takes either `{ definitionId }`, opening the authorized saved
+Artifact at its current revision, or `{ draft }`, containing the current unsaved
+Workflow definition snapshot (the `definition` from `workflow.authoring.draft.get`).
+Both use the same validation and document codec and return canonical `happier.workflow` JSON;
 credentials, staged media, and runtime state are not document fields. File picking
-and delivery stay platform-local. Unsaved mounted draft editing/export remains local.
+and delivery stay platform-local. Draft export neither saves nor starts work, and
+returns `document` and `json` without a saved Artifact id, revision or metadata.
+The mounted editor's Export JSON uses this same Action.
+
+The mounted new-session composer publishes its Workflow chooser through
+`ui.current_context.read` and `ui.current_context.command.invoke`. Read the current
+opaque command ids: `new-session.workflow.open` opens the same chooser, whose
+`new-session.workflow.activate` command accepts `{ id }` for a currently offered
+Workflow. Choosing one arms or changes this composer's selection without starting
+it; `new-session.workflow.remove` clears that selection and retains the prompt.
+The chooser's search and close commands share its existing selection-list owner.
+Commands retire with their mount; execution still belongs to `workflow.run.start`.
 
 Workflow Action failures preserve `cancelled` for native cancellation during
 family preparation or a catalog-declared read. An aborted signal alone does not
@@ -6441,9 +6467,22 @@ anchors are removed from discovery along with their controls. Writes to retired
 anchors return the existing unknown/unavailable declaration result. Neither old
 pet mode seeds Show Bots; an explicit stored Show Bots value wins, otherwise its
 existing default applies. The removed preview preference never broadens admitted
-Home/device privacy. Dock, Display, When idle, Open Bot conversations, and the
-full-screen preference share these existing Settings Actions; no overlay-specific
-settings Action family is introduced. Companion position is device-local
+Home/device privacy. Dock, Display, When idle, Open Bot conversations, the
+full-screen preference and the Session window Bot rail (`desktop.windowBotRail`,
+local key `desktopWindowBotRailEnabled`) share these existing Settings Actions; no
+overlay- or window-specific settings Action family is introduced.
+
+On the desktop app, `session.open` with `presentation: 'main'` means the main
+window presents the Session. The window lifecycle owner
+(`apps/ui/sources/desktop/window/appWindowRuntime.ts#presentDesktopSessionInMain`)
+first returns a Session window that shows it (a source tab comes back; a
+no-source Session then opens as a main tab) and shows main. Called inside a
+Session window, the same Action forwards over the existing window-action
+transport to main, which runs it through its own UI admission like the Capture
+window's Open. The Session window Bot rail retargets in place with
+`desktop.windows.open {windowId, target}`; its and the notch's right-click menus
+take Open in window from the shared `useWorkspaceOpenActions` builder and supply
+their second item (Open in Happier, Open in the overlay). Companion position is device-local
 persistent UI state, while pet enable, selection, library and default/override
 preferences remain intact.
 
@@ -7855,6 +7894,15 @@ preserves an intervening move. Public spawn placement also uses `sectionId`, map
 at Action admission into the existing internal `folderId` birth placement before
 Session creation; drafts, correspondence and replay retain that internal shape.
 
+Settings → Sessions → Sections (`session.list.sections`, a navigation anchor with no
+stored value) lists the selected Home's sections in `sortKey` order. Its rows
+create, rename, change the icon of, reorder, archive all and remove sections only
+through these section Actions, with the list's one removal confirmation. Folding
+a mounted Sessions-list group is a mounted current-context command
+(`ui.current_context.read` → `ui.current_context.command.invoke`) that writes the
+same context-qualified device-local key as the group's chevron and the
+`session.list.collapsedGroups` setting; it changes that one key only.
+
 Class-H token-management and security rows remain excluded from public API
 execution. Agent and MCP exposure is still authored per row; other class-H rows
 remain off unless explicitly requestable through mandatory human approval. Ordinary
@@ -7992,6 +8040,19 @@ Home and Machine, and a repeated completed decision returns its recorded result.
 The direct CLI uses its existing hidden terminal or stdin reader for these
 fields. Remember is a separate Saved Secret write after successful consumption;
 its failure must not replay the consuming Action.
+
+The built-in `secrets.create` Action declares its inline `value` as required
+when no external/passkey source was selected. An agent can submit the name and
+kind, then the person supplies the value in this same confidential approval.
+The private Saved Secret resource writer stores it and returns only the id and
+reference. Metadata-only edits and source links do not ask for an inline value.
+Managed identity provider create/secret replacement declare `clientSecret`;
+Home settings derive their secret replacement fields from the server config
+registry, including WorkOS keys. Identity, WorkOS and directory setup are
+requestable from Agent/MCP with their existing authority and approval policy.
+Directory/WorkOS connection Actions select configured providers or connections;
+they do not introduce a second credential input or storage owner. Deployment
+Variables use this declaration and continuation rather than a separate Ask card.
 
 `ConfidentialSecretApproval` renders both declared Action inputs and exact-field
 Browser entry in the existing approval detail. Each field accepts a masked Once
@@ -8626,13 +8687,11 @@ Browser focus shares navigation's input controller and confidentiality drain.
 Already-cancelled Browser commands, including controller transitions, return a
 known no-effect failure before reaching control or CDP effects.
 
-In 0.3 development, a present user's UI invocation consumes the same declaration-owned
-approval policy as other callers. A host-mediated present person's reversible
-in-app intent is direct by default, including dangerous Actions without an
-`irreversible` declaration. Explicit `uiConfirmation: 'policy'` retains consequence
-review. Irreversible effects retain confirmation; permanent Account plugin-data
-erase declares that fact at its spec. Explicit Ask settings and automation approval
-defaults still apply. The executor owns that decision and its confirmation
+In 0.3 development, a trusted present person's direct UI press is their decision,
+including dangerous and irreversible Actions. The shared default owner therefore
+does not create another approval card from `uiConfirmation: 'policy'` or an
+`irreversible` declaration. Explicit Ask settings, profile Require, host-discovered
+consequences and automation approval defaults still apply. The executor owns that decision and its confirmation
 host; a caller must not put another yes/no dialog or two-step button before the same Action.
 Dialogs that collect a different scope, choose recovery after a refusal, or discard an unsent
 local draft remain separate decisions.
@@ -8651,15 +8710,17 @@ localized-string shape `{ key, fallback }`; omission uses the host's localized
 “Approve”. `irreversible: true` declares that the effect cannot be undone;
 omission is not irreversible. The confirmation button and its destructive note
 read that fact directly, never infer it from `sideEffectClass` or
-`approvalPolicy.uiConfirmation`. The irreversible fact also retains the built-in
-host UI's default confirmation. These fields do not change who may approve or
+`approvalPolicy.uiConfirmation`. These fields do not add another default approval
+card to a trusted person's direct UI press. They do not change who may approve or
 override the person's explicit approval settings. Plugin Action
 declarations and the strict daemon Action projection carry the same optional
 fields, resolving plugin keys through the plugin's admitted translation bundle.
 
 An actual completed host confirmation can supply `presentUserConfirmation` for that exact
 Action on UI or CLI; opening a form or pressing its ordinary submit button is not a completed
-policy confirmation. Explicit per-surface Ask settings still win, and waivers suppress the
+policy confirmation. A trusted person's direct UI submit already answers the default
+approval question, but does not answer a contextual review discovered by host preflight.
+Explicit per-surface Ask settings still win, and waivers suppress the
 default for waivable Actions. Contextual safety uses that same policy and preserves these
 overrides; it does not grant execution authority. The executor supplies contextual safety
 after input admission, never from a caller's assertion that a target is private.

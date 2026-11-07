@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { USAGE_SOURCE_CONSENT_DISCLOSURE } from '@happier-dev/protocol/usage/usageSources';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
@@ -11,7 +11,11 @@ import {
 } from '@happier-dev/protocol/usage/usageSources';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { renderMountedCurrentUiContext as renderScreen } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 import { UsageSourcesMachines, projectUsageSourcesMachines } from './UsageSourcesWidget';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -20,6 +24,8 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 it('retains source inventory but withdraws execution from machines with locked content', () => {
   const machines = [
     createMachineFixture({ id: 'locked', activeAt: Date.now(), availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }),
@@ -164,13 +170,35 @@ async function chooseOption(screen: Screen, card: string, option: string) {
   await act(async () => { await menu.props.actions.find((action: { id: string }) => action.id === `${card}.${option}`).onPress(); });
 }
 
-afterEach(() => {
+let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
+beforeEach(async () => {
+  home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-sources-controls.test', accountId: 'account' }] });
+  const server = home.homes.a!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+});
+afterEach(async () => {
   standardCleanup();
   confirm.mockReset();
   prompt.mockReset();
+  retireActiveServerAccountScopeLifetime();
+  await home?.dispose(); home = undefined;
 });
 
 describe('Usage Sources body', () => {
+  it('opens the same Source folder prompt from an agent command', async () => {
+    const boundary = machineBoundary();
+    const screen = await mount(boundary.executor);
+    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.source.claude-default')).toBeTruthy());
+    const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+    if (!read.ok) throw new Error(read.errorCode);
+    const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === t('usage.board.sources.changeFolder'));
+    expect(command).toBeDefined();
+    prompt.mockResolvedValueOnce(null);
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(boundary.calls).not.toContain('usage.sources.root.set');
+  });
   it('discovers every Machine but mounts source controls only for visible Machine rows', async () => {
     const machines = Array.from({ length: 8 }, (_, i) => ({ id: `machine-${i}`, name: `Machine ${i}`, online: true }));
     const sources = new Map(machines.map(machine => [machine.id, [{ ...found, machineId: machine.id },

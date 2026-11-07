@@ -13,6 +13,7 @@ import {
 import type { UsageCoachDigestSuggestion, UsageCoachFinding } from '@happier-dev/protocol/usage/coach/coachFinding';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { AutomationScheduleTriggerInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerAddRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -70,7 +71,7 @@ export type UsageCoachController = Readonly<{
     untilMs: number | null,
   ): Promise<ActionExecuteResult>;
   createDigest(suggestion: UsageCoachDigestSuggestion, project: WorkflowProjectTargetV1,
-    trigger: AutomationScheduleTriggerInput): Promise<ActionExecuteResult>;
+    trigger: AutomationScheduleTriggerInput, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
   dispose(): void;
 }>;
 
@@ -128,6 +129,7 @@ export function createUsageCoachController(
     operation: UsageCoachOperation,
     input: unknown,
     settle: (value: unknown) => UsageCoachSnapshot | null,
+    callerContext?: ActionExecutorContext,
   ): Promise<ActionExecuteResult> {
     if (!current()) return failure('action_account_scope_changed');
     if (
@@ -174,7 +176,7 @@ export function createUsageCoachController(
     };
     try {
       const result = await execute(operation.actionId, input, {
-        surface: 'ui',
+        ...(callerContext ?? { surface: 'ui' as const }),
         serverId: options.lifetime.scope.serverId,
         expectedAccountId: options.lifetime.scope.accountId,
         signal: controller.signal,
@@ -311,7 +313,7 @@ export function createUsageCoachController(
             ? snapshot
             : null,
       ),
-    createDigest: (suggestion, project, trigger) =>
+    createDigest: (suggestion, project, trigger, callerContext) =>
       run(
         { actionId: 'workflow.trigger.add', evidenceKey: suggestion.queryKey },
         { target: suggestion.target, project, trigger } satisfies WorkflowTriggerAddRequestV1,
@@ -319,6 +321,7 @@ export function createUsageCoachController(
           const parsed = WorkflowTriggerWriteResultV1Schema.safeParse(value);
           return parsed.success ? { ...snapshot, digest: { queryKey: suggestion.queryKey, result: parsed.data } } : null;
         },
+        callerContext,
       ),
     dispose,
   };

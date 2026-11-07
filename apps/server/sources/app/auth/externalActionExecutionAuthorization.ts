@@ -1,6 +1,7 @@
 import { isSessionStopChildRootV1, isSessionStopChildEffectV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
 import { isExternalActionConnectedAccountInventoryHttpPurpose } from './externalActionConnectedAccountInventoryPurpose';
+import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
 import * as z from 'zod/mini';
 import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -388,7 +389,7 @@ export function readExternalActionCredentialActionId(binding: ExternalActionExec
 export { isExternalActionAuthorizationBoundToEnvelope };
 
 /** The signed credential owner projects provenance once for admission and principals. */
-function readExternalActionBindingAuthority(binding: ExternalActionExecutionAuthorizationBindingV1,
+export function readExternalActionBindingAuthority(binding: ExternalActionExecutionAuthorizationBindingV1,
     accountAuthority: ActionRequiredAuthority = 'present_user'): ActionRequiredAuthority {
     return narrowCredentialAuthority(accountAuthority, !('authentication' in binding)
         || binding.sessionActionOrigin || binding.workflowActionOrigin || binding.nativeCredentialSpawnChild || binding.authentication.kind === 'terminal'
@@ -2455,6 +2456,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const root = verified.binding.actionId;
     if (isExternalActionConnectedAccountInventoryHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
+    if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     // The native reader admits exact metadata references before opening content;
     // Artifact routes retain requester Account/content authorization as for receipt observation.
     if (isDeploymentObservationReadActionIdV1(root) && verified.effectActionId === root

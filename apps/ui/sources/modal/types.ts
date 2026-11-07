@@ -4,6 +4,7 @@ import type { ModalCardDimensionOptions } from './components/card/useModalCardDi
 import type { ModalPortalTarget } from './portal/ModalPortalTarget';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 export type ModalType = 'alert' | 'confirm' | 'prompt' | 'custom';
 
@@ -19,6 +20,8 @@ export interface BaseModalConfig {
     accessibilityLabel?: string;
     webPortalTarget?: ModalPortalTarget;
     focusReturnRef?: FocusReturnRef;
+    /** Captures the opener's current-context composition for opted-in modal controls and chrome. */
+    commandBridge?: ComponentType<Readonly<{ children: ReactNode }>>;
     /** Web-only placement within the full-screen modal shell. */
     webPlacement?: 'auto' | 'top';
 }
@@ -49,6 +52,8 @@ export interface PromptModalConfig extends BaseModalConfig {
     cancelText?: string;
     confirmText?: string;
     inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
+    /** The mounted confirm command's actor, before the prompt settles its existing string result. */
+    onConfirmContext?: (context: ActionExecutorContext) => void;
 }
 
 export type CustomModalInjectedProps = Readonly<{
@@ -94,6 +99,11 @@ export type CustomModalChromeCardConfig = Readonly<{
      */
     headerInset?: 'wide';
     leading?: ReactNode;
+    /**
+     * `above`: on a phone the leading slot (a way back) takes its own row with the close control and the title
+     * and subtitle stand beneath it on the page gutter, instead of sharing one narrow row.
+     */
+    leadingPlacement?: 'above' | null;
     title?: ReactNode;
     subtitle?: ReactNode;
     /** `1`: the subtitle stays on one line and ends in an ellipsis (a subtitle made of facts that can be long). */
@@ -201,8 +211,8 @@ export interface ModalContextValue {
 }
 
 export interface IModal {
-    alert(title: string, message?: string, buttons?: AlertButton[]): void;
-    alertAsync(title: string, message?: string, buttons?: AlertButton[]): Promise<void>;
+    alert(title: string, message?: string, buttons?: AlertButton[], options?: Pick<BaseModalConfig, 'commandBridge'>): void;
+    alertAsync(title: string, message?: string, buttons?: AlertButton[], options?: Pick<BaseModalConfig, 'commandBridge'>): Promise<void>;
     confirm(title: string, message?: string, options?: {
         cancelText?: string;
         confirmText?: string;
@@ -211,6 +221,7 @@ export interface IModal {
         focusReturnRef?: FocusReturnRef;
         /** Dismiss when the operation that owns this decision can no longer execute. */
         signal?: AbortSignal;
+        commandBridge?: BaseModalConfig['commandBridge'];
     }): Promise<boolean>;
     prompt(title: string, message?: string, options?: {
         placeholder?: string;
@@ -218,6 +229,8 @@ export interface IModal {
         cancelText?: string;
         confirmText?: string;
         inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
+        commandBridge?: BaseModalConfig['commandBridge'];
+        onConfirmContext?: PromptModalConfig['onConfirmContext'];
     }): Promise<string | null>;
     show<C extends CustomModalComponentType<any>>(config: CustomModalShowConfig<C>): string;
     update<P extends CustomModalInjectedProps>(

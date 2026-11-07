@@ -1,7 +1,6 @@
 import { Platform, Alert } from 'react-native';
 import { t } from '@/text';
-import type { FocusReturnRef } from '@/keyboard/focusReturn';
-import { AlertButton, ModalConfig, CustomModalConfig, IModal, type ConfirmModalConfig, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps } from './types';
+import { AlertButton, ModalConfig, CustomModalConfig, IModal, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps } from './types';
 
 type ModalProviderFunctions = Readonly<{
     showModal: (config: Omit<ModalConfig, 'id'>) => string;
@@ -97,9 +96,9 @@ class ModalManagerClass implements IModal {
         this.updateCustomModalPropsFn = currentRegistration?.functions.updateCustomModalProps ?? null;
     }
 
-    alert(title: string, message?: string, buttons?: AlertButton[]): void {
-        if (Platform.OS === 'web') {
-            // Show custom web modal
+    alert(title: string, message?: string, buttons?: AlertButton[], options?: Parameters<IModal['alert']>[3]): void {
+        if (Platform.OS === 'web' || options?.commandBridge) {
+            // Scoped commands use the existing hosted dialog on every platform.
             if (!this.showModalFn) {
                 console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
                 return;
@@ -109,7 +108,8 @@ class ModalManagerClass implements IModal {
                 type: 'alert',
                 title,
                 message,
-                buttons: buttons || [{ text: t('common.ok') }]
+                buttons: buttons || [{ text: t('common.ok') }],
+                commandBridge: options?.commandBridge,
             } as Omit<ModalConfig, 'id'>);
         } else {
             // Use native alert
@@ -117,8 +117,8 @@ class ModalManagerClass implements IModal {
         }
     }
 
-    async alertAsync(title: string, message?: string, buttons?: AlertButton[]): Promise<void> {
-        if (Platform.OS === 'web') {
+    async alertAsync(title: string, message?: string, buttons?: AlertButton[], options?: Parameters<IModal['alertAsync']>[3]): Promise<void> {
+        if (Platform.OS === 'web' || options?.commandBridge) {
             if (!this.showModalFn) {
                 console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
                 return;
@@ -129,6 +129,7 @@ class ModalManagerClass implements IModal {
                 title,
                 message,
                 buttons: buttons || [{ text: t('common.ok') }],
+                commandBridge: options?.commandBridge,
             } as Omit<ModalConfig, 'id'>);
 
             return new Promise<void>((resolve) => {
@@ -162,18 +163,11 @@ class ModalManagerClass implements IModal {
     async confirm(
         title: string,
         message?: string,
-        options?: {
-            cancelText?: string;
-            confirmText?: string;
-            destructive?: boolean;
-            messageParagraphs?: ConfirmModalConfig['messageParagraphs'];
-            focusReturnRef?: FocusReturnRef;
-            signal?: AbortSignal;
-        }
+        options?: Parameters<IModal['confirm']>[2]
     ): Promise<boolean> {
         const signal = options?.signal;
         if (signal?.aborted) return false;
-        if (Platform.OS === 'web' || options?.messageParagraphs || signal) {
+        if (Platform.OS === 'web' || options?.messageParagraphs || signal || options?.commandBridge) {
             // Native alerts cannot be dismissed by their invocation's cancellation owner.
             // The existing app dialog owns cancellable and structured confirmations everywhere.
             if (!this.showModalFn) {
@@ -191,6 +185,7 @@ class ModalManagerClass implements IModal {
                 confirmText: options?.confirmText,
                 destructive: options?.destructive,
                 focusReturnRef: options?.focusReturnRef,
+                commandBridge: options?.commandBridge,
             } as Omit<ModalConfig, 'id'>);
 
             return new Promise<boolean>((resolve) => {
@@ -300,13 +295,7 @@ class ModalManagerClass implements IModal {
     async prompt(
         title: string,
         message?: string,
-        options?: {
-            placeholder?: string;
-            defaultValue?: string;
-            cancelText?: string;
-            confirmText?: string;
-            inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
-        }
+        options?: Parameters<IModal['prompt']>[2]
     ): Promise<string | null> {
         // Use custom modal everywhere (iOS/Android/web) so behavior is consistent.
         if (!this.showModalFn) {
@@ -322,7 +311,9 @@ class ModalManagerClass implements IModal {
             defaultValue: options?.defaultValue,
             cancelText: options?.cancelText,
             confirmText: options?.confirmText,
-            inputType: options?.inputType
+            inputType: options?.inputType,
+            commandBridge: options?.commandBridge,
+            onConfirmContext: options?.onConfirmContext,
         } as Omit<ModalConfig, 'id'>);
 
         return new Promise<string | null>((resolve) => {

@@ -8,6 +8,7 @@ import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/p
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createUiCoachSuppressionPort } from '@/sync/api/account/usageCoachSuppressions';
+import { readCurrentUiContextActionReader } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 type PublicProfileRead = Awaited<ReturnType<NonNullable<UsageActionPorts['readPublicProfile']>>>;
 const publicProfileReads = createScopedResolutionSingleFlight<PublicProfileRead>();
@@ -106,7 +107,7 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       try {
         // Calendar selections require their exact retained B, not the query's
         // accounting-ready snapshot while independent quota reads progress.
-        const value = await readUiQuota(account, input, context.signal);
+        const value = await readUiQuota({ ...account, callerContext: context }, input, context.signal);
         throwIfAborted(context.signal);
         account.assertCurrent();
         return value;
@@ -154,7 +155,7 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
           // Join ordinary admission, retaining its terminal result even when
           // the Resource is retired. A user's explicit Refresh replaces Account
           // accounting; a one-shot query must not request that replacement.
-          const baseline = entry.getSnapshot().value ? undefined : entry.refresh({ supersede: false });
+          const baseline = entry.getSnapshot().value ? undefined : entry.acquire(context);
           release = entry.subscribe(inspect, false);
           void baseline?.then(snapshot => {
             if (snapshot.error) reject(new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details }));
@@ -186,9 +187,12 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       const abort = () => retired.abort();
       context.signal?.addEventListener('abort', abort, { once: true });
       try {
-        const render = renderRecap ?? (await import('@/components/settings/usage/widgets/recap/renderUsageRecapImage')).renderUsageRecapImage;
+        const renderer = renderRecap ? null : await import('@/components/settings/usage/widgets/recap/renderUsageRecapImage');
         account.assertCurrent();
-        const result = await render(compose, { ...context, signal: retired.signal });
+        const result = renderRecap
+          ? await renderRecap(compose, { ...context, signal: retired.signal })
+          : await renderer!.renderUsageRecapImage(compose, { ...context, signal: retired.signal },
+            readCurrentUiContextActionReader(context)?.commandBridge);
         throwIfAborted(context.signal);
         account.assertCurrent();
         return result;

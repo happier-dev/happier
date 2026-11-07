@@ -1,17 +1,18 @@
-import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionLinkEnsureResponseSchema, type ExternalSessionsAgentId, type ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { resolveChatFindSeed, type ChatFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
-import { Modal } from '@/modal';
+import { Modal, type CustomModalConfig } from '@/modal';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
-import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 
 import { resolveExternalSessionBrowseRpcErrorMessage, resolveExternalSessionBrowseThrownErrorMessage } from './externalSessionBrowseErrorPresentation';
 import { isExternalSessionBrowseCandidateOfflineInert } from './resolveExternalSessionBrowseCandidateOfflineInert';
 import { resolveExternalSessionBrowseCompatibleLinkSource, resolveExternalSessionBrowseLinkEnsureRequestExtras } from './resolveExternalSessionBrowseSourceOptions';
 import { readExternalSessionBrowseCandidateKey, readExternalSessionBrowseCandidatePath, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
-import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { ExternalSessionLinkEnsureResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+
+const executeLink = createFrontDoorActionExecute();
 
 export type ExternalSessionCandidateFind = Readonly<{ query: string; sourceItemId: string }>;
 export type ExternalSessionCandidateFindSeed = ChatFindSeed;
@@ -46,8 +47,9 @@ export async function openExternalSessionCandidate(params: Readonly<{
     /** Exact selected Home authority; browser callers default to the active Account. */
     accountCurrentness?: Readonly<{ isCurrent(): boolean; onRetire?(cancel: () => void): Readonly<{ dispose(): void }> }>;
     signal?: AbortSignal;
-    /** Usage surfaces retain ordinary Action policy/approval at the existing front door. */
-    linkActionExecute?: FrontDoorActionExecute;
+    /** Preserve a mounted command's caller for ordinary link admission. */
+    actionContext?: ActionExecutorContext;
+    commandBridge?: CustomModalConfig['commandBridge'];
     openSession(sessionId: string, target: ExternalSessionCandidateOpenTarget, find?: ExternalSessionCandidateFindSeed): void | Promise<void>;
     find?: ExternalSessionCandidateFind;
 }>): Promise<'opened' | 'picked' | 'ignored' | 'failed'> {
@@ -83,7 +85,8 @@ export async function openExternalSessionCandidate(params: Readonly<{
     const abort = () => controller.abort();
     const retirement = accountCurrentness.onRetire?.(abort);
     params.signal?.addEventListener('abort', abort, { once: true });
-    if (params.signal?.aborted) controller.abort();
+    params.actionContext?.signal?.addEventListener('abort', abort, { once: true });
+    if (params.signal?.aborted || params.actionContext?.signal?.aborted) controller.abort();
     const requestIsCurrent = () => state.requestToken === requestToken
         && !controller.signal.aborted && params.isSelectionCurrent() && accountCurrentness.isCurrent();
     try {
@@ -103,31 +106,29 @@ export async function openExternalSessionCandidate(params: Readonly<{
             ...(directoryHint ? { directoryHint } : {}),
             ...extras, source: effectiveSource,
         };
-        const action = params.linkActionExecute ? await params.linkActionExecute('sessions.external.link.ensure', request, {
-            signal: controller.signal,
-            surface: 'ui', ...(target.serverId ? { serverId: target.serverId } : {}),
+        const action = await executeLink('sessions.external.link.ensure', request, {
+            ...(params.actionContext ?? { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } }),
+            ...(target.serverId ? { serverId: target.serverId } : {}),
             ...(target.accountId ? { expectedAccountId: target.accountId } : {}),
-        }) : null;
-        if (action && (!action.ok || !ExternalSessionLinkEnsureResponseSchema.safeParse(action.result).success)) return 'failed';
-        const result = action?.ok ? ExternalSessionLinkEnsureResponseSchema.parse(action.result) : target.serverId
-            ? await machineExternalSessionLinkEnsure(request, { serverId: target.serverId,
-                signal: controller.signal,
-                ...(target.accountId ? { accountId: target.accountId } : {}) })
-            : await machineExternalSessionLinkEnsure(request, { signal: controller.signal });
+            signal: controller.signal,
+        });
+        requireActionSuccess(action);
+        const result = ExternalSessionLinkEnsureResponseSchema.parse(action.result);
         if (!requestIsCurrent()) return 'ignored';
         if (!result.ok) {
-            Modal.alert(t('common.error'), resolveExternalSessionBrowseRpcErrorMessage(result.errorCode, 'link'));
+            Modal.alert(t('common.error'), resolveExternalSessionBrowseRpcErrorMessage(result.errorCode, 'link'), undefined, { commandBridge: params.commandBridge });
             return 'failed';
         }
         await params.openSession(result.sessionId, openTarget, find);
         return 'opened';
     } catch (error) {
         if (!requestIsCurrent()) return 'ignored';
-        Modal.alert(t('common.error'), resolveExternalSessionBrowseThrownErrorMessage(error, 'link'));
+        Modal.alert(t('common.error'), resolveExternalSessionBrowseThrownErrorMessage(error, 'link'), undefined, { commandBridge: params.commandBridge });
         return 'failed';
     } finally {
         retirement?.dispose();
         params.signal?.removeEventListener('abort', abort);
+        params.actionContext?.signal?.removeEventListener('abort', abort);
         if (state.controller === controller) state.controller = undefined;
         if (state.requestToken === requestToken) {
             state.linkingCandidateKey = null;

@@ -8,6 +8,7 @@ import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFrame } from './card/ModalCardFrame';
 import { ModalChoiceRow } from './card/ModalChoiceRow';
+import { ModalCommands } from './ModalCommands';
 
 
 interface WebAlertModalProps {
@@ -87,10 +88,14 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
         return `web-modal-button-${index}`;
     };
 
-    return (
+    return <ModalCommands bridge={config.commandBridge} commands={[
+        ...buttons.map((button, index) => ({ key: `button:${index}`, title: button.text,
+            invoke: () => handleButtonPress(index) })),
+        { key: 'dismiss', title: t('common.close'), invoke: handleDismiss },
+    ]}>{invoke => (
         <BaseModal
             visible={visible}
-            onClose={handleDismiss}
+            onClose={() => { void invoke('dismiss'); }}
             accessibilityLabel={config.accessibilityLabel ?? config.title}
             closeOnBackdrop={false}
             showBackdrop={showBackdrop}
@@ -120,11 +125,11 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                     text: button.text,
                     testID: resolveButtonTestId(index),
                     role: button.style === 'cancel' || button.style === 'destructive' ? button.style : 'default',
-                    onPress: () => handleButtonPress(index),
+                    onPress: () => { void invoke(`button:${index}`); },
                 }))} />
             </ModalCardFrame>
         </BaseModal>
-    );
+    )}</ModalCommands>;
 }
 
 export { ModalCardFrame } from './card/ModalCardFrame';

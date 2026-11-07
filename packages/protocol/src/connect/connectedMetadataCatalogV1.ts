@@ -74,7 +74,7 @@ function acknowledgementSnapshot(input: ConnectedMetadataLoadInputV1, row: Ackno
 function unavailable(reason: string): ConnectedMetadataCatalogV1 {
     return { presentation: { status: 'unavailable', reason }, acknowledgements: { status: 'unavailable', reason }, disclosure: [] };
 }
-function diagnosticsForRoots(diagnostics: readonly ConnectedMetadataDiagnosticV1[], roots: readonly string[]) {
+export function connectedMetadataDiagnosticsForRootsV1(diagnostics: readonly ConnectedMetadataDiagnosticV1[], roots: readonly string[]) {
     return diagnostics.filter(diagnostic => roots.includes(diagnostic.root) || diagnostic.root === 'inventory' || diagnostic.root === 'accountSettings');
 }
 /** Present or versioned-deleted rows stay authoritative; each absent catalog initializes in its own CAS. */
@@ -113,8 +113,8 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
     }
     if (input.signal?.aborted) return unavailable('cancelled');
     const retained = readLegacyConnectedMetadataV1(source.raw, inventory);
-    const presentationDiagnostics = diagnosticsForRoots(retained.diagnostics, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1);
-    const acknowledgementDiagnostics = diagnosticsForRoots(retained.diagnostics, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1);
+    const presentationDiagnostics = connectedMetadataDiagnosticsForRootsV1(retained.diagnostics, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1);
+    const acknowledgementDiagnostics = connectedMetadataDiagnosticsForRootsV1(retained.diagnostics, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1);
     if (inventoryUnavailable) {
         if (Object.hasOwn(source.raw, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0])) presentationDiagnostics.push({ root: CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0], reason: 'inventory-unavailable' });
         if (Object.hasOwn(source.raw, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0])) acknowledgementDiagnostics.push({ root: CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0], reason: 'inventory-unavailable' });
@@ -156,14 +156,14 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
     for (const [snapshot, roots] of [[catalog.presentation, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1], [catalog.acknowledgements, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1]] as const) {
         if (snapshot.status !== 'ready') { pending = { status: 'cleanup-pending', reason: 'incomplete-catalog' }; continue; }
         for (const root of roots) {
-            if (diagnosticsForRoots(retained.diagnostics, [root]).length || (inventoryUnavailable && root !== CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[1] && Object.hasOwn(raw, root))) {
+            if (connectedMetadataDiagnosticsForRootsV1(retained.diagnostics, [root]).length || (inventoryUnavailable && root !== CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[1] && Object.hasOwn(raw, root))) {
                 pending = { status: 'cleanup-pending', reason: 'source-unavailable' }; continue;
             }
             delete raw[root]; activeRoots.push(root);
         }
     }
     if (Object.hasOwn(raw, CONNECTED_DISCLOSURE_SOURCE_ROOT_V1)) {
-        if (diagnosticsForRoots(retained.diagnostics, [CONNECTED_DISCLOSURE_SOURCE_ROOT_V1]).length || !transfer.persistDisclosure) pending = { status: 'cleanup-pending', reason: 'disclosure-unavailable' };
+        if (connectedMetadataDiagnosticsForRootsV1(retained.diagnostics, [CONNECTED_DISCLOSURE_SOURCE_ROOT_V1]).length || !transfer.persistDisclosure) pending = { status: 'cleanup-pending', reason: 'disclosure-unavailable' };
         else {
             try {
                 await transfer.persistDisclosure(retained.disclosure);

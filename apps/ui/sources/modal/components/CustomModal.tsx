@@ -14,6 +14,9 @@ import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { areChromeConfigsEqual, mergeChromeConfig, resolveCustomModalPresentation } from './customModalChrome';
+import { ModalCommands } from './ModalCommands';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { t } from '@/text';
 
 interface CustomModalProps {
     config: CustomModalConfig;
@@ -59,10 +62,10 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         const dismissalGuard = config.onDismissRequest;
         if (!dismissalGuard) {
             completeDismiss(notifyRequestClose);
-            return;
+            return true;
         }
         if (dismissalPendingRef.current) {
-            return;
+            return false;
         }
 
         let decision: boolean | void | PromiseLike<boolean | void>;
@@ -70,25 +73,29 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             decision = dismissalGuard(reason);
         } catch {
             // A guard error leaves the modal open.
-            return;
+            return false;
         }
 
         if (!isPromiseLikeDismissDecision(decision)) {
             if (decision !== false) {
                 completeDismiss(notifyRequestClose);
+                return true;
             }
-            return;
+            return false;
         }
 
         dismissalPendingRef.current = true;
-        void Promise.resolve(decision)
+        return Promise.resolve(decision)
             .then((allowed) => {
                 if (allowed !== false) {
                     completeDismiss(notifyRequestClose);
+                    return true;
                 }
+                return false;
             })
             .catch(() => {
                 // A rejected guard leaves the modal open without an unhandled rejection.
+                return false;
             })
             .finally(() => {
                 dismissalPendingRef.current = false;
@@ -97,9 +104,9 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
 
     const handleSharedDismiss = React.useCallback(() => {
         if (!dismissible) {
-            return;
+            return false;
         }
-        requestDismiss('shared', true);
+        return requestDismiss('shared', true);
     }, [dismissible, requestDismiss]);
 
     const handleComponentClose = React.useCallback(() => {
@@ -122,64 +129,75 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     // content subtree whenever only chrome state changed; without that, a consumer whose chrome
     // dependencies are not referentially stable republishes on every applied chrome and the
     // publish cycle never closes.
+    // A dialog has no navigation chrome: a page shown in it keeps its own title and actions rather than
+    // publishing them to the route behind the scrim, where nobody can reach them.
     const content = React.useMemo(() => (
-        <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
+        <NavigationTitleChromeProvider showsTitle={false}>
+            <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
+        </NavigationTitleChromeProvider>
     ), [Component, config.props, handleComponentClose, setChrome]);
 
     const { phoneSheet, phoneFullscreen } = presentation;
     // A card hung from its trigger closes like every popover (outside press, Escape, its own Done), so it draws no ×.
-    const frame = (style?: React.ComponentProps<typeof ModalCardFrame>['style'], closeButton = true) => <ModalCardFrame
-        framed={chrome !== null}
-        material={chrome?.material}
-        header={chrome?.header}
-        headerInset={chrome?.headerInset}
-        leading={chrome?.leading}
-        title={chrome?.title}
-        subtitle={chrome?.subtitle}
-        subtitleLines={chrome?.subtitleLines}
-        actions={chrome?.actions}
-        footer={chrome?.footer}
-        testID={chrome?.testID}
-        titleTestID={chrome?.titleTestID}
-        subtitleTestID={chrome?.subtitleTestID}
-        closeButtonTestID={chrome?.closeButtonTestID}
-        scrollHost={chrome?.scrollHost}
-        bodyScroll={chrome?.bodyScroll ?? 'none'}
-        dimensions={chrome?.dimensions}
-        presentation={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'sheet' : 'card'}
-        safeAreaInsets={phoneFullscreen ? insets : undefined}
-        sheetBottomInset={phoneSheet ? insets.bottom : undefined}
-        onClose={chrome && dismissible && closeButton ? handleSharedDismiss : undefined}
-        style={style}
-    >
-        {content}
-    </ModalCardFrame>;
-    if (presentation.anchor) {
-        return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel}
-            dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={handleSharedDismiss} frame={frame} />;
-    }
-    return (
-        <BaseModal
-            visible={visible}
-            onClose={handleSharedDismiss}
-            accessibilityLabel={accessibilityLabel}
-            testID={effectiveChrome?.kind === 'stage' ? effectiveChrome.testID : undefined}
-            focusReturnRef={config.focusReturnRef}
-            // A captured opener can vanish as it opens the modal (a menu or picker row); return to the control
-            // that held focus when the modal activated instead of the page.
-            focusReturnFallback={effectiveChrome ? 'activation-time' : undefined}
-            closeOnBackdrop={config.closeOnBackdrop ?? true}
-            showBackdrop={showBackdrop && presentation.showBackdrop}
-            motion={presentation.motion}
-            zIndexBase={zIndexBase}
-            webPortalTarget={config.webPortalTarget ?? null}
-            webPlacement={config.webPlacement}
-            placement={presentation.placement}
-            scrollHost={presentation.scrollHost}
+    const renderModal = (sharedDismiss: () => void) => {
+        const frame = (style?: React.ComponentProps<typeof ModalCardFrame>['style'], closeButton = true) => <ModalCardFrame
+            framed={chrome !== null}
+            material={chrome?.material}
+            header={chrome?.header}
+            headerInset={chrome?.headerInset}
+            leading={chrome?.leading}
+            leadingPlacement={chrome?.leadingPlacement}
+            title={chrome?.title}
+            subtitle={chrome?.subtitle}
+            subtitleLines={chrome?.subtitleLines}
+            actions={chrome?.actions}
+            footer={chrome?.footer}
+            testID={chrome?.testID}
+            titleTestID={chrome?.titleTestID}
+            subtitleTestID={chrome?.subtitleTestID}
+            closeButtonTestID={chrome?.closeButtonTestID}
+            scrollHost={chrome?.scrollHost}
+            bodyScroll={chrome?.bodyScroll ?? 'none'}
+            dimensions={chrome?.dimensions}
+            presentation={phoneFullscreen ? 'fullscreen' : phoneSheet ? 'sheet' : 'card'}
+            safeAreaInsets={phoneFullscreen ? insets : undefined}
+            sheetBottomInset={phoneSheet ? insets.bottom : undefined}
+            onClose={chrome && dismissible && closeButton ? sharedDismiss : undefined}
+            style={style}
         >
-            {effectiveChrome?.kind === 'stage' ? content : frame()}
-        </BaseModal>
-    );
+            {content}
+        </ModalCardFrame>;
+        if (presentation.anchor) {
+            return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel}
+                dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={frame} />;
+        }
+        return (
+            <BaseModal
+                visible={visible}
+                onClose={sharedDismiss}
+                accessibilityLabel={accessibilityLabel}
+                testID={effectiveChrome?.kind === 'stage' ? effectiveChrome.testID : undefined}
+                focusReturnRef={config.focusReturnRef}
+                // A captured opener can vanish as it opens the modal (a menu or picker row); return to the control
+                // that held focus when the modal activated instead of the page.
+                focusReturnFallback={effectiveChrome ? 'activation-time' : undefined}
+                closeOnBackdrop={config.closeOnBackdrop ?? true}
+                showBackdrop={showBackdrop && presentation.showBackdrop}
+                motion={presentation.motion}
+                zIndexBase={zIndexBase}
+                webPortalTarget={config.webPortalTarget ?? null}
+                webPlacement={config.webPlacement}
+                placement={presentation.placement}
+                scrollHost={presentation.scrollHost}
+            >
+                {effectiveChrome?.kind === 'stage' ? content : frame()}
+            </BaseModal>
+        );
+    };
+    return <ModalCommands bridge={config.commandBridge} commands={dismissible
+        ? [{ key: 'close', title: t('common.close'), invoke: handleSharedDismiss }] : []}>
+        {invoke => renderModal(() => { void invoke('close'); })}
+    </ModalCommands>;
 }
 
 /** The window gap an anchored card keeps, as the other anchored panels do. */

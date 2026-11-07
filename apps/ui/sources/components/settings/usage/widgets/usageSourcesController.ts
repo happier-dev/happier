@@ -9,6 +9,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 export type UsageSourcesOperation = Readonly<{ actionId: UsageSourceActionId; sourceId?: string }>;
 export type UsageSourcesSnapshot = Readonly<{
@@ -25,11 +26,11 @@ export type UsageSourcesController = Readonly<{
     disclosure: typeof USAGE_SOURCE_CONSENT_DISCLOSURE;
     getSnapshot(): UsageSourcesSnapshot;
     subscribe(listener: () => void): () => void;
-    discover(): Promise<ActionExecuteResult>;
+    discover(callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
     refresh(sourceId?: string): Promise<ActionExecuteResult>;
     setConsent(sourceId: string, enabled: boolean): Promise<ActionExecuteResult>;
     notNow(sourceId: string): Promise<ActionExecuteResult>;
-    setRoot(sourceId: string, root: string | null): Promise<ActionExecuteResult>;
+    setRoot(sourceId: string, root: string | null, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
     stop(sourceId: string): Promise<ActionExecuteResult>;
     deleteHistory(sourceId: string, dateRange?: UsageSourceDateRangeV1): Promise<ActionExecuteResult>;
     dispose(): void;
@@ -120,7 +121,7 @@ export function createUsageSourcesController(options: Readonly<{
             ...(!retain ? { dismissedSourceIds: [], historyDeletion: null } : {}) });
     };
 
-    async function run<K extends UsageSourceActionId>(actionId: K, input: UsageSourceActionInputById[K]): Promise<ActionExecuteResult> {
+    async function run<K extends UsageSourceActionId>(actionId: K, input: UsageSourceActionInputById[K], callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> {
         if (!current()) return failure('action_account_scope_changed');
         const sourceId = 'sourceId' in input ? input.sourceId : undefined;
         // A root/consent transition must not be overwritten by an older metadata read.
@@ -136,7 +137,7 @@ export function createUsageSourcesController(options: Readonly<{
         publish({ ...snapshot, pending: [...operations.values()], error: null, approval: null });
         try {
             const result = await execute(actionId, input, {
-                surface: 'ui', serverId: target.serverId, expectedAccountId: options.lifetime.scope.accountId,
+                ...(callerContext ?? { surface: 'ui' as const }), serverId: target.serverId, expectedAccountId: options.lifetime.scope.accountId,
                 signal: controller.signal,
             });
             if (!current()) return failure('action_account_scope_changed');
@@ -208,7 +209,7 @@ export function createUsageSourcesController(options: Readonly<{
         disclosure: USAGE_SOURCE_CONSENT_DISCLOSURE,
         getSnapshot: () => { current(); return snapshot; },
         subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        discover: () => run('usage.sources.discover', target),
+        discover: callerContext => run('usage.sources.discover', target, callerContext),
         refresh: sourceId => {
             const source = sourceId === undefined ? undefined : snapshot.sources.find(source => source.sourceId === sourceId);
             // Retry restarts the Machine's existing consented capture lifetime;
@@ -219,7 +220,7 @@ export function createUsageSourcesController(options: Readonly<{
         },
         setConsent: (sourceId, enabled) => run('usage.sources.consent.set', { ...target, sourceId, enabled }),
         notNow: sourceId => run('usage.sources.dismiss', { ...target, sourceId }),
-        setRoot: (sourceId, root) => run('usage.sources.root.set', { ...target, sourceId, root }),
+        setRoot: (sourceId, root, callerContext) => run('usage.sources.root.set', { ...target, sourceId, root }, callerContext),
         stop: sourceId => run('usage.sources.stop', { ...target, sourceId }),
         deleteHistory: (sourceId, dateRange) => run('usage.sources.history.delete', { ...target, sourceId,
             ...(dateRange === undefined ? {} : { dateRange }) }),

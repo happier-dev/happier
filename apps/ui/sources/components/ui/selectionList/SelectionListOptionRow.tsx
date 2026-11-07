@@ -13,7 +13,7 @@
  */
 
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
@@ -25,6 +25,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 
 import { activateSelectionListRow } from './SelectionListRowActivation';
+import { SelectionListActivationCommandContext } from './SelectionListCommandHost';
 import {
   SelectionListOptionPresentationContext,
   SelectionListSelectedMarkContext,
@@ -169,7 +170,7 @@ export type RenderPlanRowsProps = Readonly<{
   rowOffset?: SelectionListGridRowPlacement;
 }>;
 
-export function PlanOptionRow(
+export const PlanOptionRow = React.memo(function PlanOptionRow(
   props: Readonly<{
     option: SelectionListOption;
     rootTestID: string | undefined;
@@ -245,12 +246,19 @@ export function PlanOptionRow(
   // row. Resolve either lazily so inactive rows never construct the body.
   const isExpanded = props.option.expandedContentVisibility === 'focused'
     ? props.isFocused : isSelected;
+  // A disclosure row ends in Item's turning caret and reports whether it is open.
+  const disclosureExpanded = props.option.disclosure === true ? isExpanded : undefined;
   const expandedVisual = isExpanded
     ? renderSelectionListAccessory(props.option.expandedContent)
     : undefined;
   const displayedSubtitle = expandedVisual != null && props.option.hideSubtitleWhenExpanded === true
     ? undefined : subtitleContent ?? props.option.subtitle;
-  const expandedContent = expandedVisual == null ? undefined : props.option.expandedContentInset === 'row' ? (
+  // A row drawn by Item takes its disclosure as its own bottom content, on the title edge (one inset owner).
+  const expandedUnderTitle = expandedVisual != null && props.option.expandedContentInset === 'text'
+    && props.option.content === undefined;
+  const itemBottomProps = expandedUnderTitle
+    ? { bottomElement: expandedVisual, bottomElementInset: 'text' as const, bottomElementOutsidePressable: true } : {};
+  const expandedContent = expandedVisual == null || expandedUnderTitle ? undefined : props.option.expandedContentInset === 'text' ? (
     <View style={{
       paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
       paddingBottom: PAGE_LIST_METRICS.groupHeadingGapPx,
@@ -277,14 +285,20 @@ export function PlanOptionRow(
     'option-wrapper',
     props.option.id,
   );
-  const handlePress = React.useCallback(() => {
+  const activateCommand = React.useContext(SelectionListActivationCommandContext);
+  const handlePress = React.useCallback((event?: GestureResponderEvent) => {
+    if (activateCommand) {
+      activateCommand(props.option.id);
+      return;
+    }
     activateSelectionListRow({
       option: props.option,
+      event,
       onSelect: props.onSelect,
       onPushStep: props.onPushStep,
       onRequiresInput: requestInputAttention ?? undefined,
     });
-  }, [props.option, props.onSelect, props.onPushStep, requestInputAttention]);
+  }, [activateCommand, props.option, props.onSelect, props.onPushStep, requestInputAttention]);
   // The popup-wide ARIA pattern (see SelectionListA11yPatternContext). It is
   // a declared capability of the whole list, so it is settled before the
   // first frame and cannot move while the popup is open.
@@ -567,12 +581,14 @@ export function PlanOptionRow(
           focused={paintsFocus}
           disabled={props.option.disabled === true}
           loading={props.option.loading === true}
-          showChevron={Boolean(props.option.openStep)}
+          showChevron={Boolean(props.option.openStep) || disclosureExpanded !== undefined}
+          accessibilityState={disclosureExpanded === undefined ? undefined : { expanded: disclosureExpanded }}
           keepChevronWithRightElement={
             props.option.keepChevronWithAccessory === true
           }
           webRole="presentation"
           {...itemInsetAndTextProps}
+          {...itemBottomProps}
         />
         {renderCardAccessoryOverlay(false)}
         {expandedContent}
@@ -668,7 +684,8 @@ export function PlanOptionRow(
         hoverFill={false}
         disabled={props.option.disabled === true}
         loading={props.option.loading === true}
-        showChevron={Boolean(props.option.openStep)}
+        showChevron={Boolean(props.option.openStep) || disclosureExpanded !== undefined}
+        accessibilityState={disclosureExpanded === undefined ? undefined : { expanded: disclosureExpanded }}
         keepChevronWithRightElement={
           props.option.keepChevronWithAccessory === true
         }
@@ -686,6 +703,7 @@ export function PlanOptionRow(
           optionAria.role === 'option' ? optionAria['aria-setsize'] : undefined
         }
         {...itemInsetAndTextProps}
+        {...itemBottomProps}
       />
     );
   // Everything the option owns, in reading order. In `listbox` mode these are
@@ -717,7 +735,7 @@ export function PlanOptionRow(
       )}
     </View>
   );
-}
+});
 
 export function PlanSuccessRows(
   props: RenderPlanRowsProps,

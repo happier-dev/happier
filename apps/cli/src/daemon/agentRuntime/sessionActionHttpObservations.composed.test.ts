@@ -4,12 +4,22 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { createCliProjectAdmission } from '@/session/actions/cliActionDeps/projectAdmission';
+import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import {
-  accountSettingsParse, normalizeActionsSettingsV1, SessionListQueryV1Schema, SessionListQueryResponseV1Schema,
+  accountSettingsParse, normalizeActionsSettingsV1, SessionListQueryV1Schema,
   FeaturesResponseSchema, type ActionsSettingsV1,
 } from '@happier-dev/protocol';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
+import { ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema,
+  ConnectedPresentationRowMutationV1Schema, ConnectedMetadataRowMutationResponseV1Schema,
+  CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
+} from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { verifyExternalActionMachineRpcExecution } from '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
 import { parseSessionListQueryActionResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
@@ -19,12 +29,13 @@ import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionMe
   SessionMetadataTuplePatchSuccessV1Schema, type SessionMetadataOwnerPatchV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { auth } from '../../../../server/sources/app/auth/auth';
+import { readSessionAccessAuthenticationFromRequest } from '../../../../server/sources/app/session/access/sessionAccessAuthentication';
 import { createAuthenticatedTestApp } from '../../../../server/sources/app/api/testkit/sqliteFastify';
 import { installedSessionExternalActionStorage as storage } from '../../../../server/sources/app/api/testkit/installedSessionExternalActionStorage';
 import { registerExternalActionRoutes } from '../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes';
 import type { Fastify } from '../../../../server/sources/app/api/types';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createExternalActionAuthorizedRequestHeaders, prepareExternalActionRequesterAccountAuthorization, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { createSessionListActionDeps } from '@/session/actions/sessionListActionDependency';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
@@ -93,10 +104,23 @@ import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocati
 import { UiContributedActionExecuteRequestV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { StrictJsonValueSchema, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCliActionDeps, type SessionActionRpcTransport } from '@/session/actions/createCliActionDeps';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { BasePermissionHandler } from '@/agent/permissions/BasePermissionHandler';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
+import { PublicProfileOwnerReadV1Schema, PublicProfilePreparedRequestV1Schema, DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/models';
+import { DiscussionMessagesQueryV1Schema, DiscussionRouteDiscussionParamsV1Schema } from '@happier-dev/protocol/discussions/api';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { DaemonPluginUiTargetedContributionsReadResponseSchema, DaemonPluginTargetedSourceDeclarationV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 
 const processIdentity = vi.hoisted(() => vi.fn());
 vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
@@ -116,6 +140,8 @@ const serverHttpBaseUrl = 'https://signed-session.test';
 type Operation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
 
 beforeAll(async () => {
+  // This canonical database boundary implements PostgreSQL snapshot commands.
+  vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
   vi.stubEnv('HANDY_MASTER_SECRET', 'session-observation-test-secret');
   vi.stubEnv('AUTH_REQUIRED_LOGIN_PROVIDERS', '');
   await auth.init();
@@ -147,6 +173,77 @@ async function admittedClientActionFixture() {
   return { runtime, action: { pluginId: triageManifest.id, localId: 'tasks/open-create-v1' }, effects: () => effects };
 }
 
+it('FX217 keeps wire-only Project discovery separate from private Account projection', async () => {
+  const f = await fixture();
+  try {
+    const op = f.operation('projects.list', {});
+    const prepared = await f.prepare(op, { v: 1, caller: op.witness.agentStartCaller,
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: op.requestId });
+    if (!prepared) throw new Error('Missing Home-minted Project discovery authorization');
+    expect(prepared.authorization.requesterHttpProjection).toBeDefined();
+    // Home mints a wire root, not a local Account reader. The installed parent
+    // positive lives in startDaemonSessionControlRuntime.projectLaunch's real
+    // Session Action producer; ordinary credentials here cannot replace it.
+    expect(prepared.authorization.requesterAccountProjection).toBeUndefined();
+    const admission = createCliProjectAdmission({ credentials: f.credentials, serverId, serverHttpBaseUrl }, {
+      projectHomeId: serverId, actionHomeId: storage.state.homeId,
+      executionRunActionFailure: errorCode => ({ ok: false, errorCode, error: errorCode }),
+    });
+    expect(await admission.projectAccountAdmission(undefined, { surface: 'agent',
+      externalActionExecutionAuthorization: prepared.authorization })).toMatchObject({
+        ok: false, errorCode: 'project_requester_authority_unavailable',
+      });
+  } finally { await f.close(); }
+});
+
+it.each(['projects.execution.output.read', 'projects.execution.output.copy'] as const)('FX217 admits both retained Script output phases through Home under %s', async actionId => {
+  const f = await fixture();
+  try {
+    const operationId = 'bd63318b-646f-4476-9e44-6cba58570229';
+    const op = f.operation(actionId, { machineId: storage.state.machineId, operationId });
+    const prepared = await f.prepare(op, { v: 1, caller: op.witness.agentStartCaller,
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: op.requestId });
+    if (!prepared) throw new Error('Missing Home-minted Project output authorization');
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const operation = { version: 1, operationId, revision: 1, actionId: 'projects.script.run', state: 'succeeded',
+      scope: { accountId: storage.account.id, machineId: storage.state.machineId }, title: 'Build', createdAt: 1,
+      startedAt: 1, settledAt: 2, cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'script',
+        serverId, machineId: storage.state.machineId, workspaceRefId: 'workspace', cwd: '/project', terminalId: 'retained-terminal' },
+    } satisfies ActionOperationSnapshotV1;
+    const output = { ok: true as const, terminalId: 'retained-terminal', frames: [], nextByteOffset: 7,
+      availableByteOffset: 7, droppedBeforeByteOffset: 7, done: true };
+    const admittedMethods: string[] = [];
+    const result = await executeActionOperationActionV1({ actionId,
+      input: { serverId, machineId: storage.state.machineId, operationId, byteOffset: 7 },
+      transport: async request => {
+        const method = `${request.machineId}:${request.method}`;
+        const execution = { v: 1 as const, authorization: prepared.authorization, effectActionId: actionId,
+          target: prepared.target, installationId: storage.state.installationId,
+          machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: prepared.authorization.token,
+            effectActionId: actionId, target: prepared.target, installationId: storage.state.installationId,
+            method, requestId: op.requestId, params: request.payload, privateKey: installation.secretKey }) };
+        expect((await verifyExternalActionMachineRpcExecution(execution, { method, params: request.payload,
+          requestId: op.requestId, resolveCurrentSessionMachine: async () => storage.state.machineId })) !== null, request.method).toBe(true);
+        // Full method/body signatures and the current original Session remain
+        // deciding; composite purpose is not a general terminal/operation grant.
+        expect((await verifyExternalActionMachineRpcExecution(execution, { method, params: { terminalId: 'other-terminal' },
+          requestId: op.requestId, resolveCurrentSessionMachine: async () => storage.state.machineId })) === null).toBe(true);
+        expect((await verifyExternalActionMachineRpcExecution(execution, { method, params: request.payload,
+          requestId: op.requestId, resolveCurrentSessionMachine: async () => null })) === null).toBe(true);
+        admittedMethods.push(request.method);
+        if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+          expect(request.payload).toEqual({ operationId });
+          return { kind: 'found', operation };
+        }
+        expect(request.method).toBe(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES);
+        expect(request.payload).toEqual({ terminalId: operation.domainRef.terminalId, byteOffset: 7 });
+        return output;
+      } });
+    expect(result).toEqual(actionId === 'projects.execution.output.read' ? output : { kind: 'bytes', output });
+    expect(admittedMethods).toEqual([ACTION_OPERATION_RPC_METHODS_V2.get, RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES]);
+  } finally { await f.close(); }
+});
+
 function installClientMachineControlHttp(clientAction: Pick<Awaited<ReturnType<typeof admittedClientActionFixture>>, 'runtime'>) {
   const list = createCommittedContributedActionDefinitionLister({
     tryAcquireRuntimeRegistryLease: () => clientAction.runtime.lease,
@@ -168,7 +265,7 @@ function installClientMachineControlHttp(clientAction: Pick<Awaited<ReturnType<t
     if (body.actionId === 'action.spec.search' || body.actionId === 'action.spec.get' || body.actionId === 'action.invoke') {
       const outcome = await executor.execute(body.actionId, body.input, {
         surface: body.surface,
-        authority: resolveInvocationAuthority({ credential: 'terminal', surface: body.surface, terminalPolicy: 'allowed' }),
+        authority: resolveInvocationAuthority({ credential: 'terminal', surface: body.surface }),
         actionCaller: { kind: 'host' },
         ...('defaultSessionId' in body && typeof body.defaultSessionId === 'string' ? { defaultSessionId: body.defaultSessionId } : {}),
       });
@@ -183,7 +280,8 @@ function installClientMachineControlHttp(clientAction: Pick<Awaited<ReturnType<t
 
 async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Promise<void>, bypassActionInterception = false,
   accountRelease = false, accountCurrentProcess = true,
-  clientAction?: Awaited<ReturnType<typeof admittedClientActionFixture>>) {
+  clientAction?: Awaited<ReturnType<typeof admittedClientActionFixture>>,
+  accountMachine?: Readonly<{ sessionMachineId: string; executionRunTargetMachineId?: string }>) {
   storage.state.sessionId = sessionId;
   storage.state.bound = true;
   storage.state.publisherBound = true;
@@ -195,7 +293,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   const token = await auth.createToken(storage.account.id, undefined, { kind: 'account', authority: 'present_user' });
   const credentials = { token, encryption: null };
   const scopeKey = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(credentials));
-  let rawSettings: { actionsSettingsV1?: ActionsSettingsV1 } = {};
+  let rawSettings: Readonly<Record<string, unknown>> = {};
   let authorizationStatus: 401 | 403 | 503 | undefined;
   let cancelAuthorization: (() => void) | undefined;
   let settingsVersion = 0;
@@ -215,7 +313,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   });
   app.decorate('resolveCurrentSessionMachine', async () => storage.state.bound ? storage.state.machineId : null);
   registerExternalActionRoutes(app, { dispatch: async () => { throw new Error('Unexpected external dispatch'); } });
-  const observations: { method: string; path: string; status: number; code?: string; signed: boolean; bearer: boolean }[] = [];
+  const observations: { method: string; path: string; status: number; code?: string; signed: boolean; bearer: boolean; sessionIds?: string[] }[] = [];
   app.addHook('onSend', async (request, reply, payload) => {
     let code: string | undefined;
     if (reply.statusCode >= 400 && typeof payload === 'string') {
@@ -223,8 +321,10 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
       const error = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
       if (error === 'invalid_token' || error === 'credential_scope_denied') code = error;
     }
+    const batch = request.url === '/v2/sessions/read-batch' ? SessionReadBatchRequestV1Schema.safeParse(request.body) : null;
     observations.push({ method: request.method, path: request.url, status: reply.statusCode,
       ...(code ? { code } : {}),
+      ...(batch?.success ? { sessionIds: batch.data.sessionIds } : {}),
       signed: typeof request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === 'string',
       bearer: request.headers.authorization !== undefined });
     return payload;
@@ -265,7 +365,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   app.get('/v2/account/settings', { preHandler: app.authenticate }, async () => ({ version: settingsVersion, content: { t: 'plain', v: rawSettings } }));
   app.get('/v1/account/profile', { preHandler: app.authenticate }, async () => ({ id: storage.account.id }));
   if (accountRelease) app.get(ACCOUNT_SECURITY_PATH_V1, { preHandler: app.authenticate }, async () => AccountSecurityGetResponseV1Schema.parse({
-    v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+    v: 1, encryptionMode: 'plain', nativeEmail: null,
     password: { status: 'not_enrolled', revision: null },
   }));
   app.get('/v1/machines/:machineId', { preHandler: app.authenticate }, async request => ({
@@ -295,10 +395,12 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     if (subtreeRefused === query.storage) return reply.code(503).send({ error: 'private-error-body' });
     const candidates = query.underSessionId === childId ? (nestedReportId ? [nestedReportId] : [])
       : [...members, ...(nestedReportId && members.has(childId) ? [nestedReportId] : [])];
-    return SessionListQueryResponseV1Schema.parse({ sessions: candidates.filter(id =>
+    return createCompactSessionListQueryResponseFixture({ sessions: candidates.filter(id =>
       query.storage === (archivedSessions.has(id) ? 'archived' : 'active')).map(row),
       nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
   });
+  app.post('/v2/sessions/read-batch', { preHandler: app.authenticate }, async request =>
+    createSessionReadBatchResponseFixture({ request: request.body, sessions: [sessionId, ...members, ...(nestedReportId ? [nestedReportId] : [])].map(row) }));
   app.get('/v2/sessions/:sessionId', { preHandler: app.authenticate,
     config: { apiTokenSessionAction: 'session.status.get', restrictedCredentialBinding: { scope: 'session', session: 'params.sessionId' } },
   }, async request => ({ session: row((request.params as { sessionId: string }).sessionId) }));
@@ -349,14 +451,23 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     return { authorization, target };
   };
   let sessionActionRpcTransport: SessionActionRpcTransport | undefined;
+  let resolveServerFeaturesSnapshot: Parameters<typeof createCliActionExecutor>[0]['resolveServerFeaturesSnapshot'];
   const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token, credentials,
+    ...(accountMachine ? { machineId: accountMachine.sessionMachineId } : {}),
     ...(accountRelease ? {} : { machineId: storage.state.machineId,
       prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }: Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) => prepare(operation, sessionActionOrigin) }),
     createExecutor: (_depth, _current, _post, options) => {
+      const accountPorts = createAccountServerActionDeps({ token, credentials, serverId,
+        serverIdentityId: storage.state.homeId, serverHttpBaseUrl,
+        externalActionMachineRequestPrivateKey: installation.secretKey,
+        externalActionMachineInstallationId: storage.state.installationId });
       const executor = createCliActionExecutor({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
         serverId, serverIdentityId: storage.state.homeId, serverHttpBaseUrl,
+        accountServerActionDeps: { usageActions: accountPorts.usageActions,
+          homeDomainAction: accountPorts.homeDomainAction, publicProfileActions: accountPorts.publicProfileActions },
         externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: storage.state.installationId,
         actionsSettingsProvider,
+        ...(resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot } : {}),
         ...(sessionActionRpcTransport ? { sessionActionRpcTransport } : {}),
         ...(accountRelease && accountCurrentProcess ? { pluginActionExecutionOwner: 'current_process' as const,
           invokeContributedAction: createCommittedContributedActionInvoker() } : {}),
@@ -371,7 +482,8 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
         ...options,
       });
       return { execute: (actionId, input, context) => executor.execute(actionId, input,
-        bypassActionInterception ? { ...context, bypassActionInterception: true } : context) };
+        { ...context, ...(bypassActionInterception ? { bypassActionInterception: true } : {}),
+          ...(accountMachine?.executionRunTargetMachineId ? { executionRunTargetMachineId: accountMachine.executionRunTargetMachineId } : {}) }) };
     },
   });
   const operation = (actionId: Operation['actionId'], input: Operation['input']): Operation => ({ kind: 'action.execute',
@@ -379,11 +491,13 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0, callerPermissionMode: 'default',
       agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } } });
   return { credentials, app, observations, members, prepare, execute, operation, actionsSettingsProvider, lifecycleEffects, authoredAccount,
+    setServerFeatureReader: (read: NonNullable<typeof resolveServerFeaturesSnapshot>) => { resolveServerFeaturesSnapshot = read; },
     setSessionActionRpcTransport: (transport: SessionActionRpcTransport) => { sessionActionRpcTransport = transport; },
     failAuthorization: (status?: 401 | 403 | 503, cancel?: () => void) => {
       authorizationStatus = status; cancelAuthorization = cancel;
     },
     setActionsSettings: (actionsSettingsV1: ActionsSettingsV1) => { rawSettings = { actionsSettingsV1 }; publishSettings(); },
+    setRawSettings: (value: Readonly<Record<string, unknown>>) => { rawSettings = value; publishSettings(); },
     markInactive: () => { inactive = true; },
     markChildArchived: () => { archivedSessions.add(childId); },
     addNestedReport: (id: string) => { nestedReportId = id; storage.state.sessionIds.add(id); },
@@ -396,6 +510,232 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     omitCallerWorkspace: () => { callerWorkspaceMissing = true; },
     close: async () => { restore(); await app.close(); } };
 }
+
+function publicProfileAccountingFixture(body: unknown) {
+  const query = UsageAnalyticsQueryRequestSchema.parse(body);
+  expect(query.population).toBe('public_eligible_personal');
+  const range = query.dateRange;
+  if (range?.startMs === undefined || range.endMs === undefined) throw new Error('Expected finite profile fixture query');
+  const { startMs, endMs } = range;
+  const tokens = { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 };
+  const cost = { reportedUsd: 98765, estimatedUsd: 87654, currency: 'USD' };
+  // Publication needs admitted contribution/coverage evidence, not totals alone.
+  // This is the real HTTP response grammar used by the captured Account test.
+  return UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1, tokens, cost },
+    contributions: [{ id: 'fixture-private-request', observedAtMs: startMs + 1,
+      sessionId: 'fixture-private-session', turnId: 'fixture-private-turn', agentId: 'codex',
+      modelId: null, machineId: null, projectKey: 'fixture-private-project', workspaceId: null,
+      source: 'runtime', eventCount: 1, sourceContext: { path: 'runtime', execution: 'happier' }, tokens, cost }],
+    coverage: { status: 'partial', reasons: ['incomplete_history'], sources: [{ source: 'runtime', path: 'runtime',
+      status: 'available', eventCount: 1, asOfMs: endMs, historyComplete: false }],
+      missingDimensions: [], ranked: [], range: { startMs, endMs, complete: false } },
+  });
+}
+
+it('prepares a public-profile preview through the signed Session Account binding', async () => {
+  const f = await fixture();
+  const startMs = Date.parse('2026-10-20T00:00:00Z');
+  const endMs = startMs + 86_400_000;
+  const owner = PublicProfileOwnerReadV1Schema.parse({ kind: 'absent', context: { handle: 'qa-profile', identity: {},
+    service: null, urls: null } });
+  f.app.get('/v1/account/public-profile', { preHandler: f.app.authenticate }, async request => {
+    expect(request.userId).toBe(storage.account.id);
+    expect(request.headers.authorization).toBeUndefined();
+    return owner;
+  });
+  f.app.post('/v2/usage/query', { preHandler: f.app.authenticate }, async request => {
+    expect(request.userId).toBe(storage.account.id);
+    expect(request.headers.authorization).toBeUndefined();
+    return publicProfileAccountingFixture(request.body);
+  });
+  try {
+    const outcome = await f.execute(f.operation('account.public_profile.preview', projectNativeJsonValueForTransport({
+      policy: { indexable: false, fields: Object.fromEntries(Object.keys(DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields)
+        .map(field => [field, field === 'tokens'])) }, metadataSelection: {},
+      query: normalizeUsageQuery({ period: { startMs, endMs }, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: false, includeQuotaHistory: false }),
+      layout: { v: 1, items: [] }, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+    })), { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({ ok: true,
+      result: { kind: 'ready', view: { snapshot: { facts: { tokens: 12 } } } } });
+    expect(JSON.stringify(outcome)).not.toMatch(/fixture-private-|98765|87654/);
+    for (const path of ['/v1/account/public-profile', '/v2/usage/query']) {
+      expect(f.observations).toContainEqual(expect.objectContaining({ path, status: 200, signed: true, bearer: false }));
+    }
+    expect(f.observations.filter(row => row.path === '/v1/account/public-profile' || row.path === '/v2/usage/query')
+      .every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
+  } finally { await f.close(); }
+});
+
+it.each([false, true])('retains signed Account authority for the public-profile update follow-on refresh (refreshApproved=%s)', async refreshApproved => {
+  const f = await fixture();
+  const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, population: 'public_eligible_personal' });
+  const policy = { indexable: false, fields: Object.fromEntries(Object.keys(DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields)
+    .map(field => [field, field === 'tokens'])) };
+  const owner = PublicProfileOwnerReadV1Schema.parse({ kind: 'ready', context: { handle: 'qa-profile', identity: {},
+    service: { displayName: 'Home', publicBaseUrl: serverHttpBaseUrl }, urls: {
+      page: `${serverHttpBaseUrl}/@qa-profile`, json: `${serverHttpBaseUrl}/@qa-profile/json`,
+      badgeBase: `${serverHttpBaseUrl}/@qa-profile/badge`, card: `${serverHttpBaseUrl}/@qa-profile/card.svg`,
+      og: `${serverHttpBaseUrl}/@qa-profile/og.png`, report: 'mailto:operator@example.test',
+    } }, record: { state: 'published', policy, metadata: {}, projectSelections: [], query, snapshot: null,
+      layout: { v: 1, items: [] }, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+      updatedAtMs: 1, publishedAtMs: 1, restriction: null } });
+  if (owner.kind !== 'ready') throw new Error('Expected published owner fixture');
+  const effects: unknown[] = [];
+  f.app.get('/v1/account/public-profile', { preHandler: f.app.authenticate }, async () => owner);
+  f.app.post('/v2/usage/query', { preHandler: f.app.authenticate }, async request => {
+    return publicProfileAccountingFixture(request.body);
+  });
+  for (const [operation, path] of [['update', 'policy'], ['refresh', 'snapshot']] as const) {
+    f.app.put(`/v1/account/public-profile/${path}`, { preHandler: f.app.authenticate }, async request => {
+      effects.push(PublicProfilePreparedRequestV1Schema.parse({ operation, body: request.body }));
+      return { kind: 'updated', record: owner.record };
+    });
+  }
+  // Explicit fixture policy authorizes both Actions through the existing policy
+  // owner. A follow-on refresh must not borrow consent from the parent update.
+  // This thin executor has no retained refresh approval origin; a child that
+  // still needs approval must fail closed rather than spend the parent's waiver.
+  f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+    'account.public_profile.update': ['agent'], ...(refreshApproved ? { 'account.public_profile.refresh': ['agent'] } : {}),
+  } }));
+  try {
+    const outcome = await f.execute(f.operation('account.public_profile.update', projectNativeJsonValueForTransport({ policy })),
+      { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({ ok: true,
+      result: { kind: 'updated', ...(refreshApproved ? { refresh: 'complete' }
+        : { refresh: 'failed', refreshReason: 'approval_origin_unavailable' }) } });
+    expect(effects).toMatchObject(refreshApproved
+      ? [{ operation: 'update' }, { operation: 'refresh', body: { snapshot: { facts: { tokens: 12 } } } }]
+      : [{ operation: 'update' }]);
+    expect(f.observations.filter(row => row.path.startsWith('/v1/account/public-profile') || row.path === '/v2/usage/query')
+      .every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
+  } finally { await f.close(); }
+});
+
+it.each(['present', 'absent'] as const)('writes an allowed subscription price through authenticated native Agent Account custody (%s)', async initial => {
+  const f = await fixture();
+  const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'personal' };
+  const sibling = { ...account, accountId: 'work' };
+  f.setRawSettings({ actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+    approvalWaivedSurfaces: { 'connectedServices.subscription.price.set': ['agent'] } }),
+    connectedServicesProfileLabelByKey: Object.fromEntries([account, sibling].map(ref => [
+      connectedServiceProfileKey({ serviceId: 'openai-codex', profileId: ref.accountId }), ref.accountId,
+    ])) });
+  f.app.addHook('onSend', async (request, reply, payload) => request.url === '/v1/account/profile' && reply.statusCode === 200
+    ? JSON.stringify(AccountProfileSchema.parse({ id: storage.account.id, connectedAccountsV4: [account, sibling].map(ref => ({ ref,
+      status: 'connected', authenticationModeId: 'oauth', configurationReady: true, configurationRevision: null,
+      revisionSemantics: 'legacy_unfenced', credentialRevision: null })) })) : payload);
+  let presentation = ConnectedPresentationRowReadResponseV1Schema.parse(initial === 'absent' ? { status: 'absent' }
+    : { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1,
+      entries: [account, sibling].map(ref => ({ v: 1, subject: { kind: 'account', account: ref }, label: ref.accountId })) } } });
+  f.app.get(CONNECTED_PRESENTATION_ROWS_ROUTE_V1, { preHandler: f.app.authenticate }, async () => presentation);
+  f.app.get(CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1, { preHandler: f.app.authenticate }, async () =>
+    ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+      content: { t: 'plain', v: { v: 1, entries: [] } } }));
+  f.app.post(CONNECTED_PRESENTATION_ROWS_ROUTE_V1, { preHandler: f.app.authenticate }, async request => {
+    expect(request.userId).toBe(storage.account.id);
+    expect(request.headers.authorization).toBeUndefined();
+    const mutation = ConnectedPresentationRowMutationV1Schema.parse(request.body);
+    expect(mutation.expectedRevision).toBe(initial === 'absent' ? 'absent' : 1);
+    expect(mutation.sourceSettingsVersion === undefined).toBe(initial !== 'absent');
+    // A finite price mutation includes its effect in the first presentation CAS;
+    // it does not run the independent source transfer/cleanup lifecycle first.
+    expect(mutation.content).toMatchObject({ t: 'plain', v: { entries: expect.arrayContaining([
+      expect.objectContaining({ subject: { kind: 'account', account }, label: 'personal',
+        subscriptionMonthlyPrice: { amount: 17, currency: 'EUR', enteredAtMs: expect.any(Number) } }),
+      { v: 1, subject: { kind: 'account', account: sibling }, label: 'work' },
+    ]) } });
+    presentation = ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'present', revision: 2, content: mutation.content });
+    return ConnectedMetadataRowMutationResponseV1Schema.parse({ status: 'updated', revision: 2, cursor: 2 });
+  });
+  for (const path of ['/v2/account/settings', CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
+    '/v2/account/settings/history/normalize', '/v1/kv']) {
+    f.app.post(path, { preHandler: f.app.authenticate }, async () => ({ unexpected: 'admitted' }));
+  }
+  try {
+    const outcome = await f.execute(f.operation('connectedServices.subscription.price.set', {
+      account, price: { amount: 17, currency: 'EUR' },
+    }), { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({ ok: true, result: { applied: true } });
+    expect(presentation).toMatchObject({ content: { t: 'plain', v: { entries: expect.arrayContaining([
+      expect.objectContaining({ subject: { kind: 'account', account }, label: 'personal',
+        subscriptionMonthlyPrice: { amount: 17, currency: 'EUR', enteredAtMs: expect.any(Number) } }),
+      { v: 1, subject: { kind: 'account', account: sibling }, label: 'work' },
+    ]) } } });
+    expect(f.observations.filter(row => row.method === 'POST' && row.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1))
+      .toEqual([expect.objectContaining({ status: 200, signed: true, bearer: false })]);
+    const op = f.operation('connectedServices.subscription.price.set', { account, price: { amount: 17, currency: 'EUR' } });
+    const prepared = await f.prepare(op, { v: 1, caller: op.witness.agentStartCaller,
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: op.requestId });
+    if (!prepared) throw new Error('Missing price Home root');
+    const sign = (path: string, body: unknown, effectActionId = op.actionId) =>
+      createExternalActionAuthorizedRequestHeaders({ authorization: prepared.authorization, effectActionId,
+        target: prepared.target, installationId: storage.state.installationId, method: 'POST', path, body,
+        privateKey: installation.secretKey });
+    for (const path of ['/v2/account/settings', CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
+      '/v2/account/settings/history/normalize', '/v1/kv']) {
+      expect((await f.app.inject({ method: 'POST', url: path, payload: {}, headers: sign(path, {}) })).statusCode).toBe(401);
+    }
+    const path = CONNECTED_PRESENTATION_ROWS_ROUTE_V1;
+    const body = ConnectedPresentationRowMutationV1Schema.parse({ expectedRevision: 2,
+      content: { t: 'plain', v: { v: 1, entries: [] } } });
+    expect((await f.app.inject({ method: 'POST', url: path, payload: body,
+      headers: sign(path, body, 'connectedServices.quota.get') })).statusCode).toBe(401);
+    expect((await f.app.inject({ method: 'POST', url: path, payload: {}, headers: sign(path, {}) })).statusCode).toBe(401);
+    expect((await f.app.inject({ method: 'POST', url: path, payload: { ...body, expectedRevision: 3 },
+      headers: sign(path, body) })).statusCode).toBe(401);
+    const siblingOp = { ...f.operation('usage.query', { queries: [{ includeAccounting: true,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+      includeQuotaHistory: false, includeInsights: false }] }), requestId: 'sibling-price-refusal' };
+    const siblingPrepared = await f.prepare(siblingOp, { v: 1, caller: siblingOp.witness.agentStartCaller,
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: siblingOp.requestId });
+    if (!siblingPrepared) throw new Error('Missing sibling Home root');
+    expect((await f.app.inject({ method: 'POST', url: path, payload: body,
+      headers: createExternalActionAuthorizedRequestHeaders({ authorization: siblingPrepared.authorization,
+        effectActionId: siblingOp.actionId, target: siblingPrepared.target,
+        installationId: storage.state.installationId, method: 'POST', path, body,
+        privateKey: installation.secretKey }) })).statusCode).toBe(401);
+  } finally { await f.close(); }
+});
+
+it.each(['usage.query', 'usage.recap.private.compose', 'usage.recap.private.export'] as const)(
+  'reads personal accounting through the Session Action daemon and signed Home authentication: %s', async actionId => {
+  const f = await fixture();
+  f.app.post('/v2/usage/query', { preHandler: f.app.authenticate }, async request => {
+    UsageAnalyticsQueryRequestSchema.parse(request.body);
+    expect(request.userId).toBe(storage.account.id);
+    expect(request.headers.authorization).toBeUndefined();
+    return { v: 1, totals: { eventCount: 1,
+      tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
+      cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } };
+  });
+  try {
+    const query = {
+      includeAccounting: true, includeSessionEvidence: false, includeTranscriptEvidence: false,
+      includeWorkEvidence: false, includeQuotaHistory: false, includeInsights: false,
+    };
+    const outcome = await f.execute(f.operation(actionId, actionId === 'usage.query'
+      ? { queries: [query] } : { query: { ...query, period: { startMs: 100, endMs: 200 } }, selectedFields: ['tokens'] }),
+    { sessionId, isCurrent: async () => true });
+    expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+    if (actionId === 'usage.query') {
+      const batch = UsageQueryBatchResultSchema.parse(outcome.ok ? outcome.result : null);
+      expect(batch.results[0]?.accounting?.totals.tokens.total).toBe(12);
+    } else {
+      const compose = { kind: 'composed', facts: { tokens: { total: 12 } } };
+      expect(outcome).toMatchObject({ ok: true, result: actionId === 'usage.recap.private.compose'
+        ? compose : { kind: 'unavailable', reason: 'render_target_unavailable', compose } });
+    }
+    expect(f.observations).toContainEqual(expect.objectContaining({
+      path: '/v2/usage/query', status: 200, signed: true, bearer: false,
+    }));
+    // A finite recap also reads its preceding comparison population. Every
+    // consumed read must retain the original signed root, never borrow bearer auth.
+    expect(f.observations.filter(row => row.path === '/v2/usage/query')
+      .every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
+  } finally { await f.close(); }
+});
 
 it.each(['none', 'wait', 'return'] as const)('admits a native message (%s) with the resolved receiver Session under its original Home root', async reply => {
   const f = await fixture();
@@ -465,14 +805,16 @@ it.each(['none', 'wait', 'return'] as const)('admits a native message (%s) with 
   } finally { await f.close(); }
 });
 
-it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
+it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-handler'] as const)(
   'answers a worker question through MCP and the source daemon origin: %s', async binding => {
   const f = await fixture();
+  let managerAvailable = binding !== 'stopped-at-raise';
   const worker = createMutableApiSessionClientFixture({ sessionId: childId,
     serverBinding: { serverId, serverUrl: serverHttpBaseUrl },
     agentState: { requests: {}, completedRequests: {} },
     overrides: { readQuestionSessionSnapshot: async id => ({ sessionId: id, accountId: storage.account.id,
-      managerSessionId: id === childId ? sessionId : null, available: true, answersWorkerQuestions: true }) },
+      managerSessionId: id === childId ? sessionId : null,
+      available: id !== sessionId || managerAvailable, answersWorkerQuestions: true }) },
   });
   class QuestionHandler extends BasePermissionHandler { protected getLogPrefix() { return '[C7 answer]'; } }
   new QuestionHandler(worker);
@@ -507,6 +849,7 @@ it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
     const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
     expect(request.context).toEqual({ token: 'C'.repeat(43), sessionId });
     if (request.operation.kind !== 'action.execute') throw new Error('Expected Action envelope');
+    expect(request.operation.toolCallId).toBe('native-manager-answer');
     const outcome = await f.execute(request.operation, { sessionId, isCurrent: async () => true });
     return Response.json({ ok: true, result: { kind: 'action.execution', requestId: request.operation.requestId, outcome } });
   });
@@ -527,7 +870,7 @@ it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
     updateMetadata() {}, getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0, getPermissionMode: () => 'read-only',
     getActiveTurnAdmissionWitness: () => witness, getActiveTurnPermissionWitness: () => witness,
-  }, { credentials: f.credentials, isCredentialCurrent: async () => true,
+  }, { credentials: f.credentials, isCredentialCurrent: async () => true, mcpToolCallIdMetaKey: 'callId',
     ...(binding === 'restricted' ? { authorityScope: 'session' as const, sessionCredentials: f.credentials } : {}),
     actionsSettingsProvider: f.actionsSettingsProvider });
   const client = new Client({ name: 'c7-manager-answer', version: '1' });
@@ -542,7 +885,11 @@ it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
         questions: [{ id: 'choose', prompt: 'Continue?', type: 'text' }] } } });
     const requestId = Object.keys(worker.getAgentStateSnapshot()?.requests ?? {})[0];
     expect(requestId, JSON.stringify(raised)).toBeTruthy();
-    expect(worker.getAgentStateSnapshot()?.requests?.[requestId!]).toMatchObject({ currentHandler: { kind: 'session', sessionId } });
+    expect(worker.getAgentStateSnapshot()?.requests?.[requestId!]).toMatchObject({
+      currentHandler: binding === 'stopped-at-raise' ? { kind: 'person' } : { kind: 'session', sessionId },
+    });
+    // Resuming the manager cannot transfer a question already assigned to the person.
+    managerAvailable = true;
     if (binding === 'wrong-handler') worker.updateAgentState(state => ({ ...state, requests: { ...state.requests,
       [requestId!]: { ...state.requests![requestId!]!, currentHandler: { kind: 'session', sessionId: 'another-manager' } } } }));
     await runtime.mcp.connect(serverTransport);
@@ -550,7 +897,7 @@ it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
     const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
       actionId: 'session.user_action.answer', input: { sessionId: childId, requestId,
         answers: [{ question: 'choose', values: ['yes'] }] },
-    } }));
+    }, _meta: { callId: 'native-manager-answer' } }));
     if (binding === 'bound' || binding === 'restricted') {
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
       expect(worker.getAgentStateSnapshot()?.completedRequests?.[requestId!]).toMatchObject({
@@ -563,6 +910,13 @@ it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
         binding === 'foreign-witness' ? 'target_unavailable' : 'present_user_required') }] });
       expect(worker.getAgentStateSnapshot()?.completedRequests?.[requestId!]).toBeUndefined();
       expect(worker.getAgentStateSnapshot()?.requests?.[requestId!]).toBeDefined();
+      if (binding === 'stopped-at-raise') {
+        await expect(transport.mock.results[0]?.value).resolves.toMatchObject({
+          ok: false, errorCode: 'present_user_required', requestId,
+        });
+        expect(worker.getAgentStateSnapshot()?.requests?.[requestId!])
+          .toMatchObject({ currentHandler: { kind: 'person' } });
+      }
       if (binding === 'foreign-witness') expect(transport).not.toHaveBeenCalled();
     }
   } finally {
@@ -572,8 +926,67 @@ it.each(['bound', 'restricted', 'foreign-witness', 'wrong-handler'] as const)(
   }
 });
 
-it('admits the addressed reply policy read under its original signed Account root', async () => {
+it('reads the active Discussion source through its original signed transcript root', async () => {
   const f = await fixture();
+  const discussionId = 'source-discussion';
+  const messageId = 'message-child';
+  const discussionAddressing = { discussionId, messageId: 'question', throughSeq: 1, participantSessionId: sessionId };
+  const question = { id: 'question', discussionId, localId: 'question', seq: 1,
+    authorAccountId: storage.account.id, accountActor: { v: 1, accountId: storage.account.id, profile: null },
+    producerV1: null, content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Check the source' }] } },
+    mentionedAccountIds: [], createdAt: 1 };
+  const summary = DiscussionSummaryV1Schema.parse({ id: discussionId, ownerAccountId: storage.account.id,
+    encryptionMode: 'plain', anchor: { kind: 'session', sessionId: childId, messageId },
+    access: 'owner', keyReadiness: true, dataEncryptionKey: null, creationLocalId: 'source-discussion-create',
+    titleContent: { t: 'plain', v: { v: 1, title: 'Source' } },
+    latestMessage: { id: question.id, localId: question.localId, seq: question.seq, authorAccountId: question.authorAccountId,
+      accountActor: question.accountActor, producerV1: null, createdAt: 1 }, messageSeq: 1, lastReadSeq: 0, unreadCount: 1,
+    unreadMentionCount: 0, recentAuthorAccountIds: [storage.account.id], archivedAt: null,
+    capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true,
+      sendToSession: true, manageAccess: true, leave: false } });
+  let readable = true;
+  f.members.delete(childId);
+  f.setServerFeatureReader(() => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+    features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } }, capabilities: {},
+  }) }));
+  f.app.addHook('onSend', async (request, _reply, payload) => {
+    if (request.url.startsWith(`/v1/sessions/${childId}/messages`)) {
+      expect(readSessionAccessAuthenticationFromRequest(request).contentDisclosureSessionId).toBe(sessionId);
+    }
+    return payload;
+  });
+  f.app.get('/v1/discussions/:discussionId', { preHandler: f.app.authenticate, config: { allowApiToken: true },
+    schema: { params: DiscussionRouteDiscussionParamsV1Schema } }, async () => ({ discussion: summary }));
+  f.app.get('/v1/discussions/:discussionId/messages', { preHandler: f.app.authenticate, config: { allowApiToken: true },
+    schema: { params: DiscussionRouteDiscussionParamsV1Schema, querystring: DiscussionMessagesQueryV1Schema } }, async (request, reply) => {
+    expect(request.query).toMatchObject({ messageId: discussionAddressing.messageId, throughSeq: 1 });
+    return readable ? { messages: [question], messageSeq: 1, hasMoreOlder: false }
+      : reply.code(403).send({ error: 'discussion_access_forbidden' });
+  });
+  try {
+    const operation = f.operation('session.transcript.get', { sessionId: childId, messageId });
+    operation.witness = { ...operation.witness, discussionAddressing };
+    const invoke = () => f.execute(operation, { sessionId, isCurrent: async () => true });
+    expect(await invoke(), JSON.stringify(f.observations)).toMatchObject({ ok: true,
+      result: { sessionId: childId, items: [{ id: messageId, text: 'Child ready' }] } });
+    const sourceReads = () => f.observations.filter(row => row.path.startsWith(`/v1/sessions/${childId}/messages`));
+    expect(sourceReads()).toHaveLength(1);
+    expect(f.observations.filter(row => row.path.startsWith('/v1/discussions/'))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: 'GET', path: `/v1/discussions/${discussionId}`, status: 200, signed: true, bearer: false }),
+      expect.objectContaining({ method: 'GET', status: 200, signed: true, bearer: false }),
+    ]));
+    readable = false;
+    expect(await invoke()).toMatchObject({ ok: false });
+    expect(sourceReads()).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+it('preserves the addressed reply policy admission under its original signed Account root', async () => {
+  const f = await fixture();
+  const admissionFailures: Array<{ name: string; frames: string[] }> = [];
+  f.app.addHook('onError', async (_request, _reply, error) => {
+    admissionFailures.push({ name: error.name, frames: error.stack?.split('\n').slice(1, 6) ?? [] });
+  });
   const discussionId = 'addressed-discussion';
   const path = `/v1/discussions/${discussionId}/participants`;
   let answerPolicy: 'when_addressed' | 'drafts_for_approval' = 'when_addressed';
@@ -588,7 +1001,9 @@ it('admits the addressed reply policy read under its original signed Account roo
       content: { v: 1, parts: [{ t: 'text', text: 'The quoted arithmetic is correct.' }] } };
     const op = f.operation('discussion.reply', input);
     const prepared = await f.prepare(op, { v: 1, caller: op.witness.agentStartCaller,
-      sourceTurnId: 'turn', sourceInputId: 'input', callerPermissionMode: null, requestId: op.requestId });
+      sourceTurnId: 'turn', sourceInputId: 'input', callerPermissionMode: null, requestId: op.requestId }).catch(error => {
+        throw new Error(`Signed Discussion original admission failed: ${JSON.stringify({ observations: f.observations, admissionFailures })}`, { cause: error });
+      });
     if (!prepared) throw new Error('Missing original Discussion reply root');
     const source = { sourceSessionId: sessionId, sourceTurnId: 'turn', sourceInputId: 'input', via: 'action' as const,
       discussionAddressing: { discussionId, messageId: 'question', throughSeq: 2, participantSessionId: sessionId } };
@@ -607,19 +1022,14 @@ it('admits the addressed reply policy read under its original signed Account roo
     const bound = await bindDiscussionDraftReply({ actionId: op.actionId, input, context, serverId, discussionAction });
     const reads = f.observations.filter(row => row.path === path);
     expect({ bound, reads }).toMatchObject({ bound: { actionId: 'discussion.reply', input, context },
-      reads: [{ method: 'GET', path, status: 200, signed: true, bearer: false }] });
+      reads: [] });
     expect(bound).not.toHaveProperty('failure');
-    // The original root remains unchanged after the persisted participant
-    // policy changes. A signed recheck must refuse, not normalize new operands
-    // beneath the old signature or reuse the earlier policy observation.
+    // A policy change applies at the next publication admission. Binding an
+    // already signed original neither rereads policy nor rewrites its operands.
     answerPolicy = 'drafts_for_approval';
     const changed = await bindDiscussionDraftReply({ actionId: op.actionId, input, context, serverId, discussionAction });
-    expect(changed).toMatchObject({ actionId: 'discussion.reply', input, context,
-      failure: { ok: false, errorCode: 'discussion_content_unavailable' } });
-    expect(f.observations.filter(row => row.path === path)).toEqual([
-      { method: 'GET', path, status: 200, signed: true, bearer: false },
-      { method: 'GET', path, status: 200, signed: true, bearer: false },
-    ]);
+    expect(changed).toEqual({ actionId: 'discussion.reply', input, context });
+    expect(f.observations.filter(row => row.path === path)).toEqual([]);
   } finally { await f.close(); }
 });
 
@@ -632,6 +1042,66 @@ it('classifies the actual contributed Account definition before requiring Machin
       action: { pluginId: f.authoredAccount!.pluginId, localId: 'echo' }, input: { key: 'receiver' },
     }), { sessionId, isCurrent: async () => true });
     expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { key: 'receiver', surface: 'agent' } });
+    expect(f.observations.some(observation => observation.path.includes('action.invoke/execution-authorization'))).toBe(false);
+  } finally { await f.close(); }
+});
+
+it.each([
+  { executionRunTargetMachineId: undefined, expectedMachineId: 'session-source-machine' },
+  { executionRunTargetMachineId: 'run-source-machine', expectedMachineId: 'run-source-machine' },
+])('retains the host-selected Machine for a Session Account aggregate source ($expectedMachineId)', async ({ executionRunTargetMachineId, expectedMachineId }) => {
+  const f = await fixture(1, undefined, false, true, true, undefined,
+    { sessionMachineId: 'session-source-machine', ...(executionRunTargetMachineId ? { executionRunTargetMachineId } : {}) });
+  const inputSchema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
+  const resultSchema = defineProtocolObject({ key: defineProtocolString(), machine: defineProtocolLiteral(true) }, { policy: 'closed' });
+  const protocol = defineContributionProtocol({ id: 'session-account-machine-read', version: 1, operations: {
+    read: { required: true, input: { kind: 'protocolDefined', schema: inputSchema }, resultSchema,
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
+  } });
+  const provider = definePlugin({ id: 'acme.account-source-provider', version: '1.0.0', actions: {
+    read: { title: 'Read Session provider', surfaces: ['plugin'], dangerLevel: 'safe', inputSchema, resultSchema,
+      run: async ({ key }) => ({ key, machine: true as const }) },
+  }, contributesTo: { 'acme.account-actions': { sources: {
+    provider: protocol.contribute({ operations: { read: protocol.operations.read.bind('read') } }),
+  } } } });
+  const manifest = normalizePluginManifestV2(provider.manifest);
+  const source = DaemonPluginTargetedSourceDeclarationV1Schema.parse({ manifest: { id: manifest.id, contributes: {
+    actions: manifest.contributes.actions, pluginContributionPoints: [],
+    targetedPluginContributions: manifest.contributes.targetedPluginContributions, ui: { renderers: [] },
+  } }, occurrenceId: 'session-provider-occurrence', sourceCustody: {
+    kind: 'managed', immutableGenerationId: 'session-provider-generation', installSource: 'archive',
+  } });
+  let sourceReads = 0;
+  const selectedMachines: string[] = [];
+  // Machine RPC is the external boundary. The authored Account handler,
+  // source declarations, placement, caller admission and strict wire stay real.
+  vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+    selectedMachines.push(request.machineId);
+    expect(request.requireCurrentMachine).toBe(true);
+    if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+      return DaemonPluginUiTargetedContributionsReadResponseSchema.parse({ status: 'sourceDeclarations',
+        pluginId: f.authoredAccount!.pluginId, sourceDeclarations: [source] });
+    }
+    expect(request.method).toBe(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+    expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.request)).toMatchObject({
+      machineId: expectedMachineId, qualifiedActionId: `${manifest.id}/read`,
+      input: { key: 'pr-status' }, expectedContributorOccurrenceId: source.occurrenceId,
+      invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId: f.authoredAccount!.pluginId,
+        contributionLocalId: 'source', sourceCustody: { kind: 'account_release' } } },
+    });
+    sourceReads++;
+    return { ok: true, result: { key: 'pr-status', machine: true } };
+  });
+  vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } },
+    capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } })));
+  try {
+    const outcome = await f.execute(f.operation('action.invoke', {
+      action: { pluginId: f.authoredAccount!.pluginId, localId: 'source' }, input: { key: 'pr-status' },
+    }), { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { key: 'pr-status', machine: true } });
+    expect(selectedMachines.length).toBeGreaterThan(0);
+    expect(selectedMachines.every(machineId => machineId === expectedMachineId)).toBe(true);
+    expect(sourceReads).toBe(1);
     expect(f.observations.some(observation => observation.path.includes('action.invoke/execution-authorization'))).toBe(false);
   } finally { await f.close(); }
 });
@@ -879,13 +1349,17 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
   await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31002, capability: 'B'.repeat(43) });
   const previousAuthorityPath = process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE;
   process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE = path;
+  const backendTarget = resolveBackendTargetFromSessionMetadata({ flavor: 'codex' });
+  if (!backendTarget) throw new Error('Missing native Agent target fixture');
   const startContext = resolveCliAgentStartContextV1({ sessionId, machineId: storage.state.machineId,
-    directory: '/tmp', backendTarget: resolveBackendTargetFromSessionMetadata({ flavor: 'codex' }),
+    directory: '/tmp', backendTarget,
     metadata: {}, starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings: accountSettingsParse({}),
+    appliedChildSelection: { status: 'applied', backendTarget, modelId: inheritedCodexInput.modelSelection.ref.modelId,
+      modelSelection: inheritedCodexInput.modelSelection.ref, connectedServices: null },
     roles: resolveRolesSnapshotV1({ defaultEngine: { agentTargetKey: inheritedCodexInput.modelSelection.ref.agentTargetKey,
       modelId: inheritedCodexInput.modelSelection.ref.modelId } }),
   });
-  if (!startContext) throw new Error('Missing real CLI caller facts');
+  if (!startContext || 'ok' in startContext) throw new Error('Missing real CLI caller facts');
   // Native process creation is the effect boundary. Keep both parsers, caller
   // projection, admission, requester producer and actual Home authorization real.
   const spawn = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
@@ -1108,7 +1582,9 @@ it('stops a led child through the real requester RPC receiver and preserves rece
     expect(requesterResults).toContainEqual({ ok: true, result: { ok: true, sessionId: childId, stopped: true } });
     receiverDisabled = true;
     transport.mockClear();
-    expect(await run()).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    const disabledResult = await run();
+    expect(disabledResult, JSON.stringify({ disabledResult, receiverResults, requesterResults, observations: f.observations.slice(-12) }))
+      .toMatchObject({ ok: false, errorCode: 'action_disabled' });
     expect(effects).toEqual([childId]);
     receiverDisabled = false;
     receiverMembershipLost = true;
@@ -1255,7 +1731,8 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
     expect(signed.some(row => row.path === '/v2/sessions/query')).toBe(true);
     expect(signed.every(row => !row.bearer && (row.status === 200
       || actionId === 'session.archive' && row.path.endsWith('/archive') && row.status === 409)), JSON.stringify(signed)).toBe(true);
-    const targetReads = f.observations.filter(row => row.path === `/v2/sessions/${childId}`);
+    const targetReads = f.observations.filter(row => row.path === `/v2/sessions/${childId}`
+      || row.path === '/v2/sessions/read-batch' && row.sessionIds?.includes(childId));
     expect(targetReads.length).toBeGreaterThan(0);
     expect(targetReads.every(row => row.signed && !row.bearer)).toBe(true);
     if (actionId === 'session.stop') {

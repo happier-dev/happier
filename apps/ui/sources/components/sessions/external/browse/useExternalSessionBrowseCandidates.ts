@@ -4,14 +4,17 @@ import { ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/proto
 import type {
     ExternalSessionActivityV1,
     ExternalSessionCandidateThreadV1,
+    ExternalSessionsCandidatesListResponse} from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type {
     ExternalSessionsAgentId,
-    ExternalSessionsCandidatesListResponse,
-    ExternalSessionsSource,
+    ExternalSessionsSource} from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type {
     PluginAgentExternalSessionLinkData,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import {
@@ -202,12 +205,14 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     searchTerm?: string;
     /** Exact selected Home credentials; legacy browser callers retain the active Account fence. */
     accountLifetime?: ServerAccountScopeLifetime;
+    /** A mounted Browse retains its originating caller; this listing owns cancellation. */
+    callerContext?: ActionExecutorContext;
     /** List the Agent's internal threads too (the "Sub-agent threads" filter). */
     includeThreads?: boolean;
     enabled?: boolean;
 }>) {
     const presentationActive = useLayoutPresentationActive();
-    const { accountLifetime, machineId, providerId, searchTerm, source, serverId } = params;
+    const { accountLifetime, callerContext, machineId, providerId, searchTerm, source, serverId } = params;
     const accountScope = accountLifetime?.scope;
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const includeThreads = params.includeThreads === true;
@@ -316,6 +321,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     const loadCandidates = React.useCallback(async (opts?: Readonly<{
         continuation?: CandidateContinuation;
         append?: boolean;
+        callerContext?: ActionExecutorContext;
     }>) => {
         const append = opts?.append === true;
         const requestedContinuation = opts?.continuation ?? null;
@@ -476,7 +482,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 ...(includeThreads ? { includeThreads: true } : {}),
             };
             const result = await execute('sessions.external.candidates.list', request, {
-                surface: 'ui',
+                ...(opts?.callerContext ?? callerContext ?? { surface: 'ui' as const }),
                 ...(serverId ? { serverId } : {}),
                 ...(accountScope ? { expectedAccountId: accountScope.accountId } : {}),
                 signal: abortController.signal,
@@ -706,7 +712,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     scopeKey: currentScopeKey,
                     continuations: new Set<string>(),
                 };
-                await loadCandidates();
+                await loadCandidates({ callerContext: opts?.callerContext });
                 return;
             }
 
@@ -805,7 +811,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 }
             }
         }
-    }, [accountLifetime, accountScope, currentListingKey, currentScopeKey, effectiveSearchTerm, enabled, execute, includeThreads, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
+    }, [accountLifetime, accountScope, callerContext, currentListingKey, currentScopeKey, effectiveSearchTerm, enabled, execute, includeThreads, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
 
     React.useEffect(() => {
         void loadCandidates();
@@ -819,9 +825,9 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         activePageRequestKeysRef.current.clear();
     }, []);
 
-    const loadMore = React.useCallback(async () => {
+    const loadMore = React.useCallback(async (callerContext?: ActionExecutorContext) => {
         if (!nextPage || loadingMore) return;
-        await loadCandidates({ continuation: nextPage, append: true });
+        await loadCandidates({ continuation: nextPage, append: true, callerContext });
     }, [loadCandidates, loadingMore, nextPage]);
     const cancelPreparation = React.useCallback(() => {
         loadGenerationRef.current += 1;

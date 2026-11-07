@@ -8,8 +8,9 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '../collection/CollectionList.js
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_BALANCED_TEXT_WRAP } from '../text/balancedTextWrap.js';
 import type { HappierTone } from '../semantics.js';
-import { HappierDisclosureToggle } from '../collection/DisclosureToggle.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
+import { HappierDisclosureToggle, type HappierDisclosureToggleProps } from '../collection/DisclosureToggle.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 export type HappierSurfaceStateKind = 'empty' | 'loading' | 'success' | 'error' | 'warning' | 'unavailable' | 'denied';
 
@@ -89,17 +90,21 @@ export function HappierStateLine(props: Readonly<{
   // In a body that draws its own content edge (a widget body) the line stands on that edge.
   const onBodyEdge = useContext(HappierBodyEdgeContext);
   // The glyph sits in the leading column of the rows around it, so the sentence starts on their titles'
-  // edge: a menu's icon box, a page section's leading column, or a collection row's glyph box.
+  // edge: a menu's icon box, a page section's leading column, or a collection row's glyph box. A body that
+  // draws its own edge has no glyph column, so there the glyph itself stands on that edge.
   const glyphColumn = menu
     ? { boxPx: HAPPIER_MENU_ROW_METRICS.iconBoxSizePx, gapPx: HAPPIER_MENU_ROW_METRICS.iconMarginRightPx }
+    : onBodyEdge
+      ? { boxPx: metrics.glyphPx, gapPx: metrics.gapPx }
     : pageSection
       ? { boxPx: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, gapPx: HAPPIER_PAGE_METRICS.rowLeadingGapPx }
       : { boxPx: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, gapPx: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap };
   return (
     <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={{
       minHeight: menu ? HAPPIER_MENU_ROW_METRICS.minHeightPx : metrics.minHeightPx,
+      // A menu row stands inset in its list and then pads its content, so a line among them sits on that same edge.
       paddingHorizontal: menu
-        ? HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx
+        ? HAPPIER_MENU_ROW_METRICS.insetPx + HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx
         : onBodyEdge
           ? 0
           : pageSection?.rowInsetPx
@@ -137,7 +142,10 @@ export function HappierStateLine(props: Readonly<{
   );
 }
 
-/** Disclosure lifetime and keyboard semantics are shared; text and glyphs remain host bindings. */
+/**
+ * A state's diagnostic, folded behind the shared in-place disclosure ("› Details"). The open bit is local; the code
+ * appears in place. The caret, label text and code are host bindings; the toggle is {@link HappierDisclosureToggle}.
+ */
 export function HappierStateDetails(props: Readonly<{
   testID?: string;
   markerTestID?: string;
@@ -149,25 +157,28 @@ export function HappierStateDetails(props: Readonly<{
   renderLabel?: (label: string) => ReactNode;
   focusColor?: string;
   renderDetails?: (details: string) => ReactNode;
+  /** Bind the existing disclosure intent without moving its open state into the adapter. */
+  renderToggle?: (props: HappierDisclosureToggleProps) => ReactNode;
   /** `start` for a state that stands on a left edge (an inline state): the disclosure joins that edge. */
   align?: 'start' | 'center';
 }>) {
   const start = props.align === 'start';
   const [open, setOpen] = useState(false);
+  const toggleProps: HappierDisclosureToggleProps = {
+    testID: props.testID ? `${props.testID}-details-toggle` : undefined,
+    label: props.label,
+    open,
+    onPress: () => setOpen(value => !value),
+    caret: props.renderCaret(open),
+    renderLabel: props.renderLabel,
+    focusColor: props.focusColor,
+    align: start ? 'start' : 'center',
+    // The action above owns the gap: the toggle's hit area never reaches back into it.
+    hitReach: { top: 0 },
+  };
   return (
   <View testID={props.markerTestID} style={{ alignItems: start ? 'flex-start' : 'center', marginTop: start ? 4 : 12, gap: 6 }}>
-    <HappierDisclosureToggle
-      testID={props.testID ? `${props.testID}-details-toggle` : undefined}
-      label={props.label}
-      open={open}
-      onPress={() => setOpen((value) => !value)}
-      caret={props.renderCaret(open)}
-      renderLabel={props.renderLabel}
-      focusColor={props.focusColor}
-      align={start ? 'start' : 'center'}
-      // The action above it owns the gap between them: the toggle's own hit area never reaches back up into it.
-      hitReach={{ top: 0 }}
-    />
+    {props.renderToggle ? props.renderToggle(toggleProps) : <HappierDisclosureToggle {...toggleProps} />}
     {open ? props.renderDetails?.(props.details) ?? <HappierText testID={props.testID ? `${props.testID}-details-code` : undefined} variant="code" tone="secondary" selectable style={{ textAlign: 'center' }}>{props.details}</HappierText> : null}
   </View>
   );
@@ -195,6 +206,7 @@ export function HappierFreshnessLine(props: Readonly<{
   lead?: ReactNode;
 }>) {
   const metrics = HAPPIER_FRESHNESS_LINE_METRICS;
+  const paintColor = useHappierMaterialColorResolver();
   const chip = props.presentation === 'chip';
   const plain = chip || props.onSheet === true;
   return (
@@ -208,7 +220,7 @@ export function HappierFreshnessLine(props: Readonly<{
       paddingLeft: plain ? 0 : metrics.paddingStartPx,
       paddingRight: plain ? 0 : metrics.paddingEndPx,
       paddingVertical: chip ? 0 : metrics.paddingVerticalPx,
-      backgroundColor: plain ? 'transparent' : props.colors.background,
+      backgroundColor: plain ? 'transparent' : paintColor(props.colors.background),
       borderTopWidth: plain ? 0 : StyleSheet.hairlineWidth,
       borderBottomWidth: plain ? 0 : StyleSheet.hairlineWidth,
       borderColor: props.colors.border,

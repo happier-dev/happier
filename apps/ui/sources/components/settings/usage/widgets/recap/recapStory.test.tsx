@@ -1,12 +1,31 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { t } from '@/text';
 import { buildUsageAnalyticsViewModel, type UsageFilterState } from '@/sync/api/account/usageAnalytics';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { buildRecapStorySlides } from '@/sync/domains/usage/recap/buildRecapStorySlides';
 import { RecapStorySurface } from './RecapStorySurface';
+
+let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+let reader: CurrentUiContextReader | null = null;
+async function renderStory(children: React.ReactNode) {
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://recap-story.test', accountId: 'a' }], route: () => undefined });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    function Reader() { reader = useOptionalCurrentUiContextReader(); return null; }
+    return renderMountedCurrentUiContext(<><Reader />{children}</>);
+}
+afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; reader = null; });
 
 const filters: UsageFilterState = {
     period: '30days',
@@ -103,7 +122,7 @@ describe('recap story mode (L6 T4)', () => {
         const viewModel = buildUsageAnalyticsViewModel(response, filters);
         const onDismiss = vi.fn();
 
-        const screen = await renderScreen(React.createElement(RecapStorySurface, {
+        const screen = await renderStory(React.createElement(RecapStorySurface, {
             viewModel,
             filters,
             cacheSavings: viewModel.cacheSavings,
@@ -113,7 +132,10 @@ describe('recap story mode (L6 T4)', () => {
         expect(screen.findByTestId('usage-recap-story-slide-usage')).toBeTruthy();
         expect(screen.findByTestId('usage-recap-story-share')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('usage-recap-story-forward');
+        const forward = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.continue'));
+        expect(forward).toBeDefined();
+        await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+            input: { commandId: forward!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
         expect(screen.findByTestId('usage-recap-story-slide-streak')).toBeTruthy();
 
         await screen.pressByTestIdAsync('usage-recap-story-back');
@@ -133,14 +155,14 @@ describe('recap story mode (L6 T4)', () => {
         const viewModel = buildUsageAnalyticsViewModel(response, filters);
         const onDismiss = vi.fn();
 
-        const screen = await renderScreen(React.createElement(RecapStorySurface, {
+        const screen = await renderStory(React.createElement(RecapStorySurface, {
             viewModel,
             filters,
             cacheSavings: viewModel.cacheSavings,
             onDismiss,
         }));
 
-        screen.pressByTestId('usage-recap-story-close');
+        await screen.pressByTestIdAsync('usage-recap-story-close');
         expect(onDismiss).toHaveBeenCalledTimes(1);
     });
 });

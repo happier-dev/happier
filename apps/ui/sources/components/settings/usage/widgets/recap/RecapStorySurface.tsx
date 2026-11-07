@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { Pressable, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -35,6 +37,7 @@ import { usageSignatureAccent, withUsageAccentAlpha } from '../../usageAccent';
 import { formatIdentifierLabel } from '@/utils/format/usageNumbers';
 import { buildRecapStorySlides, type RecapStorySlide, type RecapStorySlideId } from '@/sync/domains/usage/recap/buildRecapStorySlides';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /**
  * Opt-in recap story mode (L6 T4) — the ONLY place the theatrical layer lives.
@@ -52,7 +55,7 @@ export type RecapStorySurfaceProps = Readonly<{
     cacheSavings: UsageCacheSavingsViewModel | null;
     sessionId?: string;
     onDismiss?: () => void;
-    onShare?: () => void;
+    onShare?: (context?: ActionExecutorContext) => void;
     testID?: string;
 }>;
 
@@ -273,9 +276,16 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
         setIndex((current) => Math.max(0, current - 1));
     }, []);
 
-    const share = React.useCallback(() => {
-        props.onShare?.();
+    const share = React.useCallback((context?: ActionExecutorContext) => {
+        props.onShare?.(context);
     }, [props.onShare]);
+    const commands = useCurrentUiContextLocalCommands(slide ? [
+        { key: 'forward', title: t('common.continue'), invoke: goForward },
+        { key: 'back', title: t('common.back'), invoke: goBack },
+        ...(props.onShare ? [{ key: 'share', title: t('usage.recap.shareImage'),
+            invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => share(context) }] : []),
+        ...(props.onDismiss ? [{ key: 'close', title: t('common.close'), invoke: props.onDismiss }] : []),
+    ] : [], { foregroundOverlay: true });
 
     if (!slide) {
         return null;
@@ -323,7 +333,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
     }
 
     return (
-        <StorySheetFrame testID={props.testID ?? 'usage-recap-story'} onDismiss={props.onDismiss}>
+        <StorySheetFrame testID={props.testID ?? 'usage-recap-story'} onDismiss={() => { void commands.invoke('close'); }}>
             <View style={styles.root}>
                 <View style={styles.controls}>
                     <Pressable
@@ -331,7 +341,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
                         accessibilityRole="button"
                         accessibilityLabel={t('usage.recap.shareImage')}
                         style={styles.controlButton}
-                        onPress={share}
+                        onPress={() => { void commands.invoke('share'); }}
                     >
                         <Icon name="share" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
@@ -340,7 +350,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
                         accessibilityRole="button"
                         accessibilityLabel={t('common.close')}
                         style={styles.controlButton}
-                        onPress={() => props.onDismiss?.()}
+                        onPress={() => { void commands.invoke('close'); }}
                     >
                         <Icon name="x" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
@@ -400,14 +410,14 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
                             accessibilityRole="button"
                             accessibilityLabel={t('common.back')}
                             style={styles.tapZoneBack}
-                            onPress={goBack}
+                            onPress={() => { void commands.invoke('back'); }}
                         />
                         <Pressable
                             testID="usage-recap-story-forward"
                             accessibilityRole="button"
                             accessibilityLabel={t('common.continue')}
                             style={styles.tapZoneForward}
-                            onPress={goForward}
+                            onPress={() => { void commands.invoke('forward'); }}
                         />
                     </View>
                 </View>

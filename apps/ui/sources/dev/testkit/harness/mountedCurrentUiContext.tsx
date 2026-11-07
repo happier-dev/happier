@@ -11,6 +11,12 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
+import { ModalProvider } from '@/modal/ModalProvider';
+
+type MountedCurrentUiContextOptions = Pick<RenderWithAppProvidersOptions, 'createNodeMock'> & Readonly<{
+    /** Match AppShell's host order so the current-context reader observes the foreground modal. */
+    withModalProvider?: boolean;
+}>;
 
 function ActionPort() {
     const reader = useOptionalCurrentUiContextReader();
@@ -23,18 +29,29 @@ function ActionPort() {
 }
 
 /** Real mounted command publication and Action port. Install Home/Socket boundaries before importing. */
-export async function renderMountedCurrentUiContext(children: React.ReactNode, options?: Pick<RenderWithAppProvidersOptions, 'createNodeMock'>) {
+export async function createMountedCurrentUiContextWrapper(options?: Pick<MountedCurrentUiContextOptions, 'withModalProvider'>) {
     const authority = captureActiveServerAccountScopeLifetime();
     if (!authority) throw new Error('Mounted command fixture requires a restored Account');
     const server = getServerProfileById(authority.scope.serverId);
     if (!server) throw new Error('Mounted command fixture requires its exact Home');
     const credentials = await TokenStorage.getCredentialsForServerUrl(server.serverUrl);
     if (!credentials) throw new Error('Mounted command fixture requires actual Account credentials');
-    return renderScreen(<InjectedAuthProvider credentials={credentials}>
-        <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+    const Wrapper = (props: React.PropsWithChildren) => {
+        const content = <CurrentUiContextProvider>
             <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
-                <ActionPort />{children}
+                <ActionPort />{props.children}
             </PluginSurfaceFocusEligibilityProvider>
-        </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
-    </InjectedAuthProvider>, options);
+        </CurrentUiContextProvider>;
+        return <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider>
+                {options?.withModalProvider ? <ModalProvider>{content}</ModalProvider> : content}
+            </AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+    };
+    return Wrapper;
+}
+
+export async function renderMountedCurrentUiContext(children: React.ReactNode, options?: MountedCurrentUiContextOptions) {
+    const { withModalProvider, ...renderOptions } = options ?? {};
+    return renderScreen(<>{children}</>, { ...renderOptions, wrapper: await createMountedCurrentUiContextWrapper({ withModalProvider }) });
 }

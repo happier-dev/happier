@@ -3,16 +3,18 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { UsageActionPorts } from '@happier-dev/protocol/actions/executor/usageActions';
 import type { UsageRecapComposed } from '@happier-dev/protocol/usage/usageRecap';
-import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { Modal, type CustomModalConfig, type CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { captureUsageViewPng } from '../../usageImageFile';
 import { UsageStatCard } from './UsageStatCard';
 import { buildUsageStatCardModel } from './usageStatCardModel';
 
-type RenderResult = Awaited<ReturnType<NonNullable<UsageActionPorts['renderRecap']>>>;
+type RenderRecap = NonNullable<UsageActionPorts['renderRecap']>;
+type RenderResult = Awaited<ReturnType<RenderRecap>>;
 
 /** A client-only mounted renderer, never an upload, clipboard or share operation. */
-export const renderUsageRecapImage: NonNullable<UsageActionPorts['renderRecap']> = (compose, context) => {
+export const renderUsageRecapImage = (compose: Parameters<RenderRecap>[0], context: Parameters<RenderRecap>[1],
+  commandBridge?: CustomModalConfig['commandBridge']): ReturnType<RenderRecap> => {
   if (context.signal?.aborted) return Promise.resolve({ kind: 'unavailable', reason: 'render_target_unavailable' });
   return new Promise(resolve => {
     let modalId = '';
@@ -28,6 +30,7 @@ export const renderUsageRecapImage: NonNullable<UsageActionPorts['renderRecap']>
     context.signal?.addEventListener('abort', cancel, { once: true });
     modalId = Modal.show({
       component: UsageRecapImageStage,
+      commandBridge,
       props: { compose, signal: context.signal, finish },
       onRequestClose: cancel,
       onHostUnmount: cancel,

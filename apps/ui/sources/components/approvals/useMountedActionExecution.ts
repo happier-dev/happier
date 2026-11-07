@@ -1,10 +1,14 @@
 import * as React from 'react';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { resumeActionExecutionResult, type ActionApprovalContinuation } from './actionApprovalContinuation';
 import { useActionApprovalContinuation } from './useActionApprovalContinuation';
-import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute, requireActionSuccess, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
@@ -13,7 +17,12 @@ import type { SystemTaskRunner } from '@/components/systemTasks/types';
 const onExecuted = () => {};
 const retired = (): ActionExecuteResult => ({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
 type MountedExecutorOptions = Omit<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>, 'onBlockingApprovalPending'>;
-type MountedOperation = UiActionOperation & Readonly<{ retainInvocation?: true; executorOptions?: MountedExecutorOptions }>;
+type MountedOperation = UiActionOperation & Readonly<{ retainInvocation?: true; executorOptions?: MountedExecutorOptions;
+    /** Deliver an input admission receipt to its durable draft owner after navigation. */
+    retainEffectResult?: true;
+    /** A mounted command retains its caller; the nested Action owns fresh admission and approval. */
+    callerContext?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'actionCaller' | 'signal' | 'approvalProfileId' | 'defaultSessionId' | 'callerPermissionMode' | 'callerInputConstraints' | 'workspaceWrites'>;
+    onApprovalPending?: () => void }>;
 
 /** Reconnect a mounted author's original public Action to its typed approval result. */
 export function useMountedActionExecution(scopeOrHome: ServerAccountScope | string | null | undefined,
@@ -45,7 +54,6 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         current: () => boolean, fallbackSignal: AbortSignal,
         pending: Readonly<{ artifactId: string; signal?: AbortSignal }>) => {
         if (!current()) return;
-        // The executor retains its live input/result; this registration presents that same Artifact.
         const registration: ActionApprovalContinuation = {
             artifactId: pending.artifactId, scope: capturedBinding.scope, refreshAfterExecution: false,
             signal: pending.signal ?? fallbackSignal, onExecuted: async () => 'ignored',
@@ -65,17 +73,34 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
     // lifetime. The same invocation engine owns admission, approval custody and retirement.
     const executeCaptured = React.useCallback(async (capturedBinding: ServerCredentialAccountScopeBinding,
         actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<ActionExecuteResult> => {
+        // Once admitted, every Settings mutation belongs to the executor's captured
+        // Account/credential lifetime, not the author's view or projection binding.
+        const accountWrite = actionId === 'settings.set' || actionId === 'settings.reset';
+        const retainInvocation = accountWrite || Boolean(operation?.executorOptions) || (operation?.retainInvocation ?? options?.retainInvocation);
+        // A durable draft keeps its effect acknowledgement after navigation. Live-only
+        // delivery ports and approval presentation still belong to the invoking view.
+        const retainEffect = accountWrite || (operation?.retainEffectResult === true && !retainInvocation
+            && isActionEffectResult(getActionSpec(actionId).sideEffectClass));
+        const executionLifetime = retainEffect ? readServerAccountScopeOwnerLifetime(capturedBinding) : capturedBinding;
+        // Dispatch and its pending recipient retain the same operands, not a later caller draft.
+        let capturedInput = input;
+        try { capturedInput = projectNativeJsonValueForTransport(input); } catch { /* The Action input owner reports invalid JSON. */ }
         const capturedScope = capturedBinding.scope;
+        // Retained approval custody requires a concrete signal even without a caller signal.
         const retirement = new AbortController();
-        const subscription = capturedBinding.onRetire(() => retirement.abort());
-        const cancellation = mergeAbortSignals([lifetime.controller.signal, retirement.signal, operation?.signal]);
-        const invocationCurrent = () => capturedBinding.isCurrent() && !cancellation.signal.aborted;
-        if (!invocationCurrent()) { subscription.dispose(); cancellation.dispose(); return retired(); }
+        const subscription = accountWrite ? undefined : executionLifetime.onRetire(() => retirement.abort());
+        const cancellation = mergeAbortSignals([retainEffect ? undefined : lifetime.controller.signal,
+            retirement.signal, operation?.signal, operation?.callerContext?.signal]);
+        const invocationCurrent = () => (accountWrite || capturedBinding.isCurrent()) && !cancellation.signal.aborted;
+        if (!capturedBinding.isCurrent() || cancellation.signal.aborted) { subscription?.dispose(); cancellation.dispose(); return retired(); }
         const frontDoorOptions = {
             ...options?.executorOptions,
             ...operation?.executorOptions,
             homeRuntimeRunner: operation?.executorOptions?.homeRuntimeRunner ?? options?.runner ?? options?.executorOptions?.homeRuntimeRunner,
-            onBlockingApprovalPending: ({ artifactId, signal }: Readonly<{ artifactId: string; signal?: AbortSignal }>) => {
+            onBlockingApprovalPending: ({ artifactId, signal }: Readonly<{
+                artifactId: string; signal?: AbortSignal }>) => {
+                if (!invocationCurrent()) return;
+                operation?.onApprovalPending?.();
                 presentBlockingApproval(capturedBinding, invocationCurrent, cancellation.signal, { artifactId, signal });
             },
         };
@@ -83,20 +108,28 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         // The admitted input includes the draft's original CAS. Never recapture it after approval.
         // Await the initial operation directly: later retirement cannot retract a durable ACK.
         // Per-invocation delivery ports cannot be reconstructed from a serialized approval input.
-        const retainInvocation = Boolean(operation?.executorOptions) || (operation?.retainInvocation ?? options?.retainInvocation);
+        // Live-only operands/ports need their invoking view. A serializable write's
+        // durable approval does not become live-only merely because it has an effect.
         const invoke = !retainInvocation && capturedBinding === binding && areServerAccountScopesEqual(capturedScope, scope)
             ? frontDoor : createFrontDoorActionExecute(undefined, { ...frontDoorOptions,
                 ...(retainInvocation ? {
                     hostActionApprovalLifetime: { actionId, signal: cancellation.signal, surface: 'ui' as const },
                 } : {}),
             });
-        const result = await invoke(actionId, input, {
-            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        const result = await (operation?.confirmed ? invoke.confirmed : invoke)(actionId, capturedInput, {
+            ...(operation?.callerContext ? {
+                surface: operation.callerContext.surface, callerSurface: operation.callerContext.callerSurface,
+                authority: operation.callerContext.authority, actionCaller: operation.callerContext.actionCaller,
+                approvalProfileId: operation.callerContext.approvalProfileId, defaultSessionId: operation.callerContext.defaultSessionId,
+                callerPermissionMode: operation.callerContext.callerPermissionMode, callerInputConstraints: operation.callerContext.callerInputConstraints,
+                workspaceWrites: operation.callerContext.workspaceWrites,
+            } : { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } }),
             serverId: capturedScope.serverId, expectedAccountId: capturedScope.accountId,
             signal: cancellation.signal,
             ...(operation?.defaultSessionId ? { defaultSessionId: operation.defaultSessionId } : {}),
             ...(operation?.actionRequestId ? { actionRequestId: operation.actionRequestId } : {}),
             ...(operation?.onTransportIssued ? { onTransportIssued: operation.onTransportIssued } : {}),
+            ...(operation?.sessionMessageDisplayText !== undefined ? { sessionMessageDisplayText: operation.sessionMessageDisplayText } : {}),
             ...(operation?.isPluginSettingsIntentCurrent ? { isPluginSettingsIntentCurrent: operation.isPluginSettingsIntentCurrent } : {}),
             ...(operation?.presentUserConfirmation ? { presentUserConfirmation: operation.presentUserConfirmation } : {}),
             ...(operation?.executionRunTargetMachineId ? { executionRunTargetMachineId: operation.executionRunTargetMachineId } : {}),
@@ -104,14 +137,17 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
             ...(operation?.externalActionTarget ? { externalActionTarget: operation.externalActionTarget } : {}),
             ...(operation?.openRoute ? { openRoute: operation.openRoute } : {}),
             ...(operation?.reviewPublicProfilePreparedAction ? { reviewPublicProfilePreparedAction: operation.reviewPublicProfilePreparedAction } : {}),
+            ...(operation?.capturePublicProfilePreview ? { capturePublicProfilePreview: operation.capturePublicProfilePreview } : {}),
+            ...(operation?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: operation.publicProfilePreviewAdmission } : {}),
         });
         if (!result.ok) return result;
         const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         if (!pending.success) return result;
         if (!invocationCurrent()) return retired();
-        return await resumeActionExecutionResult({ result, actionId, actionInput: input, scope: capturedScope,
+        return await resumeActionExecutionResult({ result, actionId, actionInput: capturedInput, scope: capturedScope,
             signal: cancellation.signal, ...(operation?.actionRequestId ? { requestId: operation.actionRequestId } : {}),
             onApprovalPending: registration => {
+                operation?.onApprovalPending?.();
                 approval.requestApproval(registration);
                 options?.onApprovalPending?.(registration);
             },
@@ -119,7 +155,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         } catch (error) {
             if (!invocationCurrent()) return retired();
             throw error;
-        } finally { subscription.dispose(); cancellation.dispose(); }
+        } finally { subscription?.dispose(); cancellation.dispose(); }
     }, [approval.requestApproval, binding, frontDoor, lifetime, options?.executorOptions, options?.onApprovalPending,
         options?.retainInvocation, options?.runner, presentBlockingApproval, scope]);
     const execute = React.useCallback(async (actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<ActionExecuteResult> => {
@@ -127,7 +163,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         return executeCaptured(binding, actionId, input, operation);
     }, [binding, executeCaptured, isCurrent, scope]);
     /** Value-parsing clients unwrap only the terminal receipt delivered by this same mounted owner. */
-    const executeValue = React.useCallback(async (actionId: ActionId, input: unknown, operation?: UiActionOperation): Promise<unknown> => {
+    const executeValue = React.useCallback(async (actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<unknown> => {
         const result = await execute(actionId, input, operation);
         requireActionSuccess(result);
         return result.result;

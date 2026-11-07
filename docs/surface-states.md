@@ -68,7 +68,7 @@ The app consumes [`SurfaceStateCard`](../apps/ui/sources/components/ui/surfaces/
 
 [`SurfaceStateSizeProvider`](../apps/ui/sources/components/ui/surfaces/surfaceStateSize.tsx) sets `pane`, `details`, `page` or `phone` once at the container, or `line` for a narrow column whose states are one line under their header (the widget frame sets `line` in the Companion and other columns and `pane` on Home and Boards). `useSurfaceStateSize` still reports only the sized steps, so a line column hands plugin surfaces no size. A card's explicit size wins; outside a provider the existing unsized composition remains. `size="line"` is the compact in-list composition. Shared size/type/line metrics come from [`presentation/state/InfoState.tsx`](../packages/plugin-ui/src/presentation/state/InfoState.tsx); change that owner rather than hand-sizing a consumer.
 
-The composition itself (which parts appear, their reading order, action layout, the compact line's inline recovery, where the live region sits and when a diagnostic becomes a disclosure) has one owner: [`HappierSurfaceState`](../packages/plugin-ui/src/presentation/state/SurfaceState.tsx). `SurfaceStateCard` is core's adapter over it: it binds core typography, `RoundButton`, glyphs and the `EmptyState` tile, and keeps the content-replacement report, the iOS announcer, the "Still waiting" clock and translations private. A diagnostic disclosure stays outside the live region, so expanding Details announces nothing new.
+The composition itself (which parts appear, their reading order, action layout, the compact line's inline recovery, where the live region sits and when a diagnostic becomes a disclosure) has one owner: [`HappierSurfaceState`](../packages/plugin-ui/src/presentation/state/SurfaceState.tsx). `SurfaceStateCard` is core's adapter over it: it binds core typography, `RoundButton`, glyphs and the `EmptyState` tile, and keeps the content-replacement report, the iOS announcer, the "Still waiting" clock and translations private. A diagnostic disclosure stays outside the live region, so expanding Details announces nothing new. Its toggle is the one in-place disclosure control, [`HappierDisclosureToggle`](../packages/plugin-ui/src/presentation/collection/DisclosureToggle.tsx): a caret on the shared `HappierDisclosureTurn` rule and a quiet meta label in one button that owns the name and expanded state. Adapters bind its compact caret (`renderDetailsCaret`; plugin `State` uses `HappierDisclosureCaret`, which resolves the host's caret via `renderDisclosureCaret({ expanded, density })`) and the `details` text role. The optional `renderDetailsToggle` binding receives that toggle's existing intent and presentation props while the shared composition retains the open state. Core uses it to expose the same Details command to visible controls and agents in the mounted current context. Core's failed-Service "Review output" (`ServiceOutputDisclosure`) uses the same toggle, so the two read as one control.
 
 **The kit, one owner per state** (lab `.happier/design-lab/empty-states`, concept `es-kit`):
 
@@ -121,7 +121,11 @@ metadata under a row title in 0.3 development source. Agent and Computer Use
 rows bind their existing host primitives to that shared composition. Quiet
 states show words; warning/failure states add a coloured dot and words. Busy
 work may show its spinner alongside the trouble indicator and one inline
-recovery link. Domain state, copy and operation lifecycle remain caller-owned.
+recovery link. A finite run's row leads the line with its command (`lead`, mono,
+shortened first so the outcome stays whole) and passes `marked`, because its run
+glyph already shows the state; Project Scripts rows use this, and the run output
+page's larger status line takes its trouble inks from the same owner
+(`rowStatusToneColors`). Domain state, copy and operation lifecycle remain caller-owned.
 This compact variant preserves its truncation and independent action rather
 than becoming an announcing notice.
 
@@ -226,8 +230,8 @@ material variables. The public theme does not serialize another glass table. Emb
 use the same Elements role under the root `GlassMaterialRuntime`; `embedStyleTheme` applies their
 theme and finish through the existing theme runtime without introducing a material policy.
 An atmosphere behind the working page is a runtime input, `atmosphereBehind: none | band | wallpaper`.
-The glass paint owner clears the content plane and its inherited page background whenever a planet
-or picture is shown, under every glass setting. Background and glass are independent: Wallpaper
+The glass paint owner clears inherited page backgrounds whenever a planet or picture is shown.
+The shared main-area plane uses the reading coat described below over a picture. Background and glass are independent: Wallpaper
 keeps its full-window layout under Solid, Auto on web, inactive windows, Custom and Reduce
 Transparency. Functional surfaces retain the resolved material: title bar, sidebar, cards, widgets
 and composer stay opaque under Solid and Reduce Transparency. The atmosphere layer supplies the
@@ -235,13 +239,34 @@ page colour outside its artwork. Cards, widgets and composer consume Elements fr
 atmosphere supplies the backing input without adding a separate material decision.
 Wallpaper chrome and sidebar blur on inert sibling layers when their material allows it, using the same radius and tone
 owners; their content ancestors never acquire a backdrop filter that cuts off nested popovers.
-Session transcripts remain opaque by default even while another visible pane carries the atmosphere.
-With the atmosphere's Behind sessions option, the content owner instead supplies a sibling reading
-coat: the existing content blur and 56% light / 66% dark opacity for named translucent materials.
-Custom opacity and blur, Solid, inactive-window and Reduce Transparency resolution remain authoritative.
+In unreleased 0.3 source, Show background on selects where the atmosphere appears.
+Account settings and the startup theme read the same persisted active-Account settings before
+transport activation. These display values do not activate the Account or acknowledge
+a Settings version. A pending first picture read keeps the selected Picture with no
+record, leaving the ordinary content material visible until pixels are ready;
+only a settled absence takes the resolver's fallback.
+Every main area uses the shell content owner's sibling reading coat when the shared picture is
+shown: Sessions, Projects, Home, Inbox, Workflows, Discussions, Machines, Settings and plugin pages
+share the existing content blur and 56% light / 66% dark opacity for named
+translucent materials. Under Auto, a shown background backs that reading material on web and
+without live desktop glass, just as Wallpaper backs the title bar, rail and sidebar. A Horizon
+band backs content only; it does not change chrome. Custom opacity and blur, Solid,
+inactive-window and Reduce Transparency resolution remain authoritative. Page and pane bodies
+inherit this one coat; they add neither a reading coat nor an opaque fallback of their own.
+On a cold Session arrival, unresolved Project membership or an unread override demands no picture
+bytes. Accepted membership and the Project organization row (or a
+complete census proving inheritance) select the background through the existing atmosphere owner;
+Home's picture is not a placeholder for unknown membership. Shared Sessions use the viewer's
+Home presentation without consuming the owner's private Project census.
 Phone composers, including a selected workflow, also consume Elements; ordinary dialogs and
 sheets use the floating owner through `ModalCardFrame`.
 Native material changes replace only the background, preserving child input/scroll state.
+Shared surfaces also retain their material host when their coat is removed. In unreleased
+0.3 source, `HappierMaterialSurfaceRender` receives `noCoat: true` for a surface without a
+material role. The host keeps its root, paint layer and providers mounted, paints no material,
+and inherits its containing plane. Custom render adapters must forward that input to their
+incumbent material owner instead of returning a different component. Widget frame changes
+between card and plain therefore retain the body and header controls.
 Containing material roles reach shared and core field, row and control paint through
 `HappierMaterialRoleProvider`: opaque inner fills become theme ink over glass, while authored alpha
 fills and effective solid surfaces retain their original paint. Solid-control paint (primary fills,
@@ -384,6 +409,11 @@ Core injects device-local style, speed and pause preferences, including pending 
 ## Retained content and recovery
 
 In 0.3 development source, Plugin UI `State` consumes the `PluginUiResourceSnapshot` returned by the Resource hooks directly. An admitted value stays mounted during refresh or failure; `FreshnessLine` shows pending work or the retained failure beside recovery. Without a value, initial loading and failed reads use the shared state components, and `onRetry` invokes the consumer's canonical refresh. The consumer declares emptiness with `isEmpty`; the presentation does not infer it from Resource bytes. Standalone author `SceneArt` uses the same scene registry and mounted host renderer as empty states.
+
+In unreleased 0.3 source, a dynamic Resource can still be preparing its declared
+runtime before its first read. That pending read is loading, not an empty
+result. The Resource owner awaits preparation and exposes its failure through
+the existing read/retry path; presentation adds no preparation timeout.
 
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.
 

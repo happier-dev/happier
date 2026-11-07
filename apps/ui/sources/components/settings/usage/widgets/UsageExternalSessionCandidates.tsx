@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { matchesUsageSourceAccountingScope, type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { resolveExternalSessionBrowseTargetForQualifiedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
 import { useExternalSessionBrowseCandidates, readExternalSessionBrowseCandidateKey } from '@/components/sessions/external/browse/useExternalSessionBrowseCandidates';
 import { cancelExternalSessionCandidateOpen, openExternalSessionCandidate, type ExternalSessionCandidateOpenState } from '@/components/sessions/external/browse/openExternalSessionCandidate';
@@ -20,13 +21,16 @@ import { isMachineSelectableForFleet } from '@/sync/domains/machines/administrat
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useUsageSourcesController } from './useUsageSources';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /**
  * A page that lists several Sources asks for browsing once: each Source registers while it waits for an
  * explicit browse, and one request opens every waiting Source in the page's own scope. A Source whose
  * root or consent changes later waits again, so the request never reaches a scope the user did not see.
  */
-type OutsideBrowseRequests = Readonly<{ request: number; register: (key: string) => () => void }>;
+type OutsideBrowseRequest = Readonly<{ revision: number; callerContext?: ActionExecutorContext }>;
+type OutsideBrowseRequests = Readonly<{ request: OutsideBrowseRequest; register: (key: string) => () => void }>;
 const OutsideBrowseContext = React.createContext<OutsideBrowseRequests | null>(null);
 
 /** Vendor-backed candidate titles require consent or an explicit browse; linking never enables capture. */
@@ -40,8 +44,10 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     children?: (candidates: React.ReactNode) => React.ReactNode;
 }>) {
     const presentationActive = useLayoutPresentationActive();
+    const commandBridge = useCurrentUiContextCommandBridge();
     const projected = useDaemonMergedProjectionInputs({ machineId: props.source.machineId,
-        serverId: props.lifetime.scope.serverId, enabled: props.online && props.lifetime.isCurrent() });
+        serverId: props.lifetime.scope.serverId, enabled: props.online && props.lifetime.isCurrent(),
+        sections: DAEMON_AGENT_CATALOG_SECTIONS });
     const target = React.useMemo(() => {
         const resolved = projected.phase === 'ready' && props.source.externalSessionSource
             ? resolveExternalSessionBrowseTargetForQualifiedSource({ agent: props.source.agent,
@@ -53,23 +59,24 @@ export function UsageExternalSessionCandidates(props: Readonly<{
     const browseScope = React.useMemo(() => ({ target, sourceId: props.source.sourceId,
         machineId: props.source.machineId, lifetime: props.lifetime }), [target, props.source.sourceId,
         props.source.machineId, props.source.root.kind, props.source.root.path, props.source.consent, props.lifetime]);
-    const [browseIntent, setBrowseIntent] = React.useState<typeof browseScope | null>(null);
-    const historyAllowed = props.source.consent === 'enabled' || browseIntent === browseScope;
+    const [browseIntent, setBrowseIntent] = React.useState<Readonly<{ scope: typeof browseScope; callerContext?: ActionExecutorContext }> | null>(null);
+    const historyAllowed = props.source.consent === 'enabled' || browseIntent?.scope === browseScope;
     const pageBrowse = React.useContext(OutsideBrowseContext);
     const awaitingBrowse = !!target && !historyAllowed && props.online;
     const pageRegister = pageBrowse?.register;
     const registryKey = `${props.source.machineId}:${props.source.sourceId}`;
     React.useEffect(() => awaitingBrowse ? pageRegister?.(registryKey) : undefined, [awaitingBrowse, pageRegister, registryKey]);
-    const handledRequest = React.useRef(pageBrowse?.request ?? 0);
-    const pageRequest = pageBrowse?.request ?? 0;
+    const handledRequest = React.useRef(pageBrowse?.request);
+    const pageRequest = pageBrowse?.request;
     React.useEffect(() => {
         if (pageRequest === handledRequest.current) return;
         handledRequest.current = pageRequest;
-        if (awaitingBrowse && props.lifetime.isCurrent()) setBrowseIntent(browseScope);
+        if (awaitingBrowse && props.lifetime.isCurrent()) setBrowseIntent({ scope: browseScope, callerContext: pageRequest?.callerContext });
     }, [pageRequest]);
     const listing = useExternalSessionBrowseCandidates({ machineId: props.source.machineId,
         serverId: props.lifetime.scope.serverId, providerId: target?.agentId ?? null, source: target?.source ?? null,
-        accountLifetime: props.lifetime, enabled: !!target && historyAllowed && props.online && props.lifetime.isCurrent() });
+        accountLifetime: props.lifetime, callerContext: browseIntent?.scope === browseScope ? browseIntent.callerContext : undefined,
+        enabled: !!target && historyAllowed && props.online && props.lifetime.isCurrent() });
     const state = React.useRef<ExternalSessionCandidateOpenState>({ requestToken: 0, linkingCandidateKey: null });
     const [linking, setLinking] = React.useState<string | null>(null);
     const current = React.useRef({ target, browseScope, historyAllowed });
@@ -80,17 +87,39 @@ export function UsageExternalSessionCandidates(props: Readonly<{
         return () => { cancelExternalSessionCandidateOpen(state.current); };
     }, [browseScope, historyAllowed, presentationActive]);
     const router = useRouter();
+    const visible = props.visible !== false && !!target && props.lifetime.isCurrent();
+    const outside = visible && historyAllowed ? listing.candidates.filter(candidate => !candidate.linkedSessionId) : [];
+    const canContinue = listing.candidatesAuthoritative && props.online && linking === null;
+    const commands = useCurrentUiContextLocalCommands([
+        ...(visible && !historyAllowed && !pageBrowse && props.online ? [{ key: 'browse', title: t('externalSessions.browseTitle'),
+            invoke: (_input, context) => {
+                if (current.current.browseScope !== browseScope || !props.lifetime.isCurrent()) return false;
+                setBrowseIntent({ scope: browseScope, callerContext: context });
+            } }] : []),
+        ...(listing.candidatesAuthoritative && props.online && target ? outside.map(candidate => ({ key: `continue:${readExternalSessionBrowseCandidateKey(candidate)}`,
+            title: `${t('usage.board.sources.continueInHappier')}: ${candidate.title ?? candidate.remoteSessionId}`,
+            invoke: async (_input, context) => {
+                const outcome = await openExternalSessionCandidate({ candidate, agentId: target.agentId,
+                    source: target.source, actionsAllowed: listing.candidatesAuthoritative, offline: !props.online,
+                    isSelectionCurrent: () => current.current.browseScope === browseScope && current.current.historyAllowed && props.lifetime.isCurrent(),
+                    accountCurrentness: props.lifetime, actionContext: context, commandBridge,
+                    resolveCurrentTarget: () => props.lifetime.isCurrent() ? { machineId: props.source.machineId,
+                        serverId: props.lifetime.scope.serverId, accountId: props.lifetime.scope.accountId } : null,
+                    state: state.current, onLinkingChange: setLinking,
+                    openSession: sessionId => { router.push(buildScopedSessionRouteHref({ sessionId,
+                        serverId: props.lifetime.scope.serverId }) as Parameters<typeof router.push>[0]); },
+                });
+                return outcome === 'opened' ? { ok: true as const } : { ok: false as const, code: 'unavailable' as const };
+            } })) : []),
+        ...(outside.length && listing.nextCursor && !listing.loadingMore ? [{ key: 'next',
+            title: `${t('externalSessions.settingsTitle')}: ${t('common.next')}`, invoke: async (_input, context) => { await listing.loadMore(context); } }] : []),
+    ], { contextKey: JSON.stringify([props.source.machineId, props.source.sourceId, props.source.root, props.source.consent]) });
     // The page's explicit Browse still reaches offscreen Sources; only their drawn controls defer.
     const render = (candidates: React.ReactNode) => props.children ? props.children(candidates) : candidates;
-    if (props.visible === false || !target || !props.lifetime.isCurrent()) return render(null);
+    if (!visible) return render(null);
     if (!historyAllowed) return render(pageBrowse ? null : <View style={styles.action}><RoundButton size="small" display="inverted"
         title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`} disabled={!props.online}
-        onPress={() => {
-            if (current.current.browseScope === browseScope && props.lifetime.isCurrent()) {
-                setBrowseIntent(browseScope);
-            }
-        }} /></View>);
-    const outside = listing.candidates.filter(candidate => !candidate.linkedSessionId);
+        onPress={() => { void commands.invoke('browse'); }} /></View>);
     if (!outside.length) return render(null);
     return render(<View testID={props.testID}>
         <Text accessibilityRole="header">{t('externalSessions.settingsTitle')}</Text>
@@ -100,21 +129,12 @@ export function UsageExternalSessionCandidates(props: Readonly<{
                 <Text numberOfLines={1}>{candidate.title ?? candidate.remoteSessionId}</Text>
                 <RoundButton size="small" display="inverted" title={t('usage.board.sources.continueInHappier')}
                     testID={`${props.testID}.continue.${key}`} loading={linking === key}
-                    disabled={!listing.candidatesAuthoritative || !props.online || linking !== null}
-                    onPress={() => { void openExternalSessionCandidate({ candidate, agentId: target.agentId,
-                        source: target.source, actionsAllowed: listing.candidatesAuthoritative, offline: !props.online,
-                        isSelectionCurrent: () => current.current.browseScope === browseScope && current.current.historyAllowed && props.lifetime.isCurrent(),
-                        accountCurrentness: props.lifetime,
-                        resolveCurrentTarget: () => props.lifetime.isCurrent() ? { machineId: props.source.machineId,
-                            serverId: props.lifetime.scope.serverId, accountId: props.lifetime.scope.accountId } : null,
-                        state: state.current, onLinkingChange: setLinking,
-                        openSession: sessionId => { router.push(buildScopedSessionRouteHref({ sessionId,
-                            serverId: props.lifetime.scope.serverId }) as Parameters<typeof router.push>[0]); },
-                    }); }} />
+                    disabled={!canContinue}
+                    onPress={() => { void commands.invoke(`continue:${key}`); }} />
             </View>;
         })}
         {listing.nextCursor ? <View style={styles.action}><RoundButton size="small" display="inverted" title={t('common.next')}
-            loading={listing.loadingMore} onPress={() => { void listing.loadMore(); }} /></View> : null}
+            loading={listing.loadingMore} onPress={() => { void commands.invoke('next'); }} /></View> : null}
     </View>);
 }
 
@@ -148,16 +168,19 @@ export function UsageOutsideSessions(props: Readonly<{ serverId: string; query: 
 
 export function OutsideBrowsePage(props: Readonly<{ testID: string; children: React.ReactNode }>) {
     const [waiting, setWaiting] = React.useState<ReadonlySet<string>>(() => new Set());
-    const [request, setRequest] = React.useState(0);
+    const [request, setRequest] = React.useState<OutsideBrowseRequest>({ revision: 0 });
     const register = React.useCallback((key: string) => {
         setWaiting(previous => new Set(previous).add(key));
         return () => setWaiting(previous => { const next = new Set(previous); next.delete(key); return next; });
     }, []);
     const requests = React.useMemo(() => ({ request, register }), [request, register]);
+    const commands = useCurrentUiContextLocalCommands(waiting.size > 0 ? [{ key: 'browse',
+        title: t('externalSessions.browseTitle'), invoke: (_input, context) => setRequest(previous => ({ revision: previous.revision + 1,
+            callerContext: context })) }] : []);
     return <View testID={props.testID}>
         {waiting.size > 0 ? <View style={styles.action}><RoundButton size="small" display="inverted"
             title={t('externalSessions.browseTitle')} testID={`${props.testID}.browse`}
-            onPress={() => setRequest(count => count + 1)} /></View> : null}
+            onPress={() => { void commands.invoke('browse'); }} /></View> : null}
         <OutsideBrowseContext.Provider value={requests}>{props.children}</OutsideBrowseContext.Provider>
     </View>;
 }

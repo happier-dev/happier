@@ -1,4 +1,6 @@
 import type * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { GestureResponderEvent } from 'react-native';
 import type { SelectionListDynamicSectionCache } from './selectionListDynamicSectionCache';
 
 /**
@@ -143,8 +145,17 @@ type SelectionListOptionBase = Readonly<{
     detailContent?: SelectionListLazyVisual;
     /** Hide the compact subtitle while expanded content already shows it. */
     hideSubtitleWhenExpanded?: boolean;
-    /** Opt free disclosure content into the row gutter; default/none keeps content-owned insets. */
-    expandedContentInset?: 'row' | 'none';
+    /**
+     * `text` sets the disclosure under the row's title edge, as the row's own bottom content (Item
+     * `bottomElementInset="text"`), so its controls read as part of that row; default/none keeps
+     * content-owned insets.
+     */
+    expandedContentInset?: 'text' | 'none';
+    /**
+     * The row opens and closes its `expandedContent` in place (a "Details" row): it ends in the turning
+     * disclosure caret `Item` draws for expandable headers and reports its expanded state.
+     */
+    disclosure?: boolean;
     /**
      * When `true`, the navigation chevron is kept VISIBLE even though the row
      * also renders a `rightAccessory`. By default a right accessory suppresses
@@ -199,7 +210,7 @@ type SelectionListOptionBase = Readonly<{
 export type SelectionListOption =
     | (SelectionListOptionBase & Readonly<{
         /** When the option just selects (default), called on press / Enter. */
-        onSelect?: () => void;
+        onSelect?: (event?: GestureResponderEvent, context?: ActionExecutorContext) => void;
         openStep?: undefined;
     }>)
     | (SelectionListOptionBase & Readonly<{
@@ -226,6 +237,11 @@ export type SelectionListVirtualizedOptionSourceItem =
         sectionIndex: number;
     }>
     | Readonly<{
+        kind: 'result-hint';
+        key: string;
+        sectionIndex: number;
+    }>
+    | Readonly<{
         kind: 'option';
         key: string;
         /** Opaque source-local option position, not a public option id. */
@@ -237,6 +253,7 @@ export type SelectionListVirtualizedOptionSourceItem =
 export type SelectionListVirtualizedOptionSourceHeader = Readonly<{
     id: string;
     title?: string;
+    resultHint?: string;
     /** The title is a path or identifier, set in the mono role. */
     monoTitle?: boolean;
     count?: number;
@@ -260,6 +277,8 @@ export type SelectionListVirtualizedOptionSource = Readonly<{
     getOption: (optionIndex: number) => SelectionListOption;
     getOptionId: (optionIndex: number) => string;
     findOptionIndexById: (optionId: string) => number;
+    /** Visual row position, including section headers/hints; indexed with the inventory. */
+    findItemIndexByOptionIndex: (optionIndex: number) => number;
     getFirstFocusableOptionIndex: () => number;
     getNextFocusableOptionIndex: (currentOptionIndex: number, direction: -1 | 1) => number;
     isFocusableOptionIndex: (optionIndex: number) => boolean;
@@ -366,6 +385,8 @@ export type SelectionListDynamicSection = Readonly<{
         abortSignal: AbortSignal,
         /** Current results while the same request is still resolving; never cached as final. */
         onProgress?: (result: SelectionListDynamicSectionResolveResult) => void,
+        /** Current output for this target, so producers can retain unchanged option identities. */
+        previousOptions?: readonly SelectionListOption[],
     ) => Promise<SelectionListDynamicSectionResolveResult>;
     /**
      * Binds resolved or retained row data to this descriptor's current presentation
@@ -431,7 +452,8 @@ export type SelectionListDynamicSection = Readonly<{
      *
      * Directory/path pickers retain the default `'drill'` spatial transition.
      * High-frequency query providers use `'none'` so every keystroke remains a
-     * local result update rather than presenting as navigation into a new place.
+     * local result update rather than presenting as navigation into a new place. They also keep
+     * their last settled result visible while a refinement of the query resolves.
      */
     resultTransition?: 'drill' | 'none';
     /**
@@ -457,6 +479,8 @@ export type SelectionListSectionDescriptor =
 
 export type SelectionListStep = Readonly<{
     id: string;
+    /** Keep one flat virtualized body from the first render, including empty/multi-source search results. */
+    virtualization?: 'force';
     /** Title shown in the header area below the search row when present. */
     title?: string;
     /** Label shown inside the back chip when this step is on the stack (default uses parent step title). */
@@ -776,7 +800,7 @@ export type SelectionListFilter = Readonly<{
     selectedId?: string | null;
     /** Several choices at once: these rows are checked, the popover stays open, `onChange` gets the toggled id. */
     selectedIds?: ReadonlySet<string>;
-    onChange?: (id: string) => void;
+    onChange?: (id: string, context?: ActionExecutorContext) => void;
     /** The canonical owner's own chooser. `close` dismisses the popover. */
     renderPopoverContent?: (context: Readonly<{ close: () => void; maxHeight: number }>) => React.ReactNode;
     /** Controlled popover state, for a page state that opens the filter ("Choose another"). */
@@ -811,6 +835,8 @@ export type SelectionListFilter = Readonly<{
 }>;
 
 export type SelectionListProps = Readonly<{
+    /** Opt this mounted chooser into the current page's shared UI/agent command path. */
+    currentUiContextCommandScope?: string;
     /** `none` lays the picker flat on its host; the default paints the base surface. */
     surface?: 'base' | 'none';
     /** Root step. Pushes accumulate above this. */
@@ -935,7 +961,7 @@ export type SelectionListProps = Readonly<{
     inputValueEllipsizeMode?: SelectionListTextEllipsizeMode;
     onChangeInputValue?: (next: string) => void;
     /** Called when an option is selected (may close the popover). */
-    onSelect: (id: string, option: SelectionListOption) => void;
+    onSelect: (id: string, option: SelectionListOption, context?: ActionExecutorContext) => void;
     /**
      * Cmd/Ctrl+Enter on the focused row: the row's secondary commit ("Add and place"). Without it,
      * Cmd/Ctrl+Enter selects like Enter.
@@ -948,7 +974,7 @@ export type SelectionListProps = Readonly<{
      */
     onCommitInputValue?: (input: string) => void;
     /** Called when the user explicitly closes (Escape after stack drains). */
-    onRequestClose: () => void;
+    onRequestClose: (context?: ActionExecutorContext) => void;
     /** Render keyboard hints only with a detected hardware keyboard; false opts out even on desktop. */
     keyboardHintsEnabled?: boolean;
     /**

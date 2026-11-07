@@ -21,6 +21,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { NoticeLine } from '@/components/ui/lists/NoticeLine';
+import { Item } from '@/components/ui/lists/Item';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -57,6 +59,8 @@ import {
   type UsageCoachSnapshot,
 } from './usageCoachController';
 import { projectUsageCoachFindings, readUsageCoachState } from './usageCoachPresentation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useUsageDisclosureCommand } from './usageMountedControls';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 /** Below this body width the Overview strip's three columns would crush their titles; it lists instead. */
@@ -346,13 +350,16 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   // What the checks found, as one row of facts (lab d2coach "This week"). Savings are never summed:
   // overlapping estimates would double count, so the band counts findings and checks only.
   const checked = coach.evaluations.length - disabled.length;
+  // While the page still reads, the band keeps its three columns and claims no count: an unread check is not one
+  // that needs more evidence, and no finding yet is not zero findings.
   const summary = [
-    { key: 'findings', label: t('usage.board.coach.summaryFindings'), value: visible.length,
+    { key: 'findings', label: t('usage.board.coach.summaryFindings'), value: reading ? '—' : visible.length,
       caption: t('usage.board.coach.summaryOfChecks', { count: checked }) },
-    ...(props.slice.accounting ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: countUsageCheckedSessions(coach.sessionCoverage) ?? '—',
-      caption: usagePeriodPhrase(props.query) }] : []),
-    { key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: insufficient.length,
-      caption: clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined },
+    { key: 'sessions', label: t('usage.board.coach.summarySessions'),
+      value: reading || !props.slice.accounting ? '—' : countUsageCheckedSessions(coach.sessionCoverage) ?? '—',
+      caption: usagePeriodPhrase(props.query) },
+    { key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: reading ? '—' : insufficient.length,
+      caption: !reading && clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined },
     ...(disabled.length ? [{ key: 'disabled', label: t('usage.board.coach.summaryOff'), value: disabled.length }] : []),
   ];
   // On Overview the Coach is a strip of up to three findings (lab wgusage-CD); its own view lists all.
@@ -474,6 +481,20 @@ function UsageCoachDigestSuggestionRow(props: Readonly<{
   const approval = snapshot.approval?.evidenceKey === suggestion.queryKey ? snapshot.approval : null;
   const error = snapshot.error?.evidenceKey === suggestion.queryKey;
   const created = snapshot.digest?.queryKey === suggestion.queryKey ? snapshot.digest.result : null;
+  const canConfigure = controller !== null && !snapshot.retired && !pending;
+  const commands = useCurrentUiContextLocalCommands([
+    ...(!created && canConfigure ? [{ key: 'configure', title: t('usage.board.coach.digestConfigure'),
+      invoke: () => setEditing(true) }] : []),
+    ...(editing ? [{ key: 'close', title: `${t('usage.board.coach.digestTitle')}: ${t('common.close')}`,
+      invoke: () => setEditing(false) }] : []),
+    ...(approval ? [{ key: 'approval', title: t('detailPages.approval.requestTitle'), invoke: () => {
+      router.push(`/inbox/approvals/${encodeURIComponent(approval.request.artifactId)}?serverId=${encodeURIComponent(props.serverId)}`);
+    } }] : []),
+    ...(approval || created ? [{ key: 'manage', title: t('automations.pluralEditor.triggersTitle'), invoke: () => {
+      router.push(resolveTriggerEditorHref({ serverId: props.serverId,
+        ...(created ? { automationId: created.set.automationId, scopeSessionId: created.set.scopeSessionId } : {}) }));
+    } }] : []),
+  ], { contextKey: suggestion.queryKey });
   const subtitle = { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight };
   return (
     // A quiet offer on one line beside its action, not a second section inside the widget (QA-V F19).
@@ -487,11 +508,9 @@ function UsageCoachDigestSuggestionRow(props: Readonly<{
       {approval ? (
         <View style={styles.appliedRow}>
           <RoundButton size="small" display="secondary" title={t('detailPages.approval.requestTitle')}
-            testID={`${props.testID}.approval`} onPress={() => router.push(
-              `/inbox/approvals/${encodeURIComponent(approval.request.artifactId)}?serverId=${encodeURIComponent(props.serverId)}`,
-            )} />
+            testID={`${props.testID}.approval`} onPress={() => { void commands.invoke('approval'); }} />
           <RoundButton size="small" display="secondary" title={t('automations.pluralEditor.triggersTitle')}
-            testID={`${props.testID}.manage`} onPress={() => router.push(resolveTriggerEditorHref({ serverId: props.serverId }))} />
+            testID={`${props.testID}.manage`} onPress={() => { void commands.invoke('manage'); }} />
         </View>
       ) : null}
       {error && !editing ? <CoachNotice kind="error" testID={`${props.testID}.error`} message={t('usage.board.coach.actionFailed')} /> : null}
@@ -499,29 +518,28 @@ function UsageCoachDigestSuggestionRow(props: Readonly<{
         <View style={styles.appliedRow}>
           <Text style={[styles.applied, subtitle]}>{t('usage.board.coach.digestCreated')}</Text>
           <RoundButton size="small" display="secondary" title={t('automations.pluralEditor.triggersTitle')}
-            testID={`${props.testID}.manage`} onPress={() => router.push(resolveTriggerEditorHref({
-              automationId: created.set.automationId, serverId: props.serverId,
-              scopeSessionId: created.set.scopeSessionId,
-            }))} />
+            testID={`${props.testID}.manage`} onPress={() => { void commands.invoke('manage'); }} />
         </View>
       ) : (
         <View ref={anchorRef} style={styles.appliedRow}>
           <RoundButton size="small" display="secondary" title={t('usage.board.coach.digestConfigure')}
-            testID={`${props.testID}.configure`} disabled={!controller || snapshot.retired || pending}
-            onPress={() => setEditing(true)} />
+            testID={`${props.testID}.configure`} disabled={!canConfigure}
+            onPress={() => { void commands.invoke('configure'); }} />
         </View>
       )}
       {editing ? (
-        <TriggerPopover anchorRef={anchorRef} onRequestClose={() => setEditing(false)}
+        <TriggerPopover anchorRef={anchorRef} onRequestClose={() => { void commands.invoke('close'); }}
+          currentUiContextCommandScope={`${props.testID}.editor`}
           testID={`${props.testID}.editor`} whenKinds={['schedule']} sessionId={null} initial={null}
           workflowOptions={[]} showThen={false} newTitle={t('usage.board.coach.digestTitle')}
           submitLabel={t('usage.board.coach.digestCreate')} serverId={props.serverId} machineId={project?.machineId}
           hostComplete={project !== null && controller !== null && !snapshot.retired}
           setRows={<TriggerRunsOnRow target={project} onChange={setProject} testID={`${props.testID}.project`}
+            currentUiContextCommandScope={`${props.testID}.project`}
             description={t('workflows.triggers.editor.runsOnDescription')} />}
-          onSubmit={async (_value, write) => {
+          onSubmit={async (_value, write, context) => {
             if (!controller || !project || write.trigger?.kind !== 'schedule') throw new Error(t('usage.board.coach.actionFailed'));
-            const result = await controller.createDigest(suggestion, project, write.trigger);
+            const result = await controller.createDigest(suggestion, project, write.trigger, context);
             if (!result.ok) throw new Error(t('usage.board.coach.actionFailed'));
             setEditing(false);
           }}
@@ -543,6 +561,17 @@ function UsageCoachSummaryBand(props: Readonly<{ facts: readonly Readonly<{ key:
       ))}
     </View>
   );
+}
+
+/** A finding's next step when it is a decision the person makes elsewhere: one navigation row, also a page command. */
+function UsageCoachNextStep(props: Readonly<{ testID: string }>) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const title = t('usage.board.coach.nextStep_approval_friction');
+  const commands = useCurrentUiContextLocalCommands([{ key: 'open', title,
+    invoke: () => { router.push(SETTINGS_ROUTES.permissions as Parameters<typeof router.push>[0]); return true; } }]);
+  return <Item testID={props.testID} title={title} icon={<Icon name="shield-check" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+    onPress={() => { void commands.invoke('open'); }} />;
 }
 
 const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
@@ -572,6 +601,9 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
     snapshot.error?.evidenceKey === finding.evidenceKey ? snapshot.error : null;
   const approval = snapshot.approval?.evidenceKey === finding.evidenceKey;
   const title = t(`usage.board.coach.summary_${finding.summaryCode}`);
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
+  const toggleOptions = useUsageDisclosureCommand(t('usage.board.coach.findingOptions', { title }), optionsOpen,
+    () => setOptionsOpen(value => !value), controller !== null);
   const comparison = finding.modelComparison;
   const qualifiedModel = comparison ? [t('usage.board.coach.modelQualified', {
     model: comparison.modelId, candidate: comparison.candidateModelId,
@@ -696,6 +728,8 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
           ? <ChartDatum testID={`${props.testID}.meta.detail`} datum={{ label: title,
             value: finding.measurements.slice(0, COACH_LINE_MEASUREMENTS).map(measurement => formatMeasurement(measurement, 'exact')).join(' · '),
             subtitle: method }}>{evidenceInk}</ChartDatum> : evidenceInk : null}
+        {/* Approval friction has no Apply by design: its next step is the page where the person decides it. */}
+        {finding.detectorId === 'approval_friction' && !action ? <UsageCoachNextStep testID={`${props.testID}.nextStep`} /> : null}
         <UsagePlanDisclosure title={t('usage.board.coach.why')} testID={`${props.testID}.why`}>
         <View testID={`${props.testID}.evidence`} style={styles.why}>
           <Text style={[styles.whyHeading, text('subtitle')]}>{t('usage.board.coach.methodTitle')}</Text>
@@ -774,6 +808,8 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
         <ItemRowActions
           title={title}
           compactThreshold={Number.POSITIVE_INFINITY}
+          overflowOpen={optionsOpen}
+          onOverflowOpenChange={next => { if (next !== optionsOpen) toggleOptions(); }}
           overflowTriggerTestID={`${props.testID}.more`}
           overflowTriggerAccessibilityLabel={t(
             'usage.board.coach.findingOptions',

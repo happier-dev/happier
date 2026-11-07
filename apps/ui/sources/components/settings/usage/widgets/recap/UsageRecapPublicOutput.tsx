@@ -14,6 +14,9 @@ import {
 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -71,6 +74,7 @@ export function UsageRecapPublicOutput(
     kind: UsageRecapPublicOutputKind;
     serverId: string;
     onClose: () => void;
+    callerContext: React.MutableRefObject<ActionExecutorContext | undefined>;
   }>,
 ): React.ReactElement {
   const execution = useMountedActionExecution(props.serverId);
@@ -80,13 +84,17 @@ export function UsageRecapPublicOutput(
     onClose();
     router.push(SETTINGS_ROUTES.accountPublicProfile);
   }, [onClose, router]);
+  const commands = useCurrentUiContextLocalCommands([{ key: 'profile', title: t('publicIdentity.share.previewProfile'),
+    invoke: openProfile }], { foregroundOverlay: true });
+  const previewProfile = () => { void commands.invoke('profile'); };
   return props.kind === 'profile_link' ? (
-    <ProfileLinkOutput execution={execution} openProfile={openProfile} />
+    <ProfileLinkOutput execution={execution} openProfile={previewProfile} callerContext={props.callerContext} />
   ) : (
     <EmbedOutput
       kind={props.kind}
       execution={execution}
-      openProfile={openProfile}
+      openProfile={previewProfile}
+      callerContext={props.callerContext}
     />
   );
 }
@@ -99,13 +107,13 @@ function useCopyText(execution: Execution, text: string | null) {
   const [copying, setCopying] = React.useState(false);
   React.useEffect(() => setNotice(null), [text]);
   const { execute, isCurrent } = execution;
-  const copy = React.useCallback(async () => {
+  const copy = React.useCallback(async (context?: ActionExecutorContext) => {
     if (text === null) return;
     setCopying(true);
     setNotice(null);
     let next: CopyNotice = 'failed';
     try {
-      const result = await execute('clipboard.write', { text });
+      const result = await execute('clipboard.write', { text }, { callerContext: context });
       next = result.ok
         ? 'copied'
         : isActionApprovalDeclinedErrorCode(result.errorCode)
@@ -118,7 +126,10 @@ function useCopyText(execution: Execution, text: string | null) {
     setNotice(next);
     setCopying(false);
   }, [execute, isCurrent, text]);
-  return { notice, copying, copy };
+  const commands = useCurrentUiContextLocalCommands(text !== null && !copying
+    ? [{ key: 'copy', title: t('common.copy'),
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => copy(context) }] : [], { foregroundOverlay: true });
+  return { notice, copying, copy: () => commands.invoke('copy') };
 }
 
 function noticeText(notice: CopyNotice, fallback: string): string {
@@ -211,17 +222,21 @@ type LinkState =
   | Readonly<{ kind: 'failed'; code: string }>;
 
 function ProfileLinkOutput(
-  props: Readonly<{ execution: Execution; openProfile: () => void }>,
+  props: Readonly<{ execution: Execution; openProfile: () => void; callerContext: React.MutableRefObject<ActionExecutorContext | undefined> }>,
 ) {
   const { theme } = useUnistyles();
   const { execute, ready } = props.execution;
   const [state, setState] = React.useState<LinkState>({ kind: 'loading' });
   const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
+  const commands = useCurrentUiContextLocalCommands(state.kind === 'failed'
+    ? [{ key: 'retry', title: t('common.retry'),
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; retry(); } }] : [], { foregroundOverlay: true });
   React.useEffect(() => {
     if (!ready) return;
     let live = true;
+    const origin = props.callerContext.current;
     void (async () => {
-      const result = await execute('account.public_profile.get', {});
+      const result = await execute('account.public_profile.get', {}, { callerContext: origin ? { ...origin, signal: undefined } : undefined });
       if (!live) return;
       if (!result.ok)
         return setState({ kind: 'failed', code: result.errorCode });
@@ -260,7 +275,7 @@ function ProfileLinkOutput(
     <RecapComposerFrame
       stage={
         state.kind === 'failed' ? (
-          <ReadFailed code={state.code} onRetry={retry} />
+          <ReadFailed code={state.code} onRetry={() => { void commands.invoke('retry'); }} />
         ) : urls ? (
           // The unfurl as people will see it where the link is posted: the page's own preview picture.
           <View
@@ -391,6 +406,7 @@ function EmbedOutput(
     kind: 'badge' | 'card';
     execution: Execution;
     openProfile: () => void;
+    callerContext: React.MutableRefObject<ActionExecutorContext | undefined>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -402,10 +418,27 @@ function EmbedOutput(
   const [state, setState] = React.useState<EmbedState>({ kind: 'loading' });
   const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
   const { kind } = props;
+  const metricLabel = (id: Metric) => t(`publicIdentity.share.metric_${METRIC_KEYS[id]}`);
+  const commands = useCurrentUiContextLocalCommands([
+    ...(kind === 'badge' ? METRICS.map(id => ({ key: `metric:${id}`,
+      title: `${t('publicIdentity.share.shows')}: ${metricLabel(id)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setMetric(id); setMetricMenuOpen(false); } })) : []),
+    ...THEMES.map(id => ({ key: `theme:${id}`,
+      title: `${t('publicIdentity.share.theme')}: ${t(`publicIdentity.share.theme_${id}`)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setEmbedTheme(id); } })),
+    ...SYNTAXES.map(id => ({ key: `syntax:${id}`,
+      title: `${t('publicIdentity.share.copyAs')}: ${t(`publicIdentity.share.syntax_${id}`)}`,
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setSyntax(id); } })),
+    ...(kind === 'badge' ? [{ key: 'metric-menu', title: t('publicIdentity.share.shows'),
+      invoke: (input?: PluginUiJsonValueV1) => setMetricMenuOpen(typeof input === 'boolean' ? input : !metricMenuOpen) }] : []),
+    ...(state.kind === 'failed' || state.kind === 'unavailable' ? [{ key: 'retry', title: t('common.retry'),
+      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; retry(); } }] : []),
+  ], { foregroundOverlay: true, contextKey: kind });
 
   React.useEffect(() => {
     if (!ready) return;
     let live = true;
+    const origin = props.callerContext.current;
     // A new choice keeps the shown previews and snippet until the Home formats the new one.
     setState((previous) => ({
       kind: 'loading',
@@ -422,6 +455,7 @@ function EmbedOutput(
       const result = await execute(
         'account.public_profile.embed.get',
         kind === 'badge' ? { kind, metric, ...input } : { kind, ...input },
+        { callerContext: origin ? { ...origin, signal: undefined } : undefined },
       );
       if (!result.ok) throw new EmbedReadError(result.errorCode);
       const parsed = PublicEmbedResultV1Schema.safeParse(result.result);
@@ -475,11 +509,9 @@ function EmbedOutput(
     return <Unpublished kind={kind} openProfile={props.openProfile} />;
   }
 
-  const metricLabel = (id: Metric) =>
-    t(`publicIdentity.share.metric_${METRIC_KEYS[id]}`);
   const stage =
     state.kind === 'failed' ? (
-      <ReadFailed code={state.code} onRetry={retry} />
+      <ReadFailed code={state.code} onRetry={() => { void commands.invoke('retry'); }} />
     ) : state.kind === 'unavailable' ? (
       <View style={styles.stageCentered}>
         {state.reason === 'field_hidden' ? (
@@ -501,7 +533,7 @@ function EmbedOutput(
             title={t('publicIdentity.share.serviceUnavailable')}
             reason={t('publicIdentity.share.readFailedBody')}
             diagnosticCode={state.reason}
-            action={{ label: t('common.retry'), onPress: retry }}
+            action={{ label: t('common.retry'), onPress: () => { void commands.invoke('retry'); } }}
           />
         )}
       </View>
@@ -540,7 +572,7 @@ function EmbedOutput(
           <DropdownMenu
             testID="usage-recap-share.metric"
             open={metricMenuOpen}
-            onOpenChange={setMetricMenuOpen}
+            onOpenChange={open => { void commands.invoke('metric-menu', open); }}
             variant="selectable"
             search={false}
             selectedId={metric}
@@ -551,9 +583,7 @@ function EmbedOutput(
             itemTrigger={{ title: t('publicIdentity.share.shows') }}
             items={METRICS.map((id) => ({ id, title: metricLabel(id) }))}
             onSelect={(id) => {
-              const next = METRICS.find((candidate) => candidate === id);
-              if (next) setMetric(next);
-              setMetricMenuOpen(false);
+              void commands.invoke(`metric:${id}`);
             }}
           />
         </ItemGroup>
@@ -565,7 +595,7 @@ function EmbedOutput(
           compact
           segmentSizing="content"
           activeTabId={embedTheme}
-          onSelectTab={setEmbedTheme}
+          onSelectTab={id => { void commands.invoke(`theme:${id}`); }}
           accessibilityLabel={t('publicIdentity.share.theme')}
           tabs={THEMES.map((id) => ({
             id,
@@ -581,7 +611,7 @@ function EmbedOutput(
             compact
             segmentSizing="content"
             activeTabId={syntax}
-            onSelectTab={setSyntax}
+            onSelectTab={id => { void commands.invoke(`syntax:${id}`); }}
             accessibilityLabel={t('publicIdentity.share.copyAs')}
             tabs={SYNTAXES.map((id) => ({
               id,

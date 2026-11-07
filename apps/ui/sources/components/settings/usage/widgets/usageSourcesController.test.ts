@@ -3,7 +3,8 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { USAGE_SOURCE_ACTION_IDS } from '@happier-dev/protocol/usage/usageSourcesActionIdsV1';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -34,10 +35,13 @@ function lifetimeHarness() {
 
 function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], options: Readonly<{
     approve?: boolean;
+    agentDisabled?: boolean;
     dismiss?: Parameters<typeof createUsageSourceActionPort>[0]['dismiss'];
 }> = {}) {
     const scope = lifetimeHarness();
-    const settings = ActionsSettingsV1Schema.parse({ v: 1, ...(options.approve === false ? {} : {
+    const settings = ActionsSettingsV1Schema.parse({ v: 1,
+        ...(options.agentDisabled ? { actions: Object.fromEntries(USAGE_SOURCE_ACTION_IDS.map(id => [id, { disabledSurfaces: ['agent'] }])) } : {}),
+        ...(options.approve === false ? {} : {
         approvalWaivedSurfaces: {
             'usage.sources.consent.set': ['ui'], 'usage.sources.stop': ['ui'],
             'usage.sources.root.set': ['ui'], 'usage.sources.history.delete': ['ui'],
@@ -53,6 +57,7 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
                 if (!scope.lifetime.isCurrent()) throw new Error('retired');
             }, rpc, ...(options.dismiss ? { dismiss: options.dismiss } : {}),
         }),
+        isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context),
         isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
     } satisfies Partial<ActionExecutorDeps>;
     const executor = createActionExecutor(deps as ActionExecutorDeps);
@@ -61,6 +66,19 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
 }
 
 describe('Usage Sources consent controller', () => {
+    it('retains agent restrictions for mounted metadata retry and folder changes', async () => {
+        const requests: string[] = [];
+        const { controller } = harness(async request => {
+            requests.push(request.actionId);
+            return request.actionId === 'usage.sources.root.set' ? { source } : { sources: [source] };
+        }, { agentDisabled: true });
+        try {
+            expect(await controller.discover({ surface: 'agent' })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            expect(await controller.setRoot(source.sourceId, '/new/root', { surface: 'agent' }))
+                .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            expect(requests).toEqual([]);
+        } finally { controller.dispose(); }
+    });
     it.each(['enabled', 'disabled'] as const)('retries failed capture only with existing %s consent and keeps push reads passive', async consent => {
         let currentSource: UsageSourceV1 = { ...source, consent, status: 'unavailable', errorCode: 'source_unavailable' };
         let captures = 0;

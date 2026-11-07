@@ -65,6 +65,9 @@ import { SelectionListFilterChips } from './SelectionListFilterChips';
 import { SelectionListDetailPaneContext } from './SelectionListDetailPaneContext';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { SelectionListActivationCommandContext, SelectionListCommandHost, type SelectionListCommandInvoke } from './SelectionListCommandHost';
 
 const stylesheet = StyleSheet.create((theme) => ({
     // Filter chips, then the consumer's own trailing controls, inside the search field's suffix slot.
@@ -381,6 +384,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const rowSelectionMark = props.selectionMark === 'enter' && !keyboardHintsEnabled ? 'none' : props.selectionMark;
 
     const isInputControlled = props.inputValue !== undefined;
+    const commandScope = props.currentUiContextCommandScope;
+    const commandInvokeRef = React.useRef<SelectionListCommandInvoke | null>(null);
     const [uncontrolledInputValue, setUncontrolledInputValue] = React.useState<string>('');
     const inputValue = isInputControlled ? (props.inputValue ?? '') : uncontrolledInputValue;
     const setInputValue = React.useCallback(
@@ -390,6 +395,18 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         },
         [isInputControlled, props.onChangeInputValue],
     );
+    const setUiInputValue = React.useCallback((next: string) => {
+        if (commandScope) { void commandInvokeRef.current?.('search', { value: next }); return; }
+        setInputValue(next);
+    }, [commandScope, setInputValue]);
+    const popUiStep = React.useCallback(() => {
+        if (commandScope) { void commandInvokeRef.current?.('back'); return; }
+        stack.popStep();
+    }, [commandScope, stack.popStep]);
+    const closeUiList = React.useCallback(() => {
+        if (commandScope) { void commandInvokeRef.current?.('close'); return; }
+        props.onRequestClose();
+    }, [commandScope, props.onRequestClose]);
 
     const currentStep = stack.currentStep;
     // A consumer that mirrors its active step passes pagination for that step. Its mirror (and the
@@ -544,10 +561,11 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     );
 
     const handleActivate = React.useCallback(
-        (optionId: string) => {
+        (optionId: string, context?: ActionExecutorContext) => {
             const option = findOptionById(optionId);
-            if (!option) return;
-            activateSelectionListRow({
+            if (!option) return false;
+            return activateSelectionListRow({
+                context,
                 option,
                 onSelect: props.onSelect,
                 onPushStep: stack.pushStep,
@@ -556,6 +574,10 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         },
         [findOptionById, stack.pushStep, props.onSelect, requestInputAttention],
     );
+    const handleUiActivate = React.useCallback((optionId: string) => {
+        if (commandScope) { void commandInvokeRef.current?.('activate', { id: optionId }); return; }
+        handleActivate(optionId);
+    }, [commandScope, handleActivate]);
 
     const onCommandSelect = props.onCommandSelect;
     const handleCommandActivate = React.useMemo(() => (onCommandSelect ? (optionId: string) => {
@@ -570,8 +592,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     } : undefined), [findOptionById, onCommandSelect, requestInputAttention, stack.pushStep]);
 
     const handleClearInput = React.useCallback(() => {
-        setInputValue('');
-    }, [setInputValue]);
+        setUiInputValue('');
+    }, [setUiInputValue]);
 
     // Default keyboard focus. A step can compute it from the live input
     // (`resolveDefaultFocusedOptionId`) — e.g. the worktree name step focuses the
@@ -704,16 +726,16 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
 
     const handleAcceptAutocomplete = React.useCallback(() => {
         if (autocomplete.ghostSuffix.length > 0) {
-            setInputValue(autocomplete.nextInputValue);
+            setUiInputValue(autocomplete.nextInputValue);
         }
-    }, [autocomplete.ghostSuffix, autocomplete.nextInputValue, setInputValue]);
+    }, [autocomplete.ghostSuffix, autocomplete.nextInputValue, setUiInputValue]);
 
     const handleAcceptFocusedAutocomplete = React.useCallback((optionId: string): boolean => {
         const nextValue = autocompleteValueByOptionId.get(optionId);
         if (nextValue === undefined) return false;
-        setInputValue(nextValue);
+        setUiInputValue(nextValue);
         return true;
-    }, [autocompleteValueByOptionId, setInputValue]);
+    }, [autocompleteValueByOptionId, setUiInputValue]);
 
     // Prefer the active step's commit handler (a pushed value step carries its
     // own closure — e.g. the base ref it was opened for); fall back to the
@@ -852,10 +874,10 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         flatVisibleOptionIds,
         ...(virtualizedOptionSource === undefined ? {} : { virtualizedOptionSource }),
         focus,
-        onActivate: handleActivate,
+        onActivate: handleUiActivate,
         ...(handleCommandActivate ? { onCommandActivate: handleCommandActivate } : {}),
         canPopStep: stack.canPop,
-        onPopStep: stack.popStep,
+        onPopStep: popUiStep,
         inputValue,
         onClearInput: handleClearInput,
         // R14: thread the prop-level quick-action shortcuts through to the
@@ -881,17 +903,17 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             keyboard,
             isComposing,
             focusedOptionId,
-            onActivate: handleActivate,
+            onActivate: handleUiActivate,
             canPopStep: stack.canPop,
             inputValue,
-            onRequestClose: props.onRequestClose,
+            onRequestClose: closeUiList,
         });
         return (event: Parameters<typeof onKeyPress>[0]) => {
             pointerFocusedOptionIdRef.current = null;
             pointerMovedRef.current = false;
             onKeyPress(event);
         };
-    }, [keyboard, isComposing, focusedOptionId, handleActivate, stack.canPop, inputValue, props.onRequestClose]);
+    }, [keyboard, isComposing, focusedOptionId, handleUiActivate, stack.canPop, inputValue, closeUiList]);
 
     const handlePushStep = stack.pushStep;
 
@@ -944,6 +966,28 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         props.rootStep.inputPlaceholder !== undefined
         || inputBehavior !== undefined
         || inputMode === 'value';
+    const localCommands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => {
+        if (!commandScope) return [];
+        const options = renderPlan.filter(isFocusableSectionPlan).flatMap(section => section.options.map(option => ({
+            id: option.id, label: option.label, ...(option.subtitle ? { subtitle: option.subtitle } : {}),
+            ...(option.disabled ? { disabled: true } : {}),
+        })));
+        return [
+            { key: 'activate', title: currentStep.title ?? props.listAccessibilityLabel ?? t('common.choose'),
+                description: `${commandScope}.activate ${JSON.stringify(options)}; input: {id}`, invoke: (input, context) => {
+                    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.id !== 'string') return false;
+                    return handleActivate(input.id, context);
+                } },
+            ...(showSearchHeader && !currentStep.inputReadOnly ? [{ key: 'search', title: currentStep.inputPlaceholder ?? props.rootStep.inputPlaceholder ?? t('common.search'),
+                description: `${commandScope}.search; input: {value}`, invoke: (input: Parameters<CurrentUiContextLocalCommand['invoke']>[0]) => {
+                    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+                    setInputValue(input.value);
+                } }] : []),
+            ...(stack.canPop ? [{ key: 'back', title: currentStep.backLabel ?? props.rootStep.title ?? t('common.back'),
+                description: `${commandScope}.back`, invoke: stack.popStep }] : []),
+            { key: 'close', title: t('common.close'), description: `${commandScope}.close`, invoke: (_input, context) => { props.onRequestClose(context); } },
+        ];
+    }, [commandScope, currentStep, handleActivate, props.listAccessibilityLabel, props.onRequestClose, props.rootStep.title, props.rootStep.inputPlaceholder, renderPlan, setInputValue, showSearchHeader, stack.canPop, stack.popStep]);
 
     const stabilizeHeight = props.heightBehavior === 'stabilizedContentHeight';
     const stabilizedHeightReleaseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1274,13 +1318,13 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 testID={selectionListTestId(resolvedTestId, 'header')}
                 inputTestID={props.inputTestID}
                 value={inputValue}
-                onChangeText={setInputValue}
+                onChangeText={setUiInputValue}
                 placeholder={currentStep.inputPlaceholder ?? ''}
                 inputReadOnly={currentStep.inputReadOnly}
                 inputAccessibilityLabel={currentStep.inputReadOnly ? currentStep.title ?? t('tools.names.search') : undefined}
                 canPop={stack.canPop}
                 backLabel={currentStep.backLabel ?? props.rootStep.title}
-                onPopStep={stack.popStep}
+                onPopStep={popUiStep}
                 onKeyPress={handleKeyPress}
                 // Native soft-keyboard return commits the value when this
                 // step is in value mode (web commits via the keydown
@@ -1423,6 +1467,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         // A picker keeps its own look wherever it is placed: inline under a page list it resets to the
         // grouped anatomy exactly as `FloatingOverlay` does for popovers (I1).
         <SelectionListDetailPaneContext.Provider value={detailPaneActive}>
+        <SelectionListActivationCommandContext.Provider value={commandScope ? handleUiActivate : null}>
+        {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={`${commandScope}:${currentStep.id}`} invokeRef={commandInvokeRef} /> : null}
         <ListPresentationProvider value="grouped">
         <SelectionListInputAttentionContext.Provider value={requestInputAttention}>
         <SelectionListPointerFocusContext.Provider value={focusOptionFromPointer}>
@@ -1470,6 +1516,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         </SelectionListPointerFocusContext.Provider>
         </SelectionListInputAttentionContext.Provider>
         </ListPresentationProvider>
+        </SelectionListActivationCommandContext.Provider>
         </SelectionListDetailPaneContext.Provider>
     );
 }

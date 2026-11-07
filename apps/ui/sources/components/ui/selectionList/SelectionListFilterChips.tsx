@@ -1,7 +1,9 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPageRowFieldLayoutContext, HappierPressable, resolveHappierFocusRingVisible, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierFilterChip, HappierPageRowFieldLayoutContext, resolveHappierFocusRingVisible, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -11,8 +13,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { SELECTION_LIST_LARGE_POPOVER_SIZE } from './_constants';
-import type { SelectionListFilter, SelectionListStep } from './_types';
+import type { SelectionListFilter, SelectionListOption, SelectionListStep } from './_types';
 import { SelectionList } from './SelectionList';
+import { SelectionListCommandHost, type SelectionListCommandInvoke } from './SelectionListCommandHost';
 
 /**
  * The filter chip: what a filter is set to, as one compact bordered chip that opens a small popover
@@ -21,6 +24,7 @@ import { SelectionList } from './SelectionList';
  */
 export const SelectionListFilterChip = React.memo(function SelectionListFilterChip(props: Readonly<{
     filter: SelectionListFilter;
+    currentUiContextCommandScope?: string;
     /** Where the chip is drawn: the chip row beneath the field draws `rowValueLabel` when the filter has one. */
     placement?: 'inline' | 'row';
 }>) {
@@ -40,11 +44,12 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
         onOpenChange?.(next);
     }, [controlled, onOpenChange]);
     const close = React.useCallback(() => setOpen(false), [setOpen]);
+    const commandScope = props.currentUiContextCommandScope;
+    const commandInvokeRef = React.useRef<SelectionListCommandInvoke | null>(null);
 
     const selected = filter.options?.find((option) => option.id === filter.selectedId) ?? null;
     const valueLabel = filter.valueLabel ?? selected?.label ?? '';
-    const leading = filter.icon ?? selected?.icon
-        ?? (filter.onToggle && filter.selected ? <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.text.primary} /> : null);
+    const leading = filter.icon ?? selected?.icon ?? null;
     const iconOnly = filter.iconOnly === true && leading !== null;
     const hasChooser = filter.renderPopoverContent !== undefined
         || (filter.options !== undefined && filter.options.length > 0 && filter.onChange !== undefined);
@@ -74,17 +79,44 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
     } : null, [filter.id, filter.options, testID]);
     const { onChange } = filter;
     const multiple = filter.selectedIds !== undefined;
-    const handleSelect = React.useCallback((id: string) => {
+    const handleSelect = React.useCallback((id: string, _option: SelectionListOption, context?: ActionExecutorContext) => {
         // Several choices stay open: each row toggles until the viewer is done.
         if (!multiple) setOpen(false);
-        onChange?.(id);
+        if (context) onChange?.(id, context);
+        else onChange?.(id);
     }, [multiple, onChange, setOpen]);
+
+    const localCommands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => {
+        if (!commandScope) return [];
+        if (clearable) return [{ key: 'clear', title: filter.clearAccessibilityLabel ?? filter.label,
+            description: `${commandScope}.clear`, invoke: () => filter.onClear?.() }];
+        if (toggleable) return [{ key: 'toggle', title: filter.label,
+            description: `${commandScope}.toggle`, invoke: () => filter.onToggle?.() }];
+        if (!canOpen) return [];
+        return [{ key: open ? 'close' : 'open', title: filter.label,
+            description: `${commandScope}.${open ? 'close' : 'open'}`, invoke: () => setOpen(!open) }];
+    }, [commandScope, canOpen, clearable, toggleable, filter.clearAccessibilityLabel, filter.label, filter.onClear, filter.onToggle, open, setOpen]);
+    const closeFromUi = React.useCallback((context?: ActionExecutorContext) => {
+        if (commandScope) { void commandInvokeRef.current?.('close', undefined, context); return; }
+        close();
+    }, [commandScope, close]);
+    const pressFromUi = React.useCallback(() => {
+        if (commandScope) {
+            void commandInvokeRef.current?.(clearable ? 'clear' : toggleable ? 'toggle' : open ? 'close' : 'open');
+            return;
+        }
+        if (clearable) filter.onClear?.();
+        else if (toggleable) filter.onToggle?.();
+        else setOpen(!open);
+    }, [commandScope, clearable, toggleable, open, filter.onClear, filter.onToggle, setOpen]);
 
     return (
         <>
+            {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={commandScope} invokeRef={commandInvokeRef} /> : null}
             {/* The anchor is a plain view: the popover measures it, the pressable owns interaction. */}
             <View ref={anchorRef} style={[styles.anchor, stackedInRow ? styles.anchorStacked : null, iconOnly ? styles.anchorIconOnly : null]}>
-                <HappierPressable
+                <HappierFilterChip
+                    gap={theme.space.s6}
                     testID={testID}
                     accessibilityRole={toggleable ? 'checkbox' : 'button'}
                     {...(toggleable ? { checked: filter.selected === true } : {})}
@@ -95,7 +127,9 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     expanded={canOpen ? open : undefined}
                     hasPopup={canOpen ? 'dialog' : undefined}
                     disabled={!canOpen && !clearable && !toggleable}
-                    onPress={() => (clearable ? filter.onClear?.() : toggleable ? filter.onToggle?.() : setOpen(!open))}
+                    // The row of chips scrolls sideways, so its viewport clips: a chip's reach stops at the row's own top padding.
+                    hitReach={props.placement === 'row' ? { top: theme.space.s2 } : undefined}
+                    onPress={pressFromUi}
                     style={(state) => [
                         styles.chip,
                         filter.active ? { borderColor: theme.colors.text.link } : null,
@@ -130,7 +164,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     ) : null}
                     {canOpen && !iconOnly ? <Icon name={open ? 'caret-up' : 'caret-down'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> : null}
                     {clearable ? <Icon name="x" size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> : null}
-                </HappierPressable>
+                </HappierFilterChip>
             </View>
             <Popover
                 open={open && canOpen}
@@ -143,7 +177,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                 // edge still opens in view and a chip beside the navigation never covers it.
                 portal={{ ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, sizeToContent: true }}
                 containerStyle={{ paddingHorizontal: 0 }}
-                onRequestClose={close}
+                onRequestClose={closeFromUi}
                 // A chooser that lays out its own content, or keeps several choices open, is the app's bottom
                 // sheet on a phone; a plain one-tap list stays the anchored menu beside its chip.
                 {...(phoneSheet ? { phonePresentation: 'sheet' as const, accessibilityLabel: filter.label } : {})}
@@ -151,16 +185,17 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                 {({ maxHeight }) => (
                     <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" scrollEnabled={false}>
                         {filter.renderPopoverContent
-                            ? filter.renderPopoverContent({ close, maxHeight })
+                            ? filter.renderPopoverContent({ close: closeFromUi, maxHeight })
                             : optionsStep ? (
                                 <SelectionList
+                                    currentUiContextCommandScope={commandScope ? `${commandScope}.list` : undefined}
                                     testID={`${testID}.list`}
                                     rootStep={optionsStep}
                                     {...(filter.selectedIds
                                         ? { selection: { kind: 'multiple' as const, selectedIds: filter.selectedIds } }
                                         : { selectedOptionId: filter.selectedId ?? null })}
                                     onSelect={handleSelect}
-                                    onRequestClose={close}
+                                    onRequestClose={closeFromUi}
                                     listAccessibilityLabel={filter.label}
                                     maxHeight={maxHeight}
                                     disableTransitions
@@ -177,7 +212,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
  * A list's filter chips, beside the field (`placement="inline"`) or on a row of their own beneath it
  * that scrolls sideways when the chips outgrow a narrow list (`placement="row"`).
  */
-export function SelectionListFilterChips(props: Readonly<{
+export const SelectionListFilterChips = React.memo(function SelectionListFilterChips(props: Readonly<{
     filters: ReadonlyArray<SelectionListFilter>;
     placement: 'inline' | 'row';
     testID?: string;
@@ -200,7 +235,7 @@ export function SelectionListFilterChips(props: Readonly<{
             {chips}
         </ScrollView>
     );
-}
+});
 
 /** A figure space is as wide as a tabular digit, so the slot keeps two digits' width whatever the count. */
 const COUNT_SLOT_DIGITS = 2;
@@ -223,15 +258,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
     },
     chip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-        minHeight: 32,
-        maxWidth: '100%',
-        flexShrink: 1,
-        paddingHorizontal: theme.space.s10,
-        borderRadius: 16,
-        borderWidth: 1,
         borderColor: theme.colors.border.strong,
         backgroundColor: theme.colors.surface.base,
     },

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import type { SelectionListHeightBehavior, SelectionListOptionPresentation, SelectionListSelection, SelectionListStep } from '@/components/ui/selectionList';
@@ -17,6 +18,7 @@ const DEFAULT_MAX_WIDTH_CAP = 420;
 const DEFAULT_TEST_ID = 'agent-input-selection-list-popover';
 
 export type AgentInputSelectionListPopoverProps = Readonly<{
+    currentUiContextCommandScope?: string;
     open: boolean;
     anchorRef: React.RefObject<any>;
     boundaryRef?: React.RefObject<any> | null;
@@ -24,8 +26,8 @@ export type AgentInputSelectionListPopoverProps = Readonly<{
     selectedOptionId?: string | null;
     /** Several choices at once (`kind: 'multiple'`): rows toggle and the popover stays open. */
     selection?: SelectionListSelection;
-    onSelect: (id: string) => void;
-    onRequestClose: () => void;
+    onSelect: (id: string, context?: ActionExecutorContext) => void;
+    onRequestClose: (context?: ActionExecutorContext) => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
     heightBehavior?: SelectionListHeightBehavior;
@@ -67,14 +69,16 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                     scrollEnabled={false}
                 >
                     <SelectionList
+                        currentUiContextCommandScope={props.currentUiContextCommandScope}
                         rootStep={props.rootStep}
                         {...(props.selection ? { selection: props.selection } : { selectedOptionId: props.selectedOptionId })}
                         autoFocusInputOnWeb
-                        onSelect={(id) => {
+                        onSelect={(id, _option, context) => {
                             // The caller's onSelect runs synchronously so any
                             // per-row mutation/state update is committed against
                             // the still-valid synthetic event.
-                            props.onSelect(id);
+                            if (context) props.onSelect(id, context);
+                            else props.onSelect(id);
                             // A multiple choice toggles in place; only a single choice is terminal.
                             if (props.selection?.kind === 'multiple') return;
                             // FR3-B (FR3-3): on web, closing a portaled popover
@@ -86,7 +90,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                             // option row first. On native this calls
                             // onRequestClose synchronously (no portal click
                             // fall-through to guard against).
-                            deferAgentInputPopoverClose(props.onRequestClose);
+                            deferAgentInputPopoverClose(context ? () => props.onRequestClose(context) : props.onRequestClose);
                         }}
                         onRequestClose={props.onRequestClose}
                         maxHeight={maxHeight}
