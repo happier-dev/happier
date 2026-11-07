@@ -6,7 +6,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture, createPlainMachineRowFixture, createRootLayoutFeaturesResponse, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
-import { ApprovalRequestSchema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
@@ -135,6 +135,7 @@ describe('mounted field Dictation Actions', () => {
         } });
         const speechMachine = createMachineFixture({ id: 'speech-machine', storageMode: 'plain', active: true, activeAt: Date.now() });
         const speechMachineRow = createPlainMachineRowFixture({ id: speechMachine.id, accountId: 'alice' });
+        speechMachine.access = speechMachineRow.access;
         storage.setState({ machines: { [speechMachine.id]: speechMachine },
             machineListByServerId: { [serverId]: [speechMachine] } });
         home.answer(serverId, '/v1/machines', { body: [speechMachineRow] });
@@ -234,7 +235,7 @@ describe('mounted field Dictation Actions', () => {
             const decided = await execute('approval.request.decide', { artifactId: approval.id, decision: 'approve' }, ui);
             expect(decided, JSON.stringify(decided))
                 .toMatchObject({ ok: true, result: { status: 'executed', execution: {
-                    ok: true, effectAttempted: true,
+                    ok: true, executedAtMs: expect.any(Number),
                     result: { status: 'completed', dictationStatus: 'listening', inserted: false },
                 } } });
             const admitted = await requested;

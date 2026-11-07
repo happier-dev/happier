@@ -5,6 +5,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentInputDictationRecovery, useDictationRecoveryFailure } from './AgentInputDictationRecovery';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -41,8 +42,6 @@ type Props = React.ComponentProps<
 >;
 
 async function render(overrides: Partial<Props>): Promise<HTMLDivElement> {
-  const { AgentInputDictationRecovery } =
-    await import('./AgentInputDictationRecovery');
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -172,7 +171,6 @@ describe('AgentInputDictationRecovery', () => {
 
 describe('useDictationRecoveryFailure', () => {
     it('keeps the cause in place while Retry transcribes, and clears it when the retry settles or is discarded', async () => {
-        const { useDictationRecoveryFailure } = await import('./AgentInputDictationRecovery');
         const failure = { id: 3, sessionId: 'dictation-3', kind: 'provider_error' as const, reason: 'transcription_failed' as const, canRetry: true };
         const seen: Array<string | null> = [];
         function Probe(props: Readonly<{ failure: typeof failure | null; status: 'idle' | 'transcribing' }>) {
