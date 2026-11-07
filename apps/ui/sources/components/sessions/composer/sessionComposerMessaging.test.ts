@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ActionApprovalRequestCreatedResultSchema,
     ActionExecuteFailureSchema,
@@ -42,6 +42,8 @@ import type { ComposerSubmissionSnapshot } from './composerSubmissionCoordinator
 const messaging = await import('./sessionComposerMessaging');
 const { readSessionComposerMessageIntent, readSessionComposerMessagingHandoff, readSessionComposerMessagingOutcome } = messaging;
 
+// Global cleanup retires runtimeFetch after each test; reinstall this suite's physical boundary.
+beforeEach(async () => { await homes.reset(); });
 afterEach(async () => { rpc.mockReset(); await homes.reset(); });
 
 const sendOutputSchema = withSessionTargetFanoutResultV1(SessionMessageSendResultV1Schema);

@@ -19,6 +19,7 @@ import { t } from '@/text';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { useSessionSelector } from '@/sync/domains/state/storage';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
@@ -136,8 +137,8 @@ export function SessionTalkPicker(props: SessionTalkPickerProps) {
   const selected = selectedTarget?.selector ?? null;
   // The Discussion selector needs one Discussion; the step below chooses it, and the row then previews it.
   const [step, setStep] = React.useState<'targets' | 'discussion' | 'matching' | 'model'>('targets');
-  const sourceMachineId = useSessionSelector(props.sessionId, props.serverId, session => session?.metadata?.machineId ?? null);
-  const sourceDirectory = useSessionSelector(props.sessionId, props.serverId, session => session?.metadata?.path ?? null);
+  const sourceMachineId = useSessionSelector(props.sessionId, props.serverId, session => session ? readSessionOwnerMetadataView(session)?.machineId ?? null : null);
+  const sourceDirectory = useSessionSelector(props.sessionId, props.serverId, session => session ? readSessionOwnerMetadataView(session)?.path ?? null : null);
   const modelLaunch = props.intent?.kind === 'ask_new_session' ? props.intent.launch : null;
   const modelTarget = modelLaunch?.executionTarget ?? (props.serverId && sourceMachineId
     ? { serverId: props.serverId, machineId: sourceMachineId } : null);

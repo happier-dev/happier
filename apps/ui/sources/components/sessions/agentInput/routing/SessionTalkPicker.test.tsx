@@ -9,6 +9,7 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 
@@ -61,7 +62,8 @@ function seedRelations() {
       serverId,
       encryptionMode: 'plain',
       access: createSessionAccessFixture('view'),
-      metadata: { path: '/repo', host: 'host', name },
+      // Recipient previews read the shared title, not the owner's private name.
+      metadata: { path: '/repo', host: 'host', name, summary: { text: name, updatedAt: 1 } },
       manager: lead ? { sessionId: lead } : null,
     });
   const sessions = {
@@ -74,9 +76,8 @@ function seedRelations() {
     body: createPlainSessionByIdResponseFixture(value),
   });
   homes.answer(serverId, '/v2/sessions/query', { body: {
-    sessions: Object.values(sessions).map(value => ({ ...createPlainSessionCurrentProjectionRecordFixture({
-      id: value.id, metadata: value.metadata, ...(value.manager ? { manager: value.manager } : {}),
-    }), viewer: createSessionViewerFixture() })), hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+    sessions: Object.values(sessions).map(value => ({ ...createPlainSessionByIdResponseFixture(value).session,
+      viewer: createSessionViewerFixture() })), hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
   } });
 }
 
@@ -144,6 +145,25 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
     expect(screen.findByTestId('session-talk-target:model')).toBeNull();
   });
 
+  it('offers the model recipe for an online layout-v1 owner Session', async () => {
+    seedRelations();
+    const source = createSessionFixture({ id: 'api', serverId, metadataLayoutVersion: 1,
+      metadata: { summary: { text: 'Idempotent retries', updatedAt: 1 } },
+      ownerMetadataView: { machineId: 'macbook', path: '/repo', host: 'host' },
+      manager: { sessionId: 'lead' },
+    });
+    getStorage().setState(state => ({ sessions: { ...state.sessions, api: source } }));
+    homes.answer(serverId, '/v2/sessions/api', { body: createPlainSessionByIdResponseFixture(source) });
+    getStorage().getState().applyMachines([createMachineFixture({ id: 'macbook', active: true, activeAt: Date.now() })],
+      true, { sourceServerId: serverId });
+    const { screen, writes } = await renderPicker();
+    const row = screen.findByTestId('session-talk-target:model');
+    expect(row).not.toBeNull();
+    expect(row?.props.disabled).not.toBe(true);
+    expect(writes).toEqual([]);
+    expect(homes.requests.some(request => request.path.includes('spawn'))).toBe(false);
+  });
+
   it('settles Matching across equal filter renders and overlapping Account wakes without restarting its live read', async () => {
     seedRelations();
     homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
@@ -154,7 +174,7 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
     const held = createDeferred<void>();
     const matchingReads: Array<AbortSignal | null | undefined> = [];
     const sessions = ['lead', 'api', 'ui'].map(id => ({
-      ...createPlainSessionCurrentProjectionRecordFixture({ id, metadata: getStorage().getState().sessions[id]!.metadata }),
+      ...createPlainSessionByIdResponseFixture(getStorage().getState().sessions[id]!).session,
       viewer: createSessionViewerFixture(),
     }));
     homes.answer(serverId, '/v2/sessions/query', { select: (input, request) => {
@@ -202,7 +222,7 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
       expect(matchingReads).toHaveLength(1);
     } finally { await act(async () => held.resolve()); }
     await vi.waitFor(() => {
-      const done = screen.findByTestId('session-list-filter-done');
+      const done = screen.findByTestId('collection-filter-done');
       expect(done).not.toBeNull();
       expect(done?.props.disabled).toBe(false);
       expect(screen.getTextContent()).toContain('complete:ui');
@@ -302,6 +322,9 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
       const { viewer: _viewer, ...session } = getStorage().getState().sessions[id]!;
       return { ...session, access: createSessionAccessFixture('owner') };
     });
+    for (const session of owned) homes.answer(serverId, `/v2/sessions/${session.id}`, {
+      body: createPlainSessionByIdResponseFixture(session),
+    });
     homes.answer(serverId, '/v2/sessions/query', { body: {
       sessions: owned.map((session) => ({ ...createPlainSessionByIdResponseFixture(session).session,
         viewer: createSessionOwnerViewerFixture(session) })),
@@ -314,8 +337,10 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
     expect(screen.findByTestId('session-talk-matching-back')).not.toBeNull();
     // "Use these" waits for the Action's own preview to prove who the filter reaches.
     await vi.waitFor(() => {
-      const summary = screen.findByTestId('session-list-filter-result-count')?.props.children;
-      expect(screen.findByTestId('session-list-filter-done')?.props.disabled, String(summary)).not.toBe(true);
+      const done = screen.findByTestId('collection-filter-done');
+      const summary = screen.findByTestId('collection-filter-count')?.props.children;
+      expect(done).not.toBeNull();
+      expect(done?.props.disabled, String(summary)).not.toBe(true);
     });
     // Choosing the filter does not freeze its rows or send. A last complete
     // answer for this same filter remains choosable during a trailing refresh;
@@ -335,8 +360,8 @@ describe('SessionTalkPicker (composer To: Send · Ask · Post update)', () => {
         changeKinds: ['session'], sessionListQueryAffects: true,
       }));
       await vi.waitFor(() => expect(refreshing).toBe(true));
-      expect(screen.findByTestId('session-list-filter-done')?.props.disabled).not.toBe(true);
-      await act(async () => screen.pressByTestId('session-list-filter-done'));
+      expect(screen.findByTestId('collection-filter-done')?.props.disabled).not.toBe(true);
+      await act(async () => screen.pressByTestId('collection-filter-done'));
     } finally { await act(async () => held.resolve()); }
     expect(writes).toHaveLength(1);
     const written = writes[0];
