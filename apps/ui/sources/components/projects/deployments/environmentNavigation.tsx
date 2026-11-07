@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { resolveDeploymentEnvironmentDestinationV1, type DeploymentEnvironmentDestinationV1, type DeploymentEnvironmentSettingsSectionV1 } from '@happier-dev/deployments';
-import { resolveDetailNavigationItems, type DetailPageNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
+import { ENVIRONMENT_COMPANION_IDS, resolveDetailNavigationItems, type DetailPageNavigationItem, type EnvironmentCompanionId } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import { selectPresentedDetailNavigationItem, usePresentedDetailNavigation } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { EnvironmentCockpitTabBar } from './EnvironmentNavigationViews';
 import type { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
@@ -18,25 +18,51 @@ export type EnvironmentNavigationModel = Readonly<{
     activeId: DeploymentEnvironmentDestinationV1['tab'];
     readColumn: (column: 'main' | 'side', section?: DeploymentEnvironmentSettingsSectionV1 | null) => ShellColumnActionOwner;
 }>;
-/** Selection and Settings-section links remain owned by the Environment route/draft controller. */
+const NO_COMPANIONS: readonly EnvironmentCompanionId[] = Object.freeze([]);
+function isEnvironmentCompanionId(id: string): id is EnvironmentCompanionId {
+    return (ENVIRONMENT_COMPANION_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * Selection and Settings-section links remain owned by the Environment route/draft controller. The open companion is
+ * transient page state: it opens and closes through the same side column every detail page uses, and the page draws
+ * it with `DetailCompanionPane` (beside the page, or pushed on a phone).
+ */
 export function useEnvironmentNavigation(input: Readonly<{
     scope: ServerAccountScope; environmentId: string; destination: DeploymentEnvironmentDestinationV1;
     phone: boolean; presented: boolean; navigate: (destination: DeploymentEnvironmentDestinationV1) => void;
+    /** The companions this Environment can show now; only these are offered. */
+    companions?: readonly EnvironmentCompanionId[];
 }>) {
     const locale = usePreferredLanguage();
-    const items = React.useMemo(() => resolveDetailNavigationItems({ scope: 'environment' }), [locale]);
+    const offered = input.companions ?? NO_COMPANIONS;
+    const offeredKey = offered.join(',');
+    const items = React.useMemo(() => resolveDetailNavigationItems({ scope: 'environment', companions: offered }), [locale, offeredKey]);
+    const [openCompanion, setOpenCompanion] = React.useState<Readonly<{ environmentId: string; id: EnvironmentCompanionId }> | null>(null);
+    // A companion belongs to the Environment it was opened beside, and closes when that Environment stops offering it.
+    const activeCompanion = openCompanion !== null && openCompanion.environmentId === input.environmentId
+        && offered.includes(openCompanion.id) ? openCompanion.id : null;
+    const environmentId = input.environmentId;
+    const companion = React.useMemo(() => ({
+        activeId: activeCompanion,
+        open: (id: EnvironmentCompanionId) => setOpenCompanion({ environmentId, id }),
+        close: () => setOpenCompanion(null),
+    }), [activeCompanion, environmentId]);
+    const latest = React.useRef(input);
+    latest.current = input;
     const navigation = usePresentedDetailNavigation({ pageKind: 'environment', identity: input.environmentId,
         scope: input.scope, items, activeId: input.destination.tab, phone: input.phone, presented: input.presented,
         title: t('projects.deployments.review.environment'),
         selectPage: id => {
             if (id !== input.destination.tab) input.navigate(resolveDeploymentEnvironmentDestinationV1({ tab: id }));
         },
+        companion: { activeId: activeCompanion, close: companion.close, select: id => {
+            if (isEnvironmentCompanionId(id) && latest.current.companions?.includes(id)) companion.open(id);
+        } },
         phoneChrome: execute => {
             const props = { model, onSelect: (id: string) => selectPresentedDetailNavigationItem(execute, model, id) };
             return { node: <EnvironmentCockpitTabBar {...props} />, systemModel: { kind: 'environmentCockpit', props } };
         } });
-    const latest = React.useRef(input);
-    latest.current = input;
     const readColumn = React.useCallback((column: 'main' | 'side', section?: DeploymentEnvironmentSettingsSectionV1 | null): ShellColumnActionOwner => {
         const owner = navigation.readColumn(column);
         if (column !== 'main' || section === undefined) return owner;
@@ -50,11 +76,13 @@ export function useEnvironmentNavigation(input: Readonly<{
     const model = React.useMemo<EnvironmentNavigationModel>(() => ({ ...navigation.model, scope: input.scope,
         environmentId: input.environmentId, activeId: input.destination.tab, readColumn }),
     [navigation.model, input.scope, input.environmentId, input.destination.tab, readColumn]);
-    return { model, placements: navigation.placements };
+    return { model, placements: navigation.placements, companion };
 }
 
 export function selectEnvironmentNavigationItem(execute: ReturnType<typeof useMountedScopeActionCommand>, model: EnvironmentNavigationModel, id: string, section?: DeploymentEnvironmentSettingsSectionV1 | null): void {
-    void execute('shell.column.set', { column: 'main', visible: true, tab: id }, {
-        kind: 'shell.column', column: 'main', read: () => model.readColumn('main', section),
+    // A companion (the phone bar's More) opens beside the page through the side column, never as a page.
+    const column = model.items.find(item => item.id === id)?.navigation.kind === 'companion' ? 'side' : 'main';
+    void execute('shell.column.set', { column, visible: true, tab: id }, {
+        kind: 'shell.column', column, read: () => model.readColumn(column, column === 'main' ? section : undefined),
     });
 }

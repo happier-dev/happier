@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { PaneHeaderScrollScope } from '@/components/appShell/panes/paneHeaderScroll';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { PluginUiDetailsPaneHost, PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
 import { PaneHeader } from '../PaneHeader';
-import { DetailsPaneHost } from './DetailsPaneHost';
+import { DetailsPaneHost, type DetailsPaneContent } from './DetailsPaneHost';
 import { useDetailsPaneAvailable } from './detailsPaneAvailability';
 
 /** What a plugin surface's `DetailsPane` (or a `Collection` opening an item) publishes: plugin-ui's contract. */
@@ -18,7 +19,12 @@ type DetailsPaneSlotFrame = Readonly<{
     title?: string;
     subtitle?: string;
     testID?: string;
+    /** A host page's companion beside its own content (Logs, Session), not an item opened from a list. */
+    companion?: true;
 }>;
+
+/** What the slot accepts: plugin-ui's publication, or a host page's companion through {@link DetailCompanionPane}. */
+type DetailsPaneSlotPublication = DetailsPaneSlotPresentation & Readonly<{ companion?: true }>;
 
 /**
  * The pane's body: changes whenever the detail re-renders, read only by the pane's own leaf. The header's marks
@@ -34,7 +40,7 @@ type DetailsPaneSlotBody = Readonly<{
 }>;
 
 type DetailsPaneSlotStore = Readonly<{
-    publish(owner: object, input: DetailsPaneSlotPresentation): void;
+    publish(owner: object, input: DetailsPaneSlotPublication): void;
     retract(owner: object): void;
     close(): void;
     getFrame(): DetailsPaneSlotFrame | null;
@@ -46,7 +52,8 @@ type DetailsPaneSlotStore = Readonly<{
 function sameFrame(left: DetailsPaneSlotFrame | null, right: DetailsPaneSlotFrame | null): boolean {
     if (left === right) return true;
     if (left === null || right === null) return false;
-    return left.title === right.title && left.subtitle === right.subtitle && left.testID === right.testID;
+    return left.title === right.title && left.subtitle === right.subtitle && left.testID === right.testID
+        && left.companion === right.companion;
 }
 
 /**
@@ -84,6 +91,7 @@ function createDetailsPaneSlotStore(): DetailsPaneSlotStore {
                 ...(input.title === undefined ? {} : { title: input.title }),
                 ...(input.subtitle === undefined ? {} : { subtitle: input.subtitle }),
                 ...(input.testID === undefined ? {} : { testID: input.testID }),
+                ...(input.companion ? { companion: true as const } : {}),
             });
             setBody({
                 actions: input.actions,
@@ -119,7 +127,7 @@ function createDetailsPaneSlotStore(): DetailsPaneSlotStore {
 const DetailsPaneSlotContext = React.createContext<DetailsPaneSlotStore | null>(null);
 
 /** Publishes from where the detail is declared; renders nothing in place. */
-function DetailsPanePublisher(props: Readonly<{ store: DetailsPaneSlotStore; input: DetailsPaneSlotPresentation }>) {
+function DetailsPanePublisher(props: Readonly<{ store: DetailsPaneSlotStore; input: DetailsPaneSlotPublication }>) {
     const [owner] = React.useState(() => ({}));
     const { store, input } = props;
     React.useLayoutEffect(() => {
@@ -143,8 +151,9 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
                 <PaneHeader
                     testID={`${testID}.header`}
                     // A detail is about one thing, so it opens on that thing's name at page-title size over its
-                    // facts line (lab c7 detail), the same title its pushed form shows on a phone.
-                    size="large"
+                    // facts line (lab c7 detail), the same title its pushed form shows on a phone. A companion
+                    // names a tool beside the page (Logs, Session), so it keeps the pane's own header size.
+                    {...(props.frame.companion ? {} : { size: 'large' as const })}
                     // The name wraps rather than cuts off the words that tell two entries apart (lab c7).
                     titleNumberOfLines={2}
                     title={props.frame.title}
@@ -168,25 +177,32 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
 const ITEM_DETAILS_PREFERRED_WIDTH_PX = 750;
 
 /**
- * A page whose content (a plugin page) may open an item beside it: the page's app details pane — the one
- * `DetailsPaneHost` every destination uses (persisted width, docked or overlay by the pane budget, Escape and focus
- * return) — fed by whatever surface inside the page declares a `DetailsPane`.
+ * A page whose content may open an item beside it. The same slot feeds the default App details host or a
+ * target's existing physical pane host; persisted width, dock/overlay, Escape and focus remain host-owned.
  */
 export const DetailsPaneSlotHost = React.memo(function DetailsPaneSlotHost(props: Readonly<{
     children: React.ReactNode;
     mainColumn?: React.ComponentProps<typeof DetailsPaneHost>['mainColumn'];
     testID?: string;
+    /** Reuse a target's existing physical pane host instead of the default App host. */
+    renderHost?: (input: Readonly<{
+        main: React.ReactNode;
+        details: DetailsPaneContent | null;
+        onCloseDetails: () => void;
+    }>) => React.ReactNode;
 }>) {
     const [store] = React.useState(createDetailsPaneSlotStore);
     const frame = React.useSyncExternalStore(store.subscribeFrame, store.getFrame, store.getFrame);
     const details = React.useMemo(() => frame === null ? null : {
         ...(frame.title === undefined ? {} : { accessibilityLabel: frame.title }),
+        ...(frame.companion ? { companion: true as const } : {}),
         content: <DetailsPaneSlotBodyView store={store} frame={frame} />,
     }, [frame, store]);
     const main = React.useMemo(
         () => <DetailsPaneSlotContext.Provider value={store}>{props.children}</DetailsPaneSlotContext.Provider>,
         [props.children, store],
     );
+    if (props.renderHost) return props.renderHost({ main, details, onCloseDetails: store.close });
     return (
         <DetailsPaneHost
             main={main}
@@ -201,7 +217,7 @@ export const DetailsPaneSlotHost = React.memo(function DetailsPaneSlotHost(props
 
 /**
  * The binding for a plugin surface mounted inside a {@link DetailsPaneSlotHost}; null elsewhere, so the surface's
- * `DetailsPane` pushes its detail inside the page instead.
+ * `DetailsPane` pushes its detail inside the page instead. The binding retains the same phone push fallback.
  */
 export function useDetailsPaneSlotBinding(): DetailsPaneSlotBinding | null {
     const store = React.useContext(DetailsPaneSlotContext);
@@ -210,3 +226,46 @@ export function useDetailsPaneSlotBinding(): DetailsPaneSlotBinding | null {
         renderDetailsPane: (input: DetailsPaneSlotPresentation) => <DetailsPanePublisher store={store} input={input} />,
     }, [store]);
 }
+
+/**
+ * A host page's companion (an Environment's Logs or Session) in the page's own details pane: published into the
+ * enclosing {@link DetailsPaneSlotHost} as a companion, so it docks beside the page it was opened from and the page
+ * never steps aside for it. Where there is no pane beside the page (phones, side panes off, a page mounted outside a
+ * slot host) it is pushed inside the page, over its content, with the header's close as the way back: the same rule
+ * plugin-ui's `DetailsPane` follows. The caller owns which companion is open (its detail navigation's side column).
+ */
+export function DetailCompanionPane(props: Readonly<{
+    open: boolean;
+    title: string;
+    subtitle?: string;
+    actions?: React.ReactNode;
+    onClose: () => void;
+    children?: React.ReactNode;
+    testID?: string;
+}>): React.ReactElement | null {
+    const store = React.useContext(DetailsPaneSlotContext);
+    const beside = useDetailsPaneAvailable();
+    if (store !== null && beside) {
+        return <DetailsPanePublisher store={store} input={{ open: props.open, title: props.title, companion: true,
+            ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
+            ...(props.actions === undefined ? {} : { actions: props.actions }),
+            ...(props.testID === undefined ? {} : { testID: props.testID }),
+            onClose: props.onClose, children: props.children }} />;
+    }
+    if (!props.open) return null;
+    const testID = props.testID ?? 'details-pane';
+    return (
+        <View testID={testID} style={styles.pushed}>
+            <PaneHeaderScrollScope>
+                <PaneHeader testID={`${testID}.header`} title={props.title} subtitle={props.subtitle}
+                    actions={props.actions} onClose={props.onClose} />
+                <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>{props.children}</View>
+            </PaneHeaderScrollScope>
+        </View>
+    );
+}
+
+const styles = StyleSheet.create((theme) => ({
+    // Pushed over the page's content, on the page's ground.
+    pushed: { ...StyleSheet.absoluteFillObject, zIndex: 1, backgroundColor: theme.colors.surface.base },
+}));

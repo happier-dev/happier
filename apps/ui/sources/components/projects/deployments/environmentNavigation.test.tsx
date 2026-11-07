@@ -191,3 +191,31 @@ it('nested Environment owns desktop column Actions and leaving restores its encl
     expect(screen.findByTestId('project-shell-header.pages:overview')).not.toBeNull();
     await screen.unmount();
 });
+
+it('detail-navigation.T2 a declared Environment companion is one side item: it opens and closes beside the page, never as a page', async () => {
+    let navigation: ReturnType<typeof useEnvironmentNavigation> | undefined;
+    let published: ReturnType<typeof usePresentedDetailNavigationChrome> = null;
+    const navigate = vi.fn();
+    function Observer() { published = usePresentedDetailNavigationChrome(); return null; }
+    function Environment(props: Readonly<{ phone: boolean }>) {
+        navigation = useEnvironmentNavigation({ scope, environmentId: 'staging', destination: { tab: 'overview', section: null },
+            phone: props.phone, presented: true, navigate, companions: ['logs'] });
+        return <EnvironmentPageNavigation navigation={navigation} phone={props.phone} onSelect={() => {}} />;
+    }
+    const screen = await renderScreen(<PresentedDetailNavigationProvider><Environment phone={false} /><Observer /></PresentedDetailNavigationProvider>);
+    expect(navigation!.model.items.find(item => item.id === 'logs')).toMatchObject({ navigation: { kind: 'companion', companion: 'logs' }, phonePlacement: 'more' });
+    expect(published!.companionItems.map(item => item.id)).toEqual(['logs']);
+    expect(screen.findByTestId('project-deployments.environment.tab:logs')).toBeNull();
+    expect(navigation!.companion.activeId).toBeNull();
+    expect(await invokeScopeAction('shell.column.get', { column: 'side' })).toMatchObject({ present: true, visible: false,
+        items: [expect.objectContaining({ id: 'logs', pageKind: 'environment' })] });
+    await act(async () => { await invokeScopeAction('shell.column.set', { column: 'side', visible: true, tab: 'logs' }); });
+    expect(navigation!.companion.activeId).toBe('logs');
+    expect(navigate).not.toHaveBeenCalled();
+    expect(await invokeScopeAction('shell.column.get', { column: 'side' })).toMatchObject({ visible: true, activeTab: 'logs' });
+    await act(async () => navigation!.companion.close());
+    expect(navigation!.companion.activeId).toBeNull();
+    await act(async () => navigation!.companion.open('logs'));
+    expect(navigation!.companion.activeId).toBe('logs');
+    await screen.unmount();
+});

@@ -13,7 +13,7 @@ import { ENVIRONMENT_DESKTOP_NAVIGATION_ADDRESS, ENVIRONMENT_PHONE_NAVIGATION_AD
 export function environmentNavigationCustomizer(model: EnvironmentNavigationModel, device: 'desktop' | 'phone'): DetailNavigationCustomizerProps {
     return { pageKind: 'environment', pageTitle: t('projects.deployments.review.environment'), device,
         desktop: [{ id: 'pages', address: ENVIRONMENT_DESKTOP_NAVIGATION_ADDRESS, title: t('navigationPlacement.topTabs'),
-            description: t('navigationPlacement.topTabsDescription'), items: model.items }],
+            description: t('navigationPlacement.topTabsDescription'), items: model.items.filter(item => item.navigation.kind !== 'companion') }],
         phone: [{ id: 'items', address: ENVIRONMENT_PHONE_NAVIGATION_ADDRESS, title: t('navigationPlacement.phoneBar'),
             description: t('navigationPlacement.phoneBarDescription'), items: model.items.map(resolveDetailPhoneNavigationItem), placementLabels: { pinned: t('navigationPlacement.bar') } }],
         phonePageTabs: true, testID: 'environment-navigation-customizer' };
@@ -27,7 +27,8 @@ export function EnvironmentPageNavigation(props: Readonly<{
     if (props.phone && experience === 'cockpit') return <EnvironmentPhonePageStrip model={model} onSelect={props.onSelect} />;
     const tab = (item: EnvironmentNavigationModel['items'][number]) => ({ id: item.id, label: item.title });
     return <SegmentedTabBar presentation="plain" segmentSizing="content" testIDPrefix="project-deployments.environment.tab"
-        activeTabId={model.activeId} onSelectTab={props.onSelect} tabs={(props.phone ? model.items : placements.pinned).map(tab)}
+        activeTabId={model.activeId} onSelectTab={props.onSelect}
+        tabs={(props.phone ? model.items.filter(item => item.navigation.kind !== 'companion') : placements.pinned).map(tab)}
         overflow={{ label: t('common.more'), testID: 'project-deployments.environment.tab.more',
             ...(props.phone ? {} : { items: placements.overflow.map(tab), orderedIds: placements.ordered.map(item => item.id),
                 actions: [{ id: 'customize', label: t('navigationPlacement.customizeTabs'), onPress: () => {

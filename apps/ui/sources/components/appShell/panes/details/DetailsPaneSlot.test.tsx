@@ -51,6 +51,7 @@ afterEach(() => {
 
 const { AppPaneProvider } = await import('../AppPaneProvider');
 const { DetailsPaneSlotHost, useDetailsPaneSlotBinding } = await import('./DetailsPaneSlot');
+const { AppPaneScopeHost } = await import('../AppPaneScopeHost');
 
 async function mountPluginPage() {
     const { DetailsPane, Text, defineUiSurface, usePluginTheme } = await import('@happier-dev/plugin-ui');
@@ -225,5 +226,54 @@ describe('DetailsPaneSlotHost (the page details pane a plugin DetailsPane render
         const main = screen.root.findByType('MainColumn' as any);
         expect(main.findAllByType('ProbeFacts' as any)).toHaveLength(1);
         expect(screen.findByTestId('entry-pane:back')).toBeTruthy();
+    });
+});
+
+describe('DetailCompanionPane (a host page\'s companion in the same page details pane)', () => {
+    async function mountHostCompanion(onClose: () => void) {
+        const { DetailCompanionPane } = await import('./DetailsPaneSlot');
+        const captured: { companion?: boolean | undefined } = {};
+        function EnvironmentPage() {
+            return <>
+                {React.createElement('EnvironmentBody')}
+                <DetailCompanionPane open title="Logs" onClose={onClose} testID="environment-logs">
+                    {React.createElement('LogsBody')}
+                </DetailCompanionPane>
+            </>;
+        }
+        const screen = await renderScreen(<AppPaneProvider><DetailsPaneSlotHost renderHost={({ main, details, onCloseDetails }) => {
+            captured.companion = details?.companion;
+            return <AppPaneScopeHost scopeId="project:companion" main={main}
+                destinationDetails={details ? { pane: details.content, onClose: onCloseDetails, ...(details.companion ? { companion: true as const } : {}) } : undefined} />;
+        }}><EnvironmentPage /></DetailsPaneSlotHost></AppPaneProvider>);
+        return { screen, captured };
+    }
+
+    it('docks the companion beside the page it was opened from, under a pane header (not an item title)', async () => {
+        const onClose = vi.fn();
+        const { screen, captured } = await mountHostCompanion(onClose);
+        const details = screen.root.findByType('DetailsColumn' as never);
+        expect(details.findAllByType('LogsBody' as never)).toHaveLength(1);
+        expect(screen.root.findByType('MainColumn' as never).findAllByType('EnvironmentBody' as never)).toHaveLength(1);
+        expect(captured.companion).toBe(true);
+        // A companion beside its page: the page never steps aside for it.
+        expect(state.lastHostProps.mainOwnsDetails).not.toBe(true);
+        const header = details.findAll(node => node.props.testID === 'environment-logs.header' && typeof node.props.onClose === 'function')[0]!;
+        expect(header.props.title).toBe('Logs');
+        expect(header.props.size).toBeUndefined();
+        await act(async () => header.props.onClose());
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('pushes the companion inside the page on a phone, with its way back', async () => {
+        state.deviceType = 'phone';
+        const onClose = vi.fn();
+        const { screen } = await mountHostCompanion(onClose);
+        expect(state.lastHostProps?.detailsPane ?? null).toBeNull();
+        const main = screen.root.findByType('MainColumn' as never);
+        expect(main.findAllByType('LogsBody' as never)).toHaveLength(1);
+        const header = main.findAll(node => node.props.testID === 'environment-logs.header' && typeof node.props.onClose === 'function')[0]!;
+        await act(async () => header.props.onClose());
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

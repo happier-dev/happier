@@ -87,7 +87,13 @@ export type DetailPageNavigationDescriptor = Pick<ProjectDetailNavigationItem, '
 export type DetailPageNavigationItem = Omit<ProjectDetailNavigationItem, 'page' | 'companion'> & Readonly<{ count?: string }>;
 type MachineNavigationInput = Readonly<{ scope: 'machine'; pages: readonly DetailPageNavigationDescriptor[] }>;
 type WorkflowNavigationInput = Readonly<({ scope: 'workflowEditor' } | { scope: 'workflowRun' }) & { settingsAvailable?: boolean }>;
-type EnvironmentNavigationInput = Readonly<{ scope: 'environment' }>;
+/**
+ * Host companions an Environment page offers beside itself (DEPLOY-COMPOSE R2). The page names the ones it can show
+ * now; each is a side item only (rail on desktop, More on a phone), never a page tab.
+ */
+export const ENVIRONMENT_COMPANION_IDS = ['logs'] as const;
+export type EnvironmentCompanionId = (typeof ENVIRONMENT_COMPANION_IDS)[number];
+type EnvironmentNavigationInput = Readonly<{ scope: 'environment'; companions?: readonly EnvironmentCompanionId[] }>;
 type PluginNavigationInput = Readonly<{ scope: 'plugin'; items: readonly PluginUiPageNavigationItemV1[] }>;
 const environmentPageMetadata = {
     overview: { label: 'projects.deployments.overview', icon: 'squares-four' },
@@ -97,6 +103,9 @@ const environmentPageMetadata = {
     permissions: { label: 'projects.deployments.tabPermissions', icon: 'shield-check' },
     settings: { label: 'projects.deployments.tabSettings', icon: 'sliders-horizontal' },
 } as const satisfies Record<DeploymentEnvironmentTabV1, { label: string; icon: DetailPageNavigationItem['icon'] }>;
+const environmentCompanionMetadata = {
+    logs: { label: 'common.logs', icon: 'article' },
+} as const satisfies Record<EnvironmentCompanionId, { label: string; icon: DetailPageNavigationItem['icon'] }>;
 
 type ProjectNavigationInput = ResolveRightSidebarTabsInput & Readonly<{ scope: 'project'; projectPages: readonly ProjectPageDescriptor[] }>;
 export function resolveDetailNavigationItems(input: MachineNavigationInput): readonly DetailPageNavigationItem[];
@@ -121,11 +130,20 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
             ...(item.badge === undefined ? {} : { count: item.badge }),
         })));
     }
-    if (input.scope === 'environment') return Object.freeze(DEPLOYMENT_ENVIRONMENT_TABS_V1.map((id, phoneOrder) => Object.freeze({
-        id, title: t(environmentPageMetadata[id].label), icon: environmentPageMetadata[id].icon, disabledReason: null,
-        navigation: { kind: 'page' as const, page: id, desktop: 'tabs' as const }, phonePlacement: 'bar' as const,
-        phoneOrder, defaultPlacement: 'pinned' as const, ...(phoneOrder === 0 ? { allowedPlacements: ['pinned'] as const } : {}),
-    })));
+    if (input.scope === 'environment') {
+        const pages: DetailPageNavigationItem[] = DEPLOYMENT_ENVIRONMENT_TABS_V1.map((id, phoneOrder) => ({
+            id, title: t(environmentPageMetadata[id].label), icon: environmentPageMetadata[id].icon, disabledReason: null,
+            navigation: { kind: 'page' as const, page: id, desktop: 'tabs' as const }, phonePlacement: 'bar' as const,
+            phoneOrder, defaultPlacement: 'pinned' as const, ...(phoneOrder === 0 ? { allowedPlacements: ['pinned'] as const } : {}),
+        }));
+        // On the desktop rail by default; on a phone, in More (Plan T U5, as the Workflow editor's companions).
+        const companions = ENVIRONMENT_COMPANION_IDS.filter(id => input.companions?.includes(id)).map((id, index): DetailPageNavigationItem => ({
+            id, title: t(environmentCompanionMetadata[id].label), icon: environmentCompanionMetadata[id].icon, disabledReason: null,
+            navigation: { kind: 'companion', companion: id }, phonePlacement: 'more', phoneOrder: pages.length + index,
+            defaultPlacement: 'pinned',
+        }));
+        return Object.freeze([...pages, ...companions].map(item => Object.freeze(item)));
+    }
     if (input.scope === 'workflowEditor' || input.scope === 'workflowRun') {
         const page = (id: string, title: string, icon: DetailPageNavigationItem['icon']): DetailPageNavigationItem => ({
             id, title, icon, disabledReason: null, navigation: { kind: 'page', page: id, desktop: 'tabs' },

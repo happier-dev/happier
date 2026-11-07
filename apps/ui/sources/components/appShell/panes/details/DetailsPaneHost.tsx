@@ -13,6 +13,8 @@ export type DetailsPaneContent = Readonly<{
     content: React.ReactNode;
     /** Names the pane for assistive technology when there is no header title. */
     accessibilityLabel?: string;
+    /** A companion beside the page's own content (an Environment's Logs), not an item of a list: the page stays. */
+    companion?: true;
 }>;
 
 export type DetailsPaneHostProps = Readonly<{
@@ -74,6 +76,7 @@ export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: Detail
             </View>
         ),
         onClose,
+        ...(details.companion ? { companion: true as const } : {}),
     } : null), [details, onClose, testID]);
     return (
         <AppScopePaneHost
