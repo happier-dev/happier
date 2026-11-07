@@ -172,6 +172,8 @@ describe('opened habit History result', () => {
         await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
+        // Attribution takes its own line, so a long progress or result line never clips it.
+        expect(screen.findHostByTestId('workflow-run-row:habit-run:edited-by')).not.toBeNull();
         const reads = http.requests.slice(before).filter(request => request.path === route && request.input !== null
             && typeof request.input === 'object' && 'operation' in request.input && request.input.operation === 'list');
         expect(reads.length).toBeGreaterThan(0);

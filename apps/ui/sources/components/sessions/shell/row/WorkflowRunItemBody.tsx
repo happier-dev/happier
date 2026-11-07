@@ -194,8 +194,11 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const oneLine = rowDensity === 'compact';
     const showWord = !oneLine || props.statusWords === true;
     const rowMark = resolveWorkStatusRowMark(status);
+    // Who edited the occurrence is its own fact: a detailed row has room for a third line, so attribution takes
+    // it and a long progress or result line never clips it. Tighter rows keep it on the context line.
+    const attributionLine = rowDensity === 'detailed' ? editedBy : null;
     const contextLine = oneLine && resultLine === null ? null
-        : [resultLine ?? (oneLine ? null : context || null), editedBy].filter(Boolean).join(' · ') || null;
+        : [resultLine ?? (oneLine ? null : context || null), attributionLine === null ? editedBy : null].filter(Boolean).join(' · ') || null;
     const statusContent = <View style={styles.status}>
         {props.presentation === 'work'
             ? <WorkStatusGlyph status={status} testIDSuffix={`workflow-run-${props.runId}`} animationEnabled={dataActive} />
@@ -251,6 +254,8 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
                         testID={`workflow-run-result:${props.runId}:retry`} label={t('workflows.retry')}
                         onPress={event => { event?.stopPropagation(); result.retry(); }} /> : null}
                 </View> : null}
+                {attributionLine !== null ? <CollectionRowLine testID={`workflow-run-row:${props.runId}:edited-by`}
+                    density={rowDensity} touchCompact={readablePhone} textScale={fontScale}>{attributionLine}</CollectionRowLine> : null}
             </CollectionRowContent>
         </View>
     </View>;
