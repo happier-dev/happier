@@ -47,6 +47,11 @@ export function createSessionRuntimeActivity(
             epoch: 0,
             disposed: false,
         },
+        turnActivity: {
+            contribution: IDLE_CONTRIBUTION,
+            epoch: 0,
+            disposed: false,
+        },
     };
     const knownPublishers = new Set<SessionRuntimeActivitySnapshotPublisher>();
     const closedPublishers = new WeakSet<SessionRuntimeActivitySnapshotPublisher>();
@@ -67,6 +72,7 @@ export function createSessionRuntimeActivity(
         const aggregate = aggregateSessionRuntimeActivityContributions([
             slots.agentRuntime.contribution,
             slots.executionRuns.contribution,
+            slots.turnActivity.contribution,
         ]);
         return aggregate;
     }
@@ -164,11 +170,13 @@ export function createSessionRuntimeActivity(
         ? createHandle('agentRuntime')
         : null;
     const executionRunsContributionHandle = createHandle('executionRuns');
+    const turnActivityContributionHandle = createHandle('turnActivity');
 
     return Object.freeze({
         applicability,
         agentRuntimeContributionHandle,
         executionRunsContributionHandle,
+        turnActivityContributionHandle,
         bindPublisher(publisher) {
             ensureActive();
             if (closedPublishers.has(publisher)) {
@@ -231,6 +239,7 @@ export function createSessionRuntimeActivity(
             bindingEpoch += 1;
             slots.agentRuntime.epoch += 1;
             slots.executionRuns.epoch += 1;
+            slots.turnActivity.epoch += 1;
             disposalPromise = enqueue(async () => {
                 let firstError: unknown;
                 for (const publisher of knownPublishers) {

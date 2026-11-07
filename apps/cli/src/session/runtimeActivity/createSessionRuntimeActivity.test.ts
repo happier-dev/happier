@@ -63,6 +63,63 @@ describe('createSessionRuntimeActivity', () => {
         expect(publisher.publish).toHaveBeenLastCalledWith({ state: 'active', activeCount: 3 });
     });
 
+    it('aggregates an in-flight turn as active with no provider tasks and no execution runs', async () => {
+        const activity = createSessionRuntimeActivity('not_applicable');
+        const publisher = createPublisher();
+        await bind(activity, publisher);
+        expect(publisher.publish).toHaveBeenLastCalledWith(idle);
+
+        await activity.turnActivityContributionHandle.report(
+            { state: 'active', activeCount: 1 },
+            'turn started',
+        );
+
+        expect(publisher.publish).toHaveBeenLastCalledWith({ state: 'active', activeCount: 1 });
+    });
+
+    it('returns to idle once the in-flight turn ends and the other slots are idle', async () => {
+        const activity = createSessionRuntimeActivity('not_applicable');
+        const publisher = createPublisher();
+        await bind(activity, publisher);
+        await activity.turnActivityContributionHandle.report(
+            { state: 'active', activeCount: 1 },
+            'turn started',
+        );
+
+        await activity.turnActivityContributionHandle.report(idle, 'turn ended');
+
+        expect(publisher.publish).toHaveBeenLastCalledWith(idle);
+    });
+
+    it('lets an active turn win over an unknown agent-runtime contribution', async () => {
+        const activity = createSessionRuntimeActivity('supported');
+        const publisher = createPublisher();
+        await bind(activity, publisher);
+        expect(publisher.publish).toHaveBeenLastCalledWith({ state: 'unknown', activeCount: 0 });
+
+        await activity.turnActivityContributionHandle.report(
+            { state: 'active', activeCount: 1 },
+            'turn started',
+        );
+
+        expect(publisher.publish).toHaveBeenLastCalledWith({ state: 'active', activeCount: 1 });
+    });
+
+    it('fences the turnActivity handle like the other fixed slots at disposal', async () => {
+        const activity = createSessionRuntimeActivity('supported');
+        const publisher = createPublisher();
+        await bind(activity, publisher);
+        const turn = activity.turnActivityContributionHandle;
+
+        await turn.dispose();
+        await turn.dispose();
+        expect(() => turn.report(idle, 'late turn callback')).toThrow(/disposed/i);
+
+        await activity.dispose();
+        await activity.dispose();
+        expect(publisher.close).toHaveBeenCalled();
+    });
+
     it('offers the new current-runtime baseline without predecessor state or attach provenance', async () => {
         const activity = createSessionRuntimeActivity('supported');
         const publisher = createPublisher();
