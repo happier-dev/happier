@@ -126,7 +126,10 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     </PageFrame>
                 </ListPresentationProvider>
             ) : viewTabs}
-            {view === 'runs' ? <SessionsList fixedShow="runs" pathname={pathname} /> : (
+            {view === 'runs' ? (headsPage && !phone
+                // Runs sit in the same wide column as the page's name and switch above them.
+                ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
+                : <SessionsList fixedShow="runs" pathname={pathname} />) : (
                 <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
                     <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
                 </WorkflowsColumnOwnsCreationContext.Provider>
@@ -375,6 +378,7 @@ const styles = StyleSheet.create((theme) => ({
     viewsOnPage: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },
     /** The page form's head keeps no page-end padding of its own: the views' content follows it. */
     pageHead: { paddingBottom: 0 },
+    pageRuns: { flex: 1, paddingBottom: 0 },
     // Under the page's large title, the same gap the Inbox's tabs keep (lab `phone-P4`).
     viewsUnderPageTitle: { paddingTop: theme.space.s8, paddingBottom: 0 },
     viewTabs: { flex: 1, minWidth: 0 },
