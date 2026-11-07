@@ -44,7 +44,7 @@ export function useSharedSavedSecretReveal(input: Readonly<{
         && current.current.scope.serverId === held.scope.serverId && current.current.scope.accountId === held.scope.accountId
         && current.current.entry.ref === held.ref && current.current.entry.revision === held.revision
         && current.current.entry.encryptionMode === held.resourceMode
-        && current.current.entry.capabilities.manageAccess && current.current.entry.materialStatus === 'ready', []);
+        && current.current.entry.capabilities.reveal === true && current.current.entry.materialStatus === 'ready', []);
     const hide = React.useCallback(() => {
         pending.current?.abort();
         pending.current = null;
@@ -61,7 +61,7 @@ export function useSharedSavedSecretReveal(input: Readonly<{
         return () => { mounted.current = false; hide(); };
     }, [hide]);
     React.useEffect(() => hide, [hide, input.scope.serverId, input.scope.accountId, input.entry.ref,
-        input.entry.revision, input.entry.capabilities.manageAccess, input.entry.encryptionMode, input.entry.materialStatus]);
+        input.entry.revision, input.entry.capabilities.reveal, input.entry.encryptionMode, input.entry.materialStatus]);
     React.useEffect(() => {
         const native = AppState.addEventListener('change', next => { if (next !== 'active') hide(); });
         const visibility = () => { if (!foreground()) hide(); };
@@ -76,14 +76,14 @@ export function useSharedSavedSecretReveal(input: Readonly<{
     const select = React.useCallback(() => {
         const selected = { ...current.current, scope: { ...current.current.scope }, entry: { ...current.current.entry,
             capabilities: { ...current.current.entry.capabilities } } };
-        const eligible = foreground() && selected.entry.capabilities.manageAccess && selected.entry.source === 'shared_resource'
+        const eligible = foreground() && selected.entry.capabilities.reveal === true && selected.entry.source === 'shared_resource'
             && selected.entry.revision !== null && selected.entry.materialStatus === 'ready';
         const controller = new AbortController();
         const exact = () => mounted.current && !controller.signal.aborted && foreground()
             && current.current.scope.serverId === selected.scope.serverId && current.current.scope.accountId === selected.scope.accountId
             && current.current.entry.ref === selected.entry.ref && current.current.entry.revision === selected.entry.revision
             && current.current.entry.encryptionMode === selected.entry.encryptionMode
-            && current.current.entry.capabilities.manageAccess && current.current.entry.materialStatus === 'ready';
+            && current.current.entry.capabilities.reveal === true && current.current.entry.materialStatus === 'ready';
         return { selected, eligible, controller, exact };
     }, []);
     type Selection = ReturnType<typeof select>;

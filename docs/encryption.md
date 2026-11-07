@@ -491,6 +491,19 @@ the existing Saved Secret resource owner. Account, Team and Group grants define
 the reviewed audience; the resource's envelope census resolves its current
 recipient Accounts and their content-key readiness.
 
+In 0.3 development, a Saved Secret grant means "Give them the value": recipients
+can see, copy and use it without the owner's Machine. Only the owner can rename,
+rotate, delete or manage access and disclosure history. Reveal and Copy use the
+resource owner's qualified grant admission for the present user and exact
+revision; their activity and Agent/MCP results contain metadata only. Team and
+Group grants exclude guests. Removing a grant stops the next material read, but
+cannot recall a disclosed copy; invalidate that copy with the credential's
+provider. "Let them use it" describes brokered Team credentials instead.
+
+Plain recipients receive the existing Home-readable Plain content. E2EE resources
+retain ciphertext and recipient-bound key envelopes; a recipient without E2EE
+readiness sees `recipient_mode_unsupported`, with no automatic mode conversion.
+
 The UI's sharing repair and CLI shared-save custody use the same
 `prepareSavedSecretResourceRecipientEnvelopesV1` decision in Protocol's
 `savedSecretResourceContentV1` owner. It seals only missing envelopes for ready
@@ -817,7 +830,10 @@ and private UI-query projection. Data requests do not acquire fresh encryption
 currentness. Local identity tags alone acquire fresh authority when their
 contract declares identity fields and the observed mode is Plain:
 a delayed Plain→E2EE push must not mint an unkeyed digest that can become a
-persistent row identity. E2EE tags borrow admission; the custody pin already
+persistent row identity. Concurrent Plain tag calls in the same Home, credential
+and Account lifetime share only their pending currentness read; settle releases
+the promise, so the next burst reads again. There is no TTL or retained result.
+E2EE tags borrow admission; the custody pin already
 refuses E2EE→Plain downgrade. Socket pushes and reconnect
 update or withdraw the existing observation; readers without that observation
 still admit through their own HTTP request. Exact Data absence witnesses and

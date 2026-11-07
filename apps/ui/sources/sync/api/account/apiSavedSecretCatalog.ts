@@ -152,7 +152,7 @@ export async function readSavedSecretReferenceInContext(
     context: SavedSecretReferenceAccountContext,
     reference: string,
     signal?: AbortSignal,
-    admission?: Readonly<{ expectedRevision: number; requireManage: true; isCurrent?: () => boolean }>,
+    admission?: Readonly<{ expectedRevision: number; requireManage: boolean; isCurrent?: () => boolean }>,
 ): Promise<SavedSecretReferenceReadResult> {
     const read = await readSavedSecretReferencesInContext(context, [reference], signal, admission);
     if (!read.ok) return read;
@@ -175,7 +175,7 @@ export async function readSavedSecretReferencesInContext(
     context: SavedSecretReferenceAccountContext,
     references: readonly string[],
     signal?: AbortSignal,
-    admission?: Readonly<{ expectedRevision: number; requireManage?: true; isCurrent?: () => boolean }>,
+    admission?: Readonly<{ expectedRevision: number; requireManage?: boolean; isCurrent?: () => boolean }>,
 ): Promise<Readonly<{ ok: true; values: ReadonlyMap<string, SavedSecretReferenceMaterial> }>
     | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>> {
     const read = await readSavedSecretContentsInContext(context, references, signal, admission);
@@ -193,7 +193,7 @@ export async function readSavedSecretContentsInContext(
     context: SavedSecretReferenceAccountContext,
     references: readonly string[],
     signal?: AbortSignal,
-    admission?: Readonly<{ expectedRevision: number; requireManage?: true; isCurrent?: () => boolean }>,
+    admission?: Readonly<{ expectedRevision: number; requireManage?: boolean; isCurrent?: () => boolean }>,
 ): Promise<Readonly<{ ok: true; contents: ReadonlyMap<string, Readonly<{ content: SavedSecretResourceContentV1; revision: number; entry: SavedSecretCatalogEntryV1 }>> }>
     | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>> {
     const assertCurrent = () => {

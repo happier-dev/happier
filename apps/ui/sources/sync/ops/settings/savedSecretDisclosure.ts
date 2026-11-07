@@ -58,7 +58,7 @@ export async function openSavedSecretDisclosureInContext(context: LazyActionAcco
     const accountMode = await context.resolveAccountMode();
     if (!isCurrent()) return { ok: false as const, reason: 'changed' as const };
     const material = await readSavedSecretReferenceInContext(context, input.ref, signal,
-        { expectedRevision: input.expectedRevision, requireManage: true, isCurrent });
+        { expectedRevision: input.expectedRevision, requireManage: false, isCurrent });
     if (!isCurrent()) return { ok: false as const, reason: 'changed' as const };
     const settled = await recordSavedSecretDisclosureInContext(context, { ...input, deviceId, historyEntryId,
         outcome: material.ok ? 'displayed' : 'refused' }, 'reveal', signal);

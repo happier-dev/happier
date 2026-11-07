@@ -17,12 +17,14 @@ import {
     VoiceCredentialBindingIdentityV1Schema,
 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
+import { savedSecretDisclosureActivityEntityIdV1 } from "@happier-dev/protocol/account/settings/savedSecretReferenceV1";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
 import {
     createSavedSecretResourceInTx,
     promoteSavedSecretResourceInTx,
+    setSavedSecretResourceGrantsInTx,
 } from "@/app/account/savedSecrets/savedSecretResourceService";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -32,10 +34,13 @@ import { registerAccountEncryptionRoutes } from "./registerAccountEncryptionRout
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
 import { registerAccountSettingsHistoryRoutes } from "./registerAccountSettingsHistoryRoutes";
 import { registerConnectedAccountConfigurationRowsRoutes } from "@/app/account/connectedAccounts/registerConfigurationRowsRoutes";
+import { registerPromptLibraryRoutes } from "@/app/account/prompts/registerPromptLibraryRoutes";
+import { accountSettingsSnapshotToContent } from "@/app/accountSettings/accountSettingsHistoryContent";
+import type { PromptLibraryCatalogSnapshotV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { readProfileReferenceGuardInTx } from '@/app/account/profiles/profileRows';
 import type { FastifyRequest } from "fastify";
 import { sealPromptLibraryContentV1, PromptLibraryRowReadResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { RegistrySourcesRecordV1Schema } from '@happier-dev/protocol/registries/registrySourcesV1';
+import { RegistrySourcesRecordV1Schema } from '@happier-dev/protocol/registries';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { mutatePromptLibraryRowInTx, readPromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
 
@@ -103,6 +108,7 @@ describe("Saved Secret material route (SQLite integration)", () => {
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
+            () => db.teamCredentialActivityEvent.deleteMany(),
             () => db.savedSecretResourceKeyEnvelope.deleteMany(),
             () => db.savedSecretGroupGrant.deleteMany(),
             () => db.savedSecretTeamGrant.deleteMany(),
@@ -123,7 +129,64 @@ describe("Saved Secret material route (SQLite integration)", () => {
 
     afterAll(async () => harness.close());
 
-    it('selects one exact managed revision before disclosing material and rejects use-only readers', async () => {
+    it('lets a grantee Reveal and Copy at the exact revision without management, and refuses the next read after withdrawal', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+        const resourceId = 'give-value-disclosure';
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId, displayName: 'Shared login', kind: 'password', encryptionMode: 'plain',
+            accountGrants: [recipient.id],
+            storedContent: { t: 'plain', v: { v: 1, name: 'Shared login', kind: 'password', value: 'give-value-fixture-sentinel' } },
+        }))).toMatchObject({ ok: true });
+        let accountId = recipient.id;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = accountId; });
+        registerSavedSecretResourceRoutes(app);
+        const input = { ref: formatSharedSavedSecretRefV1(resourceId), expectedRevision: 1, deviceId: 'recipient-device' };
+        const materialPath = `/v1/account/saved-secrets/resources/materials?resourceId=${resourceId}&expectedRevision=1`;
+        const record = (outcome: string, historyEntryId?: string) => app.inject({ method: 'POST',
+            url: '/v1/account/saved-secrets/resources/activity', payload: { ...input, outcome, ...(historyEntryId ? { historyEntryId } : {}) } });
+        try {
+            const requested = await record('requested');
+            expect(requested.statusCode).toBe(200);
+            expect(requested.body).not.toContain('give-value-fixture-sentinel');
+            const historyEntryId = requested.json().historyEntryId;
+            const material = await app.inject({ method: 'GET', url: materialPath });
+            expect(material.statusCode).toBe(200);
+            expect(material.json().resources[0]).toMatchObject({
+                storedContent: { t: 'plain', v: { value: 'give-value-fixture-sentinel' } },
+                entry: { capabilities: { reveal: true, manageAccess: false, rename: false, rotate: false, delete: false } },
+            });
+            expect((await record('displayed', historyEntryId)).statusCode).toBe(200);
+            const copied = await app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/activity/copy',
+                payload: { ...input, historyEntryId, outcome: 'succeeded' } });
+            expect(copied.statusCode).toBe(200);
+            expect(copied.body).not.toContain('give-value-fixture-sentinel');
+            const historyChanges = await db.accountChange.findMany({ where: { kind: 'account',
+                entityId: savedSecretDisclosureActivityEntityIdV1(resourceId) }, select: { accountId: true } });
+            expect(new Set(historyChanges.map(change => change.accountId))).toEqual(new Set([owner.id]));
+            const managed = await app.inject({ method: 'GET', url: `${materialPath}&requireManage=true` });
+            expect(managed.statusCode).toBe(403);
+            expect((await app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/activity/read', payload: { resourceId } })).statusCode).toBe(403);
+            expect((await record('requested')).statusCode).toBe(200);
+            const stale = await app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/activity',
+                payload: { ...input, expectedRevision: 2, outcome: 'requested' } });
+            expect(stale.statusCode).toBe(409);
+            accountId = outsider.id;
+            expect((await record('requested')).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: materialPath })).body).not.toContain('give-value-fixture-sentinel');
+            expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: owner.id, resourceId,
+                expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [] }))).toMatchObject({ ok: true });
+            accountId = recipient.id;
+            expect((await record('requested')).statusCode).toBe(404);
+            const withdrawn = await app.inject({ method: 'GET', url: materialPath });
+            expect(withdrawn.body).not.toContain('give-value-fixture-sentinel');
+        } finally { await app.close(); }
+    });
+
+    it('selects one exact managed revision and refuses grantees without management', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
@@ -285,6 +348,61 @@ describe("Saved Secret material route (SQLite integration)", () => {
         } finally { await app.close(); }
     });
 
+    it('keeps unresolved predecessor registry configuration and history through the real CLI loader and HTTP rows', async () => {
+        const retained = { v: 1, sources: [{ id: 'custom', adapterId: 'custom-adapter', title: 'Custom', enabled: true,
+            config: { endpoint: 'https://registry.example', customOption: 'retain' } }] };
+        const raw = { promptRegistrySourcesV1: retained, promptFoldersV1: { v: 1, folders: [{ id: 'retained', name: 'Retained' }] } };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', settings: JSON.stringify({ t: 'plain', v: raw }) } });
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: owner.id })).toString('base64url')}.signature`;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async (request: FastifyRequest) => { request.headers['x-test-user-id'] = owner.id; });
+        registerAccountEncryptionRoutes(app);
+        registerAccountSettingsRoutes(app);
+        registerAccountSettingsHistoryRoutes(app);
+        registerPromptLibraryRoutes(app);
+        await app.listen({ host: '127.0.0.1', port: 0 });
+        const activeSnapshot = await importCliTestModule<{
+            setActiveAccountSettingsSnapshot(input: unknown): void;
+            resetActiveAccountSettingsSnapshotForTests(): void;
+        }>('../../../../../../cli/src/settings/accountSettings/activeAccountSettingsSnapshot');
+        try {
+            const address = app.server.address();
+            if (!address || typeof address === 'string') throw new Error('Expected TCP test address');
+            const { runWithServerHttpBaseUrl } = await importCliTestModule<{
+                runWithServerHttpBaseUrl<T>(baseUrl: string, operation: () => Promise<T>): Promise<T>;
+            }>('../../../../../../cli/src/api/client/serverHttpBaseUrl');
+            const { resolveAccountSettingsScopeKeyForToken } = await importCliTestModule<{
+                resolveAccountSettingsScopeKeyForToken(token: string): string;
+            }>('../../../../../../cli/src/settings/accountSettings/accountSettingsScopeKey');
+            const { createCliPromptLibraryStore } = await importCliTestModule<{
+                createCliPromptLibraryStore(input: { credentials: { token: string; encryption: null } }): {
+                    readPromptLibraryCatalog(): Promise<PromptLibraryCatalogSnapshotV1>;
+                };
+            }>('../../../../../../cli/src/settings/prompts/promptLibraryStore');
+            await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () => {
+                activeSnapshot.setActiveAccountSettingsSnapshot({ source: 'network',
+                    scopeKey: resolveAccountSettingsScopeKeyForToken(token), settingsVersion: 0, loadedAtMs: 1,
+                    settingsSecretsReadKeys: [], settings: {}, rawSettings: raw });
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const catalog = await createCliPromptLibraryStore({ credentials: { token, encryption: null } }).readPromptLibraryCatalog();
+                    expect(catalog).toMatchObject({ status: 'partial', diagnostics: expect.arrayContaining([
+                        { key: 'registry-sources', revision: 'absent', reason: 'invalid-stored-content' },
+                    ]), cleanup: { status: 'cleanup-pending' }, rows: expect.arrayContaining([
+                        expect.objectContaining({ record: { key: 'folders', value: raw.promptFoldersV1 } }),
+                    ]) });
+                }
+            });
+            expect(await inTx(tx => readPromptLibraryRowInTx(tx, { accountId: owner.id, key: 'registry-sources' })))
+                .toEqual({ status: 'absent' });
+            const current = (await app.inject({ method: 'GET', url: '/v2/account/settings' })).json();
+            expect(current.content).toEqual({ t: 'plain', v: { promptRegistrySourcesV1: retained } });
+            const history = await db.accountSettingsSnapshot.findMany({ where: { accountId: owner.id } });
+            expect(history.length).toBeGreaterThan(0);
+            for (const snapshot of history) expect(accountSettingsSnapshotToContent(snapshot))
+                .toMatchObject({ t: 'plain', v: { promptRegistrySourcesV1: retained } });
+        } finally { activeSnapshot.resetActiveAccountSettingsSnapshotForTests(); await app.close(); }
+    });
+
     it.each([true, false])('promotes a personal registry token through the real Action route and refuses its deletion (explicit mapping: %s)', async explicitMapping => {
         const personal = { id: 'registry-personal', name: 'Registry token', kind: 'token' as const,
             encryptedValue: { _isSecretValue: true as const, value: 'private-registry-token' }, createdAt: 1, updatedAt: 1 };
@@ -338,12 +456,13 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect(read).toMatchObject({ status: 'present', revision: 1, content: { t: 'plain', v: { key: 'registry-sources',
                 value: { sources: [{ token: { secretRef: ref } }] } } } });
             const guard = await inTx(tx => readProfileReferenceGuardInTx(tx, { accountId: owner.id }));
-            if (guard.status !== 'present') throw new Error('Committed promotion must advance the guard');
+            if (guard.status !== 'ready') throw new Error('Committed promotion must leave the guard readable');
+            expect(guard.revision).toBe(0);
             const deleted = await app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/delete',
                 headers: { 'x-test-user-id': owner.id }, payload: { resourceId, expectedRevision: 1, expectedSettingsVersion: 1,
                     referenceCensus: { ...input.referenceCensus, catalogs: { ...input.referenceCensus.catalogs, registrySources: 1 },
                         profiles: { referenceGuardRevision: guard.revision, rows: [] } } } });
-            expect(deleted.statusCode).toBe(409);
+            expect(deleted.statusCode, deleted.body).toBe(400);
             expect(deleted.json()).toMatchObject({ error: 'resource_in_use' });
             expect(await db.savedSecretResource.count()).toBe(1);
         } finally { await app.close(); }

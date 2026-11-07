@@ -80,6 +80,7 @@ export const SavedSecretCatalogEntryV1Schema = lazyZodSchema(() => z.strictObjec
   deploymentReferenceState: z.optional(z.enum(['referenced', 'unreferenced', 'unavailable'])),
   capabilities: z.strictObject({
     use: z.boolean(),
+    reveal: z.optional(z.boolean()),
     rename: z.boolean(),
     rotate: z.boolean(),
     manageAccess: z.boolean(),

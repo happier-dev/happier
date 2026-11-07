@@ -5,11 +5,11 @@ export type SecretsSettingsCopy = { [K in keyof typeof en]: (typeof en)[K] };
 
 
 export const en = {
-    purpose: "API keys, tokens and passkeys for agents, MCP servers and the browsers they use. Values stay hidden unless someone who manages a secret reveals it.",
+    purpose: "API keys, tokens and passkeys for agents, MCP servers and their browsers. Values stay masked until you reveal them.",
     yoursTitle: 'Your secrets',
     yoursDescription: 'Secrets you saved or own. Pick them wherever Happier asks for a key.',
     sharedWithYouTitle: 'Shared with you',
-    sharedWithYouDescription: 'Other people let you use these. You can pick them, but not see or change them.',
+    sharedWithYouDescription: "People shared these values with you. You can see and copy them, but only their owners can change them.",
     add: 'Add secret',
     newSecret: 'New secret',
     emptyTitle: 'No secrets yet',
@@ -17,6 +17,8 @@ export const en = {
     staleTitle: 'Shared secrets could not refresh',
     valueTitle: 'Value',
     valueSaved: 'Saved',
+    valueUseOnly: ({ owner }: { owner: string }) => `You can see and copy this value. Only ${owner} can change it. A copy cannot be recalled.`,
+    valueUseOnlyUnknownOwner: "You can see and copy this value. Only its owner can change it. A copy cannot be recalled.",
     keepTitle: 'Keep it',
     keepPersonal: 'Personal',
     keepShared: 'Shared',
@@ -103,7 +105,7 @@ export const en = {
     historyUnknownActor: "Someone",
     historyOlder: "Show older",
     sharingTitle: "Sharing",
-    sharingDescription: "People you add can pick it for their agents. Removing someone stops their next use.",
+    sharingDescription: "They can see and copy this value, and use it without your Machine. You can stop future access, but a copy already obtained cannot be taken back. Rotate or revoke the credential with its provider to invalidate that copy.",
     deleteSecret: "Delete secret",
     deleteNote: "Deleting removes it for good. Anything still using it has to switch to another secret first.",
     deleteNoteShared: "Deleting removes it for good, for everyone you shared it with. Anything still using it has to switch to another secret first.",

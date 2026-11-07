@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -9,8 +9,9 @@ import type { SavedSecretGrantDraft } from './savedSecretGrantDraft';
 import { useSavedSecretShareController } from './useSavedSecretShareController';
 
 /**
- * The Saved Secret meaning of the one share sheet: one level, "Can use". A secret's value never
- * leaves; only runs use it, so there is nothing else to grant. Every row shows that level locked.
+ * A Saved Secret grant gives recipients the value, including the ability to see and copy it.
+ * Future access can be stopped, but a disclosed copy cannot be recalled. Management stays owner-only.
+ * The brokered "Let them use it" choice belongs to Team credentials, not Saved Secrets.
  */
 function createSavedSecretShareAdapter(notice: ShareUiReason | undefined): ShareSheetAdapter {
     const canUse: ShareLevelPresentation = { label: t('shareSheet.secrets.levels.canUse'), help: t('shareSheet.secrets.help.use') };

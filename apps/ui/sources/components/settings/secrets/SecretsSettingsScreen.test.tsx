@@ -63,7 +63,7 @@ function entry(id: string): SavedSecretCatalogEntryV1 {
         name: id, kind: 'apiKey', encryptionMode: 'plain', owner: null, accessSources: [],
         audience: { accounts: [{ kind: 'account', accountId: 'recipient', name: 'Recipient', firstName: 'Recipient', lastName: null, username: null, avatarUrl: null }], teams: [], groups: [] },
         ownerAccountId: 'account-owner', revision: 3, materialStatus: 'ready',
-        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+        capabilities: { use: true, reveal: true, rename: true, rotate: true, manageAccess: true, delete: true },
     };
 }
 
@@ -397,7 +397,7 @@ describe('Shared Saved Secret person disclosure controller', () => {
         expect(writeClipboard).not.toHaveBeenCalled();
     });
 
-    it.each(['scope', 'ref', 'revision', 'manage', 'mode'] as const)('refuses a pending Copy when its current %s changes before cleanup', async change => {
+    it.each(['scope', 'ref', 'revision', 'reveal', 'mode'] as const)('refuses a pending Copy when its current %s changes before cleanup', async change => {
         const { scope, entries } = await mount(false);
         const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
         const activityPath = '/v1/account/saved-secrets/resources/activity';
@@ -419,7 +419,7 @@ describe('Shared Saved Secret person disclosure controller', () => {
         if (change === 'scope') selectedScope.accountId = 'another-account';
         if (change === 'ref') selected.ref = entries[1]!.ref;
         if (change === 'revision') selected.revision = 4;
-        if (change === 'manage') selected.capabilities.manageAccess = false;
+        if (change === 'reveal') selected.capabilities.reveal = false;
         if (change === 'mode') selected.encryptionMode = 'e2ee';
         await act(async () => { response.resolve(); expect(await copied).toBe('refused'); });
         expect(writeClipboard).not.toHaveBeenCalled();
@@ -890,23 +890,23 @@ describe('Saved Secret reveal leaf on the Saved Secrets page', () => {
         expect(writeClipboard).toHaveBeenCalledTimes(1);
     });
 
-    it('offers no reveal where the person cannot manage the secret or this device cannot read it', async () => {
+    it('offers a grantee Reveal without management and keeps unreadable material masked', async () => {
         const { screen, scope, entries } = await mount(false);
         answerDisclosure(scope.serverId);
-        const [useOnly, unreadable] = entries;
+        const [grantee, unreadable] = entries;
         await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 2, entries: [
-            { ...useOnly!, capabilities: { ...useOnly!.capabilities, manageAccess: false } },
+            { ...grantee!, capabilities: { ...grantee!.capabilities, manageAccess: false } },
             { ...unreadable!, materialStatus: 'preparing_encrypted_access' },
         ] }));
-        await openSecretPage(useOnly!.ref);
+        await openSecretPage(grantee!.ref);
+        expect(screen.findByTestId(`saved-secret:${grantee!.ref}:value-reveal`)).not.toBeNull();
+        expect(screen.findByTestId(`saved-secret:${grantee!.ref}:history`)).toBeNull();
         await openSecretPage(unreadable!.ref);
-        expect(screen.findByTestId(`saved-secret:${useOnly!.ref}:value-reveal`)).toBeNull();
         expect(screen.findByTestId(`saved-secret:${unreadable!.ref}:value-reveal`)).toBeNull();
         expect(screen.findByTestId(`saved-secret:${unreadable!.ref}:value-unavailable`)).not.toBeNull();
         expect(confirm).not.toHaveBeenCalled();
         expect(harness.requestsFor(activityPath)).toHaveLength(0);
-        // History is metadata: a manager still sees it while the value is unreadable here; use-only sees none.
-        expect(screen.findByTestId(`saved-secret:${useOnly!.ref}:history`)).toBeNull();
+        // History remains owner-only even when a grantee can Reveal.
         expect(screen.findByTestId(`saved-secret:${unreadable!.ref}:history`)).not.toBeNull();
     });
 

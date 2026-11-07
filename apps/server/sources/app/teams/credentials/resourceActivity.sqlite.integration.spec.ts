@@ -1,18 +1,20 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 import { initEncrypt } from "@/modules/encrypt";
+import { savedSecretDisclosureActivityEntityIdV1 } from "@happier-dev/protocol/account/settings/savedSecretReferenceV1";
 import { readTeamCredentialActivityInTx } from "./resourceActivity";
 import * as resourceActivity from "./resourceActivity";
-import { createSavedSecretResourceInTx } from "@/app/account/savedSecrets/savedSecretResourceService";
+import { admitSavedSecretResourceManagementInTx, createSavedSecretResourceInTx,
+    listSavedSecretResourceMaterialsForAccountInTx, setSavedSecretResourceGrantsInTx } from "@/app/account/savedSecrets/savedSecretResourceService";
 
 const TEST_AUTHENTICATION = { authenticationAuthority: "present_user", authenticationEvidence: [] } as const;
 
 describe("Team credential activity reads", () => {
-    let harness: LightSqliteHarness;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: "team-resource-activity-" });
+        harness = await createDatabaseIntegrationHarness({ tempDirPrefix: "team-resource-activity-" });
         harness.resetEnv({ HANDY_MASTER_SECRET: "happier-disposable-disclosure-contract-master" });
         await initEncrypt();
     }, 120_000);
@@ -138,6 +140,52 @@ describe("Team credential activity reads", () => {
         ]) } });
         expect(JSON.stringify(history)).not.toContain("attribution-private-value");
         expect(JSON.stringify(history)).not.toContain(owner.id);
+    });
+
+    it("admits a qualified grantee disclosure without management and refuses the next read after withdrawal", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
+        const outsider = await db.account.create({ data: { encryptionMode: "plain" } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: "friend" } });
+        const resourceId = "grantee-disclosure";
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: "Shared login", kind: "password", encryptionMode: "plain", accountGrants: [recipient.id],
+            storedContent: { t: "plain", v: { v: 1, name: "Shared login", kind: "password", value: "grantee-fixture-sentinel" } },
+        }))).toMatchObject({ ok: true });
+        const input = { actorAccountId: recipient.id, resourceId, expectedRevision: 1,
+            deviceId: "recipient-device", authentication: TEST_AUTHENTICATION };
+        const requested = await inTx(tx => resourceActivity.recordSavedSecretDisclosureActivityInTx(tx, { ...input, outcome: "requested" }));
+        expect(requested).toMatchObject({ ok: true });
+        if (!requested.ok) throw new Error("Expected qualified grantee disclosure");
+        expect(await inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, recipient.id, TEST_AUTHENTICATION, [resourceId])))
+            .toMatchObject([{ storedContent: { t: "plain", v: { value: "grantee-fixture-sentinel" } },
+                entry: { capabilities: { reveal: true, manageAccess: false, rename: false, rotate: false, delete: false } } }]);
+        const displayed = await inTx(tx => resourceActivity.recordSavedSecretDisclosureActivityInTx(tx,
+            { ...input, historyEntryId: requested.historyEntryId, outcome: "displayed" }));
+        const copied = await inTx(tx => resourceActivity.recordSavedSecretCopyActivityInTx(tx,
+            { ...input, historyEntryId: requested.historyEntryId, outcome: "succeeded" }));
+        expect(displayed).toMatchObject({ ok: true });
+        expect(copied).toMatchObject({ ok: true });
+        expect(JSON.stringify([requested, displayed, copied])).not.toContain("grantee-fixture-sentinel");
+        const historyChanges = await db.accountChange.findMany({ where: { kind: "account",
+            entityId: savedSecretDisclosureActivityEntityIdV1(resourceId) }, select: { accountId: true } });
+        expect(new Set(historyChanges.map(change => change.accountId))).toEqual(new Set([owner.id]));
+        expect(await inTx(tx => admitSavedSecretResourceManagementInTx(tx, { accountId: recipient.id, resourceId,
+            authentication: TEST_AUTHENTICATION }))).toEqual({ ok: false, error: "forbidden" });
+        const history = await inTx(tx => resourceActivity.readSavedSecretDisclosureActivityInTx(tx,
+            { actorAccountId: owner.id, resourceId, authentication: TEST_AUTHENTICATION }));
+        expect(history).toMatchObject({ ok: true, page: { items: [{ actorIsSelf: false, copyOutcome: "succeeded" }] } });
+        expect(await inTx(tx => resourceActivity.readSavedSecretDisclosureActivityInTx(tx, input)))
+            .toEqual({ ok: false, error: "resource_forbidden" });
+        expect(await inTx(tx => resourceActivity.recordSavedSecretDisclosureActivityInTx(tx,
+            { ...input, actorAccountId: outsider.id, outcome: "requested" }))).toEqual({ ok: false, error: "resource_not_found" });
+        expect(await inTx(tx => resourceActivity.recordSavedSecretDisclosureActivityInTx(tx,
+            { ...input, expectedRevision: 2, outcome: "requested" }))).toEqual({ ok: false, error: "resource_changed" });
+        expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: owner.id, resourceId,
+            expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [] }))).toMatchObject({ ok: true });
+        expect(await inTx(tx => resourceActivity.recordSavedSecretDisclosureActivityInTx(tx, { ...input, outcome: "requested" })))
+            .toEqual({ ok: false, error: "resource_not_found" });
+        expect(await inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, recipient.id, TEST_AUTHENTICATION, [resourceId]))).toEqual([]);
     });
 
     it("records exact Saved Secret disclosure and same-entry Copy without changing resource currentness", async () => {

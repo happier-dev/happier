@@ -156,7 +156,7 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
         await expect(db.savedSecretTeamGrant.count()).resolves.toBe(0);
     });
 
-    it("excludes Guests from a Team-wide grant while preserving their explicit Group grant", async () => {
+    it("excludes Guests from Team and Group grants while admitting a Group member", async () => {
         const owner = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
         const guest = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
         const team = await db.team.create({ data: { name: "Guest audience" }, select: { id: true } });
@@ -168,6 +168,8 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
             data: { teamId: team.id, accountId: guest.id, role: "guest" },
             select: { id: true },
         });
+        const member = await db.account.create({ data: { encryptionMode: "plain" } });
+        const memberMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
         const group = await db.teamGroup.create({
             data: { teamId: team.id, name: "Explicit guests", nameKey: "explicit-guests" },
             select: { id: true },
@@ -176,6 +178,7 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
             data: [
                 { teamId: team.id, teamGroupId: group.id, teamMembershipId: ownerMembership.id },
                 { teamId: team.id, teamGroupId: group.id, teamMembershipId: guestMembership.id },
+                { teamId: team.id, teamGroupId: group.id, teamMembershipId: memberMembership.id },
             ],
         });
 
@@ -189,11 +192,16 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
                 t: "plain",
                 v: { v: 1, name: "Shared token", kind: "token", value: "value" },
             },
-            teamGrants: [team.id],
+            teamGrants: [],
             groupGrants: [group.id],
         }));
         expect(created).toMatchObject({ ok: true });
         await expect(inTx((tx) => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id)))
+            .resolves.toHaveLength(0);
+        // Exact material reads bypass the catalog predicate, so exercise their shared selector too.
+        await expect(inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id, undefined, ["resource_guest_scope"])))
+            .resolves.toEqual([]);
+        await expect(inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, member.id, undefined, ["resource_guest_scope"])))
             .resolves.toHaveLength(1);
 
         const groupRemoved = await inTx((tx) => setSavedSecretResourceGrantsInTx(tx, {

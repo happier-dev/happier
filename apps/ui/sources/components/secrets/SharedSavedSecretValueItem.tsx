@@ -12,6 +12,8 @@ import {
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
 import { t } from '@/text';
 
 /** A fixed shape: the mask never hints at the value's length. */
@@ -19,11 +21,12 @@ const MASKED_VALUE = '••••••••••••';
 
 /**
  * A shared Saved Secret's value as one row, and the one person-only Reveal/Copy leaf every surface
- * that shows a managed Saved Secret reuses. Masked by default; a person who manages the secret can
+ * that shows a shared Saved Secret reuses. Masked by default; a qualified recipient can
  * reveal it after confirming, then copy it with an explicit gesture that is recorded on the same
  * history entry. Hiding, collapsing, leaving or any change to the secret forgets the value (the
  * data owner, {@link useSharedSavedSecretReveal}, clears it on every lifecycle edge). Where the
- * person cannot manage it, or this device cannot read it, the row says so and offers no Reveal.
+ * device cannot read it, the row says so and offers no Reveal. Recipients can see and copy the
+ * value; only the owner can change the resource or its audience.
  * An Agent or MCP reveal the person allowed arrives as `approvedReveal`: the row opens it once on
  * mount without a second confirmation, then behaves like any revealed row.
  */
@@ -85,7 +88,7 @@ export const SharedSavedSecretValueItem = React.memo(
 
     const canReveal =
       entry.source === 'shared_resource' &&
-      entry.capabilities.manageAccess &&
+      entry.capabilities.reveal === true &&
       entry.revision !== null;
     const readable = entry.materialStatus === 'ready';
     const state = disclosure.state;
@@ -111,8 +114,18 @@ export const SharedSavedSecretValueItem = React.memo(
       />
     ) : null;
 
+    const ownerName = entry.owner ? formatAccountDisplayName(entry.owner) : null;
     const subtitle: Readonly<{ node: React.ReactNode; testID?: string }> = !canReveal
-      ? { node: t('secretsSettings.valueSaved') }
+      ? entry.relationship === 'recipient'
+        ? {
+            // Use only: its trouble, when there is one, is this row's one line.
+            node: !readable
+              ? sharedSecretStatusLabel(entry.materialStatus)
+              : ownerName
+                ? t('secretsSettings.valueUseOnly', { owner: ownerName })
+                : t('secretsSettings.valueUseOnlyUnknownOwner'),
+          }
+        : { node: t('secretsSettings.valueSaved') }
       : !readable
         ? { node: t('secretsSettings.valueUnavailable'), testID: `${props.testID}-unavailable` }
         : state.status === 'refused'

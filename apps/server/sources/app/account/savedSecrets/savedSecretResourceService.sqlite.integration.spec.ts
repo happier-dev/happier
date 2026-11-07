@@ -1,6 +1,3 @@
-import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { listQualifiedConnectedAccounts, mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     encodePlainArtifactStoredContent,
@@ -36,6 +33,7 @@ import { buildProfilePhysicalKey, PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } from 
 import { ProfileRecordV1Schema, resolveEffectiveProfileSecretBindingsV1, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import * as resourceService from './savedSecretResourceService';
+import { listQualifiedConnectedAccounts, mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { createArtifactTx, updateArtifactTx } from '@/app/artifacts/artifactWriteService';
 import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { mutateProfileTransferInTx, readProfileTransferControlInTx } from '@/app/account/profiles/profileTransferRows';
@@ -54,8 +52,10 @@ import type { SavedSecretCatalogRevisionsV1 } from '@happier-dev/protocol/accoun
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1, NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { mutatePromptLibraryRowInTx, readPromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
-import { decodeSensitiveContentFromAtRestStorage } from '@/app/encryption/sensitiveContentAtRestStorage';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { decodeSensitiveContentFromAtRestStorage } from '@/app/encryption/sensitiveContentAtRestStorage';
 
 const ACCEPTED_EMAIL_PASSWORD = { kind: "home_method" as const, methodId: "email_password" };
 const EMAIL_PASSWORD_EVIDENCE = [ACCEPTED_EMAIL_PASSWORD];
@@ -151,6 +151,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             () => db.accountPasswordCredential.deleteMany(),
             () => db.accountIdentity.deleteMany(),
             () => db.userRelationship.deleteMany(),
+            () => db.serviceAccountToken.deleteMany(),
             () => db.account.deleteMany(),
         ]);
     });
@@ -183,6 +184,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             const legacyEnvelope = decodeSensitiveContentFromAtRestStorage({
                 keyPath: ['storage', 'saved_secret_resource', resourceId, 'v1'], value: row.storedContent });
             expect(legacyEnvelope).not.toHaveProperty('storage');
+            if (mode === 'e2ee') expect(JSON.stringify(legacyEnvelope)).not.toContain('private-value-sentinel');
             expect(openSavedSecretResourceStoredContentV1({ resourceId, mode, storedContent: legacyEnvelope,
                 resourceDataKey: new Uint8Array(32).fill(7) })).toEqual(variant.content);
         }
@@ -242,6 +244,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             expectedRevision: 1, displayName: input.displayName, kind: input.kind, storedContent })))
             .toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 2 } });
     });
+
     it.each(['plain', 'e2ee'] as const)('creates and retries a resource-only external-reference batch in a %s Account without changing Settings or catalogs', async mode => {
         const material = createE2eeAccountMaterial();
         const owner = await db.account.create({ data: mode === 'e2ee' ? material.account : { encryptionMode: mode } });
@@ -282,6 +285,32 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect({ settings: after.settings, settingsVersion: after.settingsVersion })
             .toEqual({ settings: owner.settings, settingsVersion: owner.settingsVersion });
         expect(await db.userKVStore.count({ where: { accountId: owner.id } })).toBe(0);
+    });
+
+    it.each(['invalid', 'collision', 'granted'] as const)('rolls back a resource-only batch when its second external reference is %s', async failure => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = failure === 'granted' ? await db.account.create({ data: { encryptionMode: 'plain' } }) : null;
+        const resource = (resourceId: string) => ({ resourceId, displayName: 'Vault field', kind: 'token' as const,
+            encryptionMode: 'plain' as const, storedContent: { t: 'plain' as const, v: { v: 2 as const,
+                name: 'Vault field', kind: 'token' as const, source: { kind: 'external' as const,
+                    contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'personal', reference: `vault://item/${resourceId}` } } } });
+        const first = resource('vault-rollback-first');
+        const second = resource('vault-rollback-second');
+        if (failure === 'collision') {
+            expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, ...second,
+                displayName: 'Existing field', storedContent: { ...second.storedContent, v: { ...second.storedContent.v, name: 'Existing field' } } })))
+                .toMatchObject({ ok: true });
+        }
+        const candidate = failure === 'invalid' ? { ...second, displayName: 'Mismatched field' }
+            : recipient ? { ...second, accountGrants: [recipient.id] } : second;
+        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, ...first,
+            additionalSavedSecretResources: [candidate], nextSettings: null, profileMutations: [],
+            referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: {} } }))).rejects.toMatchObject({
+            error: failure === 'invalid' ? 'invalid_resource' : failure === 'collision' ? 'resource_changed' : 'recipient_mode_unsupported',
+        });
+        expect(await db.savedSecretResource.findUnique({ where: { id: first.resourceId } })).toBeNull();
+        expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(failure === 'collision' ? 1 : 0);
+        expect(await db.accountChange.count({ where: { accountId: owner.id } })).toBe(failure === 'collision' ? 1 : 0);
     });
 
     it('retains registry token resources and fences deletion with the captured source revision', async () => {
@@ -602,6 +631,44 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(1);
     });
 
+    it('admits an exact selected key reference at credential commit and refuses stale or foreign references', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const create = (accountId: string, resourceId: string) => inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId, resourceId, displayName: 'Cloud key', kind: 'apiKey', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Cloud key', kind: 'apiKey', value: 'one-key' } },
+        }));
+        expect(await create(owner.id, 'selected-owned-key')).toMatchObject({ ok: true });
+        expect(await create(other.id, 'selected-foreign-key')).toMatchObject({ ok: true });
+        const link = (accountId: string, resourceId: string, expectedRevision: number, secondRevision?: number) => mutateQualifiedConnectedServiceCredential({
+            accountId: owner.id, ref: { service: { pluginId: 'happier.fixture', localId: 'cloud' }, accountId },
+            authenticationModeId: 'api-key', expectedCredentialRevision: null, metadata: { scopes: [] },
+            savedSecretResourceIds: [resourceId], savedSecretRevisions: [{ resourceId, expectedRevision },
+                ...(secondRevision === undefined ? [] : [{ resourceId, expectedRevision: secondRevision }])],
+            content: { t: 'plain', v: { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1(resourceId) } } },
+        });
+        expect(await link('owned', 'selected-owned-key', 1)).toMatchObject({ status: 'written' });
+        expect(await link('same-selection-two-fields', 'selected-owned-key', 1, 1)).toMatchObject({ status: 'written' });
+        expect(await link('conflicting-selections', 'selected-owned-key', 1, 2)).toEqual({ status: 'saved_secret_reference_invalid' });
+        expect(await link('stale', 'selected-owned-key', 2)).toEqual({ status: 'saved_secret_reference_invalid' });
+        expect(await link('foreign', 'selected-foreign-key', 1)).toEqual({ status: 'saved_secret_reference_invalid' });
+        // An existing use grant is not the custodian's consent to link their key
+        // into the recipient's independent Connected Account.
+        await db.savedSecretAccountGrant.create({ data: {
+            resourceId: 'selected-foreign-key', accountId: owner.id, createdByAccountId: other.id,
+        } });
+        const granted = await inTx(tx => listSavedSecretResourcesForAccountInTx(tx, owner.id));
+        expect(granted).toContainEqual(expect.objectContaining({
+            ref: formatSharedSavedSecretRefV1('selected-foreign-key'), relationship: 'recipient',
+            capabilities: expect.objectContaining({ use: true }),
+        }));
+        const credentialsBefore = await db.serviceAccountToken.findMany({ where: { accountId: owner.id } });
+        expect(await link('granted-foreign', 'selected-foreign-key', 1)).toEqual({ status: 'saved_secret_reference_invalid' });
+        expect(await db.serviceAccountToken.findMany({ where: { accountId: owner.id } })).toEqual(credentialsBefore);
+        expect(await db.serviceAccountToken.count({ where: { accountId: owner.id } })).toBe(2);
+        expect(await db.savedSecretResource.count()).toBe(2);
+    });
+
     it('converts an existing raw Connected Account key on edit, and a stale edit leaves the raw source readable', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 2 }, select: { id: true } });
         const ref = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'released-key' };
@@ -706,13 +773,13 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 4,
             settings: JSON.stringify({ t: 'plain', v: raw }) }, select: { id: true } });
         const controller = await db.machine.create({ data: { id: 'scoped-controller', accountId: owner.id, metadata: 'captured-metadata' } });
-        const environment = { secretRefs: { v: 1, bindings: { TOKEN: { ref: 'personal-source', revision: 1 } } } };
+        const setupDefinition = { secretRefs: { v: 1, bindings: { TOKEN: { ref: 'personal-source', revision: 1 } } } };
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
         const preset = await db.managedMachinePreset.create({ data: { homeId: 'scoped-home', name: 'Scoped preset',
-            custodianAccountId: owner.id, controllerMachineId: controller.id, controllerInstallationId: 'scoped-install', launch, environment } });
+            custodianAccountId: owner.id, controllerMachineId: controller.id, controllerInstallationId: 'scoped-install', launch, setup: setupDefinition } });
         const machine = await db.managedMachine.create({ data: { homeId: 'scoped-home', custodianAccountId: owner.id,
             controllerMachineId: controller.id, controllerInstallationId: 'scoped-install', admittedActionRequestId: 'scoped-request',
-            admittedInput: {}, launch, retention: {}, wakeOnAcceptedMessage: false, environmentSetup: { environment } } });
+            admittedInput: {}, launch, retention: {}, wakeOnAcceptedMessage: false, machineSetup: { setup: setupDefinition } } });
         const key = '@happier/account/connected-configurations/v1/catalog';
         await db.userKVStore.create({ data: { accountId: owner.id, key, version: 0,
             value: Buffer.from(JSON.stringify({ t: 'plain', v: { key: 'configurations', value: { v: 1, entries: [] } } })) } });
@@ -777,15 +844,17 @@ describe("Saved Secret resource service (SQLite integration)", () => {
     });
 
     it.each(['plain', 'e2ee'] as const)('retains a shared secret referenced by an archived machine preset for a %s Account', async (accountMode) => {
-        const owner = await db.account.create({ data: accountMode === 'e2ee' ? createE2eeAccountMaterial().account : { encryptionMode: accountMode } });
+        // An E2EE Account holds a Plain resource only when a Plain-to-E2EE switch left a shared one Plain.
+        const owner = await db.account.create({ data: accountMode === 'e2ee' ? { ...createE2eeAccountMaterial().account, encryptionMode: 'plain' } : { encryptionMode: accountMode } });
         const resourceId = `preset-setup-${accountMode}`;
         await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId, displayName: 'Setup token',
             kind: 'token', encryptionMode: 'plain', storedContent: { t: 'plain',
                 v: { v: 1, name: 'Setup token', kind: 'token', value: 'private' } } }));
+        if (accountMode === 'e2ee') await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
         const preset = await db.managedMachinePreset.create({ data: { homeId: 'preset-home', name: 'Archived preset',
             custodianAccountId: owner.id, controllerMachineId: 'preset-controller', controllerInstallationId: 'preset-install',
             launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-            archivedAt: new Date(), environment: { setupScript: 'echo setup', futureField: true,
+            archivedAt: new Date(), setup: { setupScript: 'echo setup', futureField: true,
                 secretRefs: { v: 1, bindings: { TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } } } });
         const input = { accountId: owner.id, resourceId, expectedRevision: 1, expectedSettingsVersion: 0,
             referenceCensus: { accountMode, profiles: { referenceGuardRevision: 'absent' as const, rows: [] } } };
@@ -1444,21 +1513,21 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const otherController = await db.machine.create({ data: { id: 'promotion-other-controller', accountId: recipient.id, metadata: '{}',
             installationId: 'promotion-other-install' } });
         const team = await db.team.create({ data: { name: 'Setup team' } });
-        const environment = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, setupScript: 'echo setup',
+        const setupDefinition = { toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' }, setupScript: 'echo setup',
             futureStoredMember: { nested: [null, { opaque: true }] },
             secretRefs: { v: 1, bindings: { TOKEN: { ref: personalSecretId }, UNRELATED: { ref: 'unrelated-personal' } } } };
-        const setup = { state: 'pending', futureStoredMember: { nested: [null, { opaque: true }] }, environment };
+        const setup = { state: 'pending', futureStoredMember: { nested: [null, { opaque: true }] }, setup: setupDefinition };
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
         const preset = await db.managedMachinePreset.create({ data: { homeId: 'promotion-home', name: 'Team preset', teamId: team.id,
-            launch, controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', environment, revision: 4 } });
+            launch, controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', setup: setupDefinition, revision: 4 } });
         const foreignPreset = await db.managedMachinePreset.create({ data: { homeId: 'promotion-home', name: 'Other account',
             custodianAccountId: recipient.id, launch, controllerMachineId: otherController.id,
-            controllerInstallationId: 'promotion-other-install', environment } });
+            controllerInstallationId: 'promotion-other-install', setup: setupDefinition } });
         const managed = await db.managedMachine.create({ data: { homeId: 'promotion-home', custodianAccountId: owner.id,
             controllerMachineId: controller.id, controllerInstallationId: 'promotion-install', launch, presetId: preset.id, presetRevision: 4,
             admittedActionRequestId: 'promotion-setup', admittedInput: {}, allocation: 'may-exist',
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            environmentSetup: setup } });
+            machineSetup: setup } });
         const input = {
             accountId: owner.id,
             resourceId,
@@ -1478,29 +1547,29 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const unmapped = { ...input, personalSecretPromotions: undefined };
         expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, unmapped))).toEqual({ ok: false, error: 'references_invalid' });
         expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toBeNull();
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 4, environment });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 4, setup: setupDefinition });
         expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ settingsVersion: 1 });
 
         await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
             ok: true,
             value: { resourceId, settingsVersion: 2 },
         });
-        const rewritten = { ...environment, secretRefs: { ...environment.secretRefs,
-            bindings: { ...environment.secretRefs.bindings, TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } };
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, environment: rewritten });
+        const rewritten = { ...setupDefinition, secretRefs: { ...setupDefinition.secretRefs,
+            bindings: { ...setupDefinition.secretRefs.bindings, TOKEN: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } } };
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, setup: rewritten });
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({
-            presetRevision: 4, environmentSetup: { ...setup, environment: rewritten } });
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id }, select: { environment: true } }))
-            .toEqual({ environment: rewritten });
-        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id }, select: { environmentSetup: true } }))
-            .toEqual({ environmentSetup: { ...setup, environment: rewritten } });
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: foreignPreset.id } })).toMatchObject({ revision: 0, environment });
+            presetRevision: 4, machineSetup: { ...setup, setup: rewritten } });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id }, select: { setup: true } }))
+            .toEqual({ setup: rewritten });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id }, select: { machineSetup: true } }))
+            .toEqual({ machineSetup: { ...setup, setup: rewritten } });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: foreignPreset.id } })).toMatchObject({ revision: 0, setup: setupDefinition });
         // Simulate a client retry after the first committed response was lost.
         await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, input))).resolves.toEqual({
             ok: true,
             value: { resourceId, settingsVersion: 2 },
         });
-        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, environment: rewritten });
+        expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: preset.id } })).toMatchObject({ revision: 5, setup: rewritten });
         await expect(inTx((tx) => promoteSavedSecretResourceInTx(tx, {
             ...input,
             accountGrants: [recipient.id],
@@ -2644,7 +2713,8 @@ describe("Saved Secret resource service (SQLite integration)", () => {
     it("converts an owned Plain resource to E2EE with the owner envelope, and refuses one without it", async () => {
         const ownerMaterial = createE2eeAccountMaterial();
         const recipientMaterial = createE2eeAccountMaterial();
-        const owner = await db.account.create({ data: ownerMaterial.account, select: { id: true } });
+        // A Plain resource on an E2EE Account exists only when a Plain-to-E2EE switch left a shared one Plain.
+        const owner = await db.account.create({ data: { ...ownerMaterial.account, encryptionMode: "plain" }, select: { id: true } });
         const recipient = await db.account.create({ data: recipientMaterial.account, select: { id: true } });
         const plainRecipient = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
         await db.userRelationship.createMany({
@@ -2665,6 +2735,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             },
             accountGrants: [recipient.id, plainRecipient.id],
         }));
+        await db.account.update({ where: { id: owner.id }, data: { encryptionMode: "e2ee" } });
 
         // A Plain recipient can hold no envelope, so naming one is refused
         // rather than silently dropped.

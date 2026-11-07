@@ -7022,6 +7022,17 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 backup restore accepts optional `backupOperationId` to select an
+exact retained scheduled run alongside its snapshot `restoreBackupId`. Omitting
+it preserves pre-migration receipt selection. Backup run results optionally retain
+typed `restoreCaptures` using the existing closed source/configuration/native-target
+capture schema, now owned by Protocol and re-exported by deployment-protocol.
+Older manifest-only results remain readable and recoverable against a compatible
+current native target after exact repository and payload verification. These
+mutation envelopes and every nested capture remain closed; old strict development
+readers reject new fields, so matching Protocol, daemon, SDK and UI readers reload
+together. No released wire epoch, new Action or persisted index is introduced.
+
 The unreleased 0.3 mounted Workflow trigger snapshot adds optional
 `roleOverrides` and `visibleTeamId`, using the existing trigger-context schemas.
 The snapshot and its nested mutation envelopes remain closed. Matching Protocol
