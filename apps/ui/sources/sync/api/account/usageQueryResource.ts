@@ -69,11 +69,12 @@ import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createUsageQuerySessionInputs, type SessionInputEvidence, type SessionInputReader, type SessionInputSelectionReader } from './usageQuerySessionInputs';
+import { UsageQueryEvidencePhase } from './usageQueryEvidencePhase';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
-import { UsageHistoryEntry } from './usageHistoryReadState';
+import { UsageHistoryEntry, readUsageHistoryFailure } from './usageHistoryReadState';
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { openUsageCompactInput, persistUsageCompactInput } from './usageCompactInput';
 
@@ -524,7 +525,7 @@ async function readSessionInputPhase(ids: readonly string[], readTranscript: boo
         demandSignal,
     ).catch(error => {
         if (!demandSignal?.aborted) onFailure(sessionId, error);
-        if (!(error instanceof SessionPartsHttpError)) throw error;
+        if (!(error instanceof SessionPartsHttpError) && readUsageHistoryFailure(error).retryable) throw error;
         return null;
     }).then(value => { onValue(sessionId, value); return [sessionId, value] as const; }));
     // One physical batch serves every collected Session read. It ends only when
@@ -585,7 +586,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     signal?: AbortSignal,
     onProgress?: (snapshots: readonly HowYouWorkReadSnapshot[], sources: readonly UsageQuerySourceState[], settled: boolean) => void,
     history?: Readonly<{ readUnconverted?: boolean; coverage(selected: ReadonlySet<string>, notRead: number): void;
-        converted(sessionId: string): void; succeeded(sessionId: string): void; failed(code: string, sessionId?: string): void }>): Promise<HowYouWorkReadSnapshot[]> {
+        converted(sessionId: string): void; succeeded(sessionId: string): void;
+        failed(code: string, sessionId?: string, retryable?: boolean): void }>): Promise<HowYouWorkReadSnapshot[]> {
     const queries = [query];
     const active = captureActiveServerAccountScopeLifetime();
     const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
@@ -780,8 +782,16 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const readTranscript = history?.readUnconverted || readsUnconvertedTranscriptsOnOpen(query);
     let updateRequired: UsageQuerySourceState['updateRequired'];
     let projectedReadFailure: SessionPartsHttpError | undefined;
+    let sessionReadFailure: ReturnType<typeof readUsageHistoryFailure> | undefined;
     const recordReadFailure = (sessionId: string, error: unknown) => {
-        history?.failed(error instanceof SessionPartsHttpError && error.updateRequired ? 'update_required' : 'usage_session_evidence_read_failed', sessionId);
+        const failure = readUsageHistoryFailure(error);
+        if (!sessionReadFailure || failure.retryable) sessionReadFailure = failure;
+        history?.failed(failure.errorCode, sessionId, failure.retryable);
+        if ((typeof __DEV__ !== 'undefined' && __DEV__)
+            || ['1', 'true'].includes(String(process.env.EXPO_PUBLIC_DEBUG ?? '').trim().toLowerCase())) {
+            // The diagnostic contains typed failure facts only, never Session identity or content.
+            console.info('[usageHistory] Session evidence failure', failure);
+        }
         if (error instanceof SessionPartsHttpError) updateRequired ??= error.updateRequired;
     };
     const loadTranscript = async (sessionId: string, assertCurrent: () => void, signal: AbortSignal,
@@ -867,6 +877,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                         // freshly admitted Session facts. Access/format failures
                         // quarantine them; no previously loaded content is revived.
                         if (!isTransientConnectivityError(error)) throw error;
+                        recordReadFailure(sessionId, error);
                     }
                     if (page !== null && session.encryptionMode === 'e2ee') {
                         // Summary admission and transcript demand can use different
@@ -932,20 +943,18 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     requireCurrent(context, signal);
                     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                         ? error.code : 'usage_work_facts_write_failed';
-                    history?.failed(code, sessionId);
+                    recordReadFailure(sessionId, error);
                     return { ...value, workFactsPersisted: false, workFactsWriteErrorCode: code };
                 }
             });
         } catch (error) {
             requireCurrent(context, signal);
             assertCurrent();
-            if (error instanceof SessionPartsHttpError || error instanceof SessionPartsInvalidResponseError) throw error;
-            return null;
+            throw error;
         }
     };
-    const selected = new Map<string, SessionInputEvidence | null>();
-    const settled = new Set<string>();
-    let publishedPhase: string | undefined;
+    const evidencePhase = new UsageQueryEvidencePhase(selectedIds.length, query.includeTranscriptEvidence);
+    const selected = evidencePhase.selected;
     const project = (): HowYouWorkEvidenceSnapshot[] => queries.map(query => {
         // Loaded Sessions supply demand, never an access/content fallback after
         // a fresh exact-Account admission fails or denies transcript access.
@@ -971,41 +980,35 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     });
     const publish = () => {
         if (signal?.aborted || !context.accountLifetime.isCurrent()) return;
-        const admitted = selectedIds.every(id => selected.has(id));
-        const readable = selectedIds.every(id => {
-            const session = selected.get(id)?.session;
-            return session && session.access?.capabilities.readTranscript !== false
-                && isSessionContentReadable(readSessionContentAvailability(session));
-        });
-        const refused = [...selected.values()].some(value => value === null);
-        const sources: UsageQuerySourceState[] = [
-            { source: 'how_you_work:sessions', status: !admitted ? 'pending' : readable ? 'available' : 'partial' },
-            { source: 'how_you_work:transcripts', status: !query.includeTranscriptEvidence ? 'not_loaded' : settled.size < selectedIds.length ? 'pending'
-                : readable && selectedIds.every(id => selected.get(id)?.completeMessageCoverage) ? 'available' : 'partial' },
-        ];
         // Publish the admitted interval phase before held transcript I/O, then
         // the completed input phase. Individual unfinished Session completions
         // do not change those phases: projecting and serializing the complete
         // Account for each one makes a cold pass quadratic. A refusal still
         // withdraws private facts immediately, independently of completion.
-        const phase = JSON.stringify([sources, refused]);
-        if (phase === publishedPhase) return;
-        publishedPhase = phase;
+        const phase = evidencePhase.read();
+        if (!phase) return;
+        const { admitted, refused, sources } = phase;
         // Summary output settles at admission while this finite read continues conversion.
-        onProgress?.(admitted || refused ? project() : [], sources, admitted && !query.includeTranscriptEvidence);
+        onProgress?.(admitted || refused ? project() : [], sessionReadFailure ? sources.map(source => source.status === 'partial'
+            ? { ...source, errorCode: sessionReadFailure.errorCode } : source) : sources, admitted && !query.includeTranscriptEvidence);
     };
     publish();
     const onValue = (sessionId: string, value: SessionInputEvidence | null, complete: boolean) => {
         requireCurrent(context, signal);
-        const changed = !selected.has(sessionId) || selected.get(sessionId) !== value;
-        if (value === null) history?.failed('usage_session_evidence_read_failed', sessionId);
-        else if (complete && value.completeMessageCoverage && value.workFactsPersisted !== false) history?.succeeded(sessionId);
-        selected.set(sessionId, value);
-        if (complete) settled.add(sessionId);
+        // A null completion already reported its failure through recordReadFailure.
+        if (value) {
+            if (value.session.access?.capabilities.readTranscript === false) recordReadFailure(sessionId, { errorCode: 'forbidden' });
+            else if (!isSessionContentReadable(readSessionContentAvailability(value.session))) {
+                const availability = readSessionContentAvailability(value.session);
+                if (availability !== null) recordReadFailure(sessionId, { errorCode: availability });
+            }
+            else if (complete && value.completeMessageCoverage && value.workFactsPersisted !== false) history?.succeeded(sessionId);
+        }
+        const changed = evidencePhase.select(sessionId, value, complete);
         // Cached progress already supplied these exact facts. Only the last
         // completion changes the aggregate's pending state; reprojecting every
         // identical completion turns one refresh into N full-corpus passes.
-        if (changed || settled.size === selectedIds.length) publish();
+        if (changed || evidencePhase.complete) publish();
     };
     const needsTranscript = (value: SessionInputEvidence | null | undefined) => readTranscript && value && !value.completeMessageCoverage
         && (history?.readUnconverted !== true || canReadUnconvertedSessionHistory(value));
@@ -1032,13 +1035,12 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                     const result = inputs.get(request.sessionId);
                     if (result && 'error' in result) {
                         const failure = sessionEvidenceReadError(result.error);
-                        if (failure instanceof SessionPartsHttpError || request.retained && isTransientConnectivityError(failure)) {
-                            request.reject(failure);
-                            continue;
-                        }
+                        request.reject(failure);
+                        continue;
                     }
-                    request.resolve(result && 'value' in result ? result.value : null);
-                } catch { request.resolve(null); }
+                    if (result && 'value' in result) request.resolve(result.value);
+                    else request.reject(new SessionPartsInvalidResponseError());
+                } catch (error) { request.reject(error); }
             }
         } catch (error) {
             requireCurrent(context, ownerSignal);
@@ -1047,9 +1049,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 // Failed replacement is not a new empty admission. Let the
                 // Resource retain its admitted snapshot and expose the failure;
                 // cold reads and actual refusals still withdraw unavailable facts.
-                if (failure instanceof SessionPartsHttpError || failure instanceof SessionPartsInvalidResponseError
-                    || isTransientConnectivityError(failure)) request.reject(failure);
-                else request.resolve(null);
+                request.reject(failure);
             }
         }
     }, (id, value) => onValue(id, value, !needsTranscript(value)), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), signal);
@@ -1101,7 +1101,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 else request.reject(result && 'error' in result ? result.error : sessionEvidenceReadError(error));
             }
         }
-    }, (id, value) => onValue(id, value, true), (id, value) => { selected.set(id, value); publish(); }, summaries, transcriptDemandKey, getUsageQueryKey(query), signal);
+    }, (id, value) => onValue(id, value, true), (id, value) => { evidencePhase.select(id, value); publish(); }, summaries, transcriptDemandKey, getUsageQueryKey(query), signal);
     requireCurrent(context, signal);
     return project();
 }
@@ -1363,7 +1363,7 @@ export async function readUiUsageQueryBatch(
                             readsUnconvertedTranscriptsOnOpen(query) ? 0 : notRead),
                         converted: id => readUsageHistoryEntry(accountOwner, query).converted(id),
                         succeeded: id => readUsageHistoryEntry(accountOwner, query).succeeded(id),
-                        failed: (code, id) => readUsageHistoryEntry(accountOwner, query).failed(code, id) });
+                        failed: (code, id, retryable) => readUsageHistoryEntry(accountOwner, query).failed(code, id, retryable) });
             } catch (error) {
                 requireCurrent(context, signal);
                 if (!isTransientConnectivityError(error)) throw error;

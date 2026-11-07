@@ -1,0 +1,61 @@
+import type { UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
+import type { SessionInputEvidence } from './usageQuerySessionInputs';
+
+type EvidenceReadPhase = Readonly<{
+    admitted: boolean;
+    refused: boolean;
+    sources: readonly UsageQuerySourceState[];
+}>;
+
+/** The finite evidence read owns its selected inputs and source-phase publication. */
+export class UsageQueryEvidencePhase {
+    private readonly inputs = new Map<string, SessionInputEvidence | null>();
+    private readonly settled = new Set<string>();
+    private publishedPhase: string | undefined;
+    private readableInputs = 0;
+    private refusedInputs = 0;
+    private coveredInputs = 0;
+
+    constructor(private readonly selectionCount: number, private readonly readTranscript: boolean) {}
+
+    get selected(): ReadonlyMap<string, SessionInputEvidence | null> { return this.inputs; }
+    get complete(): boolean { return this.settled.size === this.selectionCount; }
+
+    private updateEvidenceCounts(value: SessionInputEvidence | null, change: number): void {
+        if (value === null) { this.refusedInputs += change; return; }
+        const session = value.session;
+        if (session.access?.capabilities.readTranscript !== false
+            && isSessionContentReadable(readSessionContentAvailability(session))) this.readableInputs += change;
+        if (value.completeMessageCoverage) this.coveredInputs += change;
+    }
+
+    select(id: string, value: SessionInputEvidence | null, complete = false): boolean {
+        const previous = this.inputs.get(id);
+        const changed = previous !== value;
+        // Inputs are immutable admitted snapshots. A changed Session adjusts
+        // the finite read's phase totals; it never rechecks the other Sessions.
+        if (changed) {
+            if (previous !== undefined) this.updateEvidenceCounts(previous, -1);
+            this.updateEvidenceCounts(value, 1);
+            this.inputs.set(id, value);
+        }
+        if (complete) this.settled.add(id);
+        return changed;
+    }
+
+    read(): EvidenceReadPhase | undefined {
+        const admitted = this.inputs.size === this.selectionCount;
+        const readable = this.readableInputs === this.selectionCount;
+        const refused = this.refusedInputs > 0;
+        const sources: UsageQuerySourceState[] = [
+            { source: 'how_you_work:sessions', status: !admitted ? 'pending' : readable ? 'available' : 'partial' },
+            { source: 'how_you_work:transcripts', status: !this.readTranscript ? 'not_loaded' : !this.complete ? 'pending'
+                : readable && this.coveredInputs === this.selectionCount ? 'available' : 'partial' },
+        ];
+        const phase = JSON.stringify([sources, refused]);
+        if (phase === this.publishedPhase) return undefined;
+        this.publishedPhase = phase;
+        return { admitted, refused, sources };
+    }
+}
