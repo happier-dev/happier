@@ -88,6 +88,12 @@ type PluginInputRuntimeKeysMustRemainExact = AssertTrue<Equal<keyof PluginRuntim
 type PluginResultRuntimeKeysMustRemainExact = AssertTrue<Equal<keyof PluginRuntimeResults, keyof SchemaResults>>;
 type PublicInputRuntimeKeysMustRemainExact = AssertTrue<Equal<keyof PublicRuntimeInputs, keyof CanonicalAction.PublicActionInputById>>;
 type PublicResultRuntimeKeysMustRemainExact = AssertTrue<Equal<keyof PublicRuntimeResults, keyof CanonicalAction.PublicActionResultById>>;
+type ClipboardActionId = Extract<ActionId, `computer.clipboard.${string}`>;
+type ClipboardPublicIds = AssertTrue<Equal<Extract<CanonicalAction.PublicActionId, ClipboardActionId>, ClipboardActionId>>;
+type ClipboardPublicInputs = AssertTrue<Equal<Extract<keyof CanonicalAction.PublicActionInputById, ClipboardActionId>, ClipboardActionId>>;
+type ClipboardPublicResults = AssertTrue<Equal<Extract<keyof CanonicalAction.PublicActionResultById, ClipboardActionId>, ClipboardActionId>>;
+type ClipboardPluginInputs = AssertTrue<Equal<Extract<keyof DtoInputs, ClipboardActionId>, ClipboardActionId>>;
+type ClipboardPluginResults = AssertTrue<Equal<Extract<keyof DtoResults, ClipboardActionId>, ClipboardActionId>>;
 type PluginSessionTranscriptInputMustRemainExternalShareable = AssertTrue<Equal<SchemaInputs['session.transcript.get'], CanonicalAction.SessionTranscriptGetExternalShareableInputV1>>;
 type PluginSessionTranscriptResultMustRemainExternalShareable = AssertTrue<Equal<SchemaResults['session.transcript.get'], CanonicalAction.SessionTranscriptGetExternalShareableResultV1>>;
 type PluginRawSessionReadersMustRemainAvailable = AssertTrue<Equal<Extract<keyof SchemaInputs, 'session.history.get' | 'session.events.get' | 'session.messages.recent.get'>, 'session.history.get' | 'session.events.get' | 'session.messages.recent.get'>>;
@@ -123,6 +129,11 @@ type SupportMustCorrespond = AssertNever<Failures<CanonicalSupport, PublicSuppor
 type IconVocabularyMustCorrespond = AssertTrue<Equal<(typeof PLUGIN_UI_ICON_TOKENS_V1)[number], IconDto>>;
 type DeclarativeNodeMustCorrespond = AssertNever<Failures<{ node: CanonicalDeclarativeNode }, { node: DeclarativeNodeDto }, false>>;
 type InputKeysMustRemainExact = AssertTrue<Equal<keyof SchemaInputs, keyof DtoInputs>>;
+// Bidirectional assignability alone does not detect a missing optional selector.
+type ClientChoiceDtoSelectorsMustRemainOptional = AssertTrue<Equal<
+  { [K in 'session.open' | 'settings.get' | 'action.invoke']: Pick<DtoInputs[K], 'clientId'> },
+  { [K in 'session.open' | 'settings.get' | 'action.invoke']: { clientId?: string } }
+>>;
 type ResultKeysMustRemainExact = AssertTrue<Equal<keyof SchemaResults, keyof DtoResults>>;
 
 // Canonical family membership partitions the exact aggregate without a second

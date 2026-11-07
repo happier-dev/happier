@@ -18,13 +18,16 @@ const RUNTIME_ACTION_ENABLED_SURFACES = Object.freeze({
   ...RUNTIME_ACTION_DISABLED_SURFACES,
   ui: true,
   agent: true,
+  mcp: true,
 } satisfies PreNormalizedActionSurfaces);
 
 // Per-family/per-action runtime-action surface enablement. Runtime specs are otherwise fail-closed
 // projection contracts; a runtime action is surfaced only where a real executor routes through the
 // ActionExecutor front door.
 const RUNTIME_ACTION_REAL_EXECUTOR_FAMILY_IDS: readonly RuntimeActionIdV1[] = [
-  ...ACTION_ID_FAMILIES_V1.computer,
+  // Native confidential fill is deferred beyond 0.3. Keep its Protocol shape
+  // readable without advertising or routing an executable implementation.
+  ...ACTION_ID_FAMILIES_V1.computer.filter(actionId => actionId !== 'computer.secret.fill'),
   ...ACTION_ID_FAMILIES_V1.local_services_inventory,
   ...ACTION_ID_FAMILIES_V1.local_services_launcher,
   // The daemon runtime executor registers this whole native/source-bound family, including relocation.
@@ -86,17 +89,11 @@ export function isRuntimeActionExecutorReal(actionId: RuntimeActionIdV1): boolea
 }
 
 export function resolveRuntimeActionSurfaces(actionId: RuntimeActionIdV1): PreNormalizedActionSurfaces {
-  if (actionId === 'computer.clipboard.read' || actionId === 'computer.clipboard.write') {
-    return { ...RUNTIME_ACTION_DISABLED_SURFACES, ui: true };
-  }
   if (ACTION_ID_FAMILIES_V1.browser_diagnostics.some((id) => id === actionId)) {
     return { ...RUNTIME_ACTION_ENABLED_SURFACES, cli: true };
   }
-  if (actionId === 'browser.automation.cancelActive' || actionId === 'computer.target.close') {
-    return { ...RUNTIME_ACTION_ENABLED_SURFACES, mcp: true };
-  }
   if (actionId === 'projects.service.relocate' && isRuntimeActionExecutorReal(actionId)) {
-    return { ...RUNTIME_ACTION_ENABLED_SURFACES, voice: true, mcp: true };
+    return { ...RUNTIME_ACTION_ENABLED_SURFACES, voice: true };
   }
   return isRuntimeActionExecutorReal(actionId)
     ? RUNTIME_ACTION_ENABLED_SURFACES

@@ -82,7 +82,7 @@ export function normalizeCodexSessionMessageBody(params: {
         value: {
           rawToolName,
           canonicalToolName,
-          projectObservationOutput: resolveHappierToolResultObservationProjector(rawToolName, body?.input),
+          projectObservationOutput: resolveHappierToolResultObservationProjector(canonicalToolName, input),
         },
         maxEntries: params.maxToolCallCacheEntries,
       });
@@ -154,7 +154,7 @@ export function normalizeAcpSessionMessageBody(params: {
       value: {
         rawToolName,
         canonicalToolName,
-        projectObservationOutput: resolveHappierToolResultObservationProjector(rawToolName, hintedRawInput),
+        projectObservationOutput: resolveHappierToolResultObservationProjector(canonicalToolName, input),
       },
       maxEntries: params.maxToolCallCacheEntries,
     });

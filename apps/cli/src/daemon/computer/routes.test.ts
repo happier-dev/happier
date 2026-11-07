@@ -5,7 +5,7 @@ import { createComputerRoutes } from './routes';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
-import { accountSettingsParse, ActionsSettingsV1Schema, ComputerCaptureResponseV1Schema, ComputerQueryResponseV1Schema, type ApprovalRequest } from '@happier-dev/protocol';
+import { accountSettingsParse, ActionsSettingsV1Schema, ComputerCaptureResponseV1Schema, ComputerQueryResponseV1Schema, createActionExecutor, type ApprovalRequest } from '@happier-dev/protocol';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createComputerCaptureSource } from './source';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -60,6 +60,81 @@ function selectUnsupportedTarget(registry: ReturnType<typeof createMachineLiveSt
 }
 
 describe('native computer route authority', () => {
+  it.each(['agent', 'mcp'] as const)('executes private clipboard transfers on %s after the user waives default Ask', async surface => {
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, executablePath: '/managed/cua-driver' });
+    registry.register({ sourceId: source.sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
+      capabilities: { v: 1, sourceId: source.sourceId, sourceKind: 'screen', supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
+    let text = 'private-fixture';
+    // Native subprocess transport is the sole mocked effect boundary.
+    native.call.mockImplementation(async ({ name, arguments: args }) => {
+      if (name === 'clipboard_read') return { structuredContent: { supported: true, types: ['text/plain'], text } };
+      if (name === 'clipboard_write') {
+        text = args.text;
+        return { structuredContent: { supported: true, written_type: 'text' } };
+      }
+      if (name === 'get_window_state') return captureResult();
+      return { structuredContent: { x11: true, xsend_event: true } };
+    });
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver' });
+    const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
+      resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
+    const executor = createActionExecutor({ runtimeActionExecute });
+    const context = { ...agentContext, surface };
+    try {
+      for (const actionId of ['computer.clipboard.read', 'computer.clipboard.write'] as const) {
+        const input = { machineId: 'machine', ...(actionId === 'computer.clipboard.write' ? { text: '' } : {}) };
+        expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(native.tools).toEqual([]);
+      }
+      const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+        'computer.clipboard.read': [surface], 'computer.clipboard.write': [surface],
+      } });
+      expect(await executor.execute('computer.clipboard.read', { machineId: 'machine' }, { ...context, actionsSettings }))
+        .toMatchObject({ ok: false, errorCode: 'computer_consent_required' });
+      await source.observe();
+      // A source's first admitted invocation grants its existing per-source consent.
+      expect(await routes.dispatch('computer.clipboard.read', { machineId: 'machine' }, { ...context, bypassApprovals: true }))
+        .toMatchObject({ ok: true, text });
+      expect(await executor.execute('computer.clipboard.read', { machineId: 'machine' }, { ...context, actionsSettings }))
+        .toMatchObject({ ok: true, result: { ok: true, text } });
+      expect(source.status()).toMatchObject({ controller: 'idle' });
+      expect(await executor.execute('computer.clipboard.write', { machineId: 'machine', text: '' }, { ...context, actionsSettings }))
+        .toMatchObject({ ok: true, result: { ok: true } });
+      expect(source.status()).toMatchObject({ controller: 'idle' });
+      expect(text).toBe('');
+      expect(await routes.dispatch('computer.clipboard.read', { machineId: 'machine' }, { ...context, defaultSessionId: 'other-session' }))
+        .toMatchObject({ ok: false, errorCode: 'computer_target_not_open' });
+    } finally { await routes.dispose(); }
+  });
+  it.each(['agent', 'mcp'] as const)('enforces selected-source clipboard consent and See access for %s while preserving human writes', async surface => {
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, access: 'see', executablePath: '/managed/cua-driver' });
+    registry.register({ sourceId: source.sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
+      capabilities: { v: 1, sourceId: source.sourceId, sourceKind: 'screen', supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
+    native.call.mockImplementation(async ({ name }) => name === 'clipboard_read'
+      ? { structuredContent: { supported: true, types: ['text/plain'], text: 'fixture' } }
+      : name === 'get_window_state' ? captureResult()
+        : name === 'clipboard_write' ? { structuredContent: { supported: true, written_type: 'text' } }
+          : { structuredContent: { x11: true, xsend_event: true } });
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver' });
+    const context = { ...agentContext, surface };
+    try {
+      expect(await routes.dispatch('computer.clipboard.read', { machineId: 'machine' }, context))
+        .toMatchObject({ ok: false, errorCode: 'computer_consent_required' });
+      expect(await routes.dispatch('computer.clipboard.write', { machineId: 'machine', text: 'fixture' }, { ...context, bypassApprovals: true }))
+        .toMatchObject({ ok: false, code: 'computer_access_read_only' });
+      expect(native.tools).toEqual([]);
+      await source.observe();
+      expect(await routes.dispatch('computer.clipboard.read', { machineId: 'machine' }, { ...context, bypassApprovals: true }))
+        .toMatchObject({ ok: true, text: 'fixture' });
+      expect(source.consentGranted()).toBe(true);
+      expect(await routes.dispatch('computer.clipboard.write', { machineId: 'machine', text: 'fixture' },
+        { ...context, surface: 'ui', authority: 'present_user' }))
+        .toMatchObject({ ok: true });
+      expect(source.status()).toMatchObject({ controller: 'human' });
+    } finally { await routes.dispose(); }
+  });
   it('refuses unknown provider and input contracts before any native effect', async () => {
     const routes = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry() });
     const workBefore = [native.instances.length, processBoundary.calls.length];
@@ -206,7 +281,7 @@ describe('native computer route authority', () => {
     const headless = createComputerRoutes({ machineId: 'machine', executablePath: '/managed/cua-driver', registry: createMachineLiveStreamCaptureRegistry() });
     expect(await headless.dispatch('computer.target.get', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
-      .toEqual({ ok: false, errorCode: 'computer_display_unavailable', error: 'computer_display_unavailable' });
+      .toMatchObject({ ok: false, errorCode: 'computer_display_unavailable', error: expect.stringContaining('virtual-display') });
     expect(await headless.dispatch('computer.targets.list', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
       .toMatchObject({ ok: false, errorCode: 'computer_display_unavailable', error: expect.stringContaining('virtual-display') });

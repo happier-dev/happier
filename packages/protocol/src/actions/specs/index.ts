@@ -1,6 +1,7 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from 'zod/mini';
 
-import { RuntimeActionIdV1Schema, type RuntimeActionIdV1 } from '../actionIds.js';
+import { RuntimeActionIdV1Schema, isBrowserExtensionActionIdV1, type RuntimeActionIdV1 } from '../actionIds.js';
 import type { PreNormalizedActionSpec, PreNormalizedActionSurfaces } from '../actionSpecs.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '../../browser/automation/reverseDispatchV1.js';
@@ -159,11 +160,11 @@ function createRuntimeActionSpecFor<
     placements: [],
     surfaces: {
       ...resolveRuntimeActionSurfaces(actionId),
-      ...(actionId === 'browser.profile.logins.import' ? { rpc: true, cli: true, mcp: true } : {}),
+      ...(actionId === 'browser.profile.logins.import' ? { rpc: true, cli: true } : {}),
+      ...(isBrowserExtensionActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
       ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: !requiresAnsweringClient, cli: !requiresAnsweringClient, voice: !requiresAnsweringClient } : {}),
       ...(domainRpc ? { cli: true, voice: true } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
-      ...(actionId === 'localServices.launcher.start' || domainRpc || (controlRpcMethod && !requiresAnsweringClient) ? { mcp: true } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
     },
     sideEffectClass,
@@ -171,12 +172,18 @@ function createRuntimeActionSpecFor<
     inputSchema: params.inputSchema,
     ...(actionId === 'browser.profile.logins.import' ? {
       bindings: { mcpToolName: 'browser_profile_logins_import' } } : {}),
+    ...(isBrowserExtensionActionIdV1(actionId) ? { bindings: { mcpToolName: actionId.replaceAll('.', '_') } } : {}),
     ...((BROWSER_ANNOTATION_HOST_ACTION_IDS as readonly string[]).includes(actionId)
       ? { executionPlacement: 'client' as const } : {}),
     ...(actionId === 'browser.context.attachToComposer' ? {
       executionPlacements: ['client', 'machine'] as const,
       executionPlacementForInput: (input: unknown) => typeof input === 'object' && input !== null
         && 'source' in input && input.source === 'activePage' ? 'client' as const : 'machine' as const,
+    } : {}),
+    ...(actionId === 'browser.context.captureSelectedElement' ? {
+      executionPlacements: ['client', 'machine'] as const,
+      executionPlacementForInput: (input: unknown) => typeof input === 'object' && input !== null
+        && 'pickerResult' in input && input.pickerResult !== undefined ? 'client' as const : 'machine' as const,
     } : {}),
     ...((MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS as readonly string[]).includes(actionId) ? {
       executionPlacements: ['client', 'machine'] as const,
@@ -214,6 +221,7 @@ function createRuntimeActionSpecFor<
         bindings: { mcpToolName: 'projects_service_relocate', voiceClientToolName: 'projects_service_relocate' },
         examples: { voice: { argsExample: JSON.stringify({
           workspace: { serverId: 'home', refId: 'checkout' },
+          sourceMachineId: 'source-machine',
           serviceName: 'web',
           requestId: 'move-web-1',
           currentTarget: {
@@ -242,7 +250,6 @@ function createRuntimeActionSpecFor<
     ...(actionId !== 'computer.secret.fill' && Object.hasOwn(COMPUTER_RUNTIME_ACTION_INPUT_SCHEMAS, actionId)
       ? { projectObservationInput: projectComputerObservationInput } : {}),
     ...(actionId === 'computer.clipboard.read' || actionId === 'computer.clipboard.write' ? {
-      requiredAuthority: 'present_user' as const,
       approvalInputCustody: 'live_only' as const,
       approvalResultCustody: 'live_only' as const,
       projectObservationInput: () => ({}),
@@ -271,6 +278,6 @@ type RuntimeActionSpec = RuntimeActionSpecFor<
   RuntimeActionOutputSchemas[RuntimeActionIdV1]
 >;
 
-export const RUNTIME_ACTION_SPECS: readonly RuntimeActionSpec[] = Object.freeze(
+export const RUNTIME_ACTION_SPECS: readonly RuntimeActionSpec[] = lazyActionSpecArray(() => Object.freeze(
   RuntimeActionIdV1Schema.options.map(createRuntimeActionSpec),
-) satisfies readonly PreNormalizedActionSpec[];
+) satisfies readonly PreNormalizedActionSpec[]);

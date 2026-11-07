@@ -1,19 +1,25 @@
-import { readScopedActionApprovalPreference, type ActionApprovalScopeV1 } from './actionSettings.js';
-import type { WorkflowApprovedOperationV1 } from './approvedOperationV1.js';
-import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 import { ACTION_IDS } from './actionIds.js';
+import { readApprovalProfileV1, type ApprovalProfileResolutionV1 } from './approvalProfiles.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
-import type {
-  ActionSettingsActionId,
-  ActionsSettingsV1,
-  ActionSettingsOverride,
+import {
+  readScopedActionApprovalPreference,
+  type ActionApprovalScopeV1,
+  type ActionSettingsActionId,
+  type ActionsSettingsV1,
+  type ActionSettingsOverride,
 } from './actionSettings.js';
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type ActionSpec } from './actionSpecs.js';
 import { isAgentOrUnresolvedSurface, resolveApprovalSurface } from './actionApprovalSurface.js';
-import { isProjectSetupTrustRequestV1 } from './projectActionFamily.js';
+import { readBuiltInSettingDeclarationV1, readBuiltInSettingsPermissionChangingV1 } from './settings/settingsDeclarations.js';
+import { readRecord } from '../inputs/inputRecords.js';
+import { matchesApprovedOperationStepV1 } from './approvedOperationV1.js';
+import { isApiTokenDeploymentGrantV1 } from '../auth/apiTokenGrant.js';
+import type { WorkflowApprovedOperationV1 } from '../workflows/workflowDefinitionV1.js';
+import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
+import { isPresentUserHostInvocation } from './invocationAuthority.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
 export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
@@ -21,35 +27,28 @@ export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
   flow: ActionApprovalFlow;
   result: ActionApprovalResult;
-}>;
-export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
-  /** The actual child owns authority/effects. Null is an admitted global-only operation. */
-  scope: Extract<ActionApprovalScopeV1, { kind: 'environment' }> | null;
-  previewTemplateEnvironmentId?: string;
-  /** A current nonwaivable custody hold, such as an unapproved exact fork head. */
-  mandatoryApprovalRequired?: true;
+  profile?: ApprovalProfileResolutionV1;
 }>;
 
-/** Only confirmation preferences inherit; scope authority remains with the child. */
-export function resolveActionApprovalPreferenceScopeV1(
-  scope: ActionApprovalScopeV1 | undefined,
-  previewTemplateEnvironmentId?: string,
-): ActionApprovalScopeV1 | undefined {
-  return scope?.kind === 'environment' && previewTemplateEnvironmentId
-    ? { kind: 'environment', environmentId: previewTemplateEnvironmentId }
-    : scope;
-}
+/** Host-private result of current Environment admission. */
+export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
+  /** The Environment owns its preferences. Null is an admitted global-only operation. */
+  scope: Extract<ActionApprovalScopeV1, { kind: 'environment' }> | null;
+}>;
 
 export type ResolveActionApprovalRoutingArgs = Readonly<{
   actionId: ActionId;
+  /** Resolved contributed identity when the host Action delegates target classification. */
+  profileActionId?: ActionSettingsActionId;
   spec: ActionSpec;
   input?: unknown;
   settings?: ActionsSettingsV1 | null;
-  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'bypassApprovals' | 'actionCaller' | 'isPluginSettingsIntentCurrent'> | null;
-  requiredByPolicy?: boolean;
-  reviewAdmitted?: boolean;
+  /** Exact scope proved by the host's Action admission, never raw caller context. */
   approvalScope?: ActionApprovalScopeV1;
-  approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null;
+  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'bypassApprovals' | 'actionCaller' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'externalActionCredential' | 'approvalProfileId' | 'approvalProfileChange'> | null;
+  requiredByPolicy?: boolean;
+  /** Exact parent review answers the root default; explicit preferences still win. Never caller input. */
+  reviewAdmitted?: boolean;
   /** Host-proved contextual classification, resolved through the same settings/waiver owner. */
   defaultSafety?: ActionSpec['safety'];
   /** Host-proved exposure classification; Settings and execution authority still apply. */
@@ -60,7 +59,30 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   computerConsentGranted?: boolean;
   /** Exact live host operation proved by the executor's private factory port. */
   retainHostOperationApproval?: boolean;
+  /** Private operation opened from current admitted Run storage, never caller input. */
+  approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null;
 }>;
+
+/**
+ * Person-class Actions default to Ask on the automation request surfaces (agent, MCP, plugin
+ * and the declared carve-outs). Per-surface, never caller detection: CLI and UI follow their
+ * own surface defaults, and a saved waiver above this check lets the call run (owner ruling
+ * 2026-10-29, no present-user floors).
+ */
+function defaultsPersonClassActionToAsk(
+  ctx: Pick<ActionExecutorContext, 'surface'> | null | undefined,
+  spec: Pick<ActionSpec, 'id' | 'requiredAuthority' | 'approvalInputCustody'>,
+  input: unknown,
+): boolean {
+  return canRequestPresentUserApprovalForActionInputV1(spec, input)
+    && isAutomationApprovalRequestSurface(ctx?.surface, spec, input);
+}
+
+/** Consequential Settings are declared (sensitive, or explicit `agentSafety: 'danger'`); unannotated ones are not. */
+function isNonConsequentialSettingDeclaration(anchor: unknown): boolean {
+  const declaration = readBuiltInSettingDeclarationV1(anchor);
+  return declaration !== null && declaration.sensitive === false && declaration.agentSafety !== 'danger';
+}
 
 function isApprovalAction(actionId: ActionId): boolean {
   return getActionSpec(actionId).approvalPolicy?.control === true;
@@ -78,8 +100,8 @@ export const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS: readonly ActionId[] =
  * True when an Action result leaving the host on this surface must be redacted before it can
  * egress to an agent turn — the canonical owner of the egress-surface question (INV-1 / DEC-2).
  *
- * This is deliberately the SAME resolution as the agent approval floor above: consent and egress
- * are two halves of one agent trust boundary and must not disagree. It replaced two hand-rolled
+ * This resolves the agent trust boundary for result redaction. MCP also shares agent approval
+ * defaults, but retains its own result delivery. This replaced two hand-rolled
  * `context.surface === 'agent'` allowlists (the local-services runtime-action executors in the
  * daemon and in the UI sync domain) which failed OPEN — every surface value other than the exact
  * string `'agent'`, including `undefined`, received the unredacted payload.
@@ -104,14 +126,9 @@ export function isAgentInitiatedApprovalRequiredByDefault(actionId: ActionId): b
     || (spec.safety === 'danger' && spec.surfaces.agent === true && spec.approvalPolicy?.scopeAdmissionOwnsConfirmation !== true);
 }
 
-/** Whether persisted Action settings may waive this host-declared confirmation. */
-export function isActionApprovalWaivable(spec: Pick<ActionSpec, 'approvalPolicy'>): boolean {
-  return spec.approvalPolicy?.nonWaivable !== true;
-}
-
 function requiresDefaultApprovalFloor(
   actionId: ActionId,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null,
+  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null,
   defaultSafety?: ActionSpec['safety'],
   input?: unknown,
   defaultUiConfirmation?: boolean,
@@ -123,6 +140,8 @@ function requiresDefaultApprovalFloor(
   // controller codec). External transport does not add another default Ask.
   const hostInvocation = ctx?.authority === 'present_user'
     && (!ctx.actionCaller || ctx.actionCaller.kind === 'host');
+  // UI consequence review is meaningful only for a present person's in-app
+  // intent. Agent/automation approval must never evaluate or consume its waiver.
   const uiPolicyConfirmation = surface.kind === 'non_agent' && surface.surface === 'ui'
     && hostInvocation
     ? defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input) ?? (policy?.uiConfirmation === 'policy')
@@ -135,21 +154,31 @@ function requiresDefaultApprovalFloor(
   // Scoped removal is dangerous metadata, but its own/led Session policy owns
   // admission (FIN 03 §5.4/§5.7); it does not acquire the Account trigger approval floor.
   if (policy?.scopeAdmissionOwnsConfirmation === true && surface.kind !== 'ambiguous') return false;
-  // Reversible UI intents and effects with their own UI review may explicitly
-  // declare direct admission. This changes only the present user's UI default;
-  // declared danger still governs automation and ambiguous callers.
-  // CLI and UI suppress the duplicate default when the host records a completed
+  // A person's own reversible in-app intent is direct by default. Danger also
+  // classifies automation authority and is not an irreversibility declaration.
+  // Explicit exposure policy and effects with their own UI review stay intact;
+  // plugin callers cannot acquire the host's default by claiming present_user.
+  // Present-person hosts suppress the duplicate default after a completed
   // confirmation for this exact Action. Explicit settings are evaluated first
   // and still win.
   if (
     surface.kind === 'non_agent'
     && (
       (surface.surface === 'ui' && !uiPolicyConfirmation
-        && (defaultSafety !== 'danger' || policy?.uiConfirmation === 'direct'))
-      || ((surface.surface === 'cli' || surface.surface === 'ui') && ctx?.presentUserConfirmation?.actionId === actionId)
+        && (defaultSafety !== 'danger' || policy?.uiConfirmation === 'direct'
+          || (ctx?.actionCaller?.kind === 'host' && spec.irreversible !== true)))
+      || (isPresentUserHostInvocation({ surface: surface.surface, authority: ctx?.authority, actionCaller: ctx?.actionCaller })
+        && ctx?.presentUserConfirmation?.actionId === actionId)
     )
     && hostInvocation
   ) {
+    return false;
+  }
+  // CLI surface default (owner ruling 2026-10-29: per-Action, per-surface; the CLI asks only for
+  // consequential Actions). A Settings write is direct unless its declaration is consequential
+  // (permission-changing or sensitive). Keyed on the surface only, never on who is calling.
+  if (surface.kind === 'non_agent' && surface.surface === 'cli' && (actionId === 'settings.set' || actionId === 'settings.reset')
+    && !readBuiltInSettingsPermissionChangingV1(input) && isNonConsequentialSettingDeclaration(readRecord(input).anchor)) {
     return false;
   }
   if (defaultSafety === 'danger') {
@@ -162,7 +191,9 @@ function requiresDefaultApprovalFloor(
       return spec.surfaces[surface.surface] === true;
     }
   }
-  return isAgentOrUnresolvedSurface(ctx) && (defaultSafety === undefined
+  // Agent and external MCP share the declared agent default once here. Surface
+  // Require/Waive preferences are resolved above this floor (owner 2026-10-12/29).
+  return (surface.kind !== 'non_agent' || surface.surface === 'mcp') && (defaultSafety === undefined
     ? isAgentInitiatedApprovalRequiredByDefault(actionId)
     : policy?.agentDefault !== undefined);
 }
@@ -179,7 +210,7 @@ function requiresDefaultApprovalFloor(
 export function isApprovalRequiredByActionsSettings(
   actionId: ActionSettingsActionId,
   settings: ActionsSettingsV1,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null,
+  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller' | 'externalActionCredential'> | null,
   defaultSafety?: ActionSpec['safety'],
   /** Contributed Action manifest default, resolved by its shared admission owner. */
   contributedApprovalDefault?: boolean,
@@ -189,22 +220,66 @@ export function isApprovalRequiredByActionsSettings(
   approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null,
   approvalScope?: ActionApprovalScopeV1,
 ): boolean {
+  // The parent owner admitted this exact role at its natural
+  // preparation boundary. It is not a new independently approvable operation.
   if (isHostAdmittedReviewedChildPolicyV1(approvedOperation, actionId, input)) return false;
   const requestActionId = ActionIdSchema.safeParse(actionId);
-  if (requestActionId.success && !isActionApprovalWaivable(getActionSpec(requestActionId.data))) return true;
   const explicit = readExplicitActionApprovalPreferenceV1(actionId, settings, ctx, approvalScope);
   if (explicit !== undefined) return explicit;
   if (requestActionId.success && getActionSpec(requestActionId.data).approvalPolicy?.pluginCaptureWaiver === true) {
     return ctx?.surface !== 'plugin' || ctx.actionCaller?.kind !== 'plugin'
       || settings.pluginHostCaptureApprovalWaived?.includes(ctx.actionCaller.pluginId) !== true;
   }
-  if (requestActionId.success && isAutomationApprovalRequestSurface(ctx?.surface, getActionSpec(requestActionId.data), input)
-    && canRequestPresentUserApprovalForActionInputV1(getActionSpec(requestActionId.data), input)) return true;
+  if (requestActionId.success && defaultsPersonClassActionToAsk(ctx, getActionSpec(requestActionId.data), input)) return true;
+
+  // The receiving host has opened the current Run/step through its admitted
+  // storage boundary. Only this exact effect receives the parent's consent;
+  // explicit Settings Require and nonwaivable authority remain above it.
+  // Saved variable bindings become execution consent only after host materialization.
+  if (approvedOperation?.steps.some(step => step.binding === undefined
+    && matchesApprovedOperationStepV1(step, actionId, input))) return false;
+
+  // The person saved this choice on the credential's exact Environment grant.
+  // Environment edits, including protection, do not withdraw that consent.
+  const grant = ctx?.externalActionCredential?.grant;
+  if (actionId === 'deployments.deploy' && grant?.deployApproval === 'automatic'
+    && isApiTokenDeploymentGrantV1(grant)
+    && grant.targets?.environments?.[0] === readRecord(input).environmentId) return false;
 
   const builtInActionId = ActionIdSchema.safeParse(actionId);
   return builtInActionId.success
     ? defaultConfirmation === true || requiresDefaultApprovalFloor(builtInActionId.data, ctx, defaultSafety, input, defaultUiConfirmation)
     : contributedApprovalDefault === true;
+}
+
+/** The explicit preference layer, shared by root preparation and ordinary execution. */
+export function readExplicitActionApprovalPreferenceV1(
+  actionId: ActionSettingsActionId,
+  settings: ActionsSettingsV1,
+  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface'> | null,
+  approvalScope?: ActionApprovalScopeV1,
+): boolean | undefined {
+  if (ctx?.callerSurface === 'foreign_session_html') {
+    const choice = settings.callerSurfacePolicies?.foreign_session_html?.[actionId];
+    return choice === undefined ? undefined : choice === 'ask_first';
+  }
+  const surface = resolveApprovalSurface(ctx);
+  const rawSurface = ctx?.surface;
+  const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
+  if (surface.kind !== 'ambiguous') {
+    if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
+    if (scoped?.approvalWaivedSurfaces.includes(surface.surface)) return false;
+  }
+  const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
+  const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
+  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
+  const builtIn = ActionIdSchema.safeParse(actionId);
+  if (builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true) return undefined;
+  const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
+    ? settings.approvalWaivedSurfaces[actionId]
+    : [];
+  if (surface.kind !== 'ambiguous' && waived.includes(surface.surface)) return false;
+  return undefined;
 }
 
 /**
@@ -219,30 +294,26 @@ export function isApprovalRequiredByActionsSettings(
  */
 function resolveUnwiredApprovalDefault(
   actionId: ActionId,
-  context: Pick<ActionExecutorContext, 'surface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null | undefined,
+  context: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'> | null | undefined,
   input?: unknown,
 ): boolean {
   return requiresDefaultApprovalFloor(actionId, context, undefined, input);
 }
 
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
-  // A setup waiver authorizes an invocation, never a remembered human Trust decision.
-  if (isProjectSetupTrustRequestV1(args.actionId, args.input) && args.context?.authority !== 'present_user'
-    && args.context?.bypassApprovals !== true) return { required: true, flow: 'deferred', result: 'required' };
-  const presentUserRequest = isAutomationApprovalRequestSurface(args.context?.surface, args.spec, args.input)
-    && canRequestPresentUserApprovalForActionInputV1(args.spec, args.input);
+  const presentUserRequest = defaultsPersonClassActionToAsk(args.context, args.spec, args.input);
   const computerAction = args.spec.approvalPolicy?.computerConsent === true;
   const computerConsent = computerAction && args.computerConsentGranted === true
     && args.context?.authority !== 'present_user' && args.context?.bypassApprovals !== true;
   const explicitComputerApproval = args.settings?.actions?.[args.actionId]?.approvalRequiredSurfaces
     .some(surface => surface === args.context?.surface) === true;
-  const hasPolicyContext = Boolean(args.settings || args.approvedOperation);
+  const hasPolicyContext = Boolean(args.settings || args.approvedOperation || args.context?.externalActionCredential);
   // Native confirmation answers this operation's default Ask, not a deliberate
   // per-surface preference. Internal reviewed children are admitted separately
   // by the single child issuer before this preference layer is reached.
   const requiredByPolicy = args.reviewAdmitted === true
     ? args.settings != null
-      && readExplicitActionApprovalPreferenceV1(args.actionId, args.settings, args.context, args.approvalScope) === true
+      && readExplicitActionApprovalPreferenceV1(args.profileActionId ?? args.actionId, args.settings, args.context, args.approvalScope) === true
     : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
     : args.defaultConfirmation === true
@@ -255,12 +326,41 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input, args.defaultUiConfirmation)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
-  // Waivers choose whether to request approval; execution authority remains
-  // independently enforced by the executor before preparation or effects.
+  // Changing the carrier must not escape its selected profile through a broad
+  // child-start/Run-control waiver. All carriers share the existing profile
+  // control's preference and surface defaults, at this one routing owner.
+  const input = readRecord(args.input);
+  const runProfileControl = args.actionId === 'execution.run.action' && input.actionId === 'approval_profile.set';
+  const referenceInput = runProfileControl ? readRecord(input.input)
+    : args.actionId === 'workflow.trigger.update' ? readRecord(input.patch) : input;
+  const reference = referenceInput.approvalProfileId;
+  const differsFromInherited = (value: unknown) => (value === null || typeof value === 'string')
+    && value !== (args.context?.approvalProfileId ?? null);
+  const changesProfile = args.context?.approvalProfileChange === true || runProfileControl
+    || differsFromInherited(reference)
+    || (args.actionId === 'session.spawn_new' && Array.isArray(input.initialTriggers)
+      && input.initialTriggers.some(trigger => differsFromInherited(readRecord(trigger).approvalProfileId)));
+  const profileControlRequired = changesProfile && (args.reviewAdmitted === true
+    ? args.settings != null && readExplicitActionApprovalPreferenceV1('session.approval_profile.set', args.settings,
+      args.context, args.approvalScope) === true
+    : isApprovalRequiredByActionsSettings('session.approval_profile.set', args.settings ?? { v: 1, actions: {} },
+      args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope));
+  const selectedProfile = args.context?.approvalProfileId
+    ? readApprovalProfileV1(args.settings, args.context.approvalProfileId) : undefined;
+  const profileActionId = args.profileActionId ?? args.actionId;
+  const profileMode = selectedProfile && (selectedProfile.profile.actions?.[profileActionId]
+    ?? selectedProfile.profile.categories?.[args.defaultSafety ?? args.spec.safetyForInput?.(args.input) ?? args.spec.safety]
+    ?? selectedProfile.profile.defaultMode);
+  // Allow inherits existing policy, including egress/authority and person Ask.
+  // Ask is a user-waivable default; Require tightens even a deliberate waiver.
+  // Native confirmation answers defaults; Require remains an explicit preference.
+  const profileRequired = profileMode === 'require' || (!args.reviewAdmitted && profileMode === 'ask'
+    && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false));
+  // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)
     && (args.context?.bypassApprovals === true
       ? false
-      : !isActionApprovalWaivable(args.spec) || requiredByPolicy);
+      : requiredByPolicy || profileControlRequired || profileRequired);
 
   // The public Action API reports a created approval artifact to its caller;
   // it cannot retain an HTTP or server-relay request as the blocking waiter.
@@ -292,7 +392,10 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const retainedNativeRead = args.retainHostOperationApproval === true
     && args.context?.surface === 'ui' && (!args.context.actionCaller || args.context.actionCaller.kind === 'host')
     && args.spec.sideEffectClass === 'read' && !custodyStaysOnLiveInvocation
-    && resolveActionExecutionPlacementForInput(args.spec, args.input) === 'machine';
+    && resolveActionExecutionPlacementForInput(args.spec, args.input) === 'machine'
+    // The Resource observation cannot be reconstructed by detached Artifact
+    // replay. Only its executor-proved live invocation retains that callback.
+    && !(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource);
   const retainsLiveInvocation = custodyStaysOnLiveInvocation || retainPluginSettingsFieldIntent
     || args.retainHostOperationApproval === true && !retainedNativeRead;
   const flow = required ? retainsLiveInvocation ? 'blocking' : 'deferred'
@@ -302,34 +405,6 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     required,
     flow,
     result: args.spec.approval.result,
+    ...(selectedProfile ? { profile: selectedProfile.resolution } : {}),
   };
-}
-
-export function readExplicitActionApprovalPreferenceV1(
-  actionId: ActionSettingsActionId,
-  settings: ActionsSettingsV1,
-  ctx?: Pick<ActionExecutorContext, 'surface' | 'callerSurface'> | null,
-  approvalScope?: ActionApprovalScopeV1,
-): boolean | undefined {
-  if (ctx?.callerSurface === 'foreign_session_html') {
-    const choice = settings.callerSurfacePolicies?.foreign_session_html?.[actionId];
-    return choice === undefined ? undefined : choice === 'ask_first';
-  }
-  const surface = resolveApprovalSurface(ctx);
-  const rawSurface = ctx?.surface;
-  const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
-  if (surface.kind !== 'ambiguous') {
-    if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
-    if (scoped?.approvalWaivedSurfaces.includes(surface.surface)) return false;
-  }
-  const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
-  const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
-  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
-  const builtIn = ActionIdSchema.safeParse(actionId);
-  if (builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true) return undefined;
-  const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
-    ? settings.approvalWaivedSurfaces[actionId]
-    : [];
-  if (surface.kind !== 'ambiguous' && waived.includes(surface.surface)) return false;
-  return undefined;
 }

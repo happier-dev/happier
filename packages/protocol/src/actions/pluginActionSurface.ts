@@ -39,7 +39,6 @@ export const HUMAN_SECRET_API_EXCLUSION_REASONS = Object.freeze({
   'account.password.change': 'Password change accepts current/new password or E2EE proof material.',
   'account.password.remove': 'Password removal accepts current-password or E2EE proof material.',
   'account.email.change.request': 'Sign-in email replacement starts an interactive identity-verification ceremony.',
-  'account.security.terminalPresentUser.set': 'Terminal present-user policy is an interactive Account security-management operation.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
 export type HumanSecretApiExcludedActionId = keyof typeof HUMAN_SECRET_API_EXCLUSION_REASONS;
@@ -58,12 +57,6 @@ export function isHumanSecretApiExcludedActionId(
   return HUMAN_SECRET_API_EXCLUSION_ACTION_ID_SET.has(actionId as ActionId);
 }
 
-/** The same present-person clipboard boundary applies to Plugin and Agent callers. */
-export const CLIPBOARD_AUTOMATION_EXCLUSION_REASONS = Object.freeze({
-  'computer.clipboard.read': 'Only the present person in the app may transfer text from a remote desktop clipboard.',
-  'computer.clipboard.write': 'Only the present person in the app may transfer text to a remote desktop clipboard.',
-} as const satisfies Readonly<Partial<Record<ActionId, string>>>);
-
 /**
  * The one policy owner for Actions omitted from trusted-plugin discovery and
  * invocation. It is intentionally independent of ActionSpec payload schemas so
@@ -71,7 +64,7 @@ export const CLIPBOARD_AUTOMATION_EXCLUSION_REASONS = Object.freeze({
  * initialization cycle through the full Action registry.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
-  ...CLIPBOARD_AUTOMATION_EXCLUSION_REASONS,
+  'secrets.shared.reveal': 'Only the present person in the app may display a Saved Secret.',
   ...INTERNAL_ACTION_REASONS,
   'session.view.toolCalls.set': 'Plan 60 §6 reserves transcript visibility for the human reading the conversation.',
   'plugin.webhook.delivery.movePending': 'Host-requestable delivery control through UI/CLI/Agent/MCP; direct plugin admission stays withheld.',

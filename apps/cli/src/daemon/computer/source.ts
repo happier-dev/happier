@@ -247,11 +247,13 @@ export function createComputerCaptureSource(input: Readonly<({
     setCaptureMedia: (media: NonNullable<typeof captureMedia>) => { captureMedia = media; },
     observe,
     input: (captureId: string, operation: ComputerInputOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal) => execute(captureId, operation, requestedBy, signal),
-    async clipboard(operation: ComputerClipboardOperationV1, signal?: AbortSignal): Promise<ComputerClipboardResultV1> {
+    async clipboard(operation: ComputerClipboardOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal): Promise<ComputerClipboardResultV1> {
       signal?.throwIfAborted();
-      const drain = await control.takeOver();
-      if (drain.completion === 'unknown') return { ok: false, code: 'human_input_interruption_uncertain' };
-      const result = await control.execute({ requestedBy: 'human', signal,
+      if (requestedBy === 'human') {
+        const drain = await control.takeOver();
+        if (drain.completion === 'unknown') return { ok: false, code: 'human_input_interruption_uncertain' };
+      }
+      const result = await control.execute({ requestedBy, signal,
         effect: async abortSignal => {
           if (abortSignal.aborted) return { ok: false, code: 'canceled' } as const;
           const native = await getDriver();

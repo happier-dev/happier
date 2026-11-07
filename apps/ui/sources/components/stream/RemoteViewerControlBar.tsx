@@ -1,5 +1,7 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import {
     RemoteViewerControlBar as SharedRemoteViewerControlBar,
     type RemoteViewerControlBarHost,
@@ -7,6 +9,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
@@ -20,10 +23,21 @@ const HOST: RemoteViewerControlBarHost = {
     KeyHint,
 };
 
-/** Bind the app's exact material, controls, type, spacing and translations. */
+/**
+ * Bind the app's exact material, controls, type, spacing and translations. The bar is a finger's stand-in
+ * for a mouse and keyboard, so it stands over the picture only where the primary pointer is a finger; a
+ * mouse and keyboard drive the picture directly (labs Q, H, LV have no bar). It always floats over the
+ * live picture, so it takes that picture's coat: a white page never washes a dark bar out.
+ */
 export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID'>) {
+    const touch = useHappierTouchPrimaryPointer(Platform.OS);
+    if (!touch) return null;
+    return <TouchRemoteViewerControlBar {...props} />;
+}
+
+function TouchRemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID'>) {
     const { theme } = useUnistyles();
-    return <SharedRemoteViewerControlBar {...props} host={HOST}
+    return <GlassLivePictureBackdropContext.Provider value><SharedRemoteViewerControlBar {...props} host={HOST}
         spacing={{ inset: theme.space.s12, gap: theme.space.s8 }} labels={{
             directMode: t('browserPresence.stream.directMode'),
             trackpadMode: t('browserPresence.stream.trackpadMode'),
@@ -36,5 +50,5 @@ export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 
             clipboard: t('browserPresence.remoteControls.clipboard'),
             hideKeyboard: t('browserPresence.remoteControls.hideKeyboard'),
             showKeyboard: t('browserPresence.interaction.showKeyboard'),
-        }} />;
+        }} /></GlassLivePictureBackdropContext.Provider>;
 }

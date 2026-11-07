@@ -4,9 +4,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Server } from 'socket.io';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
-import { ACTION_IDS, getActionSpec, RPC_METHODS, SOCKET_RPC_EVENTS, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { ACTION_IDS, getActionSpec, isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1, RPC_METHODS, SOCKET_RPC_EVENTS, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { createExternalMcpServer } from './createExternalMcpServer';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -16,10 +16,17 @@ import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV
   LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { configuration } from '@/configuration';
+import { daemonPost } from '@/daemon/controlHttp';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent,
   encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+
+// test-policy-boundary: authenticated local-daemon HTTP is the Computer effect boundary. MCP admission,
+// policy, runtime dispatch and control-envelope validation stay real.
+vi.mock('@/daemon/controlHttp', async original => ({
+  ...await original<typeof import('@/daemon/controlHttp')>(), daemonPost: vi.fn(),
+}));
 
 // HTTP and Socket.IO are the Home/daemon system boundary. MCP, placement,
 // target reconciliation, Machine codec and RPC client all run unchanged.
@@ -27,6 +34,7 @@ describe('standalone MCP machine placement', () => {
   it.each([
     ['localServices.launcher.start', 'localServices_launcher_start'],
     ['localServices.actions.stopManaged', 'localServices_actions_stopManaged'],
+    ['computer.targets.list', 'action_execute'],
   ] as const)('routes named %s through current Machine transport under an explicit Account MCP approval setting', async (actionId, toolName) => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const approvalRequests: ApprovalRequestV2[] = [];
@@ -39,7 +47,13 @@ describe('standalone MCP machine placement', () => {
       snapshot: { v: 1, machineId: 'addressed-machine', updatedAt: 1, targets: [] } });
     const stopped = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'stop-selected', action: 'stop_managed',
       status: 'denied', reasonCode: 'managed_service_stop_unavailable', auditEvents: [] });
-    const receipt = actionId === 'localServices.launcher.start' ? review : stopped;
+    const targetsOutputSchema = getActionSpec('computer.targets.list').outputSchema;
+    if (!targetsOutputSchema) throw new Error('Computer targets must declare their public output');
+    const receipt = actionId === 'computer.targets.list'
+      ? targetsOutputSchema.parse({ targets: [], grants: { capture: 'granted', input: 'granted' } })
+      : actionId === 'localServices.launcher.start' ? review : stopped;
+    vi.mocked(daemonPost).mockReset();
+    if (actionId === 'computer.targets.list') vi.mocked(daemonPost).mockResolvedValue({ result: receipt });
     const http = createServer(async (request, response) => {
       response.setHeader('content-type', 'application/json');
       if (request.url === '/v1/machines/addressed-machine') {
@@ -51,7 +65,7 @@ describe('standalone MCP machine placement', () => {
         response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
       } else if (request.method === 'POST' && request.url === '/v1/artifacts') {
         // Genuine HTTP persistence/decision boundary. The codec, approval
-        // header/body validation, policy and blocking waiter stay real.
+        // header/body validation, policy and deferred request stay real.
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
         const written = z.looseObject({ id: z.string(), header: z.string(), body: z.string(),
@@ -92,6 +106,7 @@ describe('standalone MCP machine placement', () => {
         localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true },
           actions: { enabled: true }, managed: { enabled: true } },
         browser: { enabled: true, viewTargets: { enabled: true } },
+        computer: { enabled: true },
       }, capabilities: {} }) },
     }));
     const { mcp } = createStandaloneServer();
@@ -106,16 +121,21 @@ describe('standalone MCP machine placement', () => {
         confirmationNonce: 'placeholder', target: { kind: 'managed_service', managedServiceId: 'actual-owned-instance',
           machineId: 'addressed-machine', workspaceId: 'accepted', cwd: '/accepted/web',
           declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } } } });
-      const input = actionId === 'localServices.launcher.start' ? startInput
+      const input = actionId === 'computer.targets.list' ? { machineId: 'addressed-machine' }
+        : actionId === 'localServices.launcher.start' ? startInput
         : { ...reviewedStop, confirmationNonce: createLocalServiceActionConfirmationNonceV1(reviewedStop) };
-      const result = CallToolResultSchema.parse(await client.callTool({ name: toolName, arguments: input }));
+      const result = CallToolResultSchema.parse(await client.callTool({ name: toolName,
+        arguments: actionId === 'computer.targets.list' ? { actionId, input } : input }));
       const content = result.content.find(entry => entry.type === 'text');
       expect(result.isError, content?.type === 'text' ? content.text : JSON.stringify(result)).not.toBe(true);
       expect(content?.type === 'text' ? JSON.parse(content.text) : null).toEqual(receipt);
-      expect(requests).toEqual([expect.objectContaining({ method: `addressed-machine:${getActionSpec(actionId).bindings?.rpcMethod}`,
+      if (actionId === 'computer.targets.list') {
+        expect(daemonPost).toHaveBeenCalledWith('/browser/runtime-actions/execute', expect.objectContaining({ actionId, input }), expect.anything());
+        expect(requests).toEqual([]);
+      } else expect(requests).toEqual([expect.objectContaining({ method: `addressed-machine:${getActionSpec(actionId).bindings?.rpcMethod}`,
         params: { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId: 'addressed-machine' },
           defaultSessionId: 'cli-global' } })]);
-      if (actionId === 'localServices.actions.stopManaged') {
+      if (actionId !== 'localServices.launcher.start') {
         // A newly constructed standalone host captures the current Account
         // settings. Tool exposure must not waive the Action's default approval.
         env.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({ v: 1,
@@ -125,12 +145,15 @@ describe('standalone MCP machine placement', () => {
         const [askFirstServerTransport, askFirstClientTransport] = InMemoryTransport.createLinkedPair();
         await askFirstMcp.connect(askFirstServerTransport); await askFirstClient.connect(askFirstClientTransport);
         try {
-          const refused = CallToolResultSchema.parse(await askFirstClient.callTool({ name: 'action_execute', arguments: { actionId, input } }));
-          const refusal = refused.content.find(entry => entry.type === 'text');
-          const publicRefusal: unknown = refusal?.type === 'text' ? JSON.parse(refusal.text) : null;
-          expect(refused.isError, JSON.stringify(publicRefusal)).toBe(true);
-          expect(publicRefusal, JSON.stringify(publicRefusal)).toMatchObject({
-            errorCode: 'approval_rejected',
+          const pending = CallToolResultSchema.parse(await askFirstClient.callTool({ name: 'action_execute', arguments: { actionId, input } }));
+          const pendingContent = pending.content.find(entry => entry.type === 'text');
+          const publicPending: unknown = pendingContent?.type === 'text' ? JSON.parse(pendingContent.text) : null;
+          // Owner 2026-10-12/29: the real external MCP entry must share the
+          // settings owner's agent default, while the explicit waiver above wins.
+          expect.soft(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1 }), { surface: 'mcp' })).toBe(true);
+          expect(pending.isError, JSON.stringify(publicPending)).not.toBe(true);
+          expect(publicPending, JSON.stringify(publicPending)).toMatchObject({
+            kind: 'approval_request_created', actionId, artifactId: expect.any(String),
           });
           expect(approvalRequests).toHaveLength(1);
           expect(approvalRequests[0]).toMatchObject({ actionId, status: 'open', requestedSurface: 'mcp' });
@@ -138,7 +161,8 @@ describe('standalone MCP machine placement', () => {
           expect(approvalRequests[0]?.executionOriginV1).toMatchObject({
             serverId: configuration.activeServerId, machineId: 'addressed-machine', actionId,
           });
-          expect(requests).toHaveLength(1);
+          expect(requests).toHaveLength(actionId === 'computer.targets.list' ? 0 : 1);
+          if (actionId === 'computer.targets.list') expect(daemonPost).toHaveBeenCalledTimes(1);
         } finally {
           await askFirstClient.close(); await askFirstMcp.close();
         }

@@ -17,13 +17,13 @@ function nativeSpec(id: string) {
 }
 
 describe('native computer Action contracts', () => {
-  it('keeps clipboard text in present-user live invocations and off automation surfaces', () => {
+  it('keeps clipboard text private in live invocations on UI and automation surfaces', () => {
     for (const id of ['computer.clipboard.read', 'computer.clipboard.write']) {
       const spec = nativeSpec(id);
-      expect(spec.requiredAuthority).toBe('present_user');
+      expect(spec.requiredAuthority).toBe('account_automation');
       expect(spec.approvalInputCustody).toBe('live_only');
       expect(spec.approvalResultCustody).toBe('live_only');
-      expect(spec.surfaces).toMatchObject({ ui: true, agent: false, mcp: false, api: false, plugin: false });
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, api: true, plugin: true });
     }
   });
   it('admits provider-bound input through the existing computer.input Action', () => {

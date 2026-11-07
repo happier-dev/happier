@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
+import { readHappierActionToolResultCandidates } from '@happier-dev/protocol/actions/happierActionToolResult';
 
 import {
   normalizeAcpSessionMessageBody,
@@ -6,6 +8,69 @@ import {
 } from './sessionOutboundMessageNormalization';
 
 describe('normalizeAcpSessionMessageBody', () => {
+  it.each(['acp', 'codex'] as const)(
+    'keeps private clipboard operands and native result wrappers out of %s Session transcripts', protocol => {
+      for (const actionId of ['computer.clipboard.read', 'computer.clipboard.write'] as const) {
+        for (const transport of ['action_execute', 'shell', 'deferred'] as const) {
+          if (protocol === 'codex' && transport === 'deferred') continue;
+          const caches = {
+            toolCallCanonicalNameByProviderAndId: new Map<string, { rawToolName: string; canonicalToolName: string }>(),
+            permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
+            toolCallInputByProviderAndId: new Map<string, unknown>(),
+          };
+          const input = { machineId: 'machine', ...(actionId === 'computer.clipboard.write'
+            ? { text: 'private-clipboard-fixture' } : {}) };
+          const envelope = { actionId, input };
+          const toolCall = {
+            type: 'tool-call' as const, callId: 'clipboard', id: 'clipboard-call',
+            name: transport === 'deferred' ? 'other' : transport === 'shell' ? 'Bash' : 'mcp__happier__action_execute',
+            input: transport === 'deferred'
+              ? { toolName: 'mcp__happier__action_execute', params: envelope, _acp: { kind: 'other', title: 'DeferExecuteTool' } }
+              : transport === 'shell'
+              ? { command: `happier tools call --source happier --tool action_execute --args-json '${JSON.stringify(envelope)}' --json` }
+              : envelope,
+          };
+          const call = protocol === 'acp'
+            ? normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: toolCall })
+            : normalizeCodexSessionMessageBody({ ...caches, body: toolCall, debug: () => {} });
+          const native = JSON.stringify({ ok: true, result: { ok: true, text: 'private-clipboard-fixture' } });
+          const toolResult = {
+            type: 'tool-result' as const, callId: 'clipboard', id: 'clipboard-result', output: {
+              content: [{ type: 'text', text: native }], structuredContent: JSON.parse(native), tool_use_result: native,
+            },
+          };
+          const result = protocol === 'acp'
+            ? normalizeAcpSessionMessageBody({ ...caches, provider: 'claude', body: toolResult })
+            : normalizeCodexSessionMessageBody({ ...caches, body: { ...toolResult, type: 'tool-call-result' }, debug: () => {} });
+          expect(JSON.stringify(call)).not.toContain('private-clipboard-fixture');
+          expect(JSON.stringify(result)).not.toContain('private-clipboard-fixture');
+        }
+      }
+    },
+  );
+  it.each(['pending', 'saved'] as const)('retains a skill create %s receipt through the native MCP transcript projection', phase => {
+    const caches = {
+      toolCallCanonicalNameByProviderAndId: new Map<string, { rawToolName: string; canonicalToolName: string }>(),
+      permissionToolCallRawInputByProviderAndId: new Map<string, unknown>(),
+      toolCallInputByProviderAndId: new Map<string, unknown>(),
+    };
+    normalizeAcpSessionMessageBody({ ...caches, provider: 'codex', body: {
+      type: 'tool-call', callId: 'create', id: 'call', name: 'mcp__happier__action_execute',
+      input: { actionId: 'skills.create', input: { name: 'review', files: [] } },
+    } });
+    const receipt = phase === 'pending'
+      ? { kind: 'approval_request_created', artifactId: 'approval', actionId: 'skills.create' }
+      : { ok: true, skillId: 'review', revision: '1:1', includedInSessionId: 'bot',
+        summary: { name: 'Review', description: null }, inclusion: { ok: false, code: 'applies_to_new_sessions_only' }, incomplete: 'session_include' };
+    const result = normalizeAcpSessionMessageBody({ ...caches, provider: 'codex', body: {
+      type: 'tool-result', callId: 'create', id: 'result', output: { content: [{ type: 'text', text: JSON.stringify(receipt) }] },
+    } });
+    if (result.type !== 'tool-result') throw new Error('expected tool-result');
+    expect(readHappierActionToolResultCandidates(result.output)).toContainEqual(receipt);
+    if (phase === 'saved') expect(readHappierActionToolResultCandidates(result.output).some(candidate =>
+      SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'].safeParse(candidate).success)).toBe(true);
+  });
+
   it('projects a failed title Action as a typed error instead of treating a JSON key as the title', () => {
     const caches = {
       toolCallCanonicalNameByProviderAndId: new Map<string, { rawToolName: string; canonicalToolName: string }>(),

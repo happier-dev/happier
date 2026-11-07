@@ -1,6 +1,7 @@
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isShellToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
+import { readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
 
 import { HAPPIER_BUILT_IN_TOOLS } from './catalog';
 import { parseMcpToolName } from '../normalization/families/mcp';
@@ -35,23 +36,37 @@ function readNativeToolResult(value: unknown): unknown {
     return value;
 }
 
-/** Retain the admitted call's Action projection, never its show-once result. */
-export function resolveHappierToolResultObservationProjector(
-    toolName: string,
-    input: unknown,
-): ((output: unknown) => unknown) | undefined {
+function resolveObservationCall(toolName: string, input: unknown) {
     const shellBridge = isShellToolNameAlias(toolName)
         ? resolveCanonicalToolNameFromHappierToolsShellBridge(input) : null;
     const name = shellBridge ?? toolName;
     const mcp = parseMcpToolName(name);
-    if (mcp && mcp.serverId !== 'happier') return undefined;
+    if (mcp && mcp.serverId !== 'happier') return null;
     const localName = mcp?.toolId ?? name;
     const args = shellBridge ? extractCanonicalInputFromHappierToolsShellBridge(input) : input;
     const id = ActionIdSchema.safeParse(localName === 'action_execute'
         ? asRecord(args)?.actionId
         : HAPPIER_BUILT_IN_TOOLS.find(tool => tool.name === localName)?.actionId);
-    if (!id.success) return undefined;
-    const project = getActionSpec(id.data).projectObservationOutput;
+    if (!id.success) return null;
+    return { spec: getActionSpec(id.data), args, wrapped: localName === 'action_execute' };
+}
+
+/** Rebuild from semantic operands: native display/raw/bridge copies may contain private input. */
+export function projectHappierToolInputForObservation(toolName: string, input: unknown): unknown {
+    const call = resolveObservationCall(toolName, input);
+    const project = call?.spec.projectObservationInput;
+    if (!call || !project) return input;
+    const args = readHappierActionToolPayload(call.args);
+    const observed = project(readHappierActionToolPayload(call.wrapped ? asRecord(args)?.input : args));
+    return call.wrapped ? { actionId: call.spec.id, input: observed } : observed;
+}
+
+/** Retain the admitted call's Action projection, never its show-once result. */
+export function resolveHappierToolResultObservationProjector(
+    toolName: string,
+    input: unknown,
+): ((output: unknown) => unknown) | undefined {
+    const project = resolveObservationCall(toolName, input)?.spec.projectObservationOutput;
     if (!project) return undefined;
     return output => {
         try {

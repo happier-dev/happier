@@ -1,23 +1,31 @@
-import type { BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
-import type { BrowserInputEventV1, BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
-import { BrowserPageInteractions } from '../streamed/BrowserPageInteractions';
 import * as React from 'react';
-import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
-import { Animated, Image, Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Animated, Image, PixelRatio, Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { MachineLiveStreamControlSidebandV1, MachineLiveStreamInputControlKindV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type { BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
+import { BrowserInputModifierV1Schema, type BrowserInputEventV1, type BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
 
+import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
+import { useRemoteViewerActions, type RemoteViewerKeyboard } from '@happier-dev/plugin-ui/presentation';
+import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
+import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer, type LiveStreamPlayerDisplayState } from '@/components/stream/LiveStreamPlayer';
 import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import { TextInput } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 import type { BrowserDaemonControlDispatchClientResult } from '@/sync/domains/browser/control/machineRpc';
 
 import { BrowserFrameStatusCapsule } from '../frame/BrowserFrameStatusCapsule';
-import { buildBrowserStreamSidebandControl } from './browserStreamSidebandControl';
+import { BrowserPageInteractions } from '../streamed/BrowserPageInteractions';
+import { BrowserSoftKeyboardButton } from '../streamed/BrowserSoftKeyboardButton';
+import { useBrowserSoftKeyboard } from '../streamed/useBrowserSoftKeyboard';
+import { useBrowserViewerViewport } from '../streamed/useBrowserViewerViewport';
+import { buildBrowserStreamSidebandControl, buildBrowserViewerInput } from './browserStreamSidebandControl';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -31,6 +39,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     inputOverlay: {
         ...StyleSheet.absoluteFillObject,
+    },
+    // A letterboxed page (another viewer's screen sets its size) keeps an edge of its own against the
+    // inset around it, so the bars read as space outside the page, not as part of it.
+    letterboxEdge: {
+        position: 'absolute',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+        pointerEvents: 'none',
+    },
+    // The phone keyboard's host: focusable and present (a hidden input cannot summon a keyboard), but
+    // drawn nowhere a person sees it. It never holds the page's value.
+    keyboardSentinel: {
+        position: 'absolute',
+        left: 0,
+        bottom: 0,
+        width: 1,
+        height: 1,
+        opacity: 0,
     },
 }));
 
@@ -86,10 +112,10 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type BrowserViewerInputEvent = DistributiveOmit<BrowserInputEventV1, 'target' | 'sequence'>;
 
 /** The gestures a browser source turns into page input (tap, scroll, typed text, keys). */
-const BROWSER_INPUT_KINDS: ReadonlySet<MachineLiveStreamInputControlKindV1> = new Set([
-    'tap', 'swipe', 'keyboard_text', 'keyboard_key',
+const BROWSER_INPUT_KINDS: ReadonlySet<LiveStreamInputGesture['kind']> = new Set([
+    'tap', 'swipe', 'drag', 'wheel', 'keyboard_text', 'keyboard_key',
 ]);
-const supportsBrowserInput = (kind: MachineLiveStreamInputControlKindV1): boolean => BROWSER_INPUT_KINDS.has(kind);
+const supportsBrowserInput = (kind: LiveStreamInputGesture['kind']): boolean => BROWSER_INPUT_KINDS.has(kind);
 
 /**
  * Where a `contain`-fitted frame of `frame` size is drawn inside `viewport`. `maxScale` caps the fit
@@ -174,26 +200,65 @@ function StreamedPicture(props: Readonly<{ stalled: boolean; children: React.Rea
     return <Animated.View style={[stylesheet.picture, { opacity }]}>{props.children}</Animated.View>;
 }
 
-/** Where the page is drawn inside the live surface (px), for input mapping and the agent cursor. */
-export type BrowserStreamedPageRect = Readonly<{ x: number; y: number; width: number; height: number }>;
+/**
+ * Where the page is drawn inside the live surface (px), for input mapping and the agent cursor, and the
+ * page's own size (null until its first frame is measured; the rect is then the whole surface).
+ */
+export type BrowserStreamedPageRect = Readonly<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    pageSize: Readonly<{ width: number; height: number }> | null;
+}>;
 
 function BrowserStreamInput(props: Readonly<{
     input: NonNullable<BrowserStreamedSurfaceRuntime['input']>;
     viewport: Readonly<{ width: number; height: number }>;
     content: BrowserStreamedPageRect;
+    /** On a phone a tap also asks whether it landed in a field, so the keyboard can follow it. */
+    probeEditable: boolean;
+    controls: RemoteViewerStageControls;
+    keyboard: RemoteViewerKeyboard;
+    onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
     testID: string;
 }>): React.ReactElement {
-    const { viewport, content } = props;
-    const { send, sourceId, streamId } = props.input;
-    const onGesture = React.useCallback((gesture: Readonly<{ eventId: string; action: LiveStreamInputGesture }>) => {
+    const { viewport, content, probeEditable } = props;
+    const { send, sendInput, sourceId, streamId } = props.input;
+    const sendGesture = React.useCallback((gesture: Readonly<{ eventId: string; action: LiveStreamInputGesture }>) => {
+        const browserInput = buildBrowserViewerInput(gesture.action);
+        if (browserInput && sendInput) { sendInput(browserInput); return; }
         const control = buildBrowserStreamSidebandControl({ sourceId, streamId, eventId: gesture.eventId, gesture: gesture.action });
         if (control) send(control);
-    }, [send, sourceId, streamId]);
+        if (probeEditable && sendInput && control?.kind === 'tap') sendInput({ kind: 'editableProbe', x: control.x, y: control.y });
+    }, [probeEditable, send, sendInput, sourceId, streamId]);
+    const actionSequence = React.useRef(0);
+    const sendAction = React.useCallback((action: LiveStreamInputGesture) => sendGesture({eventId: `viewer:${Date.now()}:${++actionSequence.current}`, action}), [sendGesture]);
+    const controlling = props.input.viewerInput?.controlling === true;
+    const actions = useRemoteViewerActions({enabled: controlling, sendGesture: sendAction, clipboardShortcut: props.input.clipboardShortcut,
+        keyboard: props.keyboard, supportedModifiers: BrowserInputModifierV1Schema.options});
+    const onGesture = React.useCallback((gesture: Readonly<{eventId: string; action: LiveStreamInputGesture}>) => {
+        const action = !controlling || (gesture.action.kind === 'pointer' && gesture.action.phase === 'cancel') ? gesture.action : actions.prepareGesture(gesture.action);
+        if (action) sendGesture({...gesture, action});
+    }, [actions.prepareGesture, controlling, sendGesture]);
+    const supports = React.useCallback((kind: LiveStreamInputGesture['kind']) => kind === 'move' ? controlling
+        : kind === 'pointer' ? controlling && Boolean(sendInput) : supportsBrowserInput(kind), [controlling, sendInput]);
+    const published = React.useMemo(() => ({...actions, inputMode: {value: props.controls.mode, setMode: props.controls.setMode},
+        resetZoom: props.controls.resetZoom}), [actions, props.controls.mode, props.controls.setMode, props.controls.resetZoom]);
+    const publishActions = React.useRef(props.onRemoteActionsChange);
+    publishActions.current = props.onRemoteActionsChange;
+    React.useEffect(() => { publishActions.current?.(published); return () => publishActions.current?.(null); }, [published]);
     return (
         <View style={stylesheet.inputOverlay}>
             <LiveStreamInputLayer
                 inputAccepted
-                supports={supportsBrowserInput}
+                supports={supports}
+                mode={props.controls.mode}
+                localZoom
+                zoomReset={props.controls.zoomReset}
+                onViewTransformChange={props.controls.onViewTransformChange}
+                renderCursor={props.controls.renderCursor}
+                renderDragTrail={props.controls.renderDragTrail}
                 viewport={viewport}
                 content={content}
                 onGesture={onGesture}
@@ -201,6 +266,7 @@ function BrowserStreamInput(props: Readonly<{
                 accessibilityLabel={t('browserPresence.stream.inputA11y')}
                 testID={props.testID}
             />
+            <RemoteViewerControlBar actions={published} controls={props.controls} enabled={controlling} testID={`${props.testID}-controls`} />
         </View>
     );
 }
@@ -251,7 +317,10 @@ export function resolveBrowserStreamedSurfaceState(state: BrowserStreamedSurface
  */
 export function BrowserStreamedTarget(props: Readonly<{
     runtime: BrowserStreamedSurfaceRuntime | null;
+    onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
     agentName: string;
+    /** No agent resolves: the connecting title names none. */
+    agentless?: boolean;
     onOpenPageHere?: () => void;
     onClosePage?: () => void;
     /**
@@ -279,22 +348,48 @@ export function BrowserStreamedTarget(props: Readonly<{
     // The page's natural size is read only when something maps through it (viewer input, the cursor).
     const wantsPageRect = Boolean(props.runtime?.input) || Boolean(props.onPageRectChange);
     const frameSize = useFirstFrameSize(pictureUp && wantsPageRect ? playerState?.lastFrameUrl : null, playerState?.phase);
-    const pageRect = pictureUp && viewport ? containRect(viewport, frameSize) : null;
     const input = props.runtime?.input ?? null;
+    // The daemon's applied page size is the page's shape once it is known (the controlling viewer may
+    // have resized it since the first frame); the first frame stands in until then.
+    const pageShape = input?.viewport ?? frameSize;
+    const pageRect = pictureUp && viewport ? { ...containRect(viewport, pageShape), pageSize: frameSize } : null;
     const controlling = input?.viewerInput?.controlling === true;
     const sendInput = input?.sendInput;
+    // The controlling viewer's screen sets the page's size; everyone else letterboxes it.
+    useBrowserViewerViewport({
+        controlling: controlling && Boolean(sendInput),
+        viewport: viewport ? { width: Math.round(viewport.width), height: Math.round(viewport.height), deviceScaleFactor: PixelRatio.get() } : null,
+        sendViewport: next => sendInput?.({ kind: 'viewport', ...next }),
+    });
+    const phone = useSurfaceStateSize() === 'phone';
+    const viewerActions = React.useRef<RemoteViewerHostActions | null>(null);
+    const onRemoteActionsChange = React.useCallback((actions: RemoteViewerHostActions | null) => {
+        viewerActions.current = actions;
+        props.onRemoteActionsChange?.(actions);
+    }, [props.onRemoteActionsChange]);
+    const keyboard = useBrowserSoftKeyboard({
+        enabled: phone && controlling && Boolean(sendInput),
+        target: input?.editableTarget ?? null,
+        sendText: text => viewerActions.current?.sendText(text),
+        sendKey: key => viewerActions.current?.sendKey(key),
+    });
+    const keyboardActions = React.useMemo(() => ({available: keyboard.available, focused: keyboard.focused,
+        showKeyboard: keyboard.showKeyboard, hideKeyboard: keyboard.hideKeyboard}),
+        [keyboard.available, keyboard.focused, keyboard.showKeyboard, keyboard.hideKeyboard]);
+    const letterboxed = pageRect !== null && viewport !== null
+        && (pageRect.width < viewport.width - 1 || pageRect.height < viewport.height - 1);
     const otherViewerControls = props.humanInControl === true && !controlling;
     const onPageRectChange = props.onPageRectChange;
     React.useEffect(() => {
         onPageRectChange?.(pageRect);
-    }, [onPageRectChange, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [onPageRectChange, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize]); // eslint-disable-line react-hooks/exhaustive-deps
     React.useEffect(() => () => onPageRectChange?.(null), [onPageRectChange]);
 
     if (surfaceState === 'connecting' || (props.runtime?.connecting && surfaceState === 'unavailable')) {
         return (
             <BrowserStreamedConnecting
                 testID={`${props.testID}-connecting`}
-                title={t('browserPresence.stream.connectingTitle', { agent: props.agentName })}
+                title={props.agentless ? t('browserPresence.stream.connectingTitleAgentless') : t('browserPresence.stream.connectingTitle', { agent: props.agentName })}
                 reason={machineName ? t('browserPresence.stream.connectingBody', { machine: machineName }) : undefined}
             />
         );
@@ -305,7 +400,7 @@ export function BrowserStreamedTarget(props: Readonly<{
                 <SurfaceStateCard
                     kind="unavailable"
                     iconName="browsers"
-                    title={t('browserPresence.stream.endedTitle', { agent: props.agentName })}
+                    title={props.agentless ? t('browserPresence.stream.endedTitleAgentless') : t('browserPresence.stream.endedTitle', { agent: props.agentName })}
                     reason={t('browserPresence.stream.endedBody')}
                     action={props.onOpenPageHere ? { label: t('browserPresence.stream.openPageHere'), onPress: props.onOpenPageHere,
                         testID: `${props.testID}-ended-open` } : undefined}
@@ -322,8 +417,8 @@ export function BrowserStreamedTarget(props: Readonly<{
                 <SurfaceStateCard
                     kind="unavailable"
                     iconName="eye-slash"
-                    title={t('browserPresence.stream.unavailableTitle', { agent: props.agentName })}
-                    reason={t('browserPresence.stream.unavailableBody', { agent: props.agentName })}
+                    title={props.agentless ? t('browserPresence.stream.unavailableTitleAgentless') : t('browserPresence.stream.unavailableTitle', { agent: props.agentName })}
+                    reason={props.agentless ? t('browserPresence.stream.unavailableBodyAgentless') : t('browserPresence.stream.unavailableBody', { agent: props.agentName })}
                     diagnosticCode={playerState?.diagnostic?.reasonCode}
                     action={onRetry ? { label: t('browserPresence.stream.tryAgain'), onPress: onRetry } : undefined}
                 />
@@ -332,6 +427,12 @@ export function BrowserStreamedTarget(props: Readonly<{
     }
     return (
         <View testID={`${props.testID}-${surfaceState}`} style={stylesheet.root} onLayout={onLayout}>
+            <RemoteViewerStage key={input?.viewerKey} viewerKey={input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
+                enabled={Boolean(input && viewport && pageRect && surfaceState === 'live')}
+                testID={props.testID} renderInput={controls => input && viewport && pageRect && surfaceState === 'live' ? (
+                    <BrowserStreamInput input={input} viewport={viewport} content={pageRect} controls={controls} keyboard={keyboardActions}
+                        onRemoteActionsChange={onRemoteActionsChange} probeEditable={phone} testID={`${props.testID}-input`} />
+                ) : null}>
             <StreamedPicture stalled={surfaceState === 'stalled'}>
                 <LiveStreamPlayer
                     testID={`${props.testID}-player`}
@@ -342,14 +443,18 @@ export function BrowserStreamedTarget(props: Readonly<{
                         : undefined}
                 />
             </StreamedPicture>
-            {props.runtime?.input && viewport && pageRect ? (
-                <BrowserStreamInput
-                    input={props.runtime.input}
-                    viewport={viewport}
-                    content={pageRect}
-                    testID={`${props.testID}-input`}
-                />
+            {letterboxed && pageRect ? <View style={[stylesheet.letterboxEdge, {left: pageRect.x, top: pageRect.y, width: pageRect.width, height: pageRect.height}]}
+                testID={`${props.testID}-letterbox`} /> : null}
+            </RemoteViewerStage>
+            {phone && controlling && sendInput ? (
+                <TextInput ref={keyboard.inputRef} {...keyboard.sentinelProps} style={stylesheet.keyboardSentinel}
+                    accessibilityLabel={t('browserPresence.interaction.showKeyboard')} testID={`${props.testID}-keyboard-sentinel`} />
             ) : null}
+            <BrowserSoftKeyboardButton
+                visible={keyboard.available && !keyboard.focused}
+                onPress={keyboard.showKeyboard}
+                testID={`${props.testID}-keyboard`}
+            />
             {input ? (
                 <BrowserPageInteractions
                     interaction={input.interaction}

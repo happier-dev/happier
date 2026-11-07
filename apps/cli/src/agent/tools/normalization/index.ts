@@ -1,5 +1,6 @@
 import { extractDeferredToolExecutionCall } from './deferredToolExecutionCanonicalization';
 import { withUnrepresentedRaw } from './rawRetention';
+import { projectHappierToolInputForObservation } from '../happierTools/resultObservation';
 import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
 import { isChangeTitleToolNameAlias, isShellToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
@@ -596,7 +597,13 @@ export function normalizeToolCallV2(opts: {
         canonicalToolName,
         rawInput: opts.rawInput,
     });
-    return { canonicalToolName, input };
+    const observed = projectHappierToolInputForObservation(canonicalToolName, input);
+    return { canonicalToolName, input: observed === input ? input : normalizeToolCallInputV2({
+        ...opts,
+        canonicalToolName,
+        // The projected semantic input has no shell command or deferred wrapper to retain.
+        rawInput: observed,
+    }) };
 }
 
 export function normalizeToolResultV2(opts: {

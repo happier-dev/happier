@@ -1,6 +1,6 @@
 import { ComputerInputRequestV1Schema, ComputerTargetRequestV1Schema, ComputerTargetsListRequestV1Schema, ComputerMachineRequestV1Schema, ComputerTargetSelectRequestV1Schema, ComputerOpenSettingsRequestV1Schema, computerSourceIdentityKeyV1, resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 import type { ComputerTargetV1, RuntimeActionExecute, RuntimeActionIdV1 } from '@happier-dev/protocol';
-import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
+import type { MachineLiveStreamCaptureRegistry, MachineLiveStreamRegisteredCaptureSource } from '../peer/mediation/stream/captureRegistry';
 import { computerTargetKey, createComputerCaptureSource } from './source';
 import { ComputerDriverError, createManagedComputerDriver, resolveComputerDisplayId } from './driver/managedComputerDriver';
 import { createSessionImageMediaWriter } from '@/session/media/createSessionImageMediaWriter';
@@ -21,6 +21,9 @@ export type ComputerActionContext = RpcActionExecutorContext & Readonly<{ ownDes
 
 export type ComputerRoutes = Readonly<{
   dispatch(actionId: RuntimeActionIdV1, input: unknown, context: ComputerActionContext): Promise<Awaited<ReturnType<RuntimeActionExecute>>>;
+  admitSourceViewing(input: Readonly<{ sourceId: string; streamFamily: string }>, context: ComputerActionContext): Promise<
+    Readonly<{ ok: true; source: MachineLiveStreamRegisteredCaptureSource; homeServerIdentityId: string }>
+    | Readonly<{ ok: false; reasonCode: string }>>;
   closeSession(sessionId: string): Promise<void>;
   dispose(): Promise<void>;
 }>;
@@ -109,11 +112,26 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
     }));
   };
   return {
+    async admitSourceViewing(request, context) {
+      try {
+        context.signal?.throwIfAborted();
+        const scope = await resolveComputerRequesterScope({ machineId: input.machineId, host: input.requesterHost,
+          context: { ...context, ownDesktopOnly: true } });
+        if (scope.kind !== 'personal') return { ok: false, reasonCode: 'capture_source_denied' };
+        const resolved = input.registry.resolve(request);
+        if (!resolved.ok) return { ok: false, reasonCode: resolved.diagnostic.reasonCode };
+        if (resolved.source.computer?.desktopKey !== scope.key) return { ok: false, reasonCode: 'capture_source_denied' };
+        return { ok: true, source: resolved.source, homeServerIdentityId: scope.homeServerIdentityId };
+      } catch (error) {
+        context.signal?.throwIfAborted();
+        const code = nativeFailure(error).errorCode;
+        return { ok: false, reasonCode: code === 'access_denied' ? 'capture_source_denied' : code };
+      }
+    },
     async dispatch(actionId, rawInput, context) {
       const sessionId = context.defaultSessionId;
       if (!context.authority || (!sessionId && context.authority !== 'present_user' && actionId !== 'computer.permissions.openSettings')) return failure('computer_session_required');
       const clipboard = actionId === 'computer.clipboard.read' || actionId === 'computer.clipboard.write';
-      if (clipboard && context.authority !== 'present_user') return failure('present_user_required');
       const list = actionId === 'computer.targets.list';
       const parsed = (list ? ComputerTargetsListRequestV1Schema
         : actionId === 'computer.target.get' ? ComputerMachineRequestV1Schema
@@ -274,9 +292,11 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       const sourceId = source.sourceId;
       if ((request.sourceId && request.sourceId !== sourceId)
         || (request.target && computerTargetKey(request.target) !== computerTargetKey(source.target))) return failure('computer_target_selection_changed');
-      if (actionId === 'computer.input' && source.access === 'see') return { target: source.target, sourceId, provider,
-        status: 'failed', code: 'computer_access_read_only' };
-      if (['computer.capture', 'computer.query', 'computer.input'].includes(actionId)
+      if (source.access === 'see' && (actionId === 'computer.input'
+        || (actionId === 'computer.clipboard.write' && context.authority !== 'present_user'))) return clipboard
+          ? { ok: false, code: 'computer_access_read_only' }
+          : { target: source.target, sourceId, provider, status: 'failed', code: 'computer_access_read_only' };
+      if (['computer.capture', 'computer.query', 'computer.input', 'computer.clipboard.read', 'computer.clipboard.write'].includes(actionId)
         && context.authority !== 'present_user' && !source.consentGranted()) {
         if (!context.bypassApprovals) return failure('computer_consent_required');
         source.grantConsent();
@@ -284,7 +304,8 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       const identity = { target: source.target, sourceId, provider };
       try {
         if (clipboard) return await source.clipboard(actionId === 'computer.clipboard.read' ? { kind: 'read' }
-          : { kind: 'write', text: ComputerClipboardWriteRequestV1Schema.parse(parsed.data).text }, context.signal);
+          : { kind: 'write', text: ComputerClipboardWriteRequestV1Schema.parse(parsed.data).text },
+          context.authority === 'present_user' ? 'human' : 'agent', context.signal);
         if (actionId === 'computer.capture' || actionId === 'computer.query') {
           const observed = await source.observe(context.authority === 'present_user' ? 'human' : 'agent');
           context.signal?.throwIfAborted();

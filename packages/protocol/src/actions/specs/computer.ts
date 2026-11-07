@@ -110,6 +110,8 @@ export const COMPUTER_RUNTIME_ACTION_OUTPUT_SCHEMAS: ComputerRuntimeActionOutput
 
 export const COMPUTER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   approvalPolicies: {
+    'computer.clipboard.read': { agentDefault: 'egress', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
+    'computer.clipboard.write': { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
     'computer.target.close': { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
     'computer.targets.list': { agentDefault: 'egress' },
     'computer.capture': { agentDefault: 'egress', computerConsent: true },
@@ -144,8 +146,8 @@ export const COMPUTER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
     'computer.capture': 'Capture the selected native target as a Session image reference with its exact image and native input geometry.',
     'computer.query': 'Read available native accessibility information for the selected target, reporting partial or unavailable information truthfully. The producing provider and captureId bind returned element IDs to subsequent computer.input operations.',
     'computer.input': 'Send click, key, text, drag, wheel, or element click/set_value input against a current capture of a Use-enabled target. An optional provider selects an enabled installed provider; element IDs remain bound to their producing provider and observation. See-only access refuses input. Delivery alone does not prove the requested effect.',
-    'computer.clipboard.read': 'Read text from the selected computer desktop clipboard for the present user. Clipboard content stays private to the live invocation.',
-    'computer.clipboard.write': 'Write text to the selected computer desktop clipboard for the present user. Clipboard content stays private to the live invocation.',
+    'computer.clipboard.read': 'Read text from the selected computer desktop clipboard. Approval defaults to Ask for automation and is user-changeable. Clipboard content stays private to the live invocation.',
+    'computer.clipboard.write': 'Write text to the selected computer desktop clipboard. Approval defaults to Ask for automation and is user-changeable. Clipboard content stays private to the live invocation.',
     'computer.secret.fill': 'Request a human credential choice for the exact observed native field. The request and settlement contain no credential value. Unsupported field or confidential observation verification refuses entry.',
     'computer.control.status': 'Read the host controller, stopping state, and in-flight agent activity with redacted target presentation for the selected native target.',
     'computer.control.interrupt': 'Stop agent input and drain accepted input before returning control to the present user.',

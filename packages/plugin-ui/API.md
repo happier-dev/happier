@@ -9,6 +9,9 @@
 
 Declaration: `dist/index.d.ts`
 
+- type `AccountActorLabel` from `dist/index.d.ts`
+- value `AccountByline` from `dist/index.d.ts`
+- type `AccountBylineProps` from `dist/index.d.ts`
 - value `Action` from `dist/index.d.ts`
 - type `ActionControlProps` from `dist/index.d.ts`
 - type `ActionCopyProps` from `dist/index.d.ts`
@@ -35,10 +38,16 @@ Declaration: `dist/index.d.ts`
 - type `ApprovalPromptProps` from `dist/index.d.ts`
 - value `Avatar` from `dist/index.d.ts`
 - type `AvatarProps` from `dist/index.d.ts`
+- value `AvatarStack` from `dist/index.d.ts`
+- type `AvatarStackEntry` from `dist/index.d.ts`
+- type `AvatarStackProps` from `dist/index.d.ts`
 - value `Badge` from `dist/index.d.ts`
 - type `BadgeProps` from `dist/index.d.ts`
 - value `Banner` from `dist/index.d.ts`
 - type `BannerProps` from `dist/index.d.ts`
+- value `BotFace` from `dist/index.d.ts`
+- type `BotFaceProps` from `dist/index.d.ts`
+- type `BotFaceValue` from `dist/index.d.ts`
 - value `BrandMark` from `dist/index.d.ts`
 - type `BrandMarkProps` from `dist/index.d.ts`
 - value `BurnUpChart` from `dist/index.d.ts`
@@ -55,6 +64,7 @@ Declaration: `dist/index.d.ts`
 - value `CapabilityAddBody` from `dist/index.d.ts`
 - type `CapabilityAddBodyProps` from `dist/index.d.ts`
 - type `CapabilityAddConfig` from `dist/index.d.ts`
+- value `CapabilityAddDetailAction` from `dist/index.d.ts`
 - type `CapabilityAddDetailFooter` from `dist/index.d.ts`
 - type `CapabilityAddFound` from `dist/index.d.ts`
 - type `CapabilityAddLevel` from `dist/index.d.ts`
@@ -69,6 +79,9 @@ Declaration: `dist/index.d.ts`
 - type `CapabilityFactsInput` from `dist/index.d.ts`
 - type `CapabilityFactsProps` from `dist/index.d.ts`
 - type `CapabilityFixKind` from `dist/index.d.ts`
+- type `CapabilityListingFacts` from `dist/index.d.ts`
+- value `CapabilityListingSections` from `dist/index.d.ts`
+- type `CapabilityListingSectionsProps` from `dist/index.d.ts`
 - type `CapabilitySource` from `dist/index.d.ts`
 - type `CapabilityStatus` from `dist/index.d.ts`
 - value `CapabilityStatusChip` from `dist/index.d.ts`
@@ -85,6 +98,9 @@ Declaration: `dist/index.d.ts`
 - value `CheckStatusGlyph` from `dist/index.d.ts`
 - type `CheckStatusGlyphProps` from `dist/index.d.ts`
 - type `CheckStatusKind` from `dist/index.d.ts`
+- value `Checkbox` from `dist/index.d.ts`
+- type `CheckboxProps` from `dist/index.d.ts`
+- type `CheckboxSize` from `dist/index.d.ts`
 - value `CodeBlock` from `dist/index.d.ts`
 - type `CodeBlockProps` from `dist/index.d.ts`
 - value `Collection` from `dist/index.d.ts`
@@ -114,12 +130,23 @@ Declaration: `dist/index.d.ts`
 - type `CollectionLoadingRowsProps` from `dist/index.d.ts`
 - type `CollectionProps` from `dist/index.d.ts`
 - type `CollectionRowActions` from `dist/index.d.ts`
+- value `CollectionRowNeedsYouHighlight` from `dist/index.d.ts`
+- type `CollectionRowNeedsYouHighlightProps` from `dist/index.d.ts`
 - type `CollectionSavedViewItem` from `dist/index.d.ts`
+- type `CollectionSavedViewStripItem` from `dist/index.d.ts`
 - type `CollectionSavedViewsControlProps` from `dist/index.d.ts`
 - type `CollectionSavedViewsLabels` from `dist/index.d.ts`
+- type `CollectionSavedViewsSelectionProps` from `dist/index.d.ts`
+- value `CollectionSavedViewsStrip` from `dist/index.d.ts`
+- type `CollectionSavedViewsStripProps` from `dist/index.d.ts`
 - type `CollectionSingleChoice` from `dist/index.d.ts`
 - type `CollectionSort` from `dist/index.d.ts`
+- value `CollectionSpaceIcon` from `dist/index.d.ts`
+- type `CollectionSpaceIconProps` from `dist/index.d.ts`
 - type `CollectionSummaryRow` from `dist/index.d.ts`
+- value `CollectionTitleButton` from `dist/index.d.ts`
+- type `CollectionTitleButtonProps` from `dist/index.d.ts`
+- value `CollectionTitleNaturalWidthContext` from `dist/index.d.ts`
 - value `CollectionToolbar` from `dist/index.d.ts`
 - type `CollectionToolbarFreshness` from `dist/index.d.ts`
 - type `CollectionToolbarProps` from `dist/index.d.ts`
@@ -171,6 +198,8 @@ Declaration: `dist/index.d.ts`
 - type `CompositionSegment` from `dist/index.d.ts`
 - value `CompositionStrip` from `dist/index.d.ts`
 - type `CompositionStripProps` from `dist/index.d.ts`
+- value `ContentPreview` from `dist/index.d.ts`
+- type `ContentPreviewProps` from `dist/index.d.ts`
 - value `ContextMenu` from `dist/index.d.ts`
 - type `CoreLoadBar` from `dist/index.d.ts`
 - value `CoreLoadBars` from `dist/index.d.ts`
@@ -215,6 +244,10 @@ Declaration: `dist/index.d.ts`
 - type `EmptySlotProps` from `dist/index.d.ts`
 - value `EmptyState` from `dist/index.d.ts`
 - type `EmptyStateProps` from `dist/index.d.ts`
+- value `EndpointHeadersEditor` from `dist/index.d.ts`
+- type `EndpointHeadersEditorCopy` from `dist/index.d.ts`
+- type `EndpointHeadersEditorProps` from `dist/index.d.ts`
+- type `EndpointHeadersLayer` from `dist/index.d.ts`
 - type `EntityFilterConditionCodecV1` from `dist/index.d.ts`
 - type `EntityFilterConditionOperatorV1` from `dist/index.d.ts`
 - type `EntityFilterConditionV1` from `dist/index.d.ts`
@@ -300,6 +333,7 @@ Declaration: `dist/index.d.ts`
 - value `HAPPIER_FOCUS_RING_DELEGATED_STYLE` from `dist/index.d.ts`
 - value `HAPPIER_FOCUS_RING_V1` from `dist/index.d.ts`
 - value `HAPPIER_FRESHNESS_LINE_METRICS` from `dist/index.d.ts`
+- value `HAPPIER_GESTURE_TIMING` from `dist/index.d.ts`
 - value `HAPPIER_ICON_BUTTON_SIZE` from `dist/index.d.ts`
 - value `HAPPIER_ICON_NAMES` from `dist/index.d.ts`
 - value `HAPPIER_INLINE_CODE_METRICS` from `dist/index.d.ts`
@@ -370,6 +404,10 @@ Declaration: `dist/index.d.ts`
 - value `HAPPIER_WORK_TEXT` from `dist/index.d.ts`
 - value `HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX` from `dist/index.d.ts`
 - value `HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX` from `dist/index.d.ts`
+- type `HappierAccountActorLabel` from `dist/index.d.ts`
+- value `HappierAccountByline` from `dist/index.d.ts`
+- type `HappierAccountBylineProps` from `dist/index.d.ts`
+- type `HappierAccountBylineTextProps` from `dist/index.d.ts`
 - type `HappierActionFieldPresentation` from `dist/index.d.ts`
 - value `HappierActionPanel` from `dist/index.d.ts`
 - type `HappierActionPanelProps` from `dist/index.d.ts`
@@ -454,6 +492,7 @@ Declaration: `dist/index.d.ts`
 - value `HappierCollectionRowContent` from `dist/index.d.ts`
 - type `HappierCollectionRowContentProps` from `dist/index.d.ts`
 - type `HappierCollectionRowDensity` from `dist/index.d.ts`
+- type `HappierCollectionRowRole` from `dist/index.d.ts`
 - type `HappierCollectionRowTextMetrics` from `dist/index.d.ts`
 - type `HappierCollectionSection` from `dist/index.d.ts`
 - type `HappierCollectionTableColumn` from `dist/index.d.ts`
@@ -503,12 +542,15 @@ Declaration: `dist/index.d.ts`
 - type `HappierDiffViewerRequest` from `dist/index.d.ts`
 - value `HappierDisclosure` from `dist/index.d.ts`
 - type `HappierDisclosureBodyProps` from `dist/index.d.ts`
+- type `HappierDisclosureCaretDensity` from `dist/index.d.ts`
 - value `HappierDisclosureChevron` from `dist/index.d.ts`
 - type `HappierDisclosureHeaderRender` from `dist/index.d.ts`
 - type `HappierDisclosureHeaderState` from `dist/index.d.ts`
 - type `HappierDisclosureMotion` from `dist/index.d.ts`
 - type `HappierDisclosureMotionDriver` from `dist/index.d.ts`
 - type `HappierDisclosureProps` from `dist/index.d.ts`
+- value `HappierDisclosureToggle` from `dist/index.d.ts`
+- type `HappierDisclosureToggleProps` from `dist/index.d.ts`
 - value `HappierDivider` from `dist/index.d.ts`
 - value `HappierDocEditProposal` from `dist/index.d.ts`
 - type `HappierDocEditProposalAction` from `dist/index.d.ts`
@@ -672,10 +714,13 @@ Declaration: `dist/index.d.ts`
 - type `HappierLiveStreamGestureGeometry` from `dist/index.d.ts`
 - type `HappierLiveStreamInputControlKind` from `dist/index.d.ts`
 - type `HappierLiveStreamInputGesture` from `dist/index.d.ts`
+- value `HappierLiveStreamInputLayer` from `dist/index.d.ts`
+- type `HappierLiveStreamInputMode` from `dist/index.d.ts`
 - type `HappierLiveStreamOrientation` from `dist/index.d.ts`
 - type `HappierLiveStreamPoint` from `dist/index.d.ts`
 - type `HappierLiveStreamProps` from `dist/index.d.ts`
 - type `HappierLiveStreamRect` from `dist/index.d.ts`
+- type `HappierLiveStreamViewTransform` from `dist/index.d.ts`
 - type `HappierLocalDateTimeDraft` from `dist/index.d.ts`
 - value `HappierLocalDateTimeField` from `dist/index.d.ts`
 - type `HappierLocalDateTimeFieldProps` from `dist/index.d.ts`
@@ -773,7 +818,6 @@ Declaration: `dist/index.d.ts`
 - value `HappierPublicLinkCard` from `dist/index.d.ts`
 - type `HappierPublicLinkCardProps` from `dist/index.d.ts`
 - value `HappierPublicProfile` from `dist/index.d.ts`
-- value `HappierPublicProfileDataProvider` from `dist/index.d.ts`
 - type `HappierPublicProfileLabels` from `dist/index.d.ts`
 - type `HappierPublicProfileProps` from `dist/index.d.ts`
 - type `HappierPublicProfileUsageHost` from `dist/index.d.ts`
@@ -800,6 +844,10 @@ Declaration: `dist/index.d.ts`
 - type `HappierReplyQuoteProps` from `dist/index.d.ts`
 - type `HappierReplyQuoteSource` from `dist/index.d.ts`
 - type `HappierReplyQuoteTextProps` from `dist/index.d.ts`
+- value `HappierRequesterDisclosureContent` from `dist/index.d.ts`
+- type `HappierRequesterDisclosureContentProps` from `dist/index.d.ts`
+- type `HappierRequesterDisclosureHost` from `dist/index.d.ts`
+- type `HappierRequesterDisclosureModel` from `dist/index.d.ts`
 - value `HappierResizeHandle` from `dist/index.d.ts`
 - type `HappierResolvedMenuGroup` from `dist/index.d.ts`
 - type `HappierResolvedPopoverPlacement` from `dist/index.d.ts`
@@ -823,6 +871,8 @@ Declaration: `dist/index.d.ts`
 - value `HappierRowActionRevealSlot` from `dist/index.d.ts`
 - type `HappierRowActionRevealSlotProps` from `dist/index.d.ts`
 - value `HappierRowOperationContext` from `dist/index.d.ts`
+- value `HappierSavedSkillCard` from `dist/index.d.ts`
+- type `HappierSavedSkillCardProps` from `dist/index.d.ts`
 - type `HappierSceneArtSize` from `dist/index.d.ts`
 - type `HappierSceneComposition` from `dist/index.d.ts`
 - type `HappierSceneDash` from `dist/index.d.ts`
@@ -1083,6 +1133,10 @@ Declaration: `dist/index.d.ts`
 - type `HeadingProps` from `dist/index.d.ts`
 - value `Heatmap` from `dist/index.d.ts`
 - type `HeatmapProps` from `dist/index.d.ts`
+- value `HorizontalScrollEdgeMask` from `dist/index.d.ts`
+- type `HorizontalScrollEdgeMaskProps` from `dist/index.d.ts`
+- type `HostTaskShareRef` from `dist/index.d.ts`
+- type `HostTaskShareSheet` from `dist/index.d.ts`
 - value `HostedAnchoredMenu` from `dist/index.d.ts`
 - type `HostedAnchoredMenuProps` from `dist/index.d.ts`
 - value `Icon` from `dist/index.d.ts`
@@ -1103,6 +1157,8 @@ Declaration: `dist/index.d.ts`
 - value `ItemGroup` from `dist/index.d.ts`
 - type `ItemGroupProps` from `dist/index.d.ts`
 - type `ItemProps` from `dist/index.d.ts`
+- value `KeyboardStickyFooter` from `dist/index.d.ts`
+- type `KeyboardStickyFooterProps` from `dist/index.d.ts`
 - value `Label` from `dist/index.d.ts`
 - type `LabelProps` from `dist/index.d.ts`
 - type `LayoutChangeEvent` from `dist/index.d.ts`
@@ -1160,6 +1216,8 @@ Declaration: `dist/index.d.ts`
 - type `MetadataProps` from `dist/index.d.ts`
 - value `Metric` from `dist/index.d.ts`
 - type `MetricProps` from `dist/index.d.ts`
+- value `ModalCardFooterActions` from `dist/index.d.ts`
+- type `ModalCardFooterActionsProps` from `dist/index.d.ts`
 - value `ModalHeader` from `dist/index.d.ts`
 - type `ModalHeaderProps` from `dist/index.d.ts`
 - value `MotionFeedback` from `dist/index.d.ts`
@@ -1179,9 +1237,15 @@ Declaration: `dist/index.d.ts`
 - type `OutcomeScatterGuide` from `dist/index.d.ts`
 - type `OutcomeScatterPoint` from `dist/index.d.ts`
 - type `OutcomeScatterProps` from `dist/index.d.ts`
+- value `PageAsideColumns` from `dist/index.d.ts`
+- type `PageAsideColumnsProps` from `dist/index.d.ts`
 - value `PageHeader` from `dist/index.d.ts`
 - type `PageHeaderMetaFact` from `dist/index.d.ts`
 - type `PageHeaderProps` from `dist/index.d.ts`
+- value `PageLoadingRows` from `dist/index.d.ts`
+- type `PageLoadingRowsProps` from `dist/index.d.ts`
+- value `PagePinnedBar` from `dist/index.d.ts`
+- type `PagePinnedBarProps` from `dist/index.d.ts`
 - value `PaneHeaderContent` from `dist/index.d.ts`
 - type `PaneHeaderContentLineSegment` from `dist/index.d.ts`
 - type `PaneHeaderContentProps` from `dist/index.d.ts`
@@ -1226,6 +1290,14 @@ Declaration: `dist/index.d.ts`
 - type `PresenceCapsuleProps` from `dist/index.d.ts`
 - value `Progress` from `dist/index.d.ts`
 - type `ProgressProps` from `dist/index.d.ts`
+- value `ProgressRing` from `dist/index.d.ts`
+- type `ProgressRingProps` from `dist/index.d.ts`
+- type `PropertyChoice` from `dist/index.d.ts`
+- type `PropertyEditor` from `dist/index.d.ts`
+- value `PropertyList` from `dist/index.d.ts`
+- type `PropertyListItem` from `dist/index.d.ts`
+- type `PropertyListProps` from `dist/index.d.ts`
+- type `PropertyNameTones` from `dist/index.d.ts`
 - type `PublicUsageChartModels` from `dist/index.d.ts`
 - type `PublicUsageMetricId` from `dist/index.d.ts`
 - type `PublicUsageOriginalLabels` from `dist/index.d.ts`
@@ -1235,6 +1307,19 @@ Declaration: `dist/index.d.ts`
 - value `REMOTE_VIEWER_KEYS` from `dist/index.d.ts`
 - value `RankedRows` from `dist/index.d.ts`
 - type `RankedRowsProps` from `dist/index.d.ts`
+- value `RegistryShelf` from `dist/index.d.ts`
+- value `RegistryShelfAddControl` from `dist/index.d.ts`
+- type `RegistryShelfAddControlProps` from `dist/index.d.ts`
+- type `RegistryShelfAddState` from `dist/index.d.ts`
+- type `RegistryShelfProjection` from `dist/index.d.ts`
+- type `RegistryShelfProps` from `dist/index.d.ts`
+- type `RegistryShelfUnavailable` from `dist/index.d.ts`
+- type `RegistrySourceFailure` from `dist/index.d.ts`
+- value `RegistrySourcesUnavailable` from `dist/index.d.ts`
+- type `RegistrySourcesUnavailableProps` from `dist/index.d.ts`
+- value `RelationList` from `dist/index.d.ts`
+- type `RelationListEntry` from `dist/index.d.ts`
+- type `RelationListProps` from `dist/index.d.ts`
 - type `RemoteViewerActionResult` from `dist/index.d.ts`
 - type `RemoteViewerActions` from `dist/index.d.ts`
 - type `RemoteViewerClipboardResult` from `dist/index.d.ts`
@@ -1262,6 +1347,10 @@ Declaration: `dist/index.d.ts`
 - type `ReviewSeverityProps` from `dist/index.d.ts`
 - value `Row` from `dist/index.d.ts`
 - type `RowProps` from `dist/index.d.ts`
+- type `RowStatusAction` from `dist/index.d.ts`
+- value `RowStatusLine` from `dist/index.d.ts`
+- type `RowStatusLineProps` from `dist/index.d.ts`
+- type `RowStatusTone` from `dist/index.d.ts`
 - type `ScaleTextStyleOptions` from `dist/index.d.ts`
 - type `ScaledTextStyleMetrics` from `dist/index.d.ts`
 - value `SceneArt` from `dist/index.d.ts`
@@ -1276,6 +1365,9 @@ Declaration: `dist/index.d.ts`
 - value `SelectionTiles` from `dist/index.d.ts`
 - type `SelectionTilesOption` from `dist/index.d.ts`
 - type `SelectionTilesProps` from `dist/index.d.ts`
+- value `SessionCard` from `dist/index.d.ts`
+- type `SessionCardProps` from `dist/index.d.ts`
+- type `SessionCardStatus` from `dist/index.d.ts`
 - value `SessionChat` from `dist/index.d.ts`
 - type `SessionChatProps` from `dist/index.d.ts`
 - value `SessionComposer` from `dist/index.d.ts`
@@ -1498,6 +1590,8 @@ Declaration: `dist/index.d.ts`
 - type `WidgetSizePickerProps` from `dist/index.d.ts`
 - value `WidgetSurface` from `dist/index.d.ts`
 - type `WidgetSurfaceProps` from `dist/index.d.ts`
+- value `WorkflowRunFoldHeader` from `dist/index.d.ts`
+- type `WorkflowRunFoldHeaderProps` from `dist/index.d.ts`
 - value `admitPluginListFilterFieldV1` from `dist/index.d.ts`
 - value `admitPluginListFilterFieldValueV1` from `dist/index.d.ts`
 - value `applyCollectionConditionEdit` from `dist/index.d.ts`
@@ -1505,6 +1599,7 @@ Declaration: `dist/index.d.ts`
 - value `capabilityCollectionAnatomy` from `dist/index.d.ts`
 - value `clampCompanionPoint` from `dist/index.d.ts`
 - value `cloneStyleEntryPreservingOwnProps` from `dist/index.d.ts`
+- value `collectionConditionChoiceValues` from `dist/index.d.ts`
 - value `collectionConditionOptionValues` from `dist/index.d.ts`
 - value `collectionConditionValueCountsFromFacts` from `dist/index.d.ts`
 - value `collectionConditionValueLabels` from `dist/index.d.ts`
@@ -1541,6 +1636,7 @@ Declaration: `dist/index.d.ts`
 - value `formatHappierLocalDateInput` from `dist/index.d.ts`
 - value `formatHappierLocalTimeInput` from `dist/index.d.ts`
 - value `formatHappierWorkMapNodeName` from `dist/index.d.ts`
+- value `formatUsageDurationCompact` from `dist/index.d.ts`
 - value `frameRectsOverlap` from `dist/index.d.ts`
 - value `getUnsupportedEntityFilterFieldsV1` from `dist/index.d.ts`
 - value `happierCollectionTravelTrack` from `dist/index.d.ts`
@@ -1558,6 +1654,7 @@ Declaration: `dist/index.d.ts`
 - value `happierSurfaceGradientWebStyle` from `dist/index.d.ts`
 - value `hitHappierSunburst` from `dist/index.d.ts`
 - value `iconMatchedSpinnerSize` from `dist/index.d.ts`
+- value `isCollectionConditionChoiceOn` from `dist/index.d.ts`
 - value `isCollectionConditionOptionPicked` from `dist/index.d.ts`
 - value `isHappierBannerUrgent` from `dist/index.d.ts`
 - value `isHappierFocusVisible` from `dist/index.d.ts`
@@ -1660,6 +1757,7 @@ Declaration: `dist/index.d.ts`
 - value `resolveHappierMenuContent` from `dist/index.d.ts`
 - value `resolveHappierMenuKeyAction` from `dist/index.d.ts`
 - value `resolveHappierMenuRadioGroups` from `dist/index.d.ts`
+- value `resolveHappierMenuRowNavigation` from `dist/index.d.ts`
 - value `resolveHappierMenuSelection` from `dist/index.d.ts`
 - value `resolveHappierMenuTypeahead` from `dist/index.d.ts`
 - value `resolveHappierModalHeaderLayout` from `dist/index.d.ts`
@@ -1724,8 +1822,11 @@ Declaration: `dist/index.d.ts`
 - value `squarifyHappierTreemap` from `dist/index.d.ts`
 - value `toHappierListMultiSelectionSnapshot` from `dist/index.d.ts`
 - value `toHappierLocalDateTimeDraft` from `dist/index.d.ts`
-- value `useButtonFace` from `dist/index.d.ts`
+- value `toggleCollectionConditionValue` from `dist/index.d.ts`
+- value `useAccountActorName` from `dist/index.d.ts`
+- value `useCollectionRowNeedsYouHighlight` from `dist/index.d.ts`
 - value `useCollectionSavedViewsControl` from `dist/index.d.ts`
+- value `useCollectionSavedViewsSelection` from `dist/index.d.ts`
 - value `useCompanionPointerDragSession` from `dist/index.d.ts`
 - value `useComposer` from `dist/index.d.ts`
 - value `useComposerView` from `dist/index.d.ts`
@@ -1753,6 +1854,7 @@ Declaration: `dist/index.d.ts`
 - value `useHappierTextSelectability` from `dist/index.d.ts`
 - value `useHappierTreeInteraction` from `dist/index.d.ts`
 - value `useHappierTreeRowLineHeight` from `dist/index.d.ts`
+- value `useHostTaskShareSheet` from `dist/index.d.ts`
 - value `useListMultiSelectionController` from `dist/index.d.ts`
 - value `useListMultiSelectionRow` from `dist/index.d.ts`
 - value `useListMultiSelectionSnapshot` from `dist/index.d.ts`
@@ -1778,6 +1880,9 @@ Declaration: `dist/index.d.ts`
 - value `useRemoteViewerActions` from `dist/index.d.ts`
 - value `useResizableSize` from `dist/index.d.ts`
 - value `useReviewCommentProposalsForEntry` from `dist/index.d.ts`
+- value `useScmFileViewed` from `dist/index.d.ts`
+- value `useScmFileViewedFile` from `dist/index.d.ts`
+- value `useScmFileViewedStatus` from `dist/index.d.ts`
 - value `useSessionState` from `dist/index.d.ts`
 - value `useSessionStates` from `dist/index.d.ts`
 - value `useSurfaceContext` from `dist/index.d.ts`
@@ -1786,6 +1891,7 @@ Declaration: `dist/index.d.ts`
 - value `useWidgetAreaPort` from `dist/index.d.ts`
 - value `useWidgetPresentation` from `dist/index.d.ts`
 - value `validatePluginListFilterSelectionsV1` from `dist/index.d.ts`
+- value `widgetFootprintBodyRows` from `dist/index.d.ts`
 - value `withHappierPageSectionDividers` from `dist/index.d.ts`
 - value `writeHappierActionInputPath` from `dist/index.d.ts`
 
@@ -1848,6 +1954,9 @@ Declaration: `dist/ansi.d.ts`
 
 Declaration: `dist/components/index.d.ts`
 
+- type `AccountActorLabel` from `dist/components/index.d.ts`
+- value `AccountByline` from `dist/components/index.d.ts`
+- type `AccountBylineProps` from `dist/components/index.d.ts`
 - value `Action` from `dist/components/index.d.ts`
 - type `ActionControlProps` from `dist/components/index.d.ts`
 - type `ActionCopyProps` from `dist/components/index.d.ts`
@@ -1874,10 +1983,16 @@ Declaration: `dist/components/index.d.ts`
 - type `ApprovalPromptProps` from `dist/components/index.d.ts`
 - value `Avatar` from `dist/components/index.d.ts`
 - type `AvatarProps` from `dist/components/index.d.ts`
+- value `AvatarStack` from `dist/components/index.d.ts`
+- type `AvatarStackEntry` from `dist/components/index.d.ts`
+- type `AvatarStackProps` from `dist/components/index.d.ts`
 - value `Badge` from `dist/components/index.d.ts`
 - type `BadgeProps` from `dist/components/index.d.ts`
 - value `Banner` from `dist/components/index.d.ts`
 - type `BannerProps` from `dist/components/index.d.ts`
+- value `BotFace` from `dist/components/index.d.ts`
+- type `BotFaceProps` from `dist/components/index.d.ts`
+- type `BotFaceValue` from `dist/components/index.d.ts`
 - value `BrandMark` from `dist/components/index.d.ts`
 - type `BrandMarkProps` from `dist/components/index.d.ts`
 - value `BurnUpChart` from `dist/components/index.d.ts`
@@ -1894,6 +2009,7 @@ Declaration: `dist/components/index.d.ts`
 - value `CapabilityAddBody` from `dist/components/index.d.ts`
 - type `CapabilityAddBodyProps` from `dist/components/index.d.ts`
 - type `CapabilityAddConfig` from `dist/components/index.d.ts`
+- value `CapabilityAddDetailAction` from `dist/components/index.d.ts`
 - type `CapabilityAddDetailFooter` from `dist/components/index.d.ts`
 - type `CapabilityAddFound` from `dist/components/index.d.ts`
 - type `CapabilityAddLevel` from `dist/components/index.d.ts`
@@ -1908,6 +2024,9 @@ Declaration: `dist/components/index.d.ts`
 - type `CapabilityFactsInput` from `dist/components/index.d.ts`
 - type `CapabilityFactsProps` from `dist/components/index.d.ts`
 - type `CapabilityFixKind` from `dist/components/index.d.ts`
+- type `CapabilityListingFacts` from `dist/components/index.d.ts`
+- value `CapabilityListingSections` from `dist/components/index.d.ts`
+- type `CapabilityListingSectionsProps` from `dist/components/index.d.ts`
 - type `CapabilitySource` from `dist/components/index.d.ts`
 - type `CapabilityStatus` from `dist/components/index.d.ts`
 - value `CapabilityStatusChip` from `dist/components/index.d.ts`
@@ -1924,6 +2043,9 @@ Declaration: `dist/components/index.d.ts`
 - value `CheckStatusGlyph` from `dist/components/index.d.ts`
 - type `CheckStatusGlyphProps` from `dist/components/index.d.ts`
 - type `CheckStatusKind` from `dist/components/index.d.ts`
+- value `Checkbox` from `dist/components/index.d.ts`
+- type `CheckboxProps` from `dist/components/index.d.ts`
+- type `CheckboxSize` from `dist/components/index.d.ts`
 - value `CodeBlock` from `dist/components/index.d.ts`
 - type `CodeBlockProps` from `dist/components/index.d.ts`
 - value `Collection` from `dist/components/index.d.ts`
@@ -1953,12 +2075,23 @@ Declaration: `dist/components/index.d.ts`
 - type `CollectionLoadingRowsProps` from `dist/components/index.d.ts`
 - type `CollectionProps` from `dist/components/index.d.ts`
 - type `CollectionRowActions` from `dist/components/index.d.ts`
+- value `CollectionRowNeedsYouHighlight` from `dist/components/index.d.ts`
+- type `CollectionRowNeedsYouHighlightProps` from `dist/components/index.d.ts`
 - type `CollectionSavedViewItem` from `dist/components/index.d.ts`
+- type `CollectionSavedViewStripItem` from `dist/components/index.d.ts`
 - type `CollectionSavedViewsControlProps` from `dist/components/index.d.ts`
 - type `CollectionSavedViewsLabels` from `dist/components/index.d.ts`
+- type `CollectionSavedViewsSelectionProps` from `dist/components/index.d.ts`
+- value `CollectionSavedViewsStrip` from `dist/components/index.d.ts`
+- type `CollectionSavedViewsStripProps` from `dist/components/index.d.ts`
 - type `CollectionSingleChoice` from `dist/components/index.d.ts`
 - type `CollectionSort` from `dist/components/index.d.ts`
+- value `CollectionSpaceIcon` from `dist/components/index.d.ts`
+- type `CollectionSpaceIconProps` from `dist/components/index.d.ts`
 - type `CollectionSummaryRow` from `dist/components/index.d.ts`
+- value `CollectionTitleButton` from `dist/components/index.d.ts`
+- type `CollectionTitleButtonProps` from `dist/components/index.d.ts`
+- value `CollectionTitleNaturalWidthContext` from `dist/components/index.d.ts`
 - value `CollectionToolbar` from `dist/components/index.d.ts`
 - type `CollectionToolbarFreshness` from `dist/components/index.d.ts`
 - type `CollectionToolbarProps` from `dist/components/index.d.ts`
@@ -1991,6 +2124,8 @@ Declaration: `dist/components/index.d.ts`
 - type `CompositionSegment` from `dist/components/index.d.ts`
 - value `CompositionStrip` from `dist/components/index.d.ts`
 - type `CompositionStripProps` from `dist/components/index.d.ts`
+- value `ContentPreview` from `dist/components/index.d.ts`
+- type `ContentPreviewProps` from `dist/components/index.d.ts`
 - value `ContextMenu` from `dist/components/index.d.ts`
 - type `CoreLoadBar` from `dist/components/index.d.ts`
 - value `CoreLoadBars` from `dist/components/index.d.ts`
@@ -2035,6 +2170,10 @@ Declaration: `dist/components/index.d.ts`
 - type `EmptySlotProps` from `dist/components/index.d.ts`
 - value `EmptyState` from `dist/components/index.d.ts`
 - type `EmptyStateProps` from `dist/components/index.d.ts`
+- value `EndpointHeadersEditor` from `dist/components/index.d.ts`
+- type `EndpointHeadersEditorCopy` from `dist/components/index.d.ts`
+- type `EndpointHeadersEditorProps` from `dist/components/index.d.ts`
+- type `EndpointHeadersLayer` from `dist/components/index.d.ts`
 - type `EntityFilterConditionCodecV1` from `dist/components/index.d.ts`
 - type `EntityFilterConditionOperatorV1` from `dist/components/index.d.ts`
 - type `EntityFilterConditionV1` from `dist/components/index.d.ts`
@@ -2120,6 +2259,7 @@ Declaration: `dist/components/index.d.ts`
 - value `HAPPIER_FOCUS_RING_DELEGATED_STYLE` from `dist/components/index.d.ts`
 - value `HAPPIER_FOCUS_RING_V1` from `dist/components/index.d.ts`
 - value `HAPPIER_FRESHNESS_LINE_METRICS` from `dist/components/index.d.ts`
+- value `HAPPIER_GESTURE_TIMING` from `dist/components/index.d.ts`
 - value `HAPPIER_ICON_BUTTON_SIZE` from `dist/components/index.d.ts`
 - value `HAPPIER_ICON_NAMES` from `dist/components/index.d.ts`
 - value `HAPPIER_INLINE_CODE_METRICS` from `dist/components/index.d.ts`
@@ -2190,6 +2330,10 @@ Declaration: `dist/components/index.d.ts`
 - value `HAPPIER_WORK_TEXT` from `dist/components/index.d.ts`
 - value `HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX` from `dist/components/index.d.ts`
 - value `HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX` from `dist/components/index.d.ts`
+- type `HappierAccountActorLabel` from `dist/components/index.d.ts`
+- value `HappierAccountByline` from `dist/components/index.d.ts`
+- type `HappierAccountBylineProps` from `dist/components/index.d.ts`
+- type `HappierAccountBylineTextProps` from `dist/components/index.d.ts`
 - type `HappierActionFieldPresentation` from `dist/components/index.d.ts`
 - value `HappierActionPanel` from `dist/components/index.d.ts`
 - type `HappierActionPanelProps` from `dist/components/index.d.ts`
@@ -2274,6 +2418,7 @@ Declaration: `dist/components/index.d.ts`
 - value `HappierCollectionRowContent` from `dist/components/index.d.ts`
 - type `HappierCollectionRowContentProps` from `dist/components/index.d.ts`
 - type `HappierCollectionRowDensity` from `dist/components/index.d.ts`
+- type `HappierCollectionRowRole` from `dist/components/index.d.ts`
 - type `HappierCollectionRowTextMetrics` from `dist/components/index.d.ts`
 - type `HappierCollectionSection` from `dist/components/index.d.ts`
 - type `HappierCollectionTableColumn` from `dist/components/index.d.ts`
@@ -2323,12 +2468,15 @@ Declaration: `dist/components/index.d.ts`
 - type `HappierDiffViewerRequest` from `dist/components/index.d.ts`
 - value `HappierDisclosure` from `dist/components/index.d.ts`
 - type `HappierDisclosureBodyProps` from `dist/components/index.d.ts`
+- type `HappierDisclosureCaretDensity` from `dist/components/index.d.ts`
 - value `HappierDisclosureChevron` from `dist/components/index.d.ts`
 - type `HappierDisclosureHeaderRender` from `dist/components/index.d.ts`
 - type `HappierDisclosureHeaderState` from `dist/components/index.d.ts`
 - type `HappierDisclosureMotion` from `dist/components/index.d.ts`
 - type `HappierDisclosureMotionDriver` from `dist/components/index.d.ts`
 - type `HappierDisclosureProps` from `dist/components/index.d.ts`
+- value `HappierDisclosureToggle` from `dist/components/index.d.ts`
+- type `HappierDisclosureToggleProps` from `dist/components/index.d.ts`
 - value `HappierDivider` from `dist/components/index.d.ts`
 - value `HappierDocEditProposal` from `dist/components/index.d.ts`
 - type `HappierDocEditProposalAction` from `dist/components/index.d.ts`
@@ -2492,10 +2640,13 @@ Declaration: `dist/components/index.d.ts`
 - type `HappierLiveStreamGestureGeometry` from `dist/components/index.d.ts`
 - type `HappierLiveStreamInputControlKind` from `dist/components/index.d.ts`
 - type `HappierLiveStreamInputGesture` from `dist/components/index.d.ts`
+- value `HappierLiveStreamInputLayer` from `dist/components/index.d.ts`
+- type `HappierLiveStreamInputMode` from `dist/components/index.d.ts`
 - type `HappierLiveStreamOrientation` from `dist/components/index.d.ts`
 - type `HappierLiveStreamPoint` from `dist/components/index.d.ts`
 - type `HappierLiveStreamProps` from `dist/components/index.d.ts`
 - type `HappierLiveStreamRect` from `dist/components/index.d.ts`
+- type `HappierLiveStreamViewTransform` from `dist/components/index.d.ts`
 - type `HappierLocalDateTimeDraft` from `dist/components/index.d.ts`
 - value `HappierLocalDateTimeField` from `dist/components/index.d.ts`
 - type `HappierLocalDateTimeFieldProps` from `dist/components/index.d.ts`
@@ -2593,7 +2744,6 @@ Declaration: `dist/components/index.d.ts`
 - value `HappierPublicLinkCard` from `dist/components/index.d.ts`
 - type `HappierPublicLinkCardProps` from `dist/components/index.d.ts`
 - value `HappierPublicProfile` from `dist/components/index.d.ts`
-- value `HappierPublicProfileDataProvider` from `dist/components/index.d.ts`
 - type `HappierPublicProfileLabels` from `dist/components/index.d.ts`
 - type `HappierPublicProfileProps` from `dist/components/index.d.ts`
 - type `HappierPublicProfileUsageHost` from `dist/components/index.d.ts`
@@ -2620,6 +2770,10 @@ Declaration: `dist/components/index.d.ts`
 - type `HappierReplyQuoteProps` from `dist/components/index.d.ts`
 - type `HappierReplyQuoteSource` from `dist/components/index.d.ts`
 - type `HappierReplyQuoteTextProps` from `dist/components/index.d.ts`
+- value `HappierRequesterDisclosureContent` from `dist/components/index.d.ts`
+- type `HappierRequesterDisclosureContentProps` from `dist/components/index.d.ts`
+- type `HappierRequesterDisclosureHost` from `dist/components/index.d.ts`
+- type `HappierRequesterDisclosureModel` from `dist/components/index.d.ts`
 - value `HappierResizeHandle` from `dist/components/index.d.ts`
 - type `HappierResolvedMenuGroup` from `dist/components/index.d.ts`
 - type `HappierResolvedPopoverPlacement` from `dist/components/index.d.ts`
@@ -2643,6 +2797,8 @@ Declaration: `dist/components/index.d.ts`
 - value `HappierRowActionRevealSlot` from `dist/components/index.d.ts`
 - type `HappierRowActionRevealSlotProps` from `dist/components/index.d.ts`
 - value `HappierRowOperationContext` from `dist/components/index.d.ts`
+- value `HappierSavedSkillCard` from `dist/components/index.d.ts`
+- type `HappierSavedSkillCardProps` from `dist/components/index.d.ts`
 - type `HappierSceneArtSize` from `dist/components/index.d.ts`
 - type `HappierSceneComposition` from `dist/components/index.d.ts`
 - type `HappierSceneDash` from `dist/components/index.d.ts`
@@ -2903,6 +3059,8 @@ Declaration: `dist/components/index.d.ts`
 - type `HeadingProps` from `dist/components/index.d.ts`
 - value `Heatmap` from `dist/components/index.d.ts`
 - type `HeatmapProps` from `dist/components/index.d.ts`
+- value `HorizontalScrollEdgeMask` from `dist/components/index.d.ts`
+- type `HorizontalScrollEdgeMaskProps` from `dist/components/index.d.ts`
 - value `HostedAnchoredMenu` from `dist/components/index.d.ts`
 - type `HostedAnchoredMenuProps` from `dist/components/index.d.ts`
 - value `Icon` from `dist/components/index.d.ts`
@@ -2923,6 +3081,8 @@ Declaration: `dist/components/index.d.ts`
 - value `ItemGroup` from `dist/components/index.d.ts`
 - type `ItemGroupProps` from `dist/components/index.d.ts`
 - type `ItemProps` from `dist/components/index.d.ts`
+- value `KeyboardStickyFooter` from `dist/components/index.d.ts`
+- type `KeyboardStickyFooterProps` from `dist/components/index.d.ts`
 - value `Label` from `dist/components/index.d.ts`
 - type `LabelProps` from `dist/components/index.d.ts`
 - type `LayoutChangeEvent` from `dist/components/index.d.ts`
@@ -2980,6 +3140,8 @@ Declaration: `dist/components/index.d.ts`
 - type `MetadataProps` from `dist/components/index.d.ts`
 - value `Metric` from `dist/components/index.d.ts`
 - type `MetricProps` from `dist/components/index.d.ts`
+- value `ModalCardFooterActions` from `dist/components/index.d.ts`
+- type `ModalCardFooterActionsProps` from `dist/components/index.d.ts`
 - value `ModalHeader` from `dist/components/index.d.ts`
 - type `ModalHeaderProps` from `dist/components/index.d.ts`
 - value `MotionFeedback` from `dist/components/index.d.ts`
@@ -2999,9 +3161,15 @@ Declaration: `dist/components/index.d.ts`
 - type `OutcomeScatterGuide` from `dist/components/index.d.ts`
 - type `OutcomeScatterPoint` from `dist/components/index.d.ts`
 - type `OutcomeScatterProps` from `dist/components/index.d.ts`
+- value `PageAsideColumns` from `dist/components/index.d.ts`
+- type `PageAsideColumnsProps` from `dist/components/index.d.ts`
 - value `PageHeader` from `dist/components/index.d.ts`
 - type `PageHeaderMetaFact` from `dist/components/index.d.ts`
 - type `PageHeaderProps` from `dist/components/index.d.ts`
+- value `PageLoadingRows` from `dist/components/index.d.ts`
+- type `PageLoadingRowsProps` from `dist/components/index.d.ts`
+- value `PagePinnedBar` from `dist/components/index.d.ts`
+- type `PagePinnedBarProps` from `dist/components/index.d.ts`
 - value `PaneHeaderContent` from `dist/components/index.d.ts`
 - type `PaneHeaderContentLineSegment` from `dist/components/index.d.ts`
 - type `PaneHeaderContentProps` from `dist/components/index.d.ts`
@@ -3019,6 +3187,14 @@ Declaration: `dist/components/index.d.ts`
 - type `PresenceCapsuleProps` from `dist/components/index.d.ts`
 - value `Progress` from `dist/components/index.d.ts`
 - type `ProgressProps` from `dist/components/index.d.ts`
+- value `ProgressRing` from `dist/components/index.d.ts`
+- type `ProgressRingProps` from `dist/components/index.d.ts`
+- type `PropertyChoice` from `dist/components/index.d.ts`
+- type `PropertyEditor` from `dist/components/index.d.ts`
+- value `PropertyList` from `dist/components/index.d.ts`
+- type `PropertyListItem` from `dist/components/index.d.ts`
+- type `PropertyListProps` from `dist/components/index.d.ts`
+- type `PropertyNameTones` from `dist/components/index.d.ts`
 - type `PublicUsageChartModels` from `dist/components/index.d.ts`
 - type `PublicUsageMetricId` from `dist/components/index.d.ts`
 - type `PublicUsageOriginalLabels` from `dist/components/index.d.ts`
@@ -3028,6 +3204,19 @@ Declaration: `dist/components/index.d.ts`
 - value `REMOTE_VIEWER_KEYS` from `dist/components/index.d.ts`
 - value `RankedRows` from `dist/components/index.d.ts`
 - type `RankedRowsProps` from `dist/components/index.d.ts`
+- value `RegistryShelf` from `dist/components/index.d.ts`
+- value `RegistryShelfAddControl` from `dist/components/index.d.ts`
+- type `RegistryShelfAddControlProps` from `dist/components/index.d.ts`
+- type `RegistryShelfAddState` from `dist/components/index.d.ts`
+- type `RegistryShelfProjection` from `dist/components/index.d.ts`
+- type `RegistryShelfProps` from `dist/components/index.d.ts`
+- type `RegistryShelfUnavailable` from `dist/components/index.d.ts`
+- type `RegistrySourceFailure` from `dist/components/index.d.ts`
+- value `RegistrySourcesUnavailable` from `dist/components/index.d.ts`
+- type `RegistrySourcesUnavailableProps` from `dist/components/index.d.ts`
+- value `RelationList` from `dist/components/index.d.ts`
+- type `RelationListEntry` from `dist/components/index.d.ts`
+- type `RelationListProps` from `dist/components/index.d.ts`
 - type `RemoteViewerActionResult` from `dist/components/index.d.ts`
 - type `RemoteViewerActions` from `dist/components/index.d.ts`
 - type `RemoteViewerClipboardResult` from `dist/components/index.d.ts`
@@ -3052,6 +3241,10 @@ Declaration: `dist/components/index.d.ts`
 - type `ReviewSeverityProps` from `dist/components/index.d.ts`
 - value `Row` from `dist/components/index.d.ts`
 - type `RowProps` from `dist/components/index.d.ts`
+- type `RowStatusAction` from `dist/components/index.d.ts`
+- value `RowStatusLine` from `dist/components/index.d.ts`
+- type `RowStatusLineProps` from `dist/components/index.d.ts`
+- type `RowStatusTone` from `dist/components/index.d.ts`
 - type `ScaleTextStyleOptions` from `dist/components/index.d.ts`
 - type `ScaledTextStyleMetrics` from `dist/components/index.d.ts`
 - value `SceneArt` from `dist/components/index.d.ts`
@@ -3066,6 +3259,9 @@ Declaration: `dist/components/index.d.ts`
 - value `SelectionTiles` from `dist/components/index.d.ts`
 - type `SelectionTilesOption` from `dist/components/index.d.ts`
 - type `SelectionTilesProps` from `dist/components/index.d.ts`
+- value `SessionCard` from `dist/components/index.d.ts`
+- type `SessionCardProps` from `dist/components/index.d.ts`
+- type `SessionCardStatus` from `dist/components/index.d.ts`
 - value `SessionChat` from `dist/components/index.d.ts`
 - type `SessionChatProps` from `dist/components/index.d.ts`
 - value `SessionComposer` from `dist/components/index.d.ts`
@@ -3285,6 +3481,8 @@ Declaration: `dist/components/index.d.ts`
 - type `WidgetSizePickerProps` from `dist/components/index.d.ts`
 - value `WidgetSurface` from `dist/components/index.d.ts`
 - type `WidgetSurfaceProps` from `dist/components/index.d.ts`
+- value `WorkflowRunFoldHeader` from `dist/components/index.d.ts`
+- type `WorkflowRunFoldHeaderProps` from `dist/components/index.d.ts`
 - value `admitPluginListFilterFieldV1` from `dist/components/index.d.ts`
 - value `admitPluginListFilterFieldValueV1` from `dist/components/index.d.ts`
 - value `applyCollectionConditionEdit` from `dist/components/index.d.ts`
@@ -3292,6 +3490,7 @@ Declaration: `dist/components/index.d.ts`
 - value `capabilityCollectionAnatomy` from `dist/components/index.d.ts`
 - value `clampCompanionPoint` from `dist/components/index.d.ts`
 - value `cloneStyleEntryPreservingOwnProps` from `dist/components/index.d.ts`
+- value `collectionConditionChoiceValues` from `dist/components/index.d.ts`
 - value `collectionConditionOptionValues` from `dist/components/index.d.ts`
 - value `collectionConditionValueCountsFromFacts` from `dist/components/index.d.ts`
 - value `collectionConditionValueLabels` from `dist/components/index.d.ts`
@@ -3327,6 +3526,7 @@ Declaration: `dist/components/index.d.ts`
 - value `formatHappierLocalDateInput` from `dist/components/index.d.ts`
 - value `formatHappierLocalTimeInput` from `dist/components/index.d.ts`
 - value `formatHappierWorkMapNodeName` from `dist/components/index.d.ts`
+- value `formatUsageDurationCompact` from `dist/components/index.d.ts`
 - value `frameRectsOverlap` from `dist/components/index.d.ts`
 - value `getUnsupportedEntityFilterFieldsV1` from `dist/components/index.d.ts`
 - value `happierCollectionTravelTrack` from `dist/components/index.d.ts`
@@ -3344,6 +3544,7 @@ Declaration: `dist/components/index.d.ts`
 - value `happierSurfaceGradientWebStyle` from `dist/components/index.d.ts`
 - value `hitHappierSunburst` from `dist/components/index.d.ts`
 - value `iconMatchedSpinnerSize` from `dist/components/index.d.ts`
+- value `isCollectionConditionChoiceOn` from `dist/components/index.d.ts`
 - value `isCollectionConditionOptionPicked` from `dist/components/index.d.ts`
 - value `isHappierBannerUrgent` from `dist/components/index.d.ts`
 - value `isHappierFocusVisible` from `dist/components/index.d.ts`
@@ -3445,6 +3646,7 @@ Declaration: `dist/components/index.d.ts`
 - value `resolveHappierMenuContent` from `dist/components/index.d.ts`
 - value `resolveHappierMenuKeyAction` from `dist/components/index.d.ts`
 - value `resolveHappierMenuRadioGroups` from `dist/components/index.d.ts`
+- value `resolveHappierMenuRowNavigation` from `dist/components/index.d.ts`
 - value `resolveHappierMenuSelection` from `dist/components/index.d.ts`
 - value `resolveHappierMenuTypeahead` from `dist/components/index.d.ts`
 - value `resolveHappierModalHeaderLayout` from `dist/components/index.d.ts`
@@ -3509,8 +3711,11 @@ Declaration: `dist/components/index.d.ts`
 - value `squarifyHappierTreemap` from `dist/components/index.d.ts`
 - value `toHappierListMultiSelectionSnapshot` from `dist/components/index.d.ts`
 - value `toHappierLocalDateTimeDraft` from `dist/components/index.d.ts`
-- value `useButtonFace` from `dist/components/index.d.ts`
+- value `toggleCollectionConditionValue` from `dist/components/index.d.ts`
+- value `useAccountActorName` from `dist/components/index.d.ts`
+- value `useCollectionRowNeedsYouHighlight` from `dist/components/index.d.ts`
 - value `useCollectionSavedViewsControl` from `dist/components/index.d.ts`
+- value `useCollectionSavedViewsSelection` from `dist/components/index.d.ts`
 - value `useCompanionPointerDragSession` from `dist/components/index.d.ts`
 - value `useContainingHappierMaterialRole` from `dist/components/index.d.ts`
 - value `useHappierCodeBlockBehavior` from `dist/components/index.d.ts`
@@ -3552,6 +3757,7 @@ Declaration: `dist/components/index.d.ts`
 - value `useVoiceAttempt` from `dist/components/index.d.ts`
 - value `useWidgetPresentation` from `dist/components/index.d.ts`
 - value `validatePluginListFilterSelectionsV1` from `dist/components/index.d.ts`
+- value `widgetFootprintBodyRows` from `dist/components/index.d.ts`
 - value `withHappierPageSectionDividers` from `dist/components/index.d.ts`
 - value `writeHappierActionInputPath` from `dist/components/index.d.ts`
 
@@ -3677,6 +3883,8 @@ Declaration: `dist/hostApi/index.d.ts`
 - type `ComposerViewStateV1` from `dist/hostApi/index.d.ts`
 - type `ComposersService` from `dist/hostApi/index.d.ts`
 - type `FindSurfaceRegistration` from `dist/hostApi/index.d.ts`
+- type `HostTaskShareRef` from `dist/hostApi/index.d.ts`
+- type `HostTaskShareSheet` from `dist/hostApi/index.d.ts`
 - type `PluginActionExecution` from `dist/hostApi/index.d.ts`
 - type `PluginActionExecutionController` from `dist/hostApi/index.d.ts`
 - type `PluginActionInput` from `dist/hostApi/index.d.ts`
@@ -3706,6 +3914,7 @@ Declaration: `dist/hostApi/index.d.ts`
 - value `useComposerView` from `dist/hostApi/index.d.ts`
 - value `useExecutePluginAction` from `dist/hostApi/index.d.ts`
 - value `useFindSurfaceRegistration` from `dist/hostApi/index.d.ts`
+- value `useHostTaskShareSheet` from `dist/hostApi/index.d.ts`
 - value `useLivePluginResource` from `dist/hostApi/index.d.ts`
 - value `useLivePluginResourceProjection` from `dist/hostApi/index.d.ts`
 - value `usePluginHostApi` from `dist/hostApi/index.d.ts`
@@ -3714,6 +3923,9 @@ Declaration: `dist/hostApi/index.d.ts`
 - value `usePluginSurfaceActivity` from `dist/hostApi/index.d.ts`
 - value `usePluginUiEphemeralSharedScope` from `dist/hostApi/index.d.ts`
 - value `useReviewCommentProposalsForEntry` from `dist/hostApi/index.d.ts`
+- value `useScmFileViewed` from `dist/hostApi/index.d.ts`
+- value `useScmFileViewedFile` from `dist/hostApi/index.d.ts`
+- value `useScmFileViewedStatus` from `dist/hostApi/index.d.ts`
 - value `useSessionState` from `dist/hostApi/index.d.ts`
 - value `useSessionStates` from `dist/hostApi/index.d.ts`
 - value `useWidgetAreaPort` from `dist/hostApi/index.d.ts`

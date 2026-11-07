@@ -1,13 +1,9 @@
-import { BotTemplateActionInputSchemasV1, BotTemplateActionOutputSchemasV1, type BotTemplateActionIdV1 } from '../bots/templates/botTemplateActionsV1.js';
-import { BOT_TEMPLATE_ACTION_SPECS_V1 } from './specs/botTemplates.js';
-import { MACHINE_REACHABILITY_ACTION_SPECS_V1 } from './specs/machineReachability.js';
-import { SESSION_MESSAGE_PIN_ACTION_SPECS } from './sessionMessagePinActionSpecs.js';
-import { MEDIA_ANNOTATION_ACTION_SPECS } from './mediaAnnotationAction.js';
-import { DESKTOP_WINDOWS_ACTION_SPECS } from './desktopWindowsAction.js';
-import { DESKTOP_SHELL_ACTION_SPECS } from './specs/desktopShell.js';
+import { lazyActionSpecArray, lazyActionSpecRecord, memoizeActionSpecValue , type ActionSpecArrayConcat } from './lazyActionSpecValue.js';
 import type { ExternalActionRequestEnvelope, ExternalActionTargetV1 } from './externalActionApi.js';
 
+
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { isRuntimeActionExecutorReal } from './surfaces.js';
 import { completeActionInputHints } from './schemaInputHints.js';
 import { withClientActionInput, retainClientActionInput } from './clientActionInput.js';
 import type { ClientRoutedActionId } from './clientRoutedActionIds.generated.js';
@@ -23,22 +19,17 @@ import { NpmRegistryProfileActionInputSchemasV1, NpmRegistryProfileActionOutputS
 import { PluginExecutionOriginActionInputSchemas, PluginExecutionOriginActionOutputSchemas,
   type PluginExecutionOriginActionId } from './pluginExecutionOriginActionFamily.js';
 export { ActionPromptingSchema, type ActionPrompting } from './metadata.js';
-export type { DesktopWindowTarget, DesktopWindowsOpenInput, DesktopWindowsOpenResult } from './desktopWindowsAction.js';
-export { DesktopWindowTargetSchema, DesktopWindowsOpenInputSchema, DesktopWindowsOpenResultSchema } from './desktopWindowsAction.js';
-export type { DesktopDisplaysList } from './specs/desktopShell.js';
-export { DesktopDisplaysListResultSchema } from './specs/desktopShell.js';
 export { SessionOpenDestinationSchema, type SessionOpenDestination } from './sessionOpenDestination.js';
-import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../sessions/control/pendingWithdrawV1.js';
-import { SessionPendingMarkHandledInputV1Schema, SessionPendingDeliveryRecoveryInputV1Schema,
-  SessionPendingDeliveryRecoveryResultV1Schema, SessionPendingSendAsNewResultV1Schema } from '../sessions/control/pendingDeliveryRecoveryV1.js';
 import { MEMORY_DOCUMENT_ACTION_SPECS_V1 } from './specs/memoryDocuments.js';
+import { BOT_TEMPLATE_ACTION_SPECS_V1 } from './specs/botTemplates.js';
+import { BotTemplateActionInputSchemasV1, BotTemplateActionOutputSchemasV1, type BotTemplateActionIdV1 } from '../bots/templates/botTemplateActionsV1.js';
 import { DOC_COLLABORATION_ACTION_SPECS_V1 } from './specs/docCollaboration.js';
 import { WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1 } from './specs/workflowEvents.js';
-import { MEMORY_DOCUMENT_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
 import { PROFILE_ACTION_SPECS_V1 } from './specs/profiles.js';
 import { MCP_SERVER_ACTION_SPECS_V1 } from './specs/mcpServers.js';
 import { REGISTRY_ACTION_SPECS_V1 } from './specs/registries.js';
 import { DEPLOYMENT_ACTION_SPECS_V1 } from './specs/deployments.js';
+import { PROJECT_READINESS_ACTION_SPECS_V1 } from './specs/projectReadiness.js';
 export { readRegistryAgentCliLocatorV1 } from './specs/registries.js';
 import { PERSONAL_SAVED_SECRET_ACTION_SPECS_V1 } from './specs/personalSavedSecrets.js';
 import { CAPABILITY_RULES_ACTION_SPECS_V1 } from './specs/capabilityRules.js';
@@ -46,7 +37,7 @@ import { SESSION_CAPABILITIES_ACTION_SPECS_V1 } from './specs/sessionCapabilitie
 import { SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1 } from './specs/session/accessDiscovery.js';
 import { FRIENDS_ACTION_SPECS } from './specs/friends.js';
 import { SKILL_ACTION_SPECS_V1 } from './specs/skills.js';
-import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1, type McpServerActionIdV1 } from '../mcp/servers/serverActionsV1.js';
+import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1, type McpServerActionIdV1 } from '../mcp/servers/actionSchemasV1.js';
 import { PROVIDER_ACTION_SPECS_V1 } from './specs/providers.js';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, type ProviderActionIdV1 } from '../providers/providerActionsV1.js';
 import { REMOTE_HOST_ACTION_SPECS_V1 } from './specs/remoteHosts.js';
@@ -64,7 +55,7 @@ import { VOICE_CONVERSATION_ACTION_SPECS, VoiceConversationActionInputSchemas, V
 import { z } from 'zod/mini';
 import { AccountHistoricalEncryptionKeyForgetInputV1Schema, AccountHistoricalEncryptionKeyForgetResultV1Schema,
   AccountEncryptionAutomationTemplatesRecoverInputV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '../auth/accountSecurity.js';
-import { WORK_BOARD_ACTION_IDS_V1, type WorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
+import type { WorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1, WorkBoardActionOutputSchemasV1 } from '../boards/actionsV1.js';
 import { DECISION_ACTION_IDS, TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 export type WorkspaceFilesReplaceActionOutput = z.infer<typeof WorkspaceFilesReplaceActionOutputSchema>;
@@ -78,6 +69,7 @@ import { SESSION_AGENT_TRANSITION_ACTION_SPECS, SESSION_AGENT_TRANSITION_ACTION_
 import { COMMAND_PALETTE_ACTION_SPECS } from './commandPaletteActionSpecs.js';
 import { FIND_ACTION_SPECS } from './findActionSpecs.js';
 import { PROMPT_PICKER_ACTION_SPECS } from './promptPickerActionSpecs.js';
+import { SESSION_MESSAGE_PIN_ACTION_SPECS } from './sessionMessagePinActionSpecs.js';
 import { PROMPT_INVOCATION_CREATE_ACTION_SPECS } from './promptInvocationCreateActionSpecs.js';
 import { SESSION_PENDING_NEXT_ACTION_SPECS } from './specs/session/pendingNext.js';
 import { SESSION_PENDING_EDIT_ACTION_SPECS, SessionPendingEditInputV1Schema, SessionPendingEditResultV1Schema } from './specs/session/pendingEdit.js';
@@ -95,13 +87,20 @@ import { INTERNAL_TASK_ACTION_SPECS } from './internalTaskActions.js';
 import { WORKFLOW_AUTHORING_ACTION_SPECS } from './workflowAuthoringAction.js';
 import { WORKFLOW_DIAGNOSTIC_ACTION_SPECS } from './workflowDiagnosticActionSpecs.js';
 import { COMPOSER_INGRESS_ACTION_SPECS } from './composerIngressAction.js';
-import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
+import { MEDIA_ANNOTATION_ACTION_SPECS } from './mediaAnnotationAction.js';
+import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { ActionPolicyInputSchemas, ActionPolicyOutputSchemas, type ActionPolicyActionId } from './actionPolicyActionFamily.js';
-import { APP_SHELL_ACTION_IDS, APP_SHELL_ACTION_SPECS } from './appShellActionFamily.js';
-import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_CONFIGURATION_ACTION_SPECS, NotificationConfigurationActionInputSchemas, NotificationConfigurationActionOutputSchemas, type NotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
-import { APP_UPDATE_ACTION_IDS, APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
-import { UPDATES_ACTION_IDS, UPDATES_ACTION_SPECS, UpdatesActionInputSchemas, UpdatesActionOutputSchemas, type UpdatesActionId } from './updatesActionFamily.js';
+import { APP_SHELL_ACTION_SPECS } from './appShellActionFamily.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_SPECS, NotificationConfigurationActionInputSchemas, NotificationConfigurationActionOutputSchemas, type NotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
+import { APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
+import { UPDATES_ACTION_SPECS, UpdatesActionInputSchemas, UpdatesActionOutputSchemas, type UpdatesActionId } from './updatesActionFamily.js';
 import { CLIPBOARD_ACTION_SPECS } from './clipboardActionFamily.js';
+import { DESKTOP_WINDOWS_ACTION_SPECS } from './desktopWindowsAction.js';
+import { DESKTOP_SHELL_ACTION_SPECS } from './specs/desktopShell.js';
+export { DesktopDisplaysListResultSchema } from './specs/desktopShell.js';
+export type { DesktopDisplaysList } from './specs/desktopShell.js';
+export { DesktopWindowTargetSchema, DesktopWindowsOpenInputSchema, DesktopWindowsOpenResultSchema } from './desktopWindowsAction.js';
+export type { DesktopWindowTarget, DesktopWindowsOpenInput, DesktopWindowsOpenResult } from './desktopWindowsAction.js';
 import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS, SCREEN_CAPTURE_NATIVE_ACTION_SPECS } from './specs/screenCapture.js';
 export { ScreenCaptureOpenInputSchema, ScreenCaptureOpenResultSchema, ScreenCaptureDeliveryInputSchema, ScreenCaptureDiscardInputSchema, ScreenCaptureCopyInputSchema } from './specs/screenCapture.js';
 export { ScreenCaptureStartInputSchema, ScreenCapturePermissionRequestInputSchema, ScreenCaptureWindowTextInputSchema,
@@ -112,10 +111,10 @@ import { FILE_SAVE_ACTION_SPECS } from './fileSaveActionFamily.js';
 export { FileSaveInputSchema, FileSaveResultSchema } from './fileSaveActionFamily.js';
 export type { FileSaveInput } from './fileSaveActionFamily.js';
 import { WORKFLOW_EFFECT_ACTION_SPECS_V1, WorkflowEffectActionInputSchemasV1, WorkflowEffectActionOutputSchemasV1, type WorkflowEffectActionIdV1 } from '../workflows/stepActionsV1.js';
-import { ROLE_ACTION_IDS_V1, type RoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
+import type { RoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { RoleActionTargetInputSchemasV1, RoleActionOutputSchemasV1 } from '../prompts/roles/roleActionsV1.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1, type ArtifactAccessActionIdV1 } from '../artifacts/artifactAccessV1.js';
-import { ARTIFACT_ACTION_IDS_V1, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../artifacts/artifactActionsV1.js';
+import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../artifacts/artifactActionsV1.js';
 import {
   MachinePoolActionInputSchemasV1,
   MachinePoolActionOutputSchemasV1,
@@ -135,10 +134,6 @@ import {
   type WorkflowActionIdV1,
 } from '../workflows/actionsV1.js';
 
-import {
-  assertPublicActionSdkMethodNames
-} from './actionSdkMethodNames.js';
-
 export { resolveActionSdkMethodName } from './actionSdkMethodNames.js';
 
 import {
@@ -151,15 +146,13 @@ import {
 } from './metadata.js';
 
 import {
-  ACTION_IDS,
   ACTION_ID_FAMILIES_V1,
   ActionIdSchema,
   PLUGIN_DEV_LOOP_ACTION_IDS_V1,
-  SESSION_MESSAGE_SEND_ACTION_ID_V1,
-  RUNTIME_ACTION_IDS_V1,
   type ActionId,
   type PluginDevLoopActionIdV1,
-  type RuntimeActionIdV1
+  type RuntimeActionIdV1,
+  isRuntimeActionIdV1,
 } from './actionIds.js';
 import {
   HUMAN_SECRET_API_EXCLUSION_ACTION_IDS,
@@ -233,9 +226,7 @@ import {
   AccountPasswordMutationResponseV1Schema,
   AccountPasswordRemoveRequestV1Schema,
   AccountSecurityGetRequestV1Schema,
-  AccountSecurityGetResponseV1Schema,
-  AccountTerminalPresentUserPolicySetRequestV1Schema,
-  AccountTerminalPresentUserPolicySetResponseV1Schema
+  AccountSecurityGetResponseV1Schema
 } from '../auth/accountSecurity.js';
 import {
   PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1,
@@ -253,7 +244,6 @@ import {
   AutomationEventActionOutputSchemasV1,
   type AutomationEventActionIdV1,
 } from '../automations/automationActionSpecsV1.js';
-import { SessionPendingActionSetInputV1Schema, SessionPendingActionSetResultV1Schema, PendingResetStartSetInputV1Schema, PendingResetStartCancelInputV1Schema, PendingResetStartSetResultV1Schema, PendingResetStartCancelResultV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
 import {
   RUNTIME_ACTION_INPUT_SCHEMAS,
   RUNTIME_ACTION_OUTPUT_SCHEMAS,
@@ -273,7 +263,7 @@ import type { WidgetDefinitionActionIdV1, WidgetDefinitionActionInputSchemasV1, 
 import type { WidgetLayoutFragmentActionIdV1, WidgetLayoutFragmentActionInputSchemasV1, WidgetLayoutFragmentActionOutputSchemasV1 } from '../widgets/fragmentActionsV1.js';
 import { MACHINE_CONNECTION_ACTION_SPECS } from './specs/machineConnection.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_SPECS } from './specs/localDaemonService.js';
-import { MACHINE_TERMINAL_ACTION_SPECS, MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS,
+import { MACHINE_TERMINAL_ACTION_SPECS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS,
   MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS, type MachineTerminalActionId } from './specs/machineTerminal.js';
 import { MACHINE_ACCESS_ACTION_SPECS } from './specs/machine/access.js';
 import { MACHINE_VITALS_ACTION_SPECS } from './specs/machineVitals.js';
@@ -285,6 +275,7 @@ import { MACHINE_SERVICE_ADOPTION_ACTION_SPECS } from './specs/machine/serviceAd
 import { MACHINE_REBOOT_ACTION_SPECS } from './specs/machine/reboot.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_SPECS } from './specs/machine/agentIsolation.js';
 import { MACHINE_ADMIN_ACCESS_ACTION_SPECS } from './specs/machine/adminAccess.js';
+import { MACHINE_REACHABILITY_ACTION_SPECS_V1 } from './specs/machineReachability.js';
 import { MACHINE_GUARD_ACTION_SPECS } from './specs/machineGuard.js';
 import { TEAM_ACTION_SPECS } from './specs/teams.js';
 import { SHARED_SAVED_SECRET_ACTION_SPECS } from './specs/sharedSavedSecrets.js';
@@ -299,7 +290,6 @@ import {
   type TeamCredentialActionIdV1,
 } from '../teams/credentials/actionsV1.js';
 import {
-  SHARED_SAVED_SECRET_ACTION_IDS_V1,
   SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1,
   SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
   type SharedSavedSecretActionIdV1,
@@ -375,6 +365,7 @@ import { SESSION_LIFETIME_CONTROL_ACTION_SPECS, SESSION_RECOVERY_ACTION_SPECS, S
 import { ACTION_CATALOG_ACTION_SPECS, ACTION_OPTIONS_ACTION_SPECS } from './specs/catalog.js';
 import { WorkspaceFilesReplaceActionOutputSchema, WORKSPACE_FILE_ACTION_SPECS } from './specs/workspaceFiles.js';
 import { UI_CONTEXT_ACTION_SPECS } from './specs/uiContext.js';
+export { CurrentUiContextCommandInvokeInputSchema, type CurrentUiContextCommandInvokeInput } from './specs/uiContext.js';
 import { ROLE_ACTION_SPECS } from './specs/roles.js';
 import { ACTION_POLICY_SPECS, SETTINGS_ADMINISTRATION_ACTION_SPECS } from './specs/settings.js';
 import { MACHINE_PRESET_ACTION_SPECS, EPHEMERAL_RUNNER_ACTION_SPECS, MACHINE_POOL_ACTION_SPECS } from './specs/managedMachines.js';
@@ -487,10 +478,6 @@ type AssertNever<T extends never> = T;
 // Reference family declarations so this aggregate preserves literal ids and
 // schemas without serializing every Zod schema into the inline tuple type.
 const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
-  | (typeof SESSION_MESSAGE_PIN_ACTION_SPECS)[number]
-  | (typeof DESKTOP_WINDOWS_ACTION_SPECS)[number]
-  | (typeof DESKTOP_SHELL_ACTION_SPECS)[number]
-  | (typeof MEDIA_ANNOTATION_ACTION_SPECS)[number]
   | (typeof PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS)[number]
   | (typeof USAGE_ACTION_SPECS)[number]
   | (typeof USAGE_COACH_ACTION_SPECS)[number]
@@ -513,6 +500,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MACHINE_REBOOT_ACTION_SPECS)[number]
   | (typeof MACHINE_AGENT_ISOLATION_ACTION_SPECS)[number]
   | (typeof MACHINE_ADMIN_ACCESS_ACTION_SPECS)[number]
+  | (typeof MACHINE_REACHABILITY_ACTION_SPECS_V1)[number]
   | (typeof MACHINE_GUARD_ACTION_SPECS)[number]
   | (typeof TEAM_ACTION_SPECS)[number]
   | (typeof SHARED_SAVED_SECRET_ACTION_SPECS)[number]
@@ -522,6 +510,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MCP_SERVER_ACTION_SPECS_V1)[number]
   | (typeof REGISTRY_ACTION_SPECS_V1)[number]
   | (typeof DEPLOYMENT_ACTION_SPECS_V1)[number]
+  | (typeof PROJECT_READINESS_ACTION_SPECS_V1)[number]
   | (typeof PERSONAL_SAVED_SECRET_ACTION_SPECS_V1)[number]
   | (typeof CAPABILITY_RULES_ACTION_SPECS_V1)[number]
   | (typeof SESSION_CAPABILITIES_ACTION_SPECS_V1)[number]
@@ -537,9 +526,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1)[number]
   | (typeof WORKFLOW_ACTION_SPECS_V1)[number]
   | (typeof WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1)[number]
-)[] = Object.freeze([
-  ...SESSION_MESSAGE_PIN_ACTION_SPECS,
-  ...MEDIA_ANNOTATION_ACTION_SPECS,
+)[] = lazyActionSpecArray(() => Object.freeze([
   ...PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS,
   ...USAGE_ACTION_SPECS,
   ...USAGE_COACH_ACTION_SPECS,
@@ -572,6 +559,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MCP_SERVER_ACTION_SPECS_V1,
   ...REGISTRY_ACTION_SPECS_V1,
   ...DEPLOYMENT_ACTION_SPECS_V1,
+  ...PROJECT_READINESS_ACTION_SPECS_V1,
   ...PERSONAL_SAVED_SECRET_ACTION_SPECS_V1,
   ...CAPABILITY_RULES_ACTION_SPECS_V1,
   ...SESSION_CAPABILITIES_ACTION_SPECS_V1,
@@ -580,7 +568,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...PROVIDER_ACTION_SPECS_V1,
   ...REMOTE_HOST_ACTION_SPECS_V1,
   ...HOME_RUNTIME_ACTION_SPECS_V1,
-  ...(BOT_TEMPLATE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...ARTIFACT_FOLDER_ACTION_SPECS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_SPECS,
   ...MANAGED_GITHUB_APP_ACTION_SPECS,
@@ -588,9 +575,41 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1,
   ...WORKFLOW_ACTION_SPECS_V1,
   ...WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1,
-]);
+]));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof MEMORY_DOCUMENT_ACTION_SPECS_V1,
+  typeof DOC_COLLABORATION_ACTION_SPECS_V1,
+  typeof PROJECT_ACTION_SPECS_V1,
+  typeof WORKFLOW_EFFECT_ACTION_SPECS_V1,
+  typeof WORKSPACE_ACTION_SPECS,
+  typeof PROJECT_DEFINITION_ACTION_SPECS,
+  typeof WORKFLOW_AUTHORING_ACTION_SPECS,
+  typeof WORKFLOW_DIAGNOSTIC_ACTION_SPECS,
+  typeof COMPOSER_INGRESS_ACTION_SPECS,
+  typeof MEDIA_ANNOTATION_ACTION_SPECS,
+  typeof SESSION_ORGANIZATION_MOVE_ACTION_SPECS,
+  typeof LIST_REORDER_ACTION_SPECS,
+  typeof TODO_SESSION_LINK_ACTION_SPECS,
+  typeof INTERNAL_TASK_ACTION_SPECS,
+  typeof SESSION_TERMINAL_ACTION_SPECS,
+  typeof SESSION_AGENT_TRANSITION_ACTION_SPECS,
+  typeof APP_SHELL_ACTION_SPECS,
+  typeof NOTIFICATION_CONFIGURATION_ACTION_SPECS,
+  typeof APP_UPDATE_ACTION_SPECS,
+  typeof UPDATES_ACTION_SPECS,
+  typeof CLIPBOARD_ACTION_SPECS,
+  typeof DESKTOP_WINDOWS_ACTION_SPECS,
+  typeof DESKTOP_SHELL_ACTION_SPECS,
+  typeof SCREEN_CAPTURE_DELIVERY_ACTION_SPECS,
+  typeof SCREEN_CAPTURE_NATIVE_ACTION_SPECS,
+  typeof EXTERNAL_LINK_ACTION_SPECS,
+  typeof FILE_SAVE_ACTION_SPECS,
+  typeof CODE_INTELLIGENCE_ACTION_SPECS,
+  typeof VOICE_CONVERSATION_ACTION_SPECS,
+  typeof SCOPE_ACTION_SPECS,
+  typeof DIAGNOSTICS_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(MEMORY_DOCUMENT_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(DOC_COLLABORATION_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(PROJECT_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
@@ -600,6 +619,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING = Object.freeze(defineAc
   ...(WORKFLOW_AUTHORING_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(WORKFLOW_DIAGNOSTIC_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(COMPOSER_INGRESS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(MEDIA_ANNOTATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_ORGANIZATION_MOVE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(LIST_REORDER_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(TODO_SESSION_LINK_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -611,19 +631,31 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING = Object.freeze(defineAc
   ...(APP_UPDATE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(UPDATES_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CLIPBOARD_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-  ...(SCREEN_CAPTURE_DELIVERY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-  ...(SCREEN_CAPTURE_NATIVE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_WINDOWS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_SHELL_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(SCREEN_CAPTURE_DELIVERY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(SCREEN_CAPTURE_NATIVE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(EXTERNAL_LINK_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(FILE_SAVE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CODE_INTELLIGENCE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(VOICE_CONVERSATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SCOPE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DIAGNOSTICS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof WORK_BOARD_ACTION_SPECS_V1,
+  typeof WIDGET_INSTANCE_ACTION_SPECS_V1,
+  typeof WIDGET_DEFINITION_ACTION_SPECS_V1,
+  typeof WIDGET_LAYOUT_FRAGMENT_ACTION_SPECS_V1,
+  typeof WIDGET_SNAPSHOT_ACTION_SPECS_V1,
+  typeof HOME_HUB_LAYOUT_ACTION_SPECS,
+  typeof PROJECT_SOURCE_ACTION_SPECS_V1,
+  typeof ARTIFACT_ACCESS_ACTION_SPECS,
+  typeof ARTIFACT_ACTION_SPECS,
+  typeof BOT_TEMPLATE_ACTION_SPECS_V1,
+  typeof PROFILE_PUBLICATION_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(WORK_BOARD_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(WIDGET_INSTANCE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(WIDGET_DEFINITION_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
@@ -633,10 +665,29 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE = Object.freeze(defineAct
   ...(PROJECT_SOURCE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(ARTIFACT_ACCESS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(ARTIFACT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(BOT_TEMPLATE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(PROFILE_PUBLICATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING,
+  typeof ACTION_POLICY_SPECS,
+  typeof SETTINGS_ADMINISTRATION_ACTION_SPECS,
+  typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE,
+  typeof ROLE_ACTION_SPECS,
+  ReturnType<typeof createPluginDevLoopActionSpec>[],
+  typeof NPM_REGISTRY_PROFILE_ACTION_SPECS_V1,
+  typeof PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS,
+  typeof CAPTURE_VIEW_ACTION_SPECS,
+  ReturnType<typeof createPluginSettingsAdministrationActionSpec>[],
+  ReturnType<typeof createPluginPermissionGrantActionSpec>[],
+  ReturnType<typeof createPluginWebhookActionSpec>[],
+  ReturnType<typeof createAutomationEventActionSpec>[],
+  typeof AUTOMATION_OCCURRENCE_ACTION_SPECS,
+  ReturnType<typeof createAutomationConversationActionSpec>[],
+  ReturnType<typeof createReviewCommentActionSpec>[],
+  readonly PreNormalizedActionSpec[],
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING satisfies readonly PreNormalizedActionSpec[]),
   ...(ACTION_POLICY_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SETTINGS_ADMINISTRATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -656,9 +707,23 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
   // Runtime rows' exact carriers are projected from their family schema maps
   // below. Avoid serializing that complete union again inside this tuple.
   ...((RUNTIME_ACTION_SPECS as readonly PreNormalizedActionSpec[]) satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_OPENING = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_OPENING: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof MACHINE_PRESET_ACTION_SPECS,
+  typeof MANAGED_MACHINE_ACTION_SPECS,
+  typeof PROJECT_WORKER_ACTION_SPECS,
+  typeof ACTION_OPERATION_ACTION_SPECS,
+  typeof MACHINE_POOL_ACTION_SPECS,
+  typeof EPHEMERAL_RUNNER_ACTION_SPECS,
+  typeof ACCOUNT_SECURITY_ACTION_SPECS,
+  typeof ACTION_CATALOG_ACTION_SPECS,
+  typeof WAIT_ACTION_SPECS,
+  typeof NOTIFICATION_DELIVERY_ACTION_SPECS,
+  typeof ACTION_OPTIONS_ACTION_SPECS,
+  typeof REVIEW_ACTION_SPECS,
+  typeof SUBAGENT_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(MACHINE_PRESET_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(MANAGED_MACHINE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(PROJECT_WORKER_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -672,14 +737,31 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_OPENING = Object.freeze(defineActionS
   ...(ACTION_OPTIONS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(REVIEW_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SUBAGENT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_MIDDLE = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_MIDDLE: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof EXECUTION_RUN_ACTION_SPECS,
+  typeof SESSION_LIFECYCLE_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(EXECUTION_RUN_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_LIFECYCLE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_REMAINDER = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_REMAINDER: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof WORKSPACE_SYNC_ACTION_SPECS,
+  typeof SESSION_AUTHORING_ACTION_SPECS,
+  typeof SESSION_SPAWN_ACTION_SPECS,
+  typeof PROJECT_CONTEXT_ACTION_SPECS,
+  typeof PROMPT_INVOCATION_ACTION_SPECS,
+  typeof MACHINE_DISCOVERY_ACTION_SPECS,
+  typeof SERVER_DISCOVERY_ACTION_SPECS,
+  typeof REVIEW_ENGINE_DISCOVERY_ACTION_SPECS,
+  typeof AGENT_INVENTORY_ACTION_SPECS,
+  typeof WORKSPACE_FILE_ACTION_SPECS,
+  typeof AGENT_CATALOG_ACTION_SPECS,
+  typeof SESSION_MESSAGE_ACTION_SPECS,
+  typeof SESSION_LIFETIME_CONTROL_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(WORKSPACE_SYNC_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_AUTHORING_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_SPAWN_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -693,22 +775,25 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_REMAINDER = Object.freeze(defineActio
   ...(AGENT_CATALOG_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_MESSAGE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_LIFETIME_CONTROL_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
 // Keep exact schema carriers in the source tuples and project them below;
 // the runtime aggregate must not serialize their complete schema union again.
-const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX: readonly PreNormalizedActionSpec[] = Object.freeze([
+const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => Object.freeze([
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_OPENING,
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_MIDDLE,
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_REMAINDER,
-]);
+]));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_PENDING: readonly PreNormalizedActionSpec[] = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_PENDING: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(SESSION_PENDING_EDIT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_PENDING_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX_OPENING = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX_OPENING: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof SESSION_PRESENTATION_ACTION_SPECS,
+  typeof SESSION_BOARD_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(SESSION_PRESENTATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_BOARD_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
 
@@ -717,25 +802,45 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX_OPENING = Object.freeze(defin
   // the same rows under its own admitted execution principal. Discussion content
   // is sealed and opened by the executor through the existing Discussion key, so
   // these inputs carry strict semantic plaintext and never the storage envelope.
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX_CONTINUATION = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX_CONTINUATION: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof SESSION_STATE_ACTION_SPECS,
+  typeof SESSION_ACCESS_ACTION_SPECS,
+  typeof SESSION_FOLLOW_RELATION_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(SESSION_STATE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_ACCESS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_FOLLOW_RELATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof SESSION_FOLLOW_ACTION_SPECS,
+  typeof SESSION_RECOVERY_ACTION_SPECS,
+  typeof SESSION_READ_ACTION_SPECS,
+  typeof SESSION_INTERACTION_ACTION_SPECS,
+  typeof SESSION_DISCOVERY_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(SESSION_FOLLOW_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_RECOVERY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_READ_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_INTERACTION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_DISCOVERY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
 // Keep exact Session row/schema carriers in a separately named tuple so the
 // declaration serializer does not have to inline the entire trailing catalog.
-const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_OPENING = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_OPENING: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof UI_CONTEXT_ACTION_SPECS,
+  typeof MEMORY_ACTION_SPECS,
+  typeof ACP_BACKEND_ACTION_SPECS,
+  typeof PROMPT_DOCUMENT_ACTION_SPECS,
+  typeof MODEL_FAVORITE_ACTION_SPECS,
+  typeof SESSION_MODEL_UNARM_ACTION_SPECS,
+  typeof PROMPT_LIBRARY_ACTION_SPECS,
+  typeof FILESYSTEM_ACTION_SPECS,
+  typeof BUG_REPORT_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(UI_CONTEXT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(MEMORY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(ACP_BACKEND_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -745,19 +850,32 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_OPENING = Object.freeze(defineActionS
   ...(PROMPT_LIBRARY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(FILESYSTEM_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(BUG_REPORT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
 // Name the trailing schema carriers separately so declaration emission preserves
 // exact Action ids and schemas without serializing the whole suffix in one node.
-const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_APPROVAL = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_APPROVAL: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof APPROVAL_REQUEST_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(APPROVAL_REQUEST_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_TRANSCRIPT = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_TRANSCRIPT: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof PERSISTED_TRANSCRIPT_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(PERSISTED_TRANSCRIPT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
-const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_EXTERNAL = Object.freeze(defineActionSpecs([
+const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_EXTERNAL: ReturnType<typeof defineActionSpecs<ActionSpecArrayConcat<readonly [
+  typeof EXTERNAL_SESSION_ACTION_SPECS,
+  PreNormalizedActionSpec[],
+  PreNormalizedActionSpec[],
+  PreNormalizedActionSpec[],
+  PreNormalizedActionSpec[],
+  PreNormalizedActionSpec[],
+  PreNormalizedActionSpec[],
+  typeof SESSION_PENDING_NEXT_ACTION_SPECS,
+]>>> = lazyActionSpecArray(() => Object.freeze(defineActionSpecs([
   ...(EXTERNAL_SESSION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   // Keep this generated family out of the large suffix tuple's serialized
   // inference. Its exact schemas remain in the canonical family projection.
@@ -765,19 +883,20 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_EXTERNAL = Object.freeze(defineAction
   ...(COMMAND_PALETTE_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec) satisfies readonly PreNormalizedActionSpec[]),
   ...(FIND_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec) satisfies readonly PreNormalizedActionSpec[]),
   ...(PROMPT_PICKER_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec) satisfies readonly PreNormalizedActionSpec[]),
+  ...(SESSION_MESSAGE_PIN_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec) satisfies readonly PreNormalizedActionSpec[]),
   ...(PROMPT_INVOCATION_CREATE_ACTION_SPECS.map((spec): PreNormalizedActionSpec => spec) satisfies readonly PreNormalizedActionSpec[]),
   ...(SESSION_PENDING_NEXT_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
-] as const));
+] as const)));
 
 const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX: readonly (
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_APPROVAL)[number]
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_TRANSCRIPT)[number]
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_EXTERNAL)[number]
-)[] = Object.freeze([
+)[] = lazyActionSpecArray(() => Object.freeze([
   ...ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_APPROVAL,
   ...ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_TRANSCRIPT,
   ...ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_EXTERNAL,
-]);
+]));
 
 const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD)[number]
@@ -790,7 +909,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX)[number]
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_OPENING)[number]
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX)[number]
-)[] = Object.freeze([
+)[] = lazyActionSpecArray(() => Object.freeze([
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD,
   ...ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES,
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX,
@@ -801,13 +920,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
   ...ACTION_SPECS_WITHOUT_APPROVAL_SESSION_SUFFIX,
   ...ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_OPENING,
   ...ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX,
-]);
+]));
 
 // Coordination ruling, 2026-10-14: this plugin-originated request is not a
 // user UI capability. Grant/dismiss remain human-owned approval proposals;
 // list/revoke are user administration and are exposed to Agent and MCP.
 export const AGENT_ACTION_EXCLUSION_REASONS = Object.freeze({
-  'secrets.shared.reveal': 'Only the present person in the app may display a Saved Secret; no agent hold.',
   'plugins.permissions.grants.request': 'Permission requests originate from host-stamped plugin provenance, not a user UI operation.',
   'session.view.toolCalls.set': 'Plan 60 §6 reserves transcript visibility for human UI, user Voice and genuine CLI callers.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
@@ -836,51 +954,6 @@ export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS = Object.freeze({
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
 export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS;
-
-/**
- * Present-user operations whose canonical input contains human-entered secret
- * material. They remain available to first-party interactive UI/CLI hosts, but
- * are intentionally absent from the generic API and trusted-plugin catalogs.
- */
-const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
-  ...ACTION_ID_FAMILIES_V1.bug_report_submission,
-  'browser.workspace.open',
-  ...ACTION_ID_FAMILIES_V1.local_daemon_services,
-  ...ACTION_ID_FAMILIES_V1.account_home_continuation,
-  ...ACTION_ID_FAMILIES_V1.session_authoring,
-  ...ACTION_ID_FAMILIES_V1.composer_ingress,
-  ...ACTION_ID_FAMILIES_V1.workflow_authoring,
-  ...ACTION_ID_FAMILIES_V1.list_reorder,
-  ...ACTION_ID_FAMILIES_V1.session_organization_move,
-  'account.encryption.historicalKey.forget',
-  'account.encryption.automationTemplates.recover',
-  ...NOTIFICATION_CONFIGURATION_ACTION_IDS,
-  ...APP_UPDATE_ACTION_IDS,
-  ...UPDATES_ACTION_IDS,
-  ...ACTION_ID_FAMILIES_V1.session_terminals,
-  ...ACTION_ID_FAMILIES_V1.workspace_layout,
-  ...APP_SHELL_ACTION_IDS,
-  'connectedServices.identityPrivacy.set',
-  'connectedServices.billing.open',
-  'home.reachNudge.dismiss',
-  ...SETTINGS_DECLARATION_ACTION_IDS_V1,
-  'homes.connect',
-  'machines.add.command',
-  'machines.add.local.start',
-  'machines.pairing.create',
-  'machines.add.ssh.start',
-  'machines.add.ssh.status',
-  'machines.add.ssh.respond',
-  'machines.managed.bootstrap.respond',
-  'machines.add.ssh.cancel',
-  'servers.list',
-  'session.target.primary.set',
-  'session.target.tracked.set',
-  'devices.simulator.input.orientation',
-  ...ACTION_ID_FAMILIES_V1.voice_controls,
-  ...ACTION_ID_FAMILIES_V1.current_ui_context,
-  ...ACTION_ID_FAMILIES_V1.companion_controls,
-] as const satisfies readonly ActionId[];
 
 export type SignedRootActionId = Exclude<
   ActionId,
@@ -933,242 +1006,6 @@ type PresentUserRequiredActionId = typeof PRESENT_USER_REQUIRED_ACTION_ID_VALUES
 
 const PRESENT_USER_REQUIRED_ACTION_IDS = new Set<ActionId>(PRESENT_USER_REQUIRED_ACTION_ID_VALUES);
 
-/**
- * External ingress routes from this registry fact. These groups are by the
- * current execution owner, not by Action-id prefix: each exceptional
- * bootstrap/client/session case is named below so a new Action cannot silently
- * inherit a machine route merely because it was added to a neighboring family.
- */
-const RUNTIME_ACTION_IDS_WITHOUT_MACHINE_PLACEMENT = new Set<RuntimeActionIdV1>([
-  'browser.workspace.open',
-  // Intentionally host-internal/fail-closed, so client placement is retained
-  // only to keep the registry total while no external owner exists.
-  'devices.simulator.input.orientation',
-  // Composer attachment is a Session-media operation, not a machine command.
-  'browser.recording.attachToComposer',
-]);
-
-// These readers resolve a Session id only to load persisted transcript data.
-// They can run through any selected available daemon and must not require the
-// Session's original publisher to still be present.
-const PERSISTED_TRANSCRIPT_READ_ACTION_IDS: readonly ActionId[] = [
-  'session.history.get',
-  'session.transcript.get',
-  'session.events.get',
-  'session.messages.recent.get',
-  'transcript.page',
-  'transcript.readAfter',
-  'transcript.search',
-];
-const PERSISTED_TRANSCRIPT_READ_ACTION_ID_SET = new Set<ActionId>(PERSISTED_TRANSCRIPT_READ_ACTION_IDS);
-
-const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPlacement> = (() => {
-  const placements = new Map<ActionId, ActionExecutionPlacement>();
-  const declaredPlacementIds = new Set<ActionId>();
-  // Row declarations own placement; the legacy census fills only undeclared rows.
-  for (const spec of ACTION_SPECS_WITHOUT_APPROVAL) {
-    if ('executionPlacement' in spec && spec.executionPlacement) {
-      placements.set(spec.id, spec.executionPlacement);
-      declaredPlacementIds.add(spec.id);
-    }
-  }
-  const register = (placement: ActionExecutionPlacement, actionIds: readonly ActionId[]) => {
-    for (const actionId of actionIds) {
-      if (declaredPlacementIds.has(actionId)) continue;
-      if (placements.has(actionId)) {
-        throw new Error(`Action ${actionId} has more than one execution placement`);
-      }
-      placements.set(actionId, placement);
-    }
-  };
-
-  // Account/server data can run before an exact machine is known.
-  register('account', [
-    ...MEMORY_DOCUMENT_ACTION_IDS_V1,
-    ...PROJECT_SOURCE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
-    ...MANAGED_MACHINE_ACTION_SPECS.filter((spec) => spec.executionPlacement === 'account').map((spec) => spec.id),
-    'home.hub.layout.get',
-    'home.hub.layout.update',
-    ...ACTION_ID_FAMILIES_V1.todo_session_link,
-    ...ACTION_ID_FAMILIES_V1.observation,
-    ...ACTION_ID_FAMILIES_V1.connected_services_configuration.filter((id) => id !== 'connectedServices.identityPrivacy.set' && id !== 'connectedServices.quota.reset' && id !== 'connectedServices.billing.open'),
-    ...WORK_BOARD_ACTION_IDS_V1,
-    ...ARTIFACT_ACCESS_ACTION_IDS_V1,
-    ...ARTIFACT_ACTION_IDS_V1.filter((id) => id !== 'artifact.publish_from_file' && id !== 'artifact.export'),
-    ...ACTION_ID_FAMILIES_V1.notifications,
-    ...ACTION_ID_FAMILIES_V1.session_attention,
-    'action.spec.search',
-    'action.spec.get',
-    'machines.list',
-    'session.list',
-    // Follow authoring is a Home relation: a valid authorized edge is persisted
-    // and waits, so no exact destination runtime has to be reachable.
-    ...ACTION_ID_FAMILIES_V1.session_follow,
-    // Viewer read state is the same Account-scoped Home relation: the actor's
-    // own private frontier, persisted per Account and published only to that
-    // Account's devices, so no exact machine has to be reachable.
-    ...ACTION_ID_FAMILIES_V1.session_read_state,
-    ...ACTION_ID_FAMILIES_V1.session_access,
-    'prompt_doc.get',
-    'prompt_doc.create',
-    'prompt_doc.favorite.set',
-    'prompts.library.list',
-    'prompts.stack.update',
-    'prompts.invocations.list',
-    'prompts.invocation.resolve',
-    'prompt_doc.update',
-    'prompt_bundle.update',
-    // The custom ACP catalog is an Account setting: no machine has to be reachable to edit it.
-    ...ACTION_ID_FAMILIES_V1.agent_acp_catalog,
-    ...ROLE_ACTION_IDS_V1.filter((actionId) => actionId.startsWith('roles.')),
-    'launch_profiles.publish',
-    ...PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
-    ...MCP_SERVER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
-    ...CAPABILITY_RULES_ACTION_SPECS_V1.map(spec => spec.id),
-    ...SKILL_ACTION_SPECS_V1.map(spec => spec.id),
-    ...PROVIDER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
-    ...REMOTE_HOST_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'account').map(spec => spec.id),
-    ...ACTION_ID_FAMILIES_V1.approvals,
-    ...ACTION_ID_FAMILIES_V1.plugin_permission_grants,
-    ...ACTION_ID_FAMILIES_V1.plugin_webhooks,
-    ...ACTION_ID_FAMILIES_V1.account_plugin_data,
-    ...ACTION_ID_FAMILIES_V1.account_sessions,
-    ...ACTION_ID_FAMILIES_V1.discussion,
-    ...ACTION_ID_FAMILIES_V1.account_security.filter((id) => id !== 'account.encryption.historicalKey.forget'
-      && id !== 'account.encryption.automationTemplates.recover'),
-    ...ACTION_ID_FAMILIES_V1.account_api_tokens,
-    ...ACTION_ID_FAMILIES_V1.session_organization_resources,
-    ...ACTION_ID_FAMILIES_V1.identity_github_apps,
-    ...ACTION_ID_FAMILIES_V1.machine_pools,
-    ...ACTION_ID_FAMILIES_V1.machine_presets,
-    ...ACTION_ID_FAMILIES_V1.ephemeral_runner,
-    ...ACTION_ID_FAMILIES_V1.automation_events,
-    ...ACTION_ID_FAMILIES_V1.automation_occurrences,
-    ...ACTION_ID_FAMILIES_V1.automation_conversation,
-    // The Home decides governance, Team and Home-identity operations in its own
-    // transaction, so these are Account-placed regardless of which machine
-    // invoked them. Identity providers travel the same Home family port.
-    ...ACTION_ID_FAMILIES_V1.home_governance,
-    ...ACTION_ID_FAMILIES_V1.home_identity,
-    ...ACTION_ID_FAMILIES_V1.teams,
-    ...ACTION_ID_FAMILIES_V1.identity_providers,
-    ...SHARED_SAVED_SECRET_ACTION_IDS_V1,
-    ...ACTION_ID_FAMILIES_V1.widgets.filter((id) => id !== 'widgets.item.refresh'),
-    ...ACTION_ID_FAMILIES_V1.workflows.filter((actionId) => actionId !== 'workflow.run.start'),
-  ]);
-
-  // These actions require an answering app's runtime. Discovery remains
-  // placement-neutral; admitted daemon hosts deliver through reverse RPC,
-  // while absent client custody returns the canonical typed unavailable result.
-  register('client', CLIENT_EXECUTION_PLACEMENT_ACTION_IDS);
-  register('client', PROJECT_SOURCE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'client').map(spec => spec.id));
-  register('client', ACTION_ID_FAMILIES_V1.capture_viewing);
-  register('client', ACTION_ID_FAMILIES_V1.scope);
-  register('client', ACTION_ID_FAMILIES_V1.command_palette);
-  register('client', ACTION_ID_FAMILIES_V1.find);
-  register('client', ACTION_ID_FAMILIES_V1.prompt_picker);
-  register('client', ACTION_ID_FAMILIES_V1.widgets.filter((id) => id === 'widgets.item.refresh'));
-  register('client', PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'client').map(spec => spec.id));
-  register('client', REMOTE_HOST_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'client').map(spec => spec.id));
-  register('client', ACTION_ID_FAMILIES_V1.home_runtime.filter(id => id !== 'home.runtime.restart'));
-  register('machine', ['home.runtime.restart']);
-  register('machine', PROFILE_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
-  register('machine', MCP_SERVER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
-  register('machine', PROVIDER_ACTION_SPECS_V1.filter(spec => spec.executionPlacement === 'machine').map(spec => spec.id));
-  // Workflow effect actions declare their placement on their own spec (`stepActionsV1`).
-  for (const spec of WORKFLOW_EFFECT_ACTION_SPECS_V1) register(spec.executionPlacement, [spec.id]);
-
-  // A canonical Session resolves its current machine/daemon owner. Execution
-  // runs are intentionally absent: detached runs have no Session owner.
-  register('session', [
-    ...ROLE_ACTION_IDS_V1.filter((actionId) => actionId.startsWith('session.')),
-    ...ACTION_ID_FAMILIES_V1.session_lifecycle.filter((actionId) => actionId !== 'session.spawn_new'),
-    'review.engines.list',
-    ...ACTION_ID_FAMILIES_V1.messaging,
-    ...ACTION_ID_FAMILIES_V1.session_control.filter((actionId) => actionId !== 'session.history.get'),
-    ...ACTION_ID_FAMILIES_V1.intent_start,
-    ...ACTION_ID_FAMILIES_V1.subagent_registry,
-    'session.activity.get',
-    ...ACTION_ID_FAMILIES_V1.session_transcripts.filter(
-      (actionId) => !PERSISTED_TRANSCRIPT_READ_ACTION_ID_SET.has(actionId),
-    ),
-    ...ACTION_ID_FAMILIES_V1.session_permissions,
-    // The Board lives on the Session's own Home; its records resolve through that owner.
-    ...ACTION_ID_FAMILIES_V1.session_board,
-    'browser.recording.attachToComposer',
-    'sessions.external.follow',
-    'sessions.external.unfollow',
-    'sessions.external.backgroundFollow.set',
-    'sessions.external.status.get',
-    'sessions.external.transcript.readAfter',
-  ]);
-
-  // The remaining operations are daemon/machine-owned. This includes detached
-  // execution runs, local indexes/filesystem/plugin/scm owners, and external
-  // session operations whose request selects a concrete daemon runtime.
-  register('machine', [
-    ...MANAGED_MACHINE_ACTION_SPECS.filter((spec) => spec.executionPlacement === 'machine').map((spec) => spec.id),
-    'artifact.publish_from_file',
-    'artifact.export',
-    'connectedServices.quota.reset',
-    ...MACHINE_TERMINAL_ACTION_IDS,
-    ...ACTION_ID_FAMILIES_V1.machine_agent_install,
-    'action.options.resolve',
-    'action.invoke',
-    'session.spawn_new',
-    ...PERSISTED_TRANSCRIPT_READ_ACTION_IDS,
-    'paths.list_recent',
-    'projects.open',
-    'agents.backends.list',
-    'machines.agents.list',
-    ...ACTION_ID_FAMILIES_V1.workflow_event_catalog,
-    'workspace.files.search',
-    ...ACTION_ID_FAMILIES_V1.code_intelligence,
-    'workspace.files.replace.preview',
-    'workspace.files.replace',
-    ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
-    'agents.models.list',
-    'agents.config_options.list',
-    'agents.session_modes.list',
-    'sessions.spawn.profiles.list',
-    'sessions.spawn.connected_services.list',
-    'sessions.spawn.mcp_servers.preview',
-    ...ACTION_ID_FAMILIES_V1.execution_run_control,
-    'workflow.run.start',
-    ...ACTION_ID_FAMILIES_V1.memory.filter(id => !MEMORY_DOCUMENT_ACTION_IDS_V1.some(documentId => documentId === id)),
-    'prompt_registry.install',
-    ...ACTION_ID_FAMILIES_V1.daemon_admin,
-    ...ACTION_ID_FAMILIES_V1.filesystem,
-    ...ACTION_ID_FAMILIES_V1.plugin_dev_loop,
-    ...ACTION_ID_FAMILIES_V1.plugin_settings_administration,
-    'sessions.external.candidates.list',
-    'sessions.external.candidate.delete',
-    'sessions.external.link.ensure',
-    'sessions.external.transcript.page',
-    'sessions.external.takeover',
-    'sessions.external.materialize.start',
-    'sessions.external.takeover.start',
-    'sessions.external.operation.status.get',
-    'sessions.external.operation.cancel',
-    'sessions.external.operation.resume',
-    'sessions.external.operation.retry',
-    'sessions.external.operation.discard',
-    ...ACTION_ID_FAMILIES_V1.scm_pull_request,
-    ...ACTION_ID_FAMILIES_V1.scm_git,
-    ...ACTION_ID_FAMILIES_V1.scm_repository,
-    ...ACTION_ID_FAMILIES_V1.scm_diff_summary,
-    ...RUNTIME_ACTION_IDS_V1.filter(
-      (actionId) => !RUNTIME_ACTION_IDS_WITHOUT_MACHINE_PLACEMENT.has(actionId),
-    ),
-  ]);
-
-  const missing = ACTION_IDS.filter((actionId) => !placements.has(actionId));
-  if (missing.length > 0) {
-    throw new Error(`Action execution placement missing for: ${missing.join(', ')}`);
-  }
-  return placements;
-})();
-
 function resolveActionRequiredAuthority(
   spec: Pick<PreNormalizedActionSpec, 'id' | 'requiredAuthority'>,
 ): ActionRequiredAuthority {
@@ -1179,12 +1016,10 @@ function resolveActionRequiredAuthority(
 function resolveActionExecutionPlacement(
   spec: Pick<PreNormalizedActionSpec, 'id' | 'executionPlacement'>,
 ): ActionExecutionPlacement {
-  if (spec.executionPlacement) return spec.executionPlacement;
-  const placement = ACTION_EXECUTION_PLACEMENT_BY_ID.get(spec.id);
-  if (!placement) {
+  if (!spec.executionPlacement) {
     throw new Error(`Action execution placement missing for: ${spec.id}`);
   }
-  return placement;
+  return spec.executionPlacement;
 }
 
 /** Disclosure from the admitted declaration/input; never execution or approval authority. */
@@ -1204,6 +1039,7 @@ export function resolveActionExecutionPlacementForInput(
 }
 
 function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
+  const runtimeBacked = !isRuntimeActionIdV1(spec.id) || isRuntimeActionExecutorReal(spec.id);
   const isInternal = isInternalActionId(spec.id);
   const isPluginProvenanceOnly = isPluginProvenanceOnlyActionId(spec.id);
   const isHumanSecretApiExcluded = isHumanSecretApiExcludedActionId(spec.id);
@@ -1258,20 +1094,24 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
       agent: spec.surfaces.agent || presentUserRequestable
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
-      api: spec.surfaces.api !== false && !isInternal
+      api: runtimeBacked && spec.surfaces.api !== false && !isInternal
         && !isPluginProvenanceOnly
         && !isHumanSecretApiExcluded
         && (requiredAuthority === 'account_automation'
           || (DECISION_ACTION_IDS as readonly string[]).includes(spec.id)
           || (TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS as readonly string[]).includes(spec.id)),
-      plugin: !isPluginSurfaceExcluded,
+      plugin: runtimeBacked && !isPluginSurfaceExcluded,
     },
   };
 }
 
-const ACTION_SPECS_WITH_PUBLIC_EXPOSURE = Object.freeze(
+function createActionSpecsWithPublicExposure() {
+  return Object.freeze(
   ACTION_SPECS_WITHOUT_APPROVAL.map(normalizeActionPublicExposure),
 );
+}
+
+const ACTION_SPECS_WITH_PUBLIC_EXPOSURE: ReturnType<typeof createActionSpecsWithPublicExposure> = lazyActionSpecArray(createActionSpecsWithPublicExposure);
 
 /**
  * The generated-family builders above return a broad registry row at runtime.
@@ -1334,7 +1174,7 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof HOME_HUB_LAYOUT_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof PROJECT_SOURCE_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof DEPLOYMENT_ACTION_SPECS_V1>
-  | LiteralActionSpecTupleDefinition<typeof MACHINE_REACHABILITY_ACTION_SPECS_V1>
+  | LiteralActionSpecTupleDefinition<typeof PROJECT_READINESS_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof WIDGET_SNAPSHOT_ACTION_SPECS_V1>
   | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING>
   | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_MIDDLE>
@@ -1352,45 +1192,11 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX>;
 
 type SessionPendingCustodyActionSpecDefinition =
+  | LiteralActionSpecTupleDefinition<typeof SESSION_PENDING_ACTION_SPECS>
   | CanonicalActionSchemaDefinition<
       'session.pending.edit',
       typeof SessionPendingEditInputV1Schema,
       typeof SessionPendingEditResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.action.set',
-      typeof SessionPendingActionSetInputV1Schema,
-      typeof SessionPendingActionSetResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.markHandled',
-      typeof SessionPendingMarkHandledInputV1Schema,
-      typeof SessionPendingDeliveryRecoveryResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.dismiss',
-      typeof SessionPendingDeliveryRecoveryInputV1Schema,
-      typeof SessionPendingDeliveryRecoveryResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.sendAsNew',
-      typeof SessionPendingDeliveryRecoveryInputV1Schema,
-      typeof SessionPendingSendAsNewResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.withdraw',
-      typeof SessionPendingWithdrawInputV1Schema,
-      typeof SessionPendingWithdrawResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.resetStart.set',
-      typeof PendingResetStartSetInputV1Schema,
-      typeof PendingResetStartSetResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'session.pending.resetStart.cancel',
-      typeof PendingResetStartCancelInputV1Schema,
-      typeof PendingResetStartCancelResultV1Schema
     >;
 
 type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
@@ -1571,11 +1377,6 @@ type ArtifactAccessActionSpecDefinition = {
   >;
 }[ArtifactAccessActionIdV1];
 
-type BotTemplateActionSpecDefinition = {
-  [Id in BotTemplateActionIdV1]: CanonicalActionSchemaDefinition<Id,
-    (typeof BotTemplateActionInputSchemasV1)[Id], (typeof BotTemplateActionOutputSchemasV1)[Id], never, 'account_automation'>;
-}[BotTemplateActionIdV1];
-
 type ArtifactActionSpecDefinition = {
   [TActionId in ArtifactActionIdV1]: CanonicalActionSchemaDefinition<
     TActionId,
@@ -1585,6 +1386,11 @@ type ArtifactActionSpecDefinition = {
     (typeof ARTIFACT_ACTION_SPECS)[number]['requiredAuthority']
   >;
 }[ArtifactActionIdV1];
+
+type BotTemplateActionSpecDefinition = {
+  [Id in BotTemplateActionIdV1]: CanonicalActionSchemaDefinition<Id,
+    (typeof BotTemplateActionInputSchemasV1)[Id], (typeof BotTemplateActionOutputSchemasV1)[Id], never, 'account_automation'>;
+}[BotTemplateActionIdV1];
 
 type SettingsDeclarationActionSpecDefinition = {
   [TActionId in SettingsDeclarationActionIdV1]: CanonicalActionSchemaDefinition<
@@ -1663,7 +1469,7 @@ type WorkflowActionSpecDefinition = {
     (typeof WorkflowActionInputSchemasV1)[TActionId],
     (typeof WorkflowActionOutputSchemasV1)[TActionId],
     never,
-    TActionId extends 'workflow.run.invocations.complete_review' ? 'present_user' : 'account_automation'
+    'account_automation'
   >;
 }[WorkflowActionIdV1];
 
@@ -1732,11 +1538,6 @@ type AccountSecurityActionSpecDefinition =
       'account.encryption.historicalKey.forget',
       typeof AccountHistoricalEncryptionKeyForgetInputV1Schema,
       typeof AccountHistoricalEncryptionKeyForgetResultV1Schema
-    >
-  | CanonicalActionSchemaDefinition<
-      'account.security.terminalPresentUser.set',
-      typeof AccountTerminalPresentUserPolicySetRequestV1Schema,
-      typeof AccountTerminalPresentUserPolicySetResponseV1Schema
     >
   | CanonicalActionSchemaDefinition<
       'account.security.get',
@@ -1848,8 +1649,8 @@ export type CanonicalActionSpecDefinition =
   | ActionPolicyActionSpecDefinition
   | WorkBoardActionSpecDefinition
   | ArtifactAccessActionSpecDefinition
-  | BotTemplateActionSpecDefinition
   | ArtifactActionSpecDefinition
+  | BotTemplateActionSpecDefinition
   | RoleActionSpecDefinition
   | ScmGitActionSpecDefinition
   | NonRuntimeDirectActionSpecDefinition
@@ -1886,6 +1687,11 @@ type CanonicalActionSpecById = {
     Readonly<{ id: TActionId }>
   >;
 };
+
+/** Host-private dispatch consumes parsed domain values across every Action surface. */
+export type AdmittedActionInputById = Readonly<{
+  [Id in keyof CanonicalActionSpecById]: z.output<CanonicalActionSpecById[Id]['inputSchema']>;
+}>;
 
 type ResultRequiredActionId = {
   // Schema-only family projections widen approval; check every potentially required result.
@@ -2036,14 +1842,18 @@ type PluginSessionMessageInputMustRemainAdmissionOnly = AssertTrue<IsTypeEqual<
   z.input<typeof SessionSendMessagePluginInputV1Schema>
 >>;
 
-const PLUGIN_INVOCABLE_ACTION_SPECS = ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(
-  (spec): spec is ActionSpecWithoutApproval & Readonly<{
-    surfaces: ActionSpecWithoutApproval['surfaces'] & Readonly<{ plugin: true }>;
+function createPluginInvocableActionSpecs() {
+  return ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(
+  (spec): spec is NormalizedActionSpec & Readonly<{
+    surfaces: NormalizedActionSpec['surfaces'] & Readonly<{ plugin: true }>;
     outputSchema: z.ZodMiniType;
   }> => (
     spec.surfaces.plugin === true && spec.outputSchema !== undefined
   ),
 );
+}
+
+const PLUGIN_INVOCABLE_ACTION_SPECS: ReturnType<typeof createPluginInvocableActionSpecs> = lazyActionSpecArray(createPluginInvocableActionSpecs);
 
 function projectPluginActionInputSchemas(
   specs: readonly ActionSpecWithoutApproval[],
@@ -2086,13 +1896,13 @@ function projectPluginActionOutputSchemas(
   ));
 }
 
-export const PLUGIN_ACTION_INPUT_SCHEMAS: ActionSchemaCarriersById<PluginActionInputSchemaById> = projectPluginActionInputSchemas(
+export const PLUGIN_ACTION_INPUT_SCHEMAS: ActionSchemaCarriersById<PluginActionInputSchemaById> = lazyActionSpecRecord(() => projectPluginActionInputSchemas(
   PLUGIN_INVOCABLE_ACTION_SPECS,
-);
+));
 
-export const PLUGIN_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PluginActionOutputSchemaById> = projectPluginActionOutputSchemas(
+export const PLUGIN_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PluginActionOutputSchemaById> = lazyActionSpecRecord(() => projectPluginActionOutputSchemas(
   PLUGIN_INVOCABLE_ACTION_SPECS,
-);
+));
 
 /**
  * The authenticated public API is the API-surface projection of the same
@@ -2168,50 +1978,66 @@ type PublicActionOutputSchemaById = Readonly<{
 }>;
 
 function isSignedRootActionSpec(
-  spec: ActionSpecWithoutApproval,
-): spec is ActionSpecWithoutApproval & Readonly<{ outputSchema: z.ZodMiniType }> {
+  spec: NormalizedActionSpec,
+): spec is NormalizedActionSpec & Readonly<{ outputSchema: z.ZodMiniType }> {
   return !isInternalActionId(spec.id)
     && !isHumanSecretApiExcludedActionId(spec.id)
     && spec.outputSchema !== undefined;
 }
 
-const SIGNED_ROOT_ACTION_SPECS = ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(isSignedRootActionSpec);
+function createSignedRootActionSpecs() {
+  return ACTION_SPECS_WITH_PUBLIC_EXPOSURE.filter(isSignedRootActionSpec);
+}
+
+const SIGNED_ROOT_ACTION_SPECS: ReturnType<typeof createSignedRootActionSpecs> = lazyActionSpecArray(createSignedRootActionSpecs);
 
 /**
  * Signed Account roots retain present-user Actions and plugin-provenance-only
  * shapes. The latter require a mounted claim at ingress and daemon-derived
  * plugin policy; they remain excluded from the PAT catalog.
  */
-export const SIGNED_ROOT_ACTION_IDS = Object.freeze(
+function createSignedRootActionIds() {
+  return Object.freeze(
   SIGNED_ROOT_ACTION_SPECS.map((spec) => spec.id),
 ) as readonly SignedRootActionId[];
+}
 
-const SIGNED_ROOT_ACTION_ID_SET = new Set<string>(SIGNED_ROOT_ACTION_IDS);
+export const SIGNED_ROOT_ACTION_IDS: ReturnType<typeof createSignedRootActionIds> = lazyActionSpecArray(createSignedRootActionIds);
+
+const SIGNED_ROOT_ACTION_ID_SET = memoizeActionSpecValue(() => new Set<string>(SIGNED_ROOT_ACTION_IDS));
 
 export const SignedRootActionIdSchema = lazyZodSchema(() => z.custom<SignedRootActionId>(
-  (actionId) => typeof actionId === 'string' && SIGNED_ROOT_ACTION_ID_SET.has(actionId),
+  (actionId) => typeof actionId === 'string' && SIGNED_ROOT_ACTION_ID_SET().has(actionId),
   { message: 'Action is not available to the signed interactive root' },
 ));
 
-const PUBLIC_ACTION_SPECS = SIGNED_ROOT_ACTION_SPECS.filter(
-  (spec): spec is ActionSpecWithoutApproval & Readonly<{
-    surfaces: ActionSpecWithoutApproval['surfaces'] & Readonly<{ api: true }>;
+function createPublicActionSpecs() {
+  return SIGNED_ROOT_ACTION_SPECS.filter(
+  (spec): spec is NormalizedActionSpec & Readonly<{
+    surfaces: NormalizedActionSpec['surfaces'] & Readonly<{ api: true }>;
     outputSchema: z.ZodMiniType;
   }> => (
     spec.surfaces.api === true
   ),
 );
+}
+
+const PUBLIC_ACTION_SPECS: ReturnType<typeof createPublicActionSpecs> = lazyActionSpecArray(createPublicActionSpecs);
 
 /** Runtime companion generated from the same canonical rows as the API type maps. */
-export const PUBLIC_ACTION_IDS = Object.freeze(
+function createPublicActionIds() {
+  return Object.freeze(
   PUBLIC_ACTION_SPECS.map((spec) => spec.id),
 ) as readonly PublicActionId[];
+}
 
-const PUBLIC_ACTION_ID_SET = new Set<string>(PUBLIC_ACTION_IDS);
+export const PUBLIC_ACTION_IDS: ReturnType<typeof createPublicActionIds> = lazyActionSpecArray(createPublicActionIds);
+
+const PUBLIC_ACTION_ID_SET = memoizeActionSpecValue(() => new Set<string>(PUBLIC_ACTION_IDS));
 
 /** Runtime parser for the ActionSpec rows explicitly surfaced to authenticated API callers. */
 export const PublicActionIdSchema = lazyZodSchema(() => z.custom<PublicActionId>(
-  (actionId) => typeof actionId === 'string' && PUBLIC_ACTION_ID_SET.has(actionId),
+  (actionId) => typeof actionId === 'string' && PUBLIC_ACTION_ID_SET().has(actionId),
   { message: 'Action is not available on the public API surface' },
 ));
 
@@ -2259,21 +2085,38 @@ function projectPublicActionOutputSchemas(
 }
 
 /** Runtime result projection for signed interactive root execution. */
-export const SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS = projectPublicActionOutputSchemas(
+export const SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS = lazyActionSpecRecord(() => projectPublicActionOutputSchemas(
   SIGNED_ROOT_ACTION_SPECS,
   'signed-root',
-);
+));
 
-export const PUBLIC_ACTION_INPUT_SCHEMAS: ActionSchemaCarriersById<PublicActionInputSchemaById> = projectPublicActionInputSchemas(
+export const PUBLIC_ACTION_INPUT_SCHEMAS: ActionSchemaCarriersById<PublicActionInputSchemaById> = lazyActionSpecRecord(() => projectPublicActionInputSchemas(
   PUBLIC_ACTION_SPECS,
-);
+));
 
-export const PUBLIC_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PublicActionOutputSchemaById> = projectPublicActionOutputSchemas(
+/** Delegate Account content access only for a valid, content-consuming public operation. */
+export function doesExternalActionConsumeRequesterAccountContentV1(request: Readonly<{
+  actionId: string;
+  input: unknown;
+  target?: ExternalActionTargetV1;
+}>): boolean {
+  const actionId = PublicActionIdSchema.safeParse(request.actionId);
+  if (!actionId.success) return false;
+  const inputSchema: z.ZodMiniType = PUBLIC_ACTION_INPUT_SCHEMAS[actionId.data];
+  const input = inputSchema.safeParse(request.input);
+  if (!input.success) return false;
+  return getActionSpec(actionId.data).requesterAccountContentDemandForInput?.(input.data, {
+    ...(request.target ? { externalActionTarget: request.target } : {}),
+    ...(request.target?.kind === 'session' ? { defaultSessionId: request.target.sessionId } : {}),
+  }) === true;
+}
+
+export const PUBLIC_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PublicActionOutputSchemaById> = lazyActionSpecRecord(() => projectPublicActionOutputSchemas(
   PUBLIC_ACTION_SPECS,
   'public',
-);
+));
 
-export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
+export const ACTION_SPECS: readonly ActionSpec[] = lazyActionSpecArray(() => Object.freeze(
   ACTION_SPECS_WITH_PUBLIC_EXPOSURE.map((spec): ActionSpec => {
     const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
     const contextualDefaults = resolveBuiltInActionContextualDefaults(spec.id);
@@ -2281,18 +2124,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
     return completeActionInputHints({
       ...spec,
       ...(argsExample ? { examples: { ...spec.examples, voice: { ...spec.examples?.voice, argsExample } } } : {}),
-      requiredAuthority: resolveActionRequiredAuthority(spec),
-      executionPlacement: resolveActionExecutionPlacement(spec),
       ...(pluginCallerPolicy ? { pluginCallerPolicy } : {}),
       ...(contextualDefaults ? { contextualDefaults } : {}),
       placements: [...spec.placements],
     });
   }),
-);
+));
 
-assertPublicActionSdkMethodNames(ACTION_SPECS, PUBLIC_ACTION_ID_SET);
-
-const ACTION_SPECS_BY_ID = new Map(ACTION_SPECS.map((spec) => [spec.id, spec] as const));
+const ACTION_SPECS_BY_ID = memoizeActionSpecValue(() => new Map(ACTION_SPECS.map((spec) => [spec.id, spec] as const)));
 
 export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;
@@ -2302,7 +2141,7 @@ export function getActionSpec<TActionId extends ActionId>(id: TActionId): Readon
   inputSchema: WithClientRoutingSchema<TActionId, CanonicalActionSpecById[TActionId]['inputSchema']>;
 }> & ActionSpec;
 export function getActionSpec(id: ActionId): ActionSpec {
-  const spec = ACTION_SPECS_BY_ID.get(id);
+  const spec = ACTION_SPECS_BY_ID().get(id);
   if (!spec) {
     // This is a programmer error: all call sites should be type-safe and list-backed.
     throw new Error(`Unknown action spec: ${id}`);
@@ -2327,9 +2166,7 @@ export function readExternalActionMachineRuntimeDemandV1(actionId: string,
   envelope: ExternalActionRequestEnvelope): 'required' | undefined {
   if (envelope.v !== 2) return projectExternalActionMachineRuntimeDemandV1(actionId, envelope.input, envelope.target);
   const parsed = ActionIdSchema.safeParse(actionId);
-  // Send activates only after its input is committed by the existing Pending owner.
-  if (!parsed.success || parsed.data === SESSION_MESSAGE_SEND_ACTION_ID_V1
-    || !getActionSpec(parsed.data).machineRuntimeDemandForInput) return undefined;
+  if (!parsed.success || !getActionSpec(parsed.data).machineRuntimeDemandForInput) return undefined;
   return envelope.machineRuntimeDemand;
 }
 
@@ -2485,7 +2322,3 @@ export function resolveVoiceClientToolNameAlias(value: string): string | null {
   return null;
 }
 export { requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from './scmGitActionSpecs.js';
-
-export type AdmittedActionInputById = Readonly<{
-  [Id in keyof CanonicalActionSpecById]: z.output<CanonicalActionSpecById[Id]['inputSchema']>;
-}>;

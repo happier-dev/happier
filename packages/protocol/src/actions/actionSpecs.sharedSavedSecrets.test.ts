@@ -8,10 +8,40 @@ import {
 } from '../account/settings/savedSecretResourceActionsV1.js';
 import { ActionIdSchema } from './actionIds.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
-import { getActionSpec, listActionSpecs } from './actionSpecs.js';
+import { getActionSpec, listActionSpecs, PublicActionIdSchema, SignedRootActionIdSchema } from './actionSpecs.js';
 import { bindHomeDomainActionHttpRequestV1 } from './homeDomainActionFamily.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+import { normalizeActionsSettingsV1 } from './actionSettings.js';
 
 describe('Shared Saved Secret Action contracts', () => {
+  it.each(['agent', 'mcp'] as const)('offers a value-free reveal request on %s with configurable default Ask', surface => {
+    const spec = getActionSpec('secrets.shared.reveal');
+    const input = { ref: 'happier:shared-secret:v1:resource', expectedRevision: 3 };
+    const context = { surface, authority: 'account_automation' } as const;
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input, context,
+      settings: normalizeActionsSettingsV1({ v: 1 }) }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input, context,
+      settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [spec.id]: [surface] } }) }).required).toBe(false);
+    expect(spec.outputSchema.safeParse({ status: 'hidden', historyEntryId: 'event', value: 'must-not-disclose' }).success).toBe(false);
+    expect(spec.surfaces[surface]).toBe(true);
+    if (surface === 'mcp') expect(spec.bindings?.mcpToolName).toBe('secrets_shared_reveal');
+  });
+  it('offers Reveal to the app and as a value-free default-Ask request to Agent/MCP; never to tokens', () => {
+    const reveal = listActionSpecs().find(spec => spec.id === 'secrets.shared.reveal');
+    expect(reveal).toBeDefined();
+    expect(reveal?.surfaces).toMatchObject({ ui: true, cli: false, agent: true, mcp: true, rpc: false, voice: false, plugin: false, api: false });
+    expect(SignedRootActionIdSchema.safeParse('secrets.shared.reveal').success).toBe(true);
+    expect(PublicActionIdSchema.safeParse('secrets.shared.reveal').success).toBe(false);
+    for (const id of ['account.password.enroll', 'account.password.change', 'account.password.remove', 'account.email.change.request']) {
+      expect(SignedRootActionIdSchema.safeParse(id).success, id).toBe(false);
+      expect(PublicActionIdSchema.safeParse(id).success, id).toBe(false);
+    }
+    expect(reveal?.serverTransport).toBeUndefined();
+    expect(reveal?.inputSchema.safeParse({ ref: 'happier:shared-secret:v1:resource', expectedRevision: 3 }).success).toBe(true);
+    expect(reveal?.inputSchema.safeParse({ ref: 'resource', expectedRevision: 3 }).success).toBe(false);
+    expect(reveal?.outputSchema.safeParse({ status: 'hidden', historyEntryId: 'event' }).success).toBe(true);
+    expect(reveal?.outputSchema.safeParse({ status: 'hidden', historyEntryId: 'event', value: 'secret-sentinel' }).success).toBe(false);
+  });
   it('declares canonical approval behavior for the complete action family', () => {
     const expectedApprovalByActionId = {
       'secrets.shared.list': { result: 'required' },
@@ -20,6 +50,7 @@ describe('Shared Saved Secret Action contracts', () => {
       'secrets.shared.grants.set': { result: 'required', flow: 'deferred' },
       'secrets.shared.update': { result: 'required', flow: 'deferred' },
       'secrets.shared.delete': { result: 'required', flow: 'deferred' },
+      'secrets.shared.reveal': { result: 'optional', flow: 'deferred' },
     } as const;
 
     expect(Object.keys(expectedApprovalByActionId)).toEqual(SHARED_SAVED_SECRET_ACTION_IDS_V1);
@@ -36,19 +67,24 @@ describe('Shared Saved Secret Action contracts', () => {
       'secrets.shared.grants.set',
       'secrets.shared.update',
       'secrets.shared.delete',
+      'secrets.shared.reveal',
     ]);
     for (const id of SHARED_SAVED_SECRET_ACTION_IDS_V1) {
       expect(ActionIdSchema.parse(id)).toBe(id);
       expect(listActionSpecs().filter((spec) => spec.id === id)).toHaveLength(1);
       const spec = getActionSpec(id);
+      if (id === 'secrets.shared.reveal') {
+        expect(spec.executionPlacement).toBe('client');
+        expect(spec.serverTransport).toBeUndefined();
+        continue;
+      }
       expect(spec.inputSchema).toBe(SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[id]);
       expect(spec.outputSchema).toBe(SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[id]);
       expect(spec.executionPlacement).toBe('account');
       expect(spec.serverTransport?.path).toBe(SHARED_SAVED_SECRET_ACTION_PATHS_V1[id]);
       expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, api: true, plugin: true });
-      const exposedOnMcp = id === 'secrets.shared.promote' || id === 'secrets.shared.grants.set';
-      expect(spec.surfaces.mcp).toBe(exposedOnMcp);
-      expect(spec.bindings?.mcpToolName).toBe(exposedOnMcp ? id.replaceAll('.', '_') : undefined);
+      expect(spec.surfaces.mcp).toBe(true);
+      expect(spec.bindings?.mcpToolName).toBe(id.replaceAll('.', '_'));
       expect(spec.approval).toEqual(id === 'secrets.shared.list'
         ? { result: 'required' }
         : { result: 'required', flow: 'deferred' });

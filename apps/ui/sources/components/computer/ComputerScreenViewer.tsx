@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { PixelRatio, View, type LayoutChangeEvent } from 'react-native';
+import { PixelRatio, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ComputerGrantStatusV1} from '@happier-dev/protocol/computer/v1';
 import { resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
@@ -79,8 +79,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     fill: {
         ...StyleSheet.absoluteFillObject,
     },
-    centered: {
+    // A state that is not a picture is centred while it fits and reads from its top while it does not:
+    // the stage's aspect box never clips its heading or its way forward.
+    stateStage: {
         flex: 1,
+        minHeight: 0,
+    },
+    stateStageContent: {
+        flexGrow: 1,
         justifyContent: 'center',
     },
     // The last picture stays, dimmed, while the stream is paused: never a blank box.
@@ -91,8 +97,23 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+function ComputerStateStage(props: React.PropsWithChildren<Readonly<{ testID?: string }>>): React.ReactElement {
+    return (
+        <ScrollView
+            style={stylesheet.stateStage}
+            contentContainerStyle={stylesheet.stateStageContent}
+            showsVerticalScrollIndicator={false}
+            testID={props.testID}
+        >
+            {props.children}
+        </ScrollView>
+    );
+}
+
 export type ComputerScreenViewerProps = Readonly<{
     agent: BrowserPresenceAgent;
+    /** No Session agent to name (a Machine's own Computer page): the sentences speak of agents on the Machine. */
+    agentless?: boolean;
     /** The shared window's title or the display label, as the computer owner names it. */
     targetTitle: string | null;
     appName?: string | null;
@@ -317,7 +338,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         : recovery?.cause === 'source_lost' ? t('computerUse.presentation.endedTitle', { target })
         : t('computerUse.presentation.unavailableTitle');
     const recoveryReason = stopFailed ? recoveryTitle
-        : needsDriverRepair ? t('computerUse.presentation.driverRepairBody')
+        : needsDriverRepair ? t('computerUse.presentation.driverRepairBody', { machine: machineInSentence })
         : recovery?.cause === 'headless' ? t('computerUse.picker.noScreenBody')
         : recovery?.cause === 'unsupported' ? t('computerUse.picker.unsupportedBody')
         : recovery?.cause === 'machine_mismatch' ? t('computerUse.picker.otherMachineBody')
@@ -325,7 +346,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         : recovery?.cause === 'source_lost' ? t('computerUse.presentation.endedBody', { agent: agentName })
         : recoveryTitle;
     // "You can still stop {agent} here" only holds while the capsule offers Take control on a shared window.
-    const unavailableReason = !props.shared || props.access === 'see' || props.inputDenied ? undefined : t('computerUse.presentation.unavailableBody', { agent: agentName });
+    const unavailableReason = !props.shared || props.access === 'see' || props.inputDenied ? undefined : props.agentless ? t('computerUse.presentation.unavailableBodyMachine') : t('computerUse.presentation.unavailableBody', { agent: agentName });
     const recoveryPermission = recovery?.permission;
     const checkAgain = (onPress: () => void) => ({ label: t('computerUse.permission.checkAgain'), onPress, busy: props.checking, disabled: props.checking });
     const recoveryAction = stopFailed
@@ -352,7 +373,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
     const onRetryStream = props.stream?.onRetry;
     const needsPermission = computerCaptureNeedsPermission(props);
     const stage = needsPermission && props.grants && props.onOpenSettings ? (
-        <View style={stylesheet.centered} testID={`${testID}-permission`}>
+        <ComputerStateStage testID={`${testID}-permission`}>
             <ComputerPermissionCard
                 machineName={machineWords}
                 grants={props.grants}
@@ -361,9 +382,9 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 onCheckAgain={props.onRefresh ?? props.onCheckAgain}
                 testID={`${testID}-permission-card`}
             />
-        </View>
+        </ComputerStateStage>
     ) : hasRecovery && !pictureUp ? (
-        <View style={stylesheet.centered}>
+        <ComputerStateStage>
             <SurfaceStateCard
                 testID={`${testID}-recovery`}
                 // A call that failed while (re)opening the share is the same state as a lost stream: one
@@ -381,29 +402,29 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 diagnosticCode={recovery?.cause === 'offline' && !stopFailed ? undefined : failure}
                 action={recoveryAction}
             />
-        </View>
+        </ComputerStateStage>
     ) : props.machineOnline === false && !pictureUp ? (
         // Watching is passive: it never wakes the machine, so the way back is the machine's own.
-        <View style={stylesheet.centered} testID={`${testID}-offline`}>
+        <ComputerStateStage testID={`${testID}-offline`}>
             <SurfaceStateCard
                 kind="unavailable"
                 title={t('computerUse.presentation.offlineTitle', { machine: machineInSentence })}
                 reason={t('computerUse.presentation.offlineBody')}
                 action={checkAgain(props.onRefresh ?? props.onCheckAgain)}
             />
-        </View>
+        </ComputerStateStage>
     ) : !props.shared && !props.selectionPending ? (
-        <View style={stylesheet.centered} testID={`${testID}-not-shared`}>
+        <ComputerStateStage testID={`${testID}-not-shared`}>
             <SurfaceStateCard
                 kind="empty"
                 iconName="browsers"
                 title={t('computerUse.presentation.notSharedTitle')}
-                reason={t('computerUse.presentation.notSharedBody', { agent: agentName })}
+                reason={props.agentless ? t('computerUse.presentation.notSharedBodyMachine') : t('computerUse.presentation.notSharedBody', { agent: agentName })}
                 action={{ label: t('computerUse.request.choose'), onPress: props.onChooseWindow }}
             />
-        </View>
+        </ComputerStateStage>
     ) : props.selectionPending || surfaceState === 'connecting' || (props.stream?.connecting && surfaceState === 'unavailable') ? (
-        <View style={stylesheet.centered} testID={`${testID}-connecting`}>
+        <ComputerStateStage testID={`${testID}-connecting`}>
             <SurfaceStateCard
                 kind="loading"
                 title={machine
@@ -411,9 +432,9 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                     : t('computerUse.presentation.connectingTitle', { target })}
                 reason={t('computerUse.presentation.openingBody')}
             />
-        </View>
+        </ComputerStateStage>
     ) : surfaceState === 'ended' ? (
-        <View style={stylesheet.centered} testID={`${testID}-ended`}>
+        <ComputerStateStage testID={`${testID}-ended`}>
             <SurfaceStateCard
                 kind="unavailable"
                 iconName="browsers"
@@ -421,9 +442,9 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 reason={t('computerUse.presentation.endedBody', { agent: agentName })}
                 action={{ label: t('computerUse.request.choose'), onPress: props.onChooseWindow }}
             />
-        </View>
+        </ComputerStateStage>
     ) : surfaceState === 'unavailable' || !playerState ? (
-        <View style={stylesheet.centered} testID={`${testID}-unavailable`}>
+        <ComputerStateStage testID={`${testID}-unavailable`}>
             <SurfaceStateCard
                 testID={`${testID}-unavailable-card`}
                 kind="unavailable"
@@ -433,7 +454,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 diagnosticCode={playerState?.diagnostic?.reasonCode}
                 action={onRetryStream && playerState ? { label: t('common.retry'), onPress: onRetryStream } : undefined}
             />
-        </View>
+        </ComputerStateStage>
     ) : (
         <View style={stylesheet.fill} testID={`${testID}-${surfaceState}`}>
             <RemoteViewerStage key={props.stream?.input?.viewerKey} viewerKey={props.stream?.input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
@@ -505,7 +526,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                         onOpenChange={setMenuOpen}
                         items={[
                             { id: 'change', title: t('computerUse.request.change'), testID: `${testID}-change-window` },
-                            ...(props.onFloat ? [{ id: 'float', title: t('computerUse.presentation.floatView'), testID: `${testID}-float` }] : []),
+                            ...(props.onFloat ? [{ id: 'float', title: t('presentation.floatView'), testID: `${testID}-float` }] : []),
                             { id: 'stop', title: t('computerUse.picker.stopSharing'), destructive: true, testID: `${testID}-stop-sharing` },
                         ]}
                         onSelect={(id) => {

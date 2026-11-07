@@ -1,3 +1,6 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import {
   SHARED_SAVED_SECRET_ACTION_IDS_V1,
   SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1,
@@ -64,34 +67,48 @@ function projectSharedSavedSecretObservationInput(id: string, input: unknown): u
   return input;
 }
 
-export const SHARED_SAVED_SECRET_ACTION_SPECS: readonly PreNormalizedActionSpec[] = Object.freeze(
+export const SHARED_SAVED_SECRET_ACTION_SPECS: readonly PreNormalizedActionSpec[] = lazyActionSpecArray(() => Object.freeze(
   SHARED_SAVED_SECRET_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
     if (id === 'secrets.shared.reveal') return {
       id, title: 'Reveal shared Saved Secret', description: 'Display an exact managed Saved Secret only to the person in the app.',
       safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'present_user', executionPlacement: 'client',
-      approval: { result: 'none' }, approvalPolicy: { uiConfirmation: 'direct' }, placements: [],
-      surfaces: { ui: true, cli: false, agent: false, mcp: false, rpc: false, voice: false },
+      approval: { result: 'optional', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' }, placements: [],
+      // Agent/MCP callers request it through the ordinary default Ask; the value
+      // is shown only in the approving person's app and never returned.
+      surfaces: { ui: true, cli: false, agent: true, mcp: true, rpc: false, voice: false },
+      bindings: { mcpToolName: 'secrets_shared_reveal' },
       inputSchema: SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[id],
       inputHints: { fields: [] },
     };
+    const reviewSchema = id === 'secrets.shared.create'
+      ? lazyZodSchema(() => z.omit(SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.shared.create'], { storedContent: true, keyEnvelopes: true }))
+      : id === 'secrets.shared.promote'
+        ? lazyZodSchema(() => z.extend(z.omit(SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.shared.create'],
+          { storedContent: true, keyEnvelopes: true }), {
+          expectedSettingsVersion: SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.shared.promote'].shape.expectedSettingsVersion,
+        }))
+        : id === 'secrets.shared.update'
+          ? lazyZodSchema(() => z.omit(SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.shared.update'], { storedContent: true, keyEnvelopes: true }))
+          : undefined;
     const row = homeDomainActionRow({
+      mcp: true,
       id, approval: READ_ACTIONS.has(id) ? { result: 'required' } : { result: 'required', flow: 'deferred' },
       ...(id === 'secrets.shared.delete' ? { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true as const } : {}),
       title: {
-        'secrets.shared.list': 'List shared Saved Secrets',
-        'secrets.shared.create': 'Create shared Saved Secret',
+        'secrets.shared.list': 'List Saved Secrets',
+        'secrets.shared.create': 'Create Saved Secret',
         'secrets.shared.promote': 'Promote Saved Secret',
         'secrets.shared.grants.set': 'Update shared Saved Secret access',
-        'secrets.shared.update': 'Update shared Saved Secret',
-        'secrets.shared.delete': 'Delete shared Saved Secret',
+        'secrets.shared.update': 'Update Saved Secret',
+        'secrets.shared.delete': 'Delete Saved Secret',
       }[id],
       description: {
         'secrets.shared.list': 'List Saved Secret metadata visible to the authenticated Account without revealing values.',
         'secrets.shared.create': 'Create an independently managed Saved Secret resource.',
         'secrets.shared.promote': 'Atomically promote a personal Saved Secret and rewrite its Account Settings references.',
         'secrets.shared.grants.set': 'Replace the complete Account, Team, and Group audience of a shared Saved Secret.',
-        'secrets.shared.update': 'Rename or rotate a shared Saved Secret through its canonical resource owner.',
-        'secrets.shared.delete': 'Delete a shared Saved Secret resource.',
+        'secrets.shared.update': 'Rename or rotate a Saved Secret through its canonical resource owner.',
+        'secrets.shared.delete': 'Delete a Saved Secret resource.',
       }[id],
       safety: READ_ACTIONS.has(id) ? 'safe' : 'danger',
       sideEffectClass: READ_ACTIONS.has(id) ? 'read' : 'danger',
@@ -100,6 +117,11 @@ export const SHARED_SAVED_SECRET_ACTION_SPECS: readonly PreNormalizedActionSpec[
       path: SHARED_SAVED_SECRET_ACTION_PATHS_V1[id],
       inputSchema: SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[id],
       outputSchema: SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[id],
+      // Review uses the existing safe resource/audience projection; stored
+      // content and recipient key envelopes remain executable operands only.
+      ...(reviewSchema ? { approvalPresentation: { summary: () => null, inputSchema: reviewSchema, inputHints: { fields: [] },
+        projectInput: (input: unknown) => reviewSchema.parse(projectSharedSavedSecretObservationInput(id, input)),
+      } } : {}),
       // Observation redaction only. `create`/`promote`/`update` deliberately do NOT
       // declare `approvalInputCustody: 'live_only'`, and that is settled, not an
       // oversight: their `storedContent` is the explicit
@@ -116,11 +138,10 @@ export const SHARED_SAVED_SECRET_ACTION_SPECS: readonly PreNormalizedActionSpec[
         ? { projectObservationInput: (input: unknown) => projectSharedSavedSecretObservationInput(id, input) }
         : {}),
     });
-    if (id !== 'secrets.shared.promote' && id !== 'secrets.shared.grants.set') return row;
+    if (!row.surfaces.mcp) return row;
     return {
       ...row,
       bindings: { ...row.bindings, mcpToolName: id.replaceAll('.', '_') },
-      surfaces: { ...row.surfaces, mcp: true },
     };
   }),
-);
+));

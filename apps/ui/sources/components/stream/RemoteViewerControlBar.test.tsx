@@ -11,6 +11,34 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
+// The browser's hardware media queries are the platform boundary; the shared primary-pointer owner
+// classifies them for real underneath.
+const pointer = vi.hoisted(() => ({ coarse: true }));
+Object.defineProperty(globalThis, 'matchMedia', { configurable: true, value: (query: string) => ({
+    matches: query === '(pointer: coarse)' || query === '(hover: none)' ? pointer.coarse
+        : query === '(pointer: fine)' || query === '(hover: hover)' ? !pointer.coarse : false,
+    media: query, onchange: null, addListener: () => {}, removeListener: () => {},
+    addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true,
+}) });
+
+function Bar() {
+    const actions = useRemoteViewerActions({ enabled: true, sendGesture: () => {} });
+    return <RemoteViewerControlBar enabled actions={actions} testID="controls" controls={{
+        mode: 'direct', setMode: () => {}, resetZoom: () => {},
+    }} />;
+}
+
+describe('remote viewer control bar', () => {
+    it('stands over the picture only for a finger; a mouse and keyboard drive the picture directly', async () => {
+        pointer.coarse = false;
+        const precise = await renderScreen(<Bar />);
+        try { expect(precise.findHostByTestId('controls')).toBeFalsy(); } finally { await precise.unmount(); }
+        pointer.coarse = true;
+        const touch = await renderScreen(<Bar />);
+        try { expect(touch.findHostByTestId('controls')).toBeTruthy(); } finally { await touch.unmount(); }
+    });
+});
+
 describe('remote viewer keyboard toggle', () => {
     it('hides on a second pointer click even when the browser would blur the sentinel before click', async () => {
         let keyboard!: ReturnType<typeof useBrowserSoftKeyboard>;

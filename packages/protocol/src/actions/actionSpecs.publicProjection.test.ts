@@ -16,15 +16,15 @@ import {
 } from './actionSpecs.js';
 
 describe('Action public projection', () => {
-  it.each(['computer.clipboard.read', 'computer.clipboard.write'] as const)('keeps %s in the present-person UI rather than public automation', id => {
-    expect(getActionSpec(id).requiredAuthority).toBe('present_user');
-    expect(PublicActionIdSchema.safeParse(id).success).toBe(false);
-    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, id)).toBe(false);
-    expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, id)).toBe(false);
+  it.each(['computer.clipboard.read', 'computer.clipboard.write'] as const)('exposes %s through the shared public automation projection', id => {
+    expect(getActionSpec(id).requiredAuthority).toBe('account_automation');
+    expect(PublicActionIdSchema.safeParse(id).success).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, id)).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, id)).toBe(true);
   });
   it('admits private recap export as client rendering with the same strict compose input', () => {
-    expect(PublicActionIdSchema.safeParse('usage.recap.export').success).toBe(true);
-    const spec = getActionSpec('usage.recap.export');
+    expect(PublicActionIdSchema.safeParse('usage.recap.private.export').success).toBe(true);
+    const spec = getActionSpec('usage.recap.private.export');
     expect(spec.executionPlacement).toBe('client');
     expect(spec.pluginCallerPolicy).toEqual({ kind: 'caller' });
     expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, plugin: true });
@@ -43,12 +43,21 @@ describe('Action public projection', () => {
     }
   });
   it('admits private recap composition through the same authenticated plugin caller policy', () => {
-    const spec = getActionSpec('usage.recap.compose');
-    expect(PublicActionIdSchema.safeParse('usage.recap.compose').success).toBe(true);
+    expect(PublicActionIdSchema.safeParse('usage.recap.private.compose').success).toBe(true);
+    const spec = getActionSpec('usage.recap.private.compose');
     expect(spec.pluginCallerPolicy).toEqual({ kind: 'caller' });
     expect(spec.surfaces.plugin).toBe(true);
     expect(spec.inputSchema.safeParse({ query: { period: { startMs: 100, endMs: 200 } }, selectedFields: ['tokens'] }).success).toBe(true);
     expect(spec.inputSchema.safeParse({ query: { accountId: 'forged' } }).success).toBe(false);
+  });
+  it.each(['compose', 'export', 'deliver'] as const)('keeps %s source privilege in the root rather than a caller payload', operation => {
+    const publicRoot = getActionSpec(`usage.recap.${operation}`);
+    const privateRoot = getActionSpec(`usage.recap.private.${operation}`);
+    const delivery = operation === 'deliver' ? { intent: 'copy' } : {};
+    expect(publicRoot.inputSchema.safeParse({ query: {}, ...delivery }).success).toBe(false);
+    expect(privateRoot.inputSchema.safeParse({ source: { kind: 'public_profile' }, ...delivery }).success).toBe(false);
+    expect(publicRoot.inputSchema.safeParse({ source: { kind: 'public_profile' }, ...delivery }).success).toBe(true);
+    expect(privateRoot.inputSchema.safeParse({ query: {}, ...delivery }).success).toBe(true);
   });
   it('admits the same strict personal Usage query on public and plugin surfaces', () => {
     expect(PublicActionIdSchema.safeParse('usage.query').success).toBe(true);
