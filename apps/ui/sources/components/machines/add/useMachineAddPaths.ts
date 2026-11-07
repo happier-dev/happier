@@ -3,7 +3,8 @@ import { Platform } from 'react-native';
 import { getNativeSshAvailability } from '@happier-dev/ssh-native';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useMachineListForServerSelection } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
@@ -34,13 +35,12 @@ export function useThisComputerMachineId(taskRunner?: SystemTaskRunner): string 
 /** Reads the canonical status projection; it does not start another daemon status task. */
 export function useMachineAddPaths(serverId?: string, taskRunner?: SystemTaskRunner): readonly MachineAddPath[] {
     const activeServer = useActiveServerSnapshot();
-    const machinesByServer = useMachineListByServerId();
     const thisMachineId = useThisComputerMachineId(taskRunner);
     const device = readMachineAddDevice();
     const nativeSshAvailable = device === 'phone' && getNativeSshAvailability().available === true;
     const policy = React.useMemo(() => resolveSetupSurfacePolicy().machine, []);
-    const machines = machinesByServer[serverId ?? activeServer.serverId];
-    const joined = isThisComputerMachineOfHome(thisMachineId, machines);
+    const selectJoined = React.useCallback((machines: readonly Machine[]) => isThisComputerMachineOfHome(thisMachineId, machines), [thisMachineId]);
+    const joined = useMachineListForServerSelection(serverId ?? activeServer.serverId, selectJoined);
     return React.useMemo(() => resolveMachineAddPaths({
         device, thisComputerJoined: joined, thisComputerMachineId: joined ? thisMachineId : null, nativeSshAvailable, policy,
     }), [device, joined, nativeSshAvailable, policy, thisMachineId]);

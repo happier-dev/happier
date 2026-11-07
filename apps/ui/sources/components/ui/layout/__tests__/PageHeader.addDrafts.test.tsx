@@ -74,7 +74,7 @@ describe('Add-flow page headers under phone navigation', () => {
         await expectNativeDiscard(screen, 'settings.homes.draft.discard');
     });
 
-    it('leaves generic machine setup titles to navigation and retains a typed host identity', async () => {
+    it('leaves the machine setup title to navigation; a typed host never becomes the title', async () => {
         route.pathname = '/settings/machines/add';
         const screen = await renderScreen(
             <InjectedAuthProvider credentials={null}>
@@ -83,7 +83,7 @@ describe('Add-flow page headers under phone navigation', () => {
         );
         expect(headerHeadings(screen, 'settings.machines.draft.header')).toEqual([]);
         await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, path: 'ssh', sshDraft: { ...draft.sshDraft, host: 'build-box' } })));
-        expect(headerHeadings(screen, 'settings.machines.draft.header')).toEqual(['build-box']);
+        expect(headerHeadings(screen, 'settings.machines.draft.header')).toEqual([]);
         await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, path: 'anotherComputer', sshDraft: { ...draft.sshDraft, host: '' } })));
         expect(headerHeadings(screen, 'settings.machines.draft.header')).toEqual([]);
         await expectNativeDiscard(screen, 'settings.machines.draft.discard');

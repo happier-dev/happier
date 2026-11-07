@@ -28,6 +28,7 @@ import { startRemoteSshBootstrapTask, continueRemoteSshBootstrapTask } from '@/c
 import { readMachineAddFlowDraft, updateMachineAddFlowDraft, type MachineAddTaskHandle, type MachineAddSshDraft } from './machineAddFlowStore';
 import { beginMachineAddWatch, startMachineAddTask } from './machineAddTaskLifetime';
 import { getMachineAddSshSupportedAuthModes } from './machineAddSshTask';
+import { answerManagedCreationEstablish } from '@/components/settings/machines/managed/managedCreationPrompt';
 
 const ResolutionSchema = z.object({
     hostTrust: z.optional(z.object({ kind: z.enum(['ssh.trustHost', 'ssh.replaceHostKey']), fingerprint: z.string(), existingFingerprint: z.optional(z.nullable(z.string())) })),
@@ -50,7 +51,7 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
         const retained = readMachineAddFlowDraft();
         const runner = runnerOverride ?? retained.sshTask?.runner ?? getSystemTasksRunner();
         if (!resolveSetupSurfacePolicy().machine.allowRemoteSshMachineSetup || runner.mode === 'unavailable'
-            || (runner.mode === 'native' && runner.capabilities?.nativeSsh?.available === false)) return fail('machine_setup_unavailable');
+            || (runner.mode === 'native' && runner.capabilities?.nativeSsh?.available === false)) return fail('machine_enroll_unavailable');
         const target = () => {
             const relay = resolveRemoteHostBootstrapRelayUrls(active);
             const descriptor = buildHomeConnectionDescriptorForProfile(profile);
@@ -102,7 +103,7 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
         if (actionId === 'machines.add.ssh.start') {
             const request = MachineAddSshStartInputSchema.parse(input);
             if (!areServerProfileIdentifiersEquivalent(request.serverId, serverId)) return fail('server_scope_mismatch');
-            if ([retained.sshTask, retained.thisComputerTask].some((handle) => handle && (handle.starting || (handle.taskId && !handle.runner.getSnapshot(handle.taskId)?.result)))) return fail('machine_setup_in_progress');
+            if ([retained.sshTask, retained.thisComputerTask].some((handle) => handle && (handle.starting || (handle.taskId && !handle.runner.getSnapshot(handle.taskId)?.result)))) return fail('machine_enroll_in_progress');
             if ('host' in request && !getMachineAddSshSupportedAuthModes(runner).some(mode => mode === request.authMode)) return fail('ssh_auth_mode_unavailable');
             const requestedDraft: MachineAddSshDraft = 'savedHostId' in request
                 ? { ...createDefaultSshCredentialsDraft(), savedHostId: request.savedHostId }
@@ -112,9 +113,13 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
                 : retained.sshDraft.host.trim() === request.host && retained.sshDraft.username === request.username
                     && (retained.sshDraft.port.trim() ? Number(retained.sshDraft.port) : undefined) === request.port
                     && retained.sshDraft.authMode === request.authMode && retained.sshDraft.identityFilePath === (request.identityFilePath ?? '');
-            const submitted = context.authority === 'present_user' && context.surface === 'ui' && sameTarget
-                && retained.serverId !== null && areServerProfileIdentifiersEquivalent(retained.serverId, serverId) ? retained.sshDraft : requestedDraft;
-            const submission = { draft: submitted, savedHostRevision: 'savedHostId' in request ? request.expectedHostRevision : null };
+            // The normalized Action input captures identity once; SSH credential edits never select it.
+            const submitted: MachineAddSshDraft = { ...(context.authority === 'present_user' && context.surface === 'ui' && sameTarget
+                && retained.serverId !== null && areServerProfileIdentifiersEquivalent(retained.serverId, serverId) ? retained.sshDraft : requestedDraft),
+                enrollmentIdentity: request.enrollmentIdentity };
+            // Capture private task custody once, separately from the editable public draft.
+            const submission = { draft: JSON.parse(JSON.stringify(submitted)) as MachineAddSshDraft,
+                savedHostRevision: 'savedHostId' in request ? request.expectedHostRevision : null };
             const lifetime = captureActiveServerAccountScopeLifetime();
             let submittedHost: RemoteHost | undefined;
             let expectedRevision: number | 'absent' | null = submission.savedHostRevision;
@@ -178,12 +183,12 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
                     if (host) updateMachineAddFlowDraft(draft => ({ ...draft, sshDraft: { ...buildSshCredentialsDraftFromRemoteHostConfig({
                         sshTarget: host.ssh.target, sshPort: host.ssh.port ?? null, sshAuth: host.ssh.authMode,
                         identityFilePath: form.identityFilePath, identityPrivateKey: '', password: submitted.password, sshConfigFilePath: '',
-                    }), savedHostId: host.id } }));
+                    }), savedHostId: host.id, enrollmentIdentity: submission.draft.enrollmentIdentity } }));
                     beginMachineAddWatch(serverId, 'ssh');
-                    return startRemoteSshBootstrapTask({ ...target(), startSpec }, form);
+                    return startRemoteSshBootstrapTask({ ...target(), startSpec, enrollmentIdentity: submission.draft.enrollmentIdentity }, form);
                 });
             }, observeCompletion, undefined, submission);
-            return taskId ? { taskId } : fail(readMachineAddFlowDraft().sshTask ? 'machine_setup_not_started' : 'cancelled');
+            return taskId ? { taskId } : fail(readMachineAddFlowDraft().sshTask ? 'machine_enroll_not_started' : 'cancelled');
         }
         const { taskId } = actionId === 'machines.add.ssh.cancel' ? MachineAddSshCancelInputSchema.parse(input)
             : MachineAddSshTaskInputSchema.parse(actionId === 'machines.add.ssh.respond'
@@ -198,7 +203,7 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
             updateMachineAddFlowDraft(draft => draft.sshTask !== handle ? draft : { ...draft, sshTask: null, startedAtMs: null, baseline: null });
             if (handle.taskId) {
                 try { await handle.runner.cancel(handle.taskId); }
-                catch { return fail('machine_setup_cancel_failed'); }
+                catch { return fail('machine_enroll_cancel_failed'); }
             }
             return { pendingCanceled: true };
         }
@@ -217,28 +222,46 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
                     ...('existingFingerprint' in prompt ? { existingFingerprint: prompt.existingFingerprint } : {}),
                     ...('target' in prompt ? { target: prompt.target } : {}),
                     ...('publicKey' in prompt ? { publicKey: prompt.publicKey } : {}),
-                    requiresPresentUser: prompt.kind === 'ssh.password' && !handle.sshSubmission?.draft.savedHostId,
+                    ...('promptId' in prompt ? { promptId: prompt.promptId } : {}),
+                    ...('administratorUsername' in prompt ? { administratorUsername: prompt.administratorUsername } : {}),
+                    requiresPresentUser: prompt.kind === 'administrator.establish' || prompt.kind === 'ssh.password' && !handle.sshSubmission?.draft.savedHostId,
                 }, machineId, errorCode: result && !result.ok ? result.error.code : null };
         }
         if (actionId === 'machines.add.ssh.cancel') {
             handle.unsubscribeCompletion?.();
             try { await handle.runner.cancel(taskId); }
-            catch { return fail('machine_setup_cancel_failed'); }
+            catch { return fail('machine_enroll_cancel_failed'); }
             updateMachineAddFlowDraft(draft => draft.sshTask !== handle ? draft : { ...draft, startedAtMs: null, baseline: null });
             return { taskId };
         }
         const { answer } = MachineAddSshRespondInputSchema.parse(input);
         if (!prompt || snapshot.cancelRequested) return fail('no_prompt');
-        if (!handle.sshSubmission) return fail('machine_setup_submission_unavailable');
+        if (!handle.sshSubmission) return fail('machine_enroll_submission_unavailable');
         if (prompt.kind === 'ssh.password' && !handle.sshSubmission.draft.savedHostId && context.authority !== 'present_user') return fail('present_user_secret_required');
         if (answer.kind !== prompt.kind) return fail('prompt_mismatch');
+        if (answer.kind === 'administrator.establish') {
+            if (prompt.kind !== 'administrator.establish' || prompt.promptId !== answer.promptId || snapshot.result || !snapshot.awaitingInput) return fail('no_prompt');
+            const isCurrent = () => {
+                const current = handle.runner.getSnapshot(taskId);
+                const pending = resolveRemoteSshBootstrapPrompt(current);
+                return !context.signal?.aborted && readMachineAddFlowDraft().sshTask === handle && areAccountSettingsScopesEqual(storage.getState().settingsScope, scope)
+                    && current?.awaitingInput === true && !current.result && !current.cancelRequested
+                    && pending?.kind === 'administrator.establish' && pending.promptId === answer.promptId;
+            };
+            try {
+                const response = await answerManagedCreationEstablish({ prompt, isCurrent,
+                    respond: async password => { await handle.runner.respond(taskId, { password }); return { kind: 'completed', value: { taskId } }; },
+                    decline: async () => { await handle.runner.cancel(taskId); return { kind: 'failed', code: 'cancelled' }; } });
+                return response.kind === 'completed' ? { taskId } : fail(response.code);
+            } catch { return fail('machine_enroll_response_failed'); }
+        }
         if (answer.kind === 'ssh.password') {
             return runWithForm(handle.sshSubmission, async form => {
                 const password = form.sshPassword.trim();
                 if (!password) return fail('ssh_password_required');
                 assertCurrent();
                 try { await handle.runner.respond(taskId, { password }); }
-                catch { return fail('machine_setup_response_failed'); }
+                catch { return fail('machine_enroll_response_failed'); }
                 return { taskId };
             });
         }
@@ -250,9 +273,9 @@ export function createMachineAddSshTaskAction(runnerOverride?: SystemTaskRunner)
         const nextTaskId = await startMachineAddTask('ssh', handle.runner, async (isCurrent) => {
             if (!isCurrent() || !areAccountSettingsScopesEqual(storage.getState().settingsScope, scope)) return null;
             return runWithForm(handle.sshSubmission!, async (form, startSpec) => (await continueRemoteSshBootstrapTask({
-                options: { ...target(), runner: handle.runner, startSpec }, form,
+                options: { ...target(), runner: handle.runner, startSpec, enrollmentIdentity: handle.sshSubmission!.draft.enrollmentIdentity }, form,
                 taskId, snapshot, prompt, resolution, accept: accepted })).taskId);
         }, handle.observeCompletion, handle);
-        return nextTaskId ? { taskId: nextTaskId } : fail('machine_setup_not_started');
+        return nextTaskId ? { taskId: nextTaskId } : fail('machine_enroll_not_started');
     };
 }

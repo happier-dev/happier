@@ -34,7 +34,7 @@ import { useMachineAddFlow } from './useMachineAddFlow';
 import { updateMachineAddFlowDraft, useMachineAddFlowDraftSelector } from './machineAddFlowStore';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ThisComputerAgentsPane } from '@/components/machines/agents/ThisComputerAgentsPane';
-import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { machineCollectionHref, type MachineAddRoutePath } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
@@ -89,6 +89,10 @@ type MachineAddFormProps = Readonly<{
     canCreate?: boolean;
     /** Once, when a machine joins (first-run onboarding advances on it). */
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
+    /** `page` on a phone: push the chosen way as its own page (the route's `path`). */
+    onOpenWay?: (way: MachineAddRoutePath) => void;
+    /** `page` on a phone: the way this pushed page shows (the route's `path`); absent, the page lists the ways. */
+    openedWay?: MachineAddRoutePath;
 }>;
 
 export function MachineAddForm(props: MachineAddFormProps) {
@@ -122,14 +126,19 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     // A phone or a browser leads with Create one (58d §D2): it is the first way in on the bar.
     const leadsWithCreate = offerCreate && machineAddLeadsWithCreate(readMachineAddDevice());
     const showCreate = offerCreate && (creating || paths.length === 0 || active === null);
-    // At phone width four ways in don't fit one bar: they group as Connect | Create, and the connection
-    // paths list under Connect (lab m-add Ap).
-    const grouped = useDeviceType() === 'phone' && offerCreate && paths.length > 0;
+    // A phone lists the ways in and pushes the chosen one full height; nothing stacks under the list.
+    const { onOpenWay } = props;
+    const pushes = useDeviceType() === 'phone' && props.layout === 'page' && Boolean(onOpenWay);
     const { choosePath } = flow;
     const setUpThisComputer = React.useCallback(() => {
         setCreating(false);
         choosePath('thisComputer');
     }, [choosePath, setCreating]);
+    const openWay = React.useCallback((way: MachineAddRoutePath) => {
+        if (way === 'create') setCreating(true);
+        else { setCreating(false); choosePath(way); }
+        onOpenWay?.(way);
+    }, [choosePath, onOpenWay, setCreating]);
 
     if (!offerCreate && (paths.length === 0 || active === null)) {
         return (
@@ -144,7 +153,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     // to say, on that section, and Account-created machines name none.
     const pane = showCreate || active === null
         ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} />
-        : <MachineAddPane flow={flow} pathId={active} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
+        : <MachineAddPane flow={flow} pathId={active} onPage={props.layout === 'page'} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>
             {t('addFlows.machinePoolPrompt')}{' '}
@@ -169,6 +178,38 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
         );
     }
 
+    if (pushes) {
+        const opened = props.openedWay === 'create' ? (offerCreate ? 'create' : null)
+            : props.openedWay && paths.some((path) => path.id === props.openedWay) ? props.openedWay : null;
+        if (opened === 'create') return <View testID={props.testID}><MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} /></View>;
+        if (opened) {
+            return (
+                <View testID={props.testID}>
+                    <MachineAddPane flow={flow} pathId={opened} onPage testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />
+                </View>
+            );
+        }
+        const createWay = offerCreate ? [{ id: 'create' as const, title: t('managedMachines.add.createPath'), subtitle: t('managedMachines.add.createPathSubtitle'),
+            glyph: <Icon name="cloud" size={17} color={theme.colors.text.secondary} /> }] : [];
+        const ways = [...(leadsWithCreate ? createWay : []), ...paths, ...(leadsWithCreate ? [] : createWay)];
+        return (
+            <View testID={props.testID}>
+                <ItemGroup>
+                    {ways.map((way) => (
+                        <Item
+                            key={way.id}
+                            testID={`${props.testID}.way.${way.id}`}
+                            icon={way.glyph}
+                            title={way.title}
+                            subtitle={way.subtitle}
+                            onPress={() => openWay(way.id)}
+                        />
+                    ))}
+                </ItemGroup>
+            </View>
+        );
+    }
+
     // Page sections own the page edge: the paths and a connect pane sit in edge-only groups, and Create
     // one's own sections render at page level so they line up with the title (anatomy: no nested insets).
     return (
@@ -177,48 +218,27 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
             {/* Two to four short ways in: one segmented bar, as wide as its words (lab m-add). Each pane
                 opens with its own lead line, so the bar carries names only. */}
             <View style={styles.pathsRow}>
-            <View style={[styles.paths, grouped ? styles.pathsFill : null]}>
-            <SegmentedTabBar<MachineAddPathId | 'connect' | 'create'>
+            <View style={styles.paths}>
+            <SegmentedTabBar<MachineAddPathId | 'create'>
                 role="radiogroup"
-                // A phone's two segments share the row's width (lab m-add Ap); a wide bar is as wide as its words.
-                segmentSizing={grouped ? 'equal' : 'content'}
+                segmentSizing="content"
                 testIDPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('settings.addMachine')}
-                tabs={grouped ? [
-                    { id: 'connect', label: t('managedMachines.add.connect') },
-                    { id: 'create', label: t('managedMachines.add.create') },
-                ] : [
+                tabs={[
                     ...(leadsWithCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
                     ...paths.map((path) => ({ id: path.id, label: path.chipLabel ?? path.title })),
                     ...(offerCreate && !leadsWithCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
                 ]}
-                activeTabId={showCreate || active === null ? 'create' : grouped ? 'connect' : active}
+                activeTabId={showCreate || active === null ? 'create' : active}
                 onSelectTab={(next) => {
                     if (next === 'create') setCreating(true);
-                    else if (next === 'connect') setCreating(false);
                     else { setCreating(false); flow.choosePath(next); }
                 }}
             />
             </View>
             </View>
             </ItemGroup>
-            {grouped && !showCreate && active !== null && paths.length > 1 ? (
-                <ItemGroup>
-                    {paths.map((path) => (
-                        <Item
-                            key={path.id}
-                            testID={`${props.testID}.connectPath.${path.id}`}
-                            icon={path.glyph}
-                            title={path.title}
-                            subtitle={path.subtitle}
-                            selected={path.id === active}
-                            showChevron={false}
-                            onPress={() => flow.choosePath(path.id)}
-                        />
-                    ))}
-                </ItemGroup>
-            ) : null}
-            {showCreate || active === null ? pane : <ItemGroup surface="none"><View style={styles.page}>{pane}</View></ItemGroup>}
+            {pane}
         </View>
     );
 }
@@ -227,17 +247,21 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
 function MachineAddPane(props: Readonly<{
     flow: Flow;
     pathId: MachineAddPathId;
+    /** On a page each part owns the page edge, so a section inside the pane lines up with the title (no nested insets). */
+    onPage: boolean;
     testID: string;
     onStartSession: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
 }>) {
-    const { flow, pathId, testID } = props;
+    const { flow, pathId, testID, onPage } = props;
     const router = useRouter();
     const path = flow.paths.find((candidate) => candidate.id === pathId) ?? null;
     const { startWatching } = flow;
     const runsCommand = path?.runs === 'command';
     const [showTerminal, setShowTerminal] = React.useState(false);
+    // Over SSH in the app, the command is the "Run it yourself" fallback beside Connect and install.
+    const [runYourself, setRunYourself] = React.useState(false);
     // A command's machine can only announce itself: shown means watching. An SSH form shows no command until it can run one.
-    const commandShown = runsCommand && (pathId !== 'ssh' || flow.ssh.ready);
+    const commandShown = (runsCommand || (pathId === 'ssh' && runYourself)) && (pathId !== 'ssh' || flow.ssh.ready);
     React.useEffect(() => {
         if (commandShown && flow.watch.status === 'idle') startWatching();
     }, [flow.watch.status, commandShown, startWatching]);
@@ -251,7 +275,7 @@ function MachineAddPane(props: Readonly<{
     if (flow.arrived) {
         const arrived = flow.arrived;
         return (
-            <MachineArrivedCard
+            <PaneSection onPage={onPage}><MachineArrivedCard
                 testID={`${testID}.arrived`}
                 machineId={arrived.machineId}
                 serverId={flow.serverId}
@@ -259,7 +283,7 @@ function MachineAddPane(props: Readonly<{
                 facts={[arrived.facts, t('addFlows.machineConnectedJustNow')].filter(Boolean).join(' · ')}
                 onStartSession={() => props.onStartSession({ machineId: arrived.machineId, serverId: flow.serverId })}
                 onAddAnother={flow.addAnother}
-            />
+            /></PaneSection>
         );
     }
     if (!path) return null;
@@ -289,11 +313,11 @@ function MachineAddPane(props: Readonly<{
         case 'thisComputer': {
             // Already a machine of this Home (lab agent-setup S1): show the computer and its agents.
             if (path.connectedMachineId) {
-                return <ConnectedThisComputerPane flow={flow} machineId={path.connectedMachineId} testID={`${testID}.connected`} onStartSession={props.onStartSession} />;
+                return <PaneSection onPage={onPage}><ConnectedThisComputerPane flow={flow} machineId={path.connectedMachineId} testID={`${testID}.connected`} onStartSession={props.onStartSession} /></PaneSection>;
             }
             if (path.runs === 'command') {
                 return (
-                    <View style={styles.pane}>
+                    <PaneSection onPage={onPage}>
                         <MachineAddPaneHeader title={t('addFlows.pathThisComputerTitle')} lead={t('addFlows.thisComputerCommandLead', { home: flow.homeName })} />
                         {flow.commands ? (
                             <OsCommandBlock
@@ -312,12 +336,12 @@ function MachineAddPane(props: Readonly<{
                                 {t('addFlows.desktopAppLink')}
                             </Text>
                         </Text>
-                    </View>
+                    </PaneSection>
                 );
             }
             const state = flow.thisComputer;
             return (
-                <View style={styles.pane}>
+                <PaneSection onPage={onPage}>
                     <MachineAddPaneHeader
                         title={t('addFlows.pathThisComputerTitle')}
                         lead={run?.running
@@ -363,18 +387,18 @@ function MachineAddPane(props: Readonly<{
                         </View>
                     ) : null}
                     {watching}
-                </View>
+                </PaneSection>
             );
         }
         case 'ssh': {
             const host = flow.ssh.draft.host.trim();
+            const username = flow.ssh.draft.username.trim();
             const approvalNotice = flow.approval.approvalId ? <AttentionBanner testID={`${testID}.approval`} title={t('approvals.title')} description={t('approvals.status.open')}
                 action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(flow.approval.approvalId!)}?serverId=${encodeURIComponent(flow.serverId)}` as never) }} /> : null;
             if (run) {
                 const onPhone = readMachineAddDevice() === 'phone';
-                const username = flow.ssh.draft.username.trim();
                 return (
-                    <View style={styles.pane}>
+                    <PaneSection onPage={onPage}>
                         {/* The phone runs the SSH session itself, so leaving the app would stop it (58d AF4). */}
                         <MachineAddPaneHeader title={t('addFlows.sshRunningTitle', { host })}
                             lead={onPhone ? t('addFlows.sshRunningLeadPhone') : t('addFlows.sshRunningLead')} />
@@ -404,14 +428,25 @@ function MachineAddPane(props: Readonly<{
                             </View>
                         ) : null}
                         {watching}
-                    </View>
+                    </PaneSection>
                 );
             }
+            const command = commandShown && flow.commands ? (
+                <OsCommandBlock
+                    testID={`${testID}.command`}
+                    commands={flow.commands}
+                    os={flow.os}
+                    onOsChange={flow.setOs}
+                    detectedOs={flow.detectedOs}
+                    detectedLabel={t('addFlows.detectedOs')}
+                />
+            ) : null;
             return (
-                <View style={styles.pane}>
+                <>
+                <PaneSection onPage={onPage}>
                     <MachineAddPaneHeader
                         title={t('addFlows.pathSshTitle')}
-                        lead={path.runs === 'command' ? t('addFlows.sshLeadCommand', { home: flow.homeName }) : t('addFlows.sshLeadTask', { home: flow.homeName })}
+                        lead={runsCommand ? t('addFlows.sshLeadCommand', { home: flow.homeName }) : t('addFlows.sshLeadTask', { home: flow.homeName })}
                     />
                     {!host && flow.ssh.suggestions.length > 0 ? (
                         <View style={styles.suggestions}>
@@ -440,18 +475,32 @@ function MachineAddPane(props: Readonly<{
                         onChangePrivateKeyMaterial={flow.ssh.setPrivateKeyMaterial}
                     />
                     {flow.ssh.hostError ? <Text accessibilityRole="alert" style={styles.fieldError}>{flow.ssh.hostError}</Text> : null}
-                    {path.runs === 'command' ? (
+                    </PaneSection>
+                    {/* What happens where: the app connects from this device; on the server Happier runs as the
+                        sign-in user, with separate users off until the person turns them on (lab add/ssh). */}
+                    <View testID={`${testID}.facts`}>
+                        {runsCommand ? null : (
+                            <ItemGroup>
+                                <Item testID={`${testID}.facts.connectFrom`} mode="info" showChevron={false}
+                                    title={t('addFlows.sshConnectFromTitle')}
+                                    subtitle={t('addFlows.sshConnectFromSubtitle')}
+                                    detail={flow.thisComputer.kind === 'ready' ? flow.thisComputer.machineName : t('addFlows.sshConnectFromThisDevice')} />
+                            </ItemGroup>
+                        )}
+                        <ItemGroup title={t('addFlows.sshOnServerTitle')}>
+                            <Item testID={`${testID}.facts.runsAs`} mode="info" showChevron={false}
+                                title={t('addFlows.sshRunsAsTitle')}
+                                subtitle={username ? t('addFlows.sshRunsAsSubtitleUser', { user: username }) : t('addFlows.sshRunsAsSubtitle')} />
+                            <Item testID={`${testID}.facts.separateUsers`} mode="info" showChevron={false}
+                                title={t('addFlows.sshSeparateUsersTitle')}
+                                subtitle={t('addFlows.sshSeparateUsersSubtitle')}
+                                detail={t('addFlows.sshSeparateUsersOff')} />
+                        </ItemGroup>
+                    </View>
+                    <PaneSection onPage={onPage}>
+                    {runsCommand ? (
                         <>
-                            {flow.commands && flow.ssh.ready ? (
-                                <OsCommandBlock
-                                    testID={`${testID}.command`}
-                                    commands={flow.commands}
-                                    os={flow.os}
-                                    onOsChange={flow.setOs}
-                                    detectedOs={flow.detectedOs}
-                                    detectedLabel={t('addFlows.detectedOs')}
-                                />
-                            ) : null}
+                            {command}
                             {commandShown ? watching : null}
                         </>
                     ) : (
@@ -460,21 +509,38 @@ function MachineAddPane(props: Readonly<{
                             <RoundButton
                                 testID={`${testID}.start`}
                                 size="small"
-                                title={host ? t('addFlows.setUpHost', { host }) : t('addFlows.pathSshTitle')}
+                                title={t('addFlows.sshConnectAndInstall')}
                                 disabled={!flow.ssh.ready || flow.approval.approvalPending}
                                 onPress={flow.startSsh}
                             />
-                            <Text style={styles.note}>{t('addFlows.sshSavedNote')}</Text>
+                            <RoundButton
+                                testID={`${testID}.runYourself`}
+                                size="small"
+                                display="secondary"
+                                title={t('addFlows.sshRunItYourself')}
+                                expanded={runYourself}
+                                onPress={() => setRunYourself((current) => !current)}
+                            />
                         </View>
+                        {!host ? <Text testID={`${testID}.startReason`} style={styles.note}>{t('addFlows.sshNeedsAddress')}</Text>
+                            : <Text style={styles.note}>{t('addFlows.sshSavedNote')}</Text>}
                         {approvalNotice}
+                        {runYourself && command ? (
+                            <>
+                                <Text style={styles.note}>{t('addFlows.sshRunItYourselfLead', { home: flow.homeName })}</Text>
+                                {command}
+                                {watching}
+                            </>
+                        ) : null}
                         </>
                     )}
-                </View>
+                </PaneSection>
+                </>
             );
         }
         case 'anotherComputer':
             return (
-                <View style={styles.pane}>
+                <PaneSection onPage={onPage}>
                     <MachineAddPaneHeader title={t('addFlows.pathAnotherTitle')} lead={t('homeSetup.pairingComputerBody', { home: flow.homeName })} />
                     <HomePairingPanel
                         purpose="computer"
@@ -499,7 +565,7 @@ function MachineAddPane(props: Readonly<{
                         </>
                     ) : null}
                     {watching}
-                </View>
+                </PaneSection>
             );
     }
 }
@@ -515,13 +581,6 @@ const styles = StyleSheet.create((theme) => ({
     paths: {
         alignSelf: 'flex-start',
         maxWidth: '100%',
-    },
-    pathsFill: {
-        alignSelf: 'stretch',
-        flexGrow: 1,
-    },
-    page: {
-        gap: theme.space.s20,
     },
     pane: {
         gap: 14,
@@ -582,6 +641,12 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
 }));
+
+/** One part of a pane. On a page it owns the page edge, as a page section does; in a panel it is the pane's own column. */
+function PaneSection(props: Readonly<{ onPage: boolean; children?: React.ReactNode }>) {
+    const body = <View style={styles.pane}>{props.children}</View>;
+    return props.onPage ? <ItemGroup surface="none">{body}</ItemGroup> : body;
+}
 
 function ConnectedThisComputerPane(props: Readonly<{
     flow: Flow;

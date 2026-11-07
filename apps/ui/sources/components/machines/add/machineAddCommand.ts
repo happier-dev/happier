@@ -1,4 +1,5 @@
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ServerProfileSource } from '@/sync/domains/server/serverProfiles';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { config } from '@/config';
@@ -42,7 +43,7 @@ export function detectClientCommandOs(userAgent: string | null = typeof navigato
 export type MachineAddCommandInput = MachineAddHomeTarget & Readonly<{
     os: MachineAddCommandOs;
 }> & (Readonly<{ kind: 'joinHome'; skipProviders?: boolean }>
-    | Readonly<{ kind: 'sshMachine'; sshDraft: SshCredentialsDraft }>);
+    | Readonly<{ kind: 'sshMachine'; sshDraft: SshCredentialsDraft; enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1 }>);
 
 function quoteShellValue(value: string, os: MachineAddCommandOs): string {
     if (/^[A-Za-z0-9_./:@=+-]+$/.test(value)) return value;
@@ -62,6 +63,15 @@ export function buildMachineAddCommand(input: MachineAddCommandInput): string {
         if (draft.port.trim()) args.push('--ssh-port', draft.port.trim());
         args.push('--ssh-auth', draft.authMode);
         if (draft.authMode === 'keyfile') args.push('--identity-file', draft.identityFilePath.trim());
+        const identity = input.enrollmentIdentity;
+        // Keep the public installer's personal command usable by older released CLIs.
+        if (identity) args.push('--role', identity.role);
+        if (identity?.kind === 'dedicatedDaemonUser') {
+            args.push('--admin-access', identity.adminAccessAtCreation);
+            if (identity.adminAccessAtCreation === 'ask' && identity.administrator) {
+                args.push('--administrator', identity.administrator.username);
+            }
+        }
         args.push('--yes');
     }
     const options = {
@@ -70,7 +80,7 @@ export function buildMachineAddCommand(input: MachineAddCommandInput): string {
         publicReleaseRingOverride: resolvePreferredPublicReleaseRingIdForCurrentApp(),
     };
     return (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)(options, {
-        action: input.kind === 'joinHome' ? 'setup' : 'machine-setup',
+        action: input.kind === 'joinHome' ? 'setup' : 'machine-enroll',
         args: args.map((arg) => quoteShellValue(arg, input.os)),
     });
 }

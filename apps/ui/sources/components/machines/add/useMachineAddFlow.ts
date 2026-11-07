@@ -42,7 +42,7 @@ import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabe
 import { resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
 import { useMachineAddPaths } from './useMachineAddPaths';
 import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS, type MachineAddCommandOs } from './machineAddCommand';
-import { discardMachineAddFlowDraft, readMachineAddFlowDraft, updateMachineAddFlowDraft, useMachineAddFlowDraft, useMachineAddFlowDraftSelector, type MachineAddTaskHandle } from './machineAddFlowStore';
+import { discardMachineAddFlowDraft, readMachineAddFlowDraft, updateMachineAddFlowDraft, useMachineAddFlowDraft, useMachineAddFlowDraftSelector, type MachineAddTaskHandle, type MachineAddSshDraft } from './machineAddFlowStore';
 import { beginMachineAddWatch, hasRunningMachineAddTask as hasRunningTask } from './machineAddTaskLifetime';
 import { getMachineAddSshSupportedAuthModes } from './machineAddSshTask';
 
@@ -158,7 +158,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     commands: Record<MachineAddCommandOs, string> | null;
     ssh: {
         draft: ReturnType<typeof readMachineAddFlowDraft>['sshDraft'];
-        setDraft: (draft: SshCredentialsDraft) => void;
+        setDraft: (draft: MachineAddSshDraft) => void;
         ready: boolean;
         hostError: string | null;
         suggestions: { id: string; title: string; subtitle: string; apply: () => void }[];
@@ -231,7 +231,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const recordSshError = React.useCallback((error: unknown) => update((current) => current.serverId !== serverId || current.path !== 'ssh' ? current : ({ ...current, sshTask: {
         ...(current.sshTask ?? { runner, taskId: null, starting: false }), startError: error instanceof Error ? error.message : t('settings.systemTaskStartFailed'),
     } })), [runner, serverId, update]);
-    const setDraft = React.useCallback((next: SshCredentialsDraft) => update((current) => ({ ...current, sshDraft: { ...next,
+    const setDraft = React.useCallback((next: MachineAddSshDraft) => update((current) => ({ ...current, sshDraft: { ...next,
         privateKeyMaterial: next.authMode === 'keyfile' ? current.sshDraft.privateKeyMaterial : undefined,
         savedHostId: ['host', 'username', 'port', 'authMode', 'identityFilePath'].every((key) => next[key as keyof SshCredentialsDraft] === current.sshDraft[key as keyof SshCredentialsDraft]) ? current.sshDraft.savedHostId : null,
         savedHostExpectedRevision: ['host', 'username', 'port', 'authMode', 'identityFilePath'].every((key) => next[key as keyof SshCredentialsDraft] === current.sshDraft[key as keyof SshCredentialsDraft]) ? current.sshDraft.savedHostExpectedRevision : undefined,
@@ -243,6 +243,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
                 ...buildSshCredentialsDraftFromRemoteHostConfig({ sshTarget: host.ssh.target, sshPort: host.ssh.port ?? null,
                     sshAuth: host.ssh.authMode, identityFilePath: overrides?.identityFilePath ?? '',
                     sshConfigFilePath: overrides?.sshConfigFilePath ?? '', identityPrivateKey: '', password: '' }), savedHostId: host.id,
+                enrollmentIdentity: current.sshDraft.enrollmentIdentity,
                 savedHostExpectedRevision: hostCatalog && !hostCatalog.stale && hostCatalog.catalog.status === 'ready' && hostCatalog.catalog.cleanup !== 'pending'
                     ? hostCatalog.catalog.revision : undefined,
             } });
@@ -283,9 +284,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         const expectedHostRevision = hostCatalog && !hostCatalog.stale && hostCatalog.catalog.status === 'ready' && hostCatalog.catalog.cleanup !== 'pending'
             ? hostCatalog.catalog.revision : null;
         if (submitted.savedHostId && expectedHostRevision === null) { recordSshError(new Error('remote_host_catalog_unavailable')); return; }
-        const input = submitted.savedHostId ? { serverId, savedHostId: submitted.savedHostId, expectedHostRevision }
+        const targetInput = submitted.savedHostId ? { serverId, savedHostId: submitted.savedHostId, expectedHostRevision }
             : { serverId, host: submitted.host, username: submitted.username,
                 ...(submitted.port.trim() ? { port: Number(submitted.port) } : {}), authMode: submitted.authMode, identityFilePath: submitted.identityFilePath };
+        const input = { ...targetInput, ...(submitted.enrollmentIdentity ? { enrollmentIdentity: submitted.enrollmentIdentity } : {}) };
         const originHandle = readMachineAddFlowDraft().sshTask;
         void sshActions.execute('machines.add.ssh.start', input).then(result => {
             // Admission failures belong to their originating draft, not a task accepted meanwhile.
@@ -318,7 +320,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         body: taskError ? resolveSystemTaskFailureMessage(taskError) ?? t('settings.systemTaskStartFailed') : handle?.startError ?? t('settings.systemTaskStartFailed'), details: null,
     } : null;
     const run = handle ? { kind: draft.path === 'ssh' ? 'ssh' as const : 'thisComputer' as const, running: handle.starting || Boolean(snapshot && !snapshot.result), steps, failure, prompt: draft.path === 'ssh' ? sshPrompt : localPrompt } : null;
-    const commands = React.useMemo(() => chosen?.runs === 'command' && profile ? Object.fromEntries(
+    // Over SSH the command is also the app's "Run it yourself" fallback beside Connect and install.
+    const commands = React.useMemo(() => (chosen?.runs === 'command' || chosen?.id === 'ssh') && profile ? Object.fromEntries(
         MACHINE_ADD_COMMAND_OS.map((os) => [os, buildMachineAddCommand({ os, descriptor, profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl,
             ...(chosen.id === 'ssh' ? { kind: 'sshMachine' as const, sshDraft: draft.sshDraft } : { kind: 'joinHome' as const }),
         })]),
@@ -345,6 +348,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const continueSshPrompt = React.useCallback(() => {
         if (!sshPrompt) return;
         switch (sshPrompt.kind) {
+            case 'administrator.establish': respondSsh({ kind: sshPrompt.kind, promptId: sshPrompt.promptId }); break;
             case 'ssh.password': respondSsh({ kind: sshPrompt.kind }); break;
             case 'ssh.trustHost': case 'ssh.replaceHostKey': respondSsh({ kind: sshPrompt.kind, trusted: true }); break;
             case 'auth.approveRemoteProvisioning': respondSsh({ kind: sshPrompt.kind, approved: true }); break;

@@ -93,10 +93,15 @@ export type MachineAddStep = Readonly<{
     elapsedMs: number | null;
 }>;
 
-/** A running setup's steps, as the system task reports them (lab MS "setting up", MS2 "running"). */
+/**
+ * A running setup's steps, as the system task reports them (lab MS "setting up", MS2 "running"). Over SSH the
+ * card opens with the server it is setting up and, on a phone, closes with the hold line (lab af-ssh Ip).
+ */
 export const MachineAddStepList = React.memo(function MachineAddStepList(props: Readonly<{
     testID: string;
     steps: readonly MachineAddStep[];
+    identity?: Readonly<{ title: string; subtitle: string }> | null;
+    hold?: string | null;
 }>) {
     const steps = React.useMemo(() => props.steps.map((step): SetupStep => {
         const state = step.state === 'pending' ? 'upcoming' : step.state;
@@ -109,9 +114,25 @@ export const MachineAddStepList = React.memo(function MachineAddStepList(props: 
         };
     }), [props.steps, props.testID]);
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     return (
         <View style={styles.steps}>
+            {props.identity ? (
+                <View testID={`${props.testID}.identity`} style={styles.identity}>
+                    <Icon name="hard-drives" size={22} color={theme.colors.text.secondary} />
+                    <View style={styles.cardCopy}>
+                        <Text style={styles.cardName} numberOfLines={1}>{props.identity.title}</Text>
+                        <Text style={styles.cardFact} numberOfLines={1}>{props.identity.subtitle}</Text>
+                    </View>
+                </View>
+            ) : null}
             <SetupSteps variant="checklist" steps={steps} />
+            {props.hold ? (
+                <View testID={`${props.testID}.hold`} style={styles.hold}>
+                    <Icon name="device-mobile" size={16} color={theme.colors.text.secondary} />
+                    <Text style={styles.holdText}>{props.hold}</Text>
+                </View>
+            ) : null}
         </View>
     );
 });
@@ -259,6 +280,28 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.border.default,
         overflow: 'hidden',
         paddingHorizontal: theme.space.s12,
+    },
+    identity: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s12,
+        paddingTop: theme.space.s12,
+        paddingBottom: theme.space.s4,
+    },
+    hold: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s10,
+        marginBottom: theme.space.s12,
+        padding: theme.space.s12,
+        borderRadius: theme.borderRadius.md,
+        backgroundColor: theme.colors.surface.inset,
+    },
+    holdText: {
+        flex: 1,
+        minWidth: 0,
+        ...Typography.variant('body', 'medium'),
+        color: theme.colors.text.primary,
     },
     arrived: {
         gap: theme.space.s12,

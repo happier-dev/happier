@@ -4,9 +4,38 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/config', () => ({ config: { variant: 'production', identityVariant: 'stable' } }));
 import { buildMachineAddCommand, detectClientCommandOs, MACHINE_ADD_COMMAND_OS } from './machineAddCommand';
 import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredentialsDraft';
+import { MachineAddCommandInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
+import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 const home = { descriptor: null, profileSource: null, fallbackHomeUrl: 'https://home.example.test' };
 describe('machine add commands', () => {
+    it('admits reviewed SSH identity at the public command request boundary', () => {
+        const enrollmentIdentity = ManagedMachineEnrollmentIdentityV1Schema.parse({ kind: 'dedicatedDaemonUser', username: 'happier',
+            serviceMode: 'user', role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } });
+        const input = { method: 'ssh', serverId: 'home', os: 'linux', host: 'server', enrollmentIdentity };
+        expect(MachineAddCommandInputSchema.safeParse(input).success).toBe(true);
+    });
+    it.each(MACHINE_ADD_COMMAND_OS)('carries reviewed SSH server identity and administrator choice without a password (%s)', os => {
+        const input = { ...home, kind: 'sshMachine' as const, os, sshDraft: {
+            ...createDefaultSshCredentialsDraft(), host: 'server.example.test', username: 'root',
+        }, enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const,
+            serviceMode: 'user' as const, role: 'server' as const, adminAccessAtCreation: 'none' as const } };
+        const command = buildMachineAddCommand(input);
+        expect(command).toContain('--role server');
+        expect(command).toContain('--admin-access none');
+        expect(command).not.toContain('--service-mode');
+    });
+
+    it.each(MACHINE_ADD_COMMAND_OS)('preserves the reviewed Ask administrator in the command (%s)', os => {
+        const command = buildMachineAddCommand({ ...home, kind: 'sshMachine', os,
+            sshDraft: { ...createDefaultSshCredentialsDraft(), host: 'server', username: 'root' },
+            enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget',
+                adminAccessAtCreation: 'ask', administrator: { username: 'operator' } },
+        });
+        expect(command).toContain('--role deployTarget --admin-access ask --administrator operator');
+        expect(command).not.toContain('--password');
+    });
+
     it('installs and joins the descriptor-proven Home on each OS', () => {
         for (const os of MACHINE_ADD_COMMAND_OS) {
             const command = buildMachineAddCommand({ ...home, os, kind: 'joinHome', descriptor: {
@@ -29,13 +58,15 @@ describe('machine add commands', () => {
             const command = buildMachineAddCommand({ ...home, kind: 'sshMachine', os, sshDraft: {
                 ...createDefaultSshCredentialsDraft(), host: 'build-box', username: 'operator', port: '2222', authMode: 'keyfile', identityFilePath: '/keys/id_ed25519',
             } });
-            expect(command).toContain(' machine setup ');
+            expect(command).toContain(' machine enroll ');
             expect(command).toContain('--home-url https://home.example.test');
             expect(command).toContain('--ssh-host build-box');
             expect(command).toContain('--ssh-user operator');
             expect(command).toContain('--ssh-port 2222');
             expect(command).toContain('--ssh-auth keyfile');
             expect(command).toContain('--identity-file /keys/id_ed25519');
+            expect(command).not.toContain('--role');
+            expect(command).not.toContain('--admin-access');
             expect(command).toContain('--yes');
         }
     });

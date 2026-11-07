@@ -56,6 +56,36 @@ async function admitSsh(serverId: string, accountId: string) {
 beforeEach(async () => { await harness.reset(); await selectActiveTestHomeForTests(); });
 afterEach(async () => { await act(async () => discardMachineAdd()); publishAppliedActiveServerRuntimeAvailability(false); vi.useRealTimers(); standardCleanup(); });
 describe('machine add flow lifetime', () => {
+
+    it('carries the mounted SSH review identity through its real Action start and secure continuation', async () => {
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://mounted-identity.example.test', name: 'Mounted identity', accountId: 'alice' });
+        const manual = createManualSystemTaskRunner('native');
+        const { Modal } = await import('@/modal');
+        let unmount: (() => Promise<void>) | undefined;
+        vi.stubGlobal('isTauri', true);
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            const hook = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialPath: 'ssh' }));
+            unmount = () => hook.unmount();
+            const enrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server',
+                adminAccessAtCreation: 'ask', administrator: { username: 'operator' } } as const;
+            await act(async () => hook.getCurrent().ssh.setDraft({ ...hook.getCurrent().ssh.draft, host: 'server', username: 'root',
+                enrollmentIdentity }));
+            await act(async () => hook.getCurrent().startSsh());
+            await vi.waitFor(() => expect(readMachineAddFlowDraft().sshTask?.taskId).toBeTruthy());
+            const taskId = readMachineAddFlowDraft().sshTask!.taskId!;
+            expect(manual.bridge.start.mock.calls.find(([spec]) => spec.kind === 'remote.ssh.bootstrapMachine.v1')?.[0])
+                .toMatchObject({ params: { enrollmentIdentity } });
+            await act(async () => manual.emitEvent(taskId, { type: 'prompt', message: 'Establish administrator', data: {
+                kind: 'administrator.establish', promptId: 'mounted-establish', administratorUsername: 'operator' } }));
+            vi.mocked(Modal.prompt).mockResolvedValueOnce('fixture-mounted-password');
+            await act(async () => hook.getCurrent().continueSshPrompt());
+            await vi.waitFor(() => expect(manual.bridge.respond).toHaveBeenLastCalledWith(taskId, { password: 'fixture-mounted-password' }));
+        } finally { await unmount?.(); await act(async () => discardMachineAdd()); storage.setState(previous); vi.unstubAllGlobals(); }
+    });
+
     it.each(['another_account', 'read_failed'] as const)('reads cold local daemon facts before an agent can move This computer away from another Account (%s)', async outcome => {
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
         const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
@@ -294,6 +324,8 @@ describe('machine add flow lifetime', () => {
             await act(async () => hook.getCurrent().ssh.setDraft({ ...hook.getCurrent().ssh.draft, host: 'pending-box' }));
             await act(async () => hook.getCurrent().startSsh());
             await vi.waitFor(() => expect(readMachineAddFlowDraft().sshTask?.starting).toBe(true));
+            // Plan 71:584 distinguishes pre-dispatch refusal from cancellation of an issued OS start.
+            await vi.waitFor(() => expect(manual.bridge.start).toHaveBeenCalledWith(expect.objectContaining({ kind: 'remote.ssh.bootstrapMachine.v1' })));
             expect(hook.getCurrent().run?.running).toBe(true);
             await act(async () => discardMachineAdd());
             await act(async () => finishStart('pending-ssh-task'));

@@ -8,6 +8,9 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Load the real route graph outside per-interaction budgets, as the picker harness does.
+await import('./MachineAddDraftScreen');
+await import('./MachineAddForm');
 beforeEach(async () => { await harness.reset(); });
 afterEach(async () => { const { discardMachineAdd } = await import('./useMachineAddFlow'); await act(async () => discardMachineAdd()); standardCleanup(); });
 
@@ -24,20 +27,24 @@ describe('Add machine Connect and Create entry', () => {
         await screen.unmount();
     });
 
-    it('keeps creation reads asleep until the person opens Create', async () => {
-        await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner' });
-        const { MachineAddForm } = await import('./MachineAddForm');
-        const screen = await renderScreen(<MachineAddForm layout="page" canCreate testID="settings.machines.draft.form" onClose={() => {}} onStartSession={() => {}} />);
-        expect(harness.requests.some(request => request.path.includes('machines.provisioners'))).toBe(false);
-        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.path:create').length).toBeGreaterThan(0));
-        await act(async () => screen.pressByTestId('settings.machines.draft.form.path:create'));
-        expect(screen.tree.findAll(node => node.props.testID === 'managed-picker').length).toBeGreaterThan(0);
-        // Create one is a fourth way to add, not a second tab layer, and the rail's draft says what is happening.
+    it('opens on Create one in the cloud in a browser, Create first on the bar (58d §D2)', async () => {
+        const target = await harness.addHome({ name: 'Build', serverUrl: 'https://creation-on.example', serverIdentityId: 'srv_creation_on', accountId: 'owner' });
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const screen = await renderScreen(<MachineAddDraftScreen />);
+        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-picker').length).toBeGreaterThan(0));
+        // Create one is the first way in, beside the connection paths, not a second tab layer.
+        const segmentIds = screen.tree.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('settings.machines.draft.form.path:'))
+            .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
+        expect(segmentIds[0]).toBe('settings.machines.draft.form.path:create');
         expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.mode:create')).toHaveLength(0);
-        // The add flow owner records it, so the rail's draft row stops saying it is waiting to connect.
         const { readMachineAddFlowDraft } = await import('./machineAddFlowStore');
         expect(readMachineAddFlowDraft().creating).toBe(true);
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
+        // Choosing a connection path leaves Create one.
+        await act(async () => screen.pressByTestId('settings.machines.draft.form.path:ssh'));
+        expect(screen.tree.findAll(node => node.props.testID === 'managed-picker')).toHaveLength(0);
+        expect(readMachineAddFlowDraft().creating).toBe(false);
         await screen.unmount();
     });
 
@@ -60,29 +67,6 @@ describe('Add machine Connect and Create entry', () => {
         await flushHookEffects({ cycles: 5 });
         expect(readMachineAddFlowDraft().startedAtMs).not.toBeNull();
         expect(watchLines()).toHaveLength(0);
-        await screen.unmount();
-    });
-
-    it('groups the ways in as Connect | Create on a phone, with the connection paths under Connect', async () => {
-        // Dimensions is the window authority; useWindowDimensions and the presentation readers follow it.
-        vi.spyOn((await import('react-native')).Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
-        await harness.addHome({ name: 'Build', serverUrl: 'https://build-phone.example', serverIdentityId: 'srv_build_phone', accountId: 'owner' });
-        const { MachineAddForm } = await import('./MachineAddForm');
-        const screen = await renderScreen(<MachineAddForm layout="page" canCreate testID="settings.machines.draft.form" onClose={() => {}} onStartSession={() => {}} />);
-        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.path:create').length).toBeGreaterThan(0));
-        const segments = (id: string) => screen.tree.findAll(node => node.props.testID === `settings.machines.draft.form.path:${id}`).length;
-        // Two segments at phone width (lab m-add Ap), not one per path.
-        expect(segments('connect')).toBeGreaterThan(0);
-        expect(segments('ssh')).toBe(0);
-        expect(segments('anotherComputer')).toBe(0);
-        // Every connection path stays one press away under Connect.
-        await act(async () => screen.pressByTestId('settings.machines.draft.form.connectPath.ssh'));
-        const { readMachineAddFlowDraft } = await import('./machineAddFlowStore');
-        expect(readMachineAddFlowDraft().path).toBe('ssh');
-        expect(readMachineAddFlowDraft().creating).toBe(false);
-        await act(async () => screen.pressByTestId('settings.machines.draft.form.path:create'));
-        expect(readMachineAddFlowDraft().creating).toBe(true);
-        expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.connectPath.ssh')).toHaveLength(0);
         await screen.unmount();
     });
 });

@@ -6,6 +6,7 @@ import type { AwaitedMachineArrivalBaseline } from '@/components/onboarding/dete
 import type { MachineAddPathId } from './machineAddPaths';
 import type { MachineAddCommandOs } from './machineAddCommand';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 export type MachineAddTaskHandle = Readonly<{
     runner: SystemTaskRunner;
@@ -23,6 +24,7 @@ export type MachineAddTaskHandle = Readonly<{
 }>;
 export type MachineAddSshDraft = SshCredentialsDraft & Readonly<{
     privateKeyMaterial?: string; savedHostId?: string | null; savedHostExpectedRevision?: number | 'absent';
+    enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
 }>;
 export type MachineAddFlowDraft = Readonly<{
     serverId: string | null;
