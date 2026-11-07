@@ -5,6 +5,7 @@ import { readWorkspacePackages, workspaceSourcePackageClosure } from '../../../.
 import { readBundledPluginPackageNames } from '../../../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scripts/build-owned/bundledPlugins/projectionPaths.mjs';
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
+import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
@@ -129,6 +130,8 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
     };
     const inputs = readWorkspaceBuildInputs(root, options);
     for (const input of inputs) {
+      if (path === 'apps/ui' && (Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS).includes(input)
+        || basename(input) === SOURCE_UI_ASSET_RECORD_FILENAME)) continue;
       // Retained checkout databases are data, never compiler inputs.
       if (path === 'apps/server' && input.startsWith('prisma/')
         && !/\.(?:prisma|sql)$/.test(input) && !input.endsWith('/migration_lock.toml')) continue;

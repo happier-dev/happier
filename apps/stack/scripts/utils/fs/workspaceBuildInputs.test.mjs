@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readSourceComponentBuildInputs, readSourcePluginUiBuildInputs, readWorkspaceBuildInputs, resolveWorkspaceBuildInputWatchPaths } from './workspaceBuildInputs.mjs';
 
 test('plugin UI inputs follow consumed workspace files instead of dependency package membership', async t => {
@@ -124,4 +125,22 @@ test('source plugin UI inputs admit shipped author Resources and exclude their g
   await writeFile(join(root, 'dist/happier-plugin-ui/locale.json.bundle'), 'generated-output-changed');
   await writeFile(join(root, '.happier-plugin/plugin.json'), 'generated-output-changed');
   assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), changed);
+});
+
+test('source UI input capture excludes prepared inventories while retaining their authored consumer', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-ui-asset-inputs-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  await mkdir(fixture.path('apps/ui'), { recursive: true });
+  await writeFile(fixture.path('apps/ui/package.json'), JSON.stringify({ name: 'fixture-ui' }));
+  const consumer = 'sources/text/localeBundleLoaders.web.ts';
+  const outputs = [...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS), `sources/${SOURCE_UI_ASSET_RECORD_FILENAME}`];
+  for (const path of [consumer, ...outputs]) {
+    await mkdir(dirname(fixture.path('apps/ui', path)), { recursive: true });
+    await writeFile(fixture.path('apps/ui', path), 'export {};\n');
+  }
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'expo' });
+  assert.ok(inputs.files.includes(`apps/ui/${consumer}`));
+  for (const output of outputs) assert.equal(inputs.files.includes(`apps/ui/${output}`), false,
+    'prepared references must be regenerated against the captured project before Expo resolves them');
 });

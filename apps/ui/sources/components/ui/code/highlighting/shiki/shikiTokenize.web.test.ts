@@ -10,9 +10,12 @@ const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
     codeToTokens: codeToTokensSpy,
 }));
 
-vi.mock('shiki', () => ({
+vi.mock('shiki/langs', () => ({
     bundledLanguages: { javascript: {}, js: {}, text: {}, typescript: {}, ts: {} },
-    createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
+}));
+
+vi.mock('shiki/core', () => ({
+    createBundledHighlighter: () => createHighlighterSpy,
 }));
 
 function makeColors(keyword: string) {

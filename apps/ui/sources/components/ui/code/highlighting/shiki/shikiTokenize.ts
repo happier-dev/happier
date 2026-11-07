@@ -1,4 +1,4 @@
-import type { BundledLanguage, BundledTheme, HighlighterGeneric, TokensResult } from 'shiki';
+import type { BundledLanguage, HighlighterGeneric, TokensResult } from 'shiki';
 
 import { resolveShikiLanguageId } from '@/components/ui/code/highlighting/resolveShikiLanguageId';
 import {
@@ -13,7 +13,7 @@ export type ShikiInlineToken = Readonly<{ text: string; color: string }>;
 
 type ShikiToken = Readonly<{ content: string; color?: string }>;
 type ShikiCodeToTokensResult = Readonly<{ tokens: readonly (readonly ShikiToken[])[]; fg?: string }>;
-type ShikiHighlighter = HighlighterGeneric<BundledLanguage, BundledTheme>;
+type ShikiHighlighter = HighlighterGeneric<BundledLanguage, string>;
 
 type CachedHighlighter = Readonly<{
     highlighter: ShikiHighlighter;
@@ -106,19 +106,24 @@ async function getShikiHighlighterForTheme(params: Readonly<{ themeId: string; i
 
     const cacheGeneration = getHighlighterCacheGeneration(cacheKey);
     const promise: Promise<CachedHighlighter> = (async () => {
-        const [{ createHighlighter }, { createShikiRegexEngine }] = await Promise.all([
-            import('shiki'),
+        const [{ createBundledHighlighter }, { loadShikiLanguages }, { createShikiRegexEngine }] = await Promise.all([
+            import('shiki/core'),
+            import('./loadShikiLanguages'),
             import('./createShikiRegexEngine'),
         ]);
+        const createHighlighter = createBundledHighlighter<BundledLanguage, string>({
+            langs: await loadShikiLanguages(),
+            themes: {},
+            engine: createShikiRegexEngine,
+        });
         const theme = getHappierTextMateThemeRegistration({ isDark: params.isDark, colors: params.colors });
-        const langs = Array.from(new Set(['text', params.languageId])) as unknown as BundledLanguage[];
+        const langs = Array.from(new Set(['text', params.languageId]));
         const highlighter = await createHighlighter({
-            themes: [theme as any],
+            themes: [theme],
             langs,
-            engine: await createShikiRegexEngine(),
         });
 
-        const entry = { highlighter: highlighter as any, loadedLanguageIds: new Set<string>(langs as unknown as string[]) };
+        const entry = { highlighter, loadedLanguageIds: new Set(langs) };
         if (getHighlighterCacheGeneration(cacheKey) === cacheGeneration) {
             setHighlighterCacheEntry(cacheKey, entry);
         }
@@ -190,7 +195,7 @@ export async function shikiTokenizeLines(params: Readonly<{
 
     const res = highlighter.codeToTokens(code, {
         lang: languageId as unknown as BundledLanguage,
-        theme: themeId as unknown as BundledTheme,
+        theme: themeId,
     }) as unknown as TokensResult;
 
     const fg = typeof (res as any).fg === 'string' ? (res as any).fg : '#000';

@@ -1197,6 +1197,19 @@ Expo resolves the canonical web app entry for every development bundle, map and
 HMR request, including chunk URLs retained by older tabs. Chunk responses keep
 their module-only, non-executing options, so they reuse that graph without
 reinstalling the runtime or running the app entry again.
+Web translation payloads and Shiki grammars use registered Expo assets so their
+unselected bodies stay outside the initial development response. English fallback
+remains synchronous; the existing locale owner awaits the selected compiled
+locale, including formatter functions, and retains its cache and explicit retry
+behavior. Native translation loading keeps its synchronous adapter.
+The source UI preparation child builds both asset inventories for the live or
+captured UI project. Its existing Metro watcher refreshes changed inputs through
+one queue, reuses unchanged producer inputs, and publishes source references only
+after Metro indexes their asset files. Startup admission requires the inventories
+and consumed files; finite exports prepare them in the captured project before
+Expo collects assets. Executable translation assets use the app's ordinary script
+evaluation policy; a custom deployment CSP that prohibits evaluation requires
+separate deployment validation.
 For stable native profiling, disable Fast Refresh in the React Native Dev Menu.
 That pauses update application; explicit reloads remain separate.
 

@@ -1,3 +1,5 @@
+// @happier-test-preparation source
+// Preparation imports authored SDK TypeScript, as the source child does.
 // Preparation imports authored SDK TypeScript, as the source child does.
 import '../../../packages/cli-common/registerSourceRuntime.mjs';
 import test from 'node:test';
@@ -66,10 +68,77 @@ test('cold declaration inventory defers full manifests and loads only the demand
   } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
 });
 
+test('declaration data stays outside Metro JavaScript as schema fields grow', async t => {
+  const fixture = await createFixture();
+  try {
+    const manifestPath = join(fixture.repoRoot, 'packages/plugins/fixture/.happier-plugin/plugin.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.contributes.actions = [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'],
+      placementBindings: [], dangerLevel: 'safe', execution: { target: 'daemon' },
+      inputSchema: { type: 'object', properties: {} } }];
+    const require = createRequire(join(packageRoot, 'package.json'));
+    const config = require('@expo/metro-config').getDefaultConfig(packageRoot);
+    const worker = require(config.transformerPath);
+    const counts = [];
+    for (const size of [1, 1000]) {
+      manifest.contributes.actions[0].inputSchema.properties = Object.fromEntries(
+        Array.from({ length: size }, (_, index) => [`field${index}`, { type: 'string', description: `Value ${index}` }]),
+      );
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const generated = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
+      const output = await readFile(generated.outputPath, 'utf8');
+      const declarationPath = resolveBundledPluginUiArtifactsInputPaths(generated.outputPath)
+        .find(path => path.endsWith('/declaration.json.bundle'));
+      assert.ok(declarationPath, 'full declarations must be packaged assets, not transitive JavaScript modules');
+      const inventory = readEmittedPluginUiInventory(output);
+      const declaration = await inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].loadDeclaration();
+      assert.deepEqual(declaration.normalizedManifest.contributes.actions[0].inputSchema.properties,
+        manifest.contributes.actions[0].inputSchema.properties);
+      const source = await readFile(declarationPath);
+      assert.deepEqual(readBundledPluginUiDeclarationSource(source.toString()), declaration);
+      assert.deepEqual(readBundledPluginUiDeclarationSource(`export const declaration = ${JSON.stringify(declaration)};`), declaration,
+        'a previously served literal declaration remains available to last-good retention');
+      const transformed = await worker.transform(config.transformer, packageRoot, declarationPath,
+        source, { dev: true, hot: false, minify: false, inlineRequires: false,
+          platform: 'web', type: 'asset', unstable_transformProfile: 'hermes-stable', customTransformOptions: {} });
+      assert.equal(transformed.output.some(({ data }) => data.code?.includes('Value 999')), false,
+        'the compiled root receives an asset descriptor without schema contents');
+      counts.push(transformed.output.reduce((sum, output) => sum + (output.data.map?.length ?? 0), 0));
+    }
+    t.diagnostic(`Metro mappings: one schema field=${counts[0]}, one thousand fields=${counts[1]}`);
+    assert.equal(counts[1], counts[0], 'declaration JSON fields must not multiply retained Metro source-map tuples');
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+let declarationAssetReader;
 function readEmittedPluginUiInventory(output, requireAsset = () => 1) {
+  if (!declarationAssetReader) {
+    const require = createRequire(import.meta.url);
+    const { buildSync } = require('esbuild');
+    const compiled = buildSync({
+      entryPoints: [join(packageRoot, 'sources/sync/domains/plugins/availability/bundledPluginUiArtifactAssetReader.ts')],
+      bundle: true, packages: 'external', platform: 'node', format: 'cjs', write: false,
+      alias: { '@': join(packageRoot, 'sources') },
+    });
+    const module = { exports: {} };
+    runInNewContext(compiled.outputFiles[0].text, {
+      module, exports: module.exports, JSON, Uint8Array, TextDecoder, fetch,
+      require: name => name === 'expo-asset' ? {
+        // Expo's packaged-asset lookup is the platform boundary. The reader and JSON decode stay real.
+        Asset: { fromModule: asset => ({
+          uri: `data:application/json;base64,${fs.readFileSync(asset).toString('base64')}`,
+          downloadAsync: async () => {},
+        }) },
+      } : require(name),
+    });
+    declarationAssetReader = module.exports.readBundledPluginUiDeclarationAsset;
+  }
   // Native assets are the external boundary; the generated data stays real.
-  return runInNewContext(`${output.replaceAll('export const ', 'const ').replaceAll('import(', 'loadDeclarationModule(')}\n({ BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_PACKAGED_RESOURCES: typeof BUNDLED_PLUGIN_PACKAGED_RESOURCES === 'undefined' ? [] : BUNDLED_PLUGIN_PACKAGED_RESOURCES });`, {
-    require: requireAsset, Uint8Array, loadDeclarationModule: specifier => import(pathToFileURL(specifier).href),
+  const source = output.replace(/^import \{ readBundledPluginUiDeclarationAsset \} from .+;$/m, '');
+  return runInNewContext(`${source.replaceAll('export const ', 'const ').replaceAll('import(', 'loadDeclarationModule(')}\n({ BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_PACKAGED_RESOURCES: typeof BUNDLED_PLUGIN_PACKAGED_RESOURCES === 'undefined' ? [] : BUNDLED_PLUGIN_PACKAGED_RESOURCES });`, {
+    require: asset => asset.endsWith('/declaration.json.bundle') ? asset : requireAsset(asset),
+    readBundledPluginUiDeclarationAsset: declarationAssetReader,
+    Uint8Array, loadDeclarationModule: specifier => import(pathToFileURL(specifier).href),
   });
 }
 

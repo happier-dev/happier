@@ -323,13 +323,13 @@ async function exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir, in
 
 /** Live Metro and finite exports share source artifact construction. Only a
  * finite export captures inputs; interactive Expo intentionally reads live source. */
-export async function prepareSourcePluginUiInventory({ repoDir, inputRepoDir = repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, env = process.env, signal,
+export async function prepareSourcePluginUiInventory({ repoDir, inputRepoDir = repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication = false, env = process.env, signal,
   stdoutStream = process.stdout, devStartup = false }) {
   await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
-    args: [JSON.stringify({ repoDir: inputRepoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir })], env, signal, captureStdout: false, captureStderr: true, stdoutStream, devStartup });
+    args: [JSON.stringify({ repoDir: inputRepoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication })], env, signal, captureStdout: false, captureStderr: true, stdoutStream, devStartup });
 }
 
-async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir }) {
+async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, deferSourceAssetsPublication }) {
   const uiProjectDir = join(repoDir, 'apps/ui');
   const packages = await readWorkspacePackages(repoDir);
   const uiPackage = JSON.parse(await readFile(join(uiProjectDir, 'package.json'), 'utf8'));
@@ -350,12 +350,14 @@ async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, ret
   const preparationPath = join(toolsDir, 'prepare.mjs');
   const source = [
     `import { prepareSourcePluginUiArtifacts } from ${JSON.stringify(join(uiProjectDir, 'scripts/prepareSourcePluginUiArtifacts.mjs'))};`,
+    `import { prepareSourceUiAssets, resolveSourceUiAssetsRecordPath } from ${JSON.stringify(join(uiProjectDir, 'scripts/prepareSourceUiAssets.mjs'))};`,
     `import { readWorkspacePackages, resolveWorkspaceSource } from ${JSON.stringify(join(repoDir, 'packages/cli-common/sourceRuntimeEntries.mjs'))};`,
     `import { pathToFileURL } from 'node:url';`,
     `const workspaces = await readWorkspacePackages(${JSON.stringify(repoDir)});`,
     `await prepareSourcePluginUiArtifacts({repoRoot:${JSON.stringify(repoDir)},outputDir:${JSON.stringify(inputsDir)},outputPath:${JSON.stringify(inventoryPath)},retainedInventoryPath:${JSON.stringify(retainedInventoryPath)},artifactStoreDir:${JSON.stringify(artifactStoreDir)},resolveSourceImport(specifier) { const name = specifier.split('/').slice(0,specifier.startsWith('@') ? 2 : 1).join('/'); if (workspaces.has(name) || specifier.startsWith('@happier-dev/')) return resolveWorkspaceSource(workspaces,specifier); },plugins:[${plugins.map(([name]) => (
       `{directory:${JSON.stringify(name.slice('@happier-dev/plugins-'.length))},loadManifest:async()=> (await import(pathToFileURL(resolveWorkspaceSource(workspaces,${JSON.stringify(`${name}/manifest`)})).href)).PLUGIN_MANIFEST,uiArtifacts:${Boolean(uiPackage.dependencies?.[name] && listBundledPluginUiArtifactExports(packages.get(name).manifest).length > 0)}}`
     )).join(',')}]});`,
+    `await prepareSourceUiAssets({uiPackageDir:${JSON.stringify(uiProjectDir)},outputDir:${JSON.stringify(inputsDir)},recordPath:resolveSourceUiAssetsRecordPath(${JSON.stringify(inventoryPath ?? join(inputsDir, 'inventory.js'))}),retainedRecordPath:resolveSourceUiAssetsRecordPath(${JSON.stringify(retainedInventoryPath ?? inventoryPath ?? join(inputsDir, 'inventory.js'))}),deferPublication:${Boolean(deferSourceAssetsPublication)}});`,
   ].join('\n');
   await writeFile(preparationPath, source);
   const preparationStartedAt = performance.now();

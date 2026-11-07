@@ -1,31 +1,80 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+
+import { generateShikiGrammarAssets } from '../../../../../../scripts/generateShikiGrammarAssets.mjs';
 
 import { clearShikiCacheForKey, resolveHappierShikiThemeId, shikiTokenizeLines } from './shikiTokenize';
 
 describe('shikiTokenizeLines with the real highlighter', () => {
     it('loads the real highlighter and requested grammar on first use in a compiled web bundle', async () => {
-        const result = await build({
-            entryPoints: [resolve(process.cwd(), 'sources/components/ui/code/highlighting/shiki/shikiTokenize.ts')],
-            bundle: true, format: 'cjs', platform: 'node', write: false,
-            resolveExtensions: ['.web.ts', '.web.tsx', '.ts', '.tsx', '.mjs', '.js', '.json'],
-            external: ['react-native'],
-        });
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const native = await createReactNativeWebMock();
-        const nodeRequire = createRequire(resolve(process.cwd(), 'package.json'));
-        const compiled = { exports: {} };
-        // Only the genuine native platform SDK leaves the compiled owner graph.
-        new Function('require', 'module', 'exports', result.outputFiles![0].text)(
-            (specifier: string) => specifier === 'react-native' ? native : nodeRequire(specifier), compiled, compiled.exports,
-        );
-        const owner = compiled.exports as typeof import('./shikiTokenize');
-        const lines = ['const answer = 42;'];
-        const highlighted = await owner.shikiTokenizeLines({ isDark: false, language: 'typescript', lines });
-        expect(highlighted.tokensByLine[0].map(token => token.text).join('')).toBe(lines[0]);
-        expect(new Set(highlighted.tokensByLine[0].map(token => token.color)).size).toBeGreaterThan(1);
+        const directory = await mkdtemp(join(tmpdir(), 'happier-shiki-'));
+        try {
+            const { outputPath } = await generateShikiGrammarAssets({
+                uiPackageDir: process.cwd(), outputDirectory: join(directory, 'assets'), outputPath: join(directory, 'inventory.js'),
+            });
+            const result = await build({
+                entryPoints: [resolve(process.cwd(), 'sources/components/ui/code/highlighting/shiki/shikiTokenize.ts')],
+                bundle: true, format: 'cjs', platform: 'node', write: false,
+                metafile: true,
+                resolveExtensions: ['.web.ts', '.web.tsx', '.ts', '.tsx', '.mjs', '.js', '.json'],
+                external: ['react-native', 'expo-asset', 'expo-file-system'],
+                plugins: [{
+                    name: 'packaged-asset-filesystem-boundary',
+                    setup(plugin) {
+                        plugin.onResolve({ filter: /generatedShikiGrammarAssets$/ }, () => ({ path: outputPath }));
+                        plugin.onLoad({ filter: /\.json\.bundle$/ }, ({ path }) => ({
+                            contents: `module.exports = ${JSON.stringify(path)};`, loader: 'js',
+                        }));
+                    },
+                }],
+            });
+            expect(Object.keys(result.metafile!.inputs).filter(file => /(?:^|\/)node_modules\/@shikijs\/themes\//.test(file)),
+                'custom Happier themes must not download Shiki built-in themes').toEqual([]);
+            expect(Object.keys(result.metafile!.inputs).filter(file => /(?:^|\/)node_modules\/@shikijs\/langs\//.test(file)),
+                'web tokenization must fetch requested grammars as assets instead of including every grammar in JavaScript').toEqual([]);
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            const native = await createReactNativeWebMock();
+            const nodeRequire = createRequire(resolve(process.cwd(), 'package.json'));
+            const compiled = { exports: {} };
+            const reads: string[] = [];
+            vi.stubGlobal('fetch', async (url: string) => {
+                const path = decodeURIComponent(new URL(url).pathname.slice(1));
+                reads.push(path);
+                return new Response(new Uint8Array(await readFile(path)));
+            });
+            // Platform SDKs and asset I/O leave the compiled owner graph; the
+            // generated inventory, real Shiki core and grammar payloads remain real.
+            new Function('require', 'module', 'exports', result.outputFiles![0].text)(
+                (specifier: string) => {
+                    if (specifier === 'react-native') return native;
+                    if (specifier === 'expo-asset') return { Asset: { fromModule: (path: string) => ({
+                        uri: `https://shiki.test/${encodeURIComponent(path)}`, downloadAsync: async () => {},
+                    }) } };
+                    return nodeRequire(specifier);
+                }, compiled, compiled.exports,
+            );
+            const owner = compiled.exports as typeof import('./shikiTokenize');
+            const lines = ['const answer = 42;'];
+            const highlighted = await owner.shikiTokenizeLines({ isDark: false, language: 'typescript', lines });
+            expect(highlighted.tokensByLine[0].map(token => token.text).join('')).toBe(lines[0]);
+            expect(new Set(highlighted.tokensByLine[0].map(token => token.color)).size).toBeGreaterThan(1);
+            expect(reads).toHaveLength(1);
+            const customized = await owner.shikiTokenizeLines({ isDark: false, language: 'ts', lines,
+                colors: { syntax: { keyword: '#123456' } } });
+            expect(customized.tokensByLine[0].find(token => token.text === 'const')?.color).toBe('#123456');
+            expect(reads).toHaveLength(1);
+            const vueLines = ['<template><div>{{ answer }}</div></template>', '<script setup lang="ts">const answer = 42;</script>'];
+            const vue = await owner.shikiTokenizeLines({ isDark: false, language: 'vue', lines: vueLines });
+            expect(vue.tokensByLine.map(row => row.map(token => token.text).join(''))).toEqual(vueLines);
+            expect(new Set(vue.tokensByLine.flat().map(token => token.color)).size).toBeGreaterThan(1);
+        } finally {
+            vi.unstubAllGlobals();
+            await rm(directory, { recursive: true, force: true });
+        }
     });
     it('exposes grammar tokens independently of color-token merging', async () => {
         const owner = await import('./shikiTokenize');

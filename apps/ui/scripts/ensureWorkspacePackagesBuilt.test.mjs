@@ -8,6 +8,7 @@ import { computeSourceDevSharedDepsSignature } from '../../cli/scripts/buildShar
 import { resolveBundledPluginUiArtifactsOutputPath } from './generateBundledPluginUiArtifacts.mjs';
 import { captureSourceWebBuildInputs } from '../../stack/scripts/build/build_source_runtime.mjs';
 import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
+import { SOURCE_UI_ASSET_OUTPUT_PATHS } from './sourceUiAssetPaths.mjs';
 
 test('source preparation retains last-green assets while refreshing healthy plugin bytes in non-strict modes', async context => {
   const fixture = await createTempFixture(context, { prefix: 'happier-ui-source-retention-' });
@@ -21,6 +22,10 @@ test('source preparation retains last-green assets while refreshing healthy plug
   const uiPackageDir = join(repoRoot, 'apps/ui');
   const cliManifestPath = join(repoRoot, 'apps/cli/package.json');
   const cliManifest = JSON.parse(await readFile(cliManifestPath, 'utf8'));
+  for (const output of Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS)) {
+    await assert.rejects(readFile(join(uiPackageDir, output)), { code: 'ENOENT' },
+      'source capture must exclude prepared inventories before the canonical prep generates them');
+  }
   await writeFile(cliManifestPath, JSON.stringify({ ...cliManifest, bundledDependencies: ['@happier-dev/plugins-inspector'] }));
   const pluginSource = join(repoRoot, 'packages/plugins/inspector/src/ui/renderSurface.tsx');
   await writeFile(pluginSource, 'export function renderSurface() { return "healthy-plugin-before"; }\n');
@@ -42,6 +47,21 @@ test('source preparation retains last-green assets while refreshing healthy plug
     return readFile(JSON.parse(entry[1]), 'utf8');
   };
   await prepare();
+  const preparedOutputs = resolveUiWorkspaceStartupOutputs({ uiPackageDir, env });
+  assert.ok(preparedOutputs.includes(join(uiPackageDir, 'sources/text/localeAssets.generated.js')),
+    'source startup must require the locale inventory consumed by web');
+  assert.ok(preparedOutputs.some(path => path.endsWith('.locale.bundle')),
+    'source startup must require its compiled locale bytes');
+  assert.ok(preparedOutputs.includes(join(uiPackageDir, 'sources/components/ui/code/highlighting/shiki/generatedShikiGrammarAssets.js')),
+    'source startup must require the grammar inventory consumed by web');
+  assert.ok(preparedOutputs.some(path => path.endsWith('.json.bundle')),
+    'source startup must require its compiled grammar bytes');
+  const compiledLocalePath = preparedOutputs.find(path => path.endsWith('.locale.bundle'));
+  const compiledLocale = await readFile(compiledLocalePath, 'utf8');
+  await rm(compiledLocalePath);
+  await prepare();
+  assert.equal(await readFile(compiledLocalePath, 'utf8'), compiledLocale,
+    'same-input reuse must regenerate a missing consumed locale asset');
   const assetPath = join(uiPackageDir, 'sources/components/atmosphere/backdropWorkletCore.generated.js');
   const lastGreen = await readFile(assetPath, 'utf8');
   assert.ok(lastGreen.length > 0);
@@ -116,6 +136,8 @@ test('workspace startup admits Metro inputs independently of workspace dist publ
     const outputPath = resolveBundledPluginUiArtifactsOutputPath(root);
     await mkdir(join(outputPath, '..'), { recursive: true });
     await writeFile(outputPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\n');
+    // Source asset admission is independent of workspace dist publication too.
+    await writeFile(join(outputPath, '../source-assets.json'), JSON.stringify({ inputPaths: [], outputPaths: [], assetPaths: [] }));
     assert.equal(await lastGreen(), true);
     await rm(join(sdkDir, 'dist', 'index.js'));
     assert.equal(await lastGreen(), true);

@@ -9,6 +9,8 @@ import {
   syncSharedDepsForSourceDev as syncSharedDepsForSourceDevDefault,
 } from '../../stack/scripts/utils/proc/pm.mjs';
 import { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
+import { prepareSourceUiAssets, publishSourceUiAssets, readSourceUiAssetsRecord,
+  resolveSourceUiAssetsRecordPath } from './prepareSourceUiAssets.mjs';
 export { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 export { retainBundledPluginUiArtifactsInventory } from './generateBundledPluginUiArtifacts.mjs';
 import {
@@ -25,9 +27,12 @@ function isWithin(root, path) {
   return suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
 }
 
-async function waitForMetroPluginUiInventory({ metroServer, metroConfig, inventoryPath, artifactStoreDir, signal }) {
-  const paths = resolveBundledPluginUiArtifactsInputPaths(inventoryPath)?.slice(1);
-  if (!paths) throw new Error(`Invalid source Plugin UI inventory: ${inventoryPath}`);
+async function waitForMetroPluginUiInventory({ metroServer, metroConfig, inventoryPath, artifactStoreDir, sourceAssetsRecordPath = resolveSourceUiAssetsRecordPath(inventoryPath), signal }) {
+  const pluginPaths = resolveBundledPluginUiArtifactsInputPaths(inventoryPath)?.slice(1);
+  if (!pluginPaths) throw new Error(`Invalid source Plugin UI inventory: ${inventoryPath}`);
+  const pluginAssets = new Set(pluginPaths);
+  const sourceAssets = readSourceUiAssetsRecord(sourceAssetsRecordPath)?.assetPaths ?? [];
+  const paths = [...pluginPaths, ...sourceAssets];
   const roots = [metroConfig.projectRoot, ...metroServer.getWatchFolders()];
   const realRoots = await Promise.all(roots.map(root => realpath(root)));
   const blockList = [metroConfig.resolver.blacklistRE || metroConfig.resolver.blockList].flat().filter(Boolean);
@@ -35,7 +40,7 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
     ...metroConfig.watcher.additionalExts]);
   for (const path of paths) {
     let reason;
-    if (artifactStoreDir && !isWithin(artifactStoreDir, path)) reason = 'outside the consumer artifact store';
+    if (artifactStoreDir && pluginAssets.has(path) && !isWithin(artifactStoreDir, path)) reason = 'outside the consumer artifact store';
     else if (!roots.some(root => isWithin(root, path))) reason = 'outside Metro projectRoot/watchFolders';
     else if (blockList.some(pattern => pattern.test(path))) reason = 'excluded by Metro resolver.blockList';
     else if (!extensions.has(extname(path).slice(1))) reason = 'extension is not indexed by Metro';
@@ -86,6 +91,7 @@ export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env
   const outputDir = await mkdtemp(resolve(parent, '.happier-plugin-ui-stage-'));
   const outputPath = requestedInventory || resolve(parent, 'inventory.js');
   const candidatePath = resolve(outputDir, 'inputs/inventory.js');
+  const sourceAssetsRecordPath = resolveSourceUiAssetsRecordPath(candidatePath);
   const artifactStoreDir = resolve(parent, 'artifacts');
   try {
     // The fallback watcher's initial enumeration registers existing files but
@@ -93,15 +99,17 @@ export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env
     if (metroServer) await metroServer.getBundler().getBundler().getDependencyGraph();
     signal?.throwIfAborted();
     await prepareSourcePluginUiInventory({ repoDir: repoRoot, outputDir, inventoryPath: candidatePath,
-      retainedInventoryPath: outputPath, artifactStoreDir, env, signal, devStartup: true });
+      retainedInventoryPath: outputPath, artifactStoreDir, deferSourceAssetsPublication: true, env, signal, devStartup: true });
     if (metroServer) await waitForMetroPluginUiInventory({ metroServer, metroConfig,
-      inventoryPath: candidatePath, artifactStoreDir, signal });
+      inventoryPath: candidatePath, artifactStoreDir, sourceAssetsRecordPath, signal });
     signal?.throwIfAborted();
     const candidate = await readFile(candidatePath, 'utf8');
     const current = await readFile(outputPath, 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
     if (candidate !== current && !await retainBundledPluginUiArtifactsInventory({ inventoryPath: candidatePath, outputPath })) {
       throw new Error('Source Plugin UI preparation produced an invalid inventory');
     }
+    await publishSourceUiAssets({ recordPath: sourceAssetsRecordPath,
+      outputPath: resolveSourceUiAssetsRecordPath(outputPath) });
     return { ok: true, built: [], skipped: [], outputPath };
   } finally {
     await rm(outputDir, { recursive: true, force: true });
@@ -133,7 +141,9 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       groups.push(await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
         pluginDirectory: name.slice('@happier-dev/plugins-'.length), packages, includeDirectories: true }));
     }
-    return new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json'].map(path => resolve(repoRoot, path)));
+    const sourceInputs = readSourceUiAssetsRecord(resolveSourceUiAssetsRecordPath(inventoryPath))?.inputPaths ?? [];
+    return new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json',
+      ...sourceInputs, ...sourceInputs.map(path => dirname(path))].map(path => resolve(repoRoot, path)));
   })().catch(error => { inputsPromise = null; throw error; });
   const onChange = ({ eventsQueue }) => {
     void inputs().then(async paths => {
@@ -196,7 +206,10 @@ export function resolveUiWorkspaceStartupOutputs({
 } = {}) {
   const repoRoot = resolve(uiPackageDir, '../..');
   const inventoryPath = env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY || resolveBundledPluginUiArtifactsOutputPath(repoRoot);
-  return resolveBundledPluginUiArtifactsInputPaths(inventoryPath) ?? [];
+  const recordPath = resolveSourceUiAssetsRecordPath(inventoryPath);
+  const prepared = readSourceUiAssetsRecord(recordPath);
+  return [...(resolveBundledPluginUiArtifactsInputPaths(inventoryPath) ?? []), recordPath,
+    ...(prepared?.outputPaths ?? []), ...(prepared?.assetPaths ?? [])];
 }
 
 function readRebuiltBundledPluginWorkspaceNames(result) {
@@ -323,6 +336,9 @@ export async function ensureUiWorkspacePackagesBuilt({
       pluginFailures: [...inheritedFailures, ...newlyFailedUiPlugins],
     });
   }
+  const inventoryPath = env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY || resolveBundledPluginUiArtifactsOutputPath(repoRoot);
+  await prepareSourceUiAssets({ uiPackageDir, outputDir: resolve(uiPackageDir, '.expo/hstack/source-assets'),
+    recordPath: resolveSourceUiAssetsRecordPath(inventoryPath) });
   return result;
 }
 
