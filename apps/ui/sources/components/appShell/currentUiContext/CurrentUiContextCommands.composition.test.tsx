@@ -1,5 +1,8 @@
 import { useCollectionFilterSettingsCommand } from '@/components/settings/session/useCollectionFilterSettingsCommand';
 import * as React from 'react';
+import { View } from 'react-native';
+import { ModalProvider, Modal } from '@/modal';
+import { MultiPaneHost } from '@/components/ui/panels/MultiPaneHost';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
@@ -19,10 +22,20 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { getStorage } from '@/sync/domains/state/storage';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublishCurrentUiContext, type CurrentUiContextReader } from './CurrentUiContextProvider';
-import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
+import { createCurrentUiContextVoiceToolPort, CurrentUiContextActionHost } from './currentUiContextVoiceToolPort';
 import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommands } from './CurrentUiContextCommands';
 import { t } from '@/text';
+
+// Radix owns browser focus/event listeners; the renderer has no DOM. Modal admission stays real.
+vi.mock('@/utils/web/radixCjs', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/utils/web/radixCjs')>();
+    const Inline = (props: Readonly<{ children?: React.ReactNode }>) => props.children;
+    return { ...actual, requireRadixDismissableLayer: () => ({ Root: Inline, Branch: Inline }),
+        requireRadixFocusScope: () => ({ Root: Inline }) };
+});
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 const routeState = vi.hoisted(() => ({ pathname: '/settings/usage', segments: ['(app)', 'settings', 'usage'], params: {} as Record<string, string> }));
 
@@ -55,6 +68,11 @@ function Publication(props: Readonly<{ author?: boolean }> = {}) {
     return null;
 }
 
+function ObserveReader() {
+    reader = useOptionalCurrentUiContextReader();
+    return null;
+}
+
 function Descendant(props: Readonly<{ id: string; value: string }>) {
     // Inline callbacks model body renders: publication must not cause a registration loop.
     const commands = useCurrentUiContextLocalCommands([{ key: 'details', title: `${props.id} details`,
@@ -78,6 +96,57 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('keeps the presented page mount address after Apply closes over its phone details pane', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://page-dialog-binding.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        let selected = false;
+        function Page() {
+            const enrichment = React.useMemo(() => ({
+                detail: { mountedAction: { action: { pluginId: 'happier.triage', localId: 'ui/mounted-v1' }, mountId: 'page-mount' } },
+                commands: [{ title: 'Select saved view', command: { kind: 'hostLocal' as const,
+                    invoke: () => { selected = true; return { ok: true as const }; } } }],
+            }), []);
+            usePublishCurrentUiContext(enrichment);
+            return null;
+        }
+        const tree = (phone: boolean) => <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><ModalProvider><CurrentUiContextProvider>
+                <CurrentUiContextActionHost /><ObserveReader />
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <MultiPaneHost main={<Page />} rightPane={null} detailsPane={<View />}
+                        layout={{ main: 'docked', kind: 'twoPane', right: 'hidden', details: phone ? 'overlay' : 'docked' }}
+                        rightDockWidthPx={360} detailsDockWidthPx={520}
+                        onCloseRight={() => {}} onCloseDetails={() => {}}
+                        onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}} />
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></ModalProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree(false));
+        const address = reader!.readCurrentUiContext()!.detail;
+        expect(address).toMatchObject({ mountedAction: { mountId: 'page-mount' } });
+        await screen.update(tree(true));
+        let decision: Promise<boolean> | undefined;
+        await act(async () => { decision = Modal.confirm('Apply saved view', undefined, { confirmText: 'Apply change' }); });
+        expect(reader!.readCurrentUiContext()!.navigation.area).toBe('modal');
+        expect(reader!.readCurrentUiContext()!.detail).toBeUndefined();
+        await screen.pressByTestIdAsync('web-modal-confirm');
+        expect(await decision).toBe(true);
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        const current = await executor.execute('ui.current_context.read', {}, { surface: 'agent', serverId: server.id });
+        expect(current).toMatchObject({ ok: true, result: { detail: address } });
+        const command = reader!.readCurrentUiContext()!.commands.find(entry => entry.title === 'Select saved view')!;
+        await act(async () => {
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: true });
+        });
+        expect(selected).toBe(true);
+        await screen.update(tree(false));
+        expect(reader!.readCurrentUiContext()!.detail).toEqual(address);
+    });
     it('reveals the Session filter search anchor after the root route retained the Projects tab', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://filter-search.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] })

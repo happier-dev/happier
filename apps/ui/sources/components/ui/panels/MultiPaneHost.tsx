@@ -352,7 +352,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                         style={{ flex: 1, minWidth: 0, minHeight: 0 }}
                         {...(mainModalActive && !sharedMainModal ? mainModalBoundary.overlayProps : activeMainBoundary?.underlayProps ?? {})}
                     >
-                        <PluginSurfaceFocusEligibilityProvider active={mainFocusEligible} presentationActive={mainPresented}>
+                        <PluginSurfaceFocusEligibilityProvider active={mainFocusEligible} presentationActive={mainPresented} currentUiContextActive={mainPresented}>
                             <PaneMainComposerReporterContext.Provider value={reportMainComposer}>
                             <PaneMainTopReporterContext.Provider value={reportMainTop}>
                                 <PaneMainBodyPresentationContext.Provider value={mainPresented && !(rightInMain && rightPresence.present) && !hasMainSurface}>

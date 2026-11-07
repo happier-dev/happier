@@ -17,6 +17,23 @@ function FocusEligibilityProbe(props: Readonly<{ testID: string }>): React.React
 }
 
 describe('PluginSurfaceFocusEligibility', () => {
+    it('retains the named presented page context while an overlay owns input, without reviving a withdrawn ancestor', async () => {
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+            <PluginSurfaceFocusEligibilityProvider active={false} presentationActive currentUiContextActive>
+                <PluginSurfaceFocusEligibilityProvider active>
+                    <FocusEligibilityProbe testID="covered-page" />
+                </PluginSurfaceFocusEligibilityProvider>
+            </PluginSurfaceFocusEligibilityProvider>
+            <PluginSurfaceFocusEligibilityProvider active={false} currentUiContextActive={false}>
+                <PluginSurfaceFocusEligibilityProvider active presentationActive currentUiContextActive>
+                    <FocusEligibilityProbe testID="withdrawn-page" />
+                </PluginSurfaceFocusEligibilityProvider>
+            </PluginSurfaceFocusEligibilityProvider>
+        </PluginSurfaceFocusEligibilityProvider>);
+        expect(screen.findByTestId('covered-page')?.props.eligible).toBe(false);
+        expect(screen.findByTestId('covered-page')?.props.currentUiContextEligible).toBe(true);
+        expect(screen.findByTestId('withdrawn-page')?.props.currentUiContextEligible).toBe(false);
+    });
     it('keeps presentation focus independent from current-context eligibility and fails current context closed until a named owner opts in', async () => {
         const screen = await renderScreen(
             <>

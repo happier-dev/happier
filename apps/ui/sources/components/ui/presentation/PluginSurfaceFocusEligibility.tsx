@@ -53,13 +53,12 @@ export function PluginSurfaceFocusEligibilityProvider(props: Readonly<{
     const value = React.useMemo<PluginSurfaceFocusEligibility>(() => {
         const effective = (parent?.effective ?? true) && props.active;
         const presentationEffective = (parent?.presentationEffective ?? true) && (props.presentationActive ?? props.active);
-        // A root must name its semantic-current owner explicitly. Nested
-        // providers inherit only an already-proven owner and can still fence
-        // themselves with `false`; this never turns simultaneous panes into a
-        // last-publisher-wins selection mechanism.
-        const currentUiContextEffective = effective && (parent === null
+        // A presented page can remain the semantic owner while its own details
+        // overlay takes input. Only an explicit semantic fact separates those
+        // roles; unnamed roots and withdrawn ancestors still withhold context.
+        const currentUiContextEffective = presentationEffective && (parent === null
             ? props.currentUiContextActive === true
-            : parent.currentUiContextEffective && (props.currentUiContextActive ?? true));
+            : parent.currentUiContextEffective && (props.currentUiContextActive ?? props.active));
         return Object.freeze({ effective, currentUiContextEffective, presentationEffective });
     }, [parent, props.active, props.currentUiContextActive, props.presentationActive]);
 
