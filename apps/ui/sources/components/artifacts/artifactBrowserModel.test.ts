@@ -4,6 +4,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets/widgetPresentationV1';
 import { readInboxItemFocus } from '@/components/inbox/inboxItemFocus';
+import { readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
 
 import {
     classifyArtifactBrowserKind,
@@ -25,6 +26,17 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('opens a shared released Bot template at its transport-qualified recipient page', () => {
+        const row = artifact('template/id', { v: 1, kind: 'bot_template.v1', state: 'released', title: 'Garden', description: '', version: '1.0.0', changelog: '' },
+            { access: 'view', sourceServerId: 'recipient-home' });
+        const route = new URL(resolveArtifactOpenRoute(row), 'https://app.test');
+        expect(route.pathname).toBe('/bot-template');
+        expect(readBotTemplateRecipientRoute(Object.fromEntries(route.searchParams))).toEqual({
+            source: { kind: 'artifact', serverId: 'recipient-home', artifactId: row.id }, serverId: 'recipient-home' });
+        expect(classifyArtifactBrowserKind(row)).toBeNull();
+        expect(resolveArtifactOpenRoute(artifact('draft', { v: 1, kind: 'bot_template.v1', state: 'draft', title: 'Garden', description: '' },
+            { sourceServerId: 'recipient-home' }))).toBe('/artifacts/draft');
+    });
     it('excludes proven private opaque hints while retaining unresolved and readable unknown documents', () => {
         const locked = (id: string, kindHint?: string): DecryptedArtifact => ({ id, title: null, header: null, rawHeader: null,
             isDecrypted: false, storageMode: 'plain', headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,

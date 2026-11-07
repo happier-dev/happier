@@ -21,8 +21,9 @@ export function useWidgetDefinition(scope: WidgetSurfaceRefV1, reference: Widget
     const body = useArtifactBody(artifactId, current && artifactId ? artifact ?? null : null,
         { readMissing: current && !!artifactId });
     const opened = React.useMemo<MountedWidgetDefinitionV1>(() => {
+        if (body.state === 'missing') return { definition: null, state: 'unavailable', reasonCode: 'widget_definition_not_found' };
         if (!artifact) return { definition: null, state: body.state === 'failed' ? 'unavailable' : 'loading',
-            ...(body.state === 'failed' ? { reasonCode: 'widget_definition_not_found' } : {}) };
+            ...(body.state === 'failed' ? { reasonCode: 'widget_definition_unavailable' } : {}) };
         if (!artifact.ownerAccountId || artifact.access === undefined) return { definition: null, state: body.state === 'failed' ? 'unavailable' : 'loading',
             ...(body.state === 'failed' ? { reasonCode: 'widget_definition_unavailable' } : {}) };
         if (artifact.id !== artifactId || artifact.ownerAccountId !== scope.accountId)

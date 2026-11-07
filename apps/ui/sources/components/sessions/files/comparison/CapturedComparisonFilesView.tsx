@@ -33,6 +33,7 @@ const doNotOpenWorkingFile = () => {};
 /** The Files renderer for immutable captured evidence, shared by PR, branch, commit and pinned routes. */
 export function CapturedComparisonFilesView(props: Readonly<{
     comparison: ScmComparison;
+    active?: boolean;
     sessionId?: string;
     reviewScopeKey?: string;
     comparisonChrome?: ReviewProps['comparisonChrome'];
@@ -97,7 +98,8 @@ export function CapturedComparisonFilesView(props: Readonly<{
         const source = scmReviewComparisonOfCaptured(props.comparison);
         const scopeLabel = source ? resolveFilesComparisonLabel(source, null) : t('scmComparison.view.files');
         const renderHeader: NonNullable<ReviewProps['comparisonChrome']>['renderHeader'] = props.comparisonChrome?.renderHeader
-            ?? ((coverage) => <ScmComparisonHeader viewLabel={t('scmComparison.view.files')} scopeLabel={scopeLabel} coverage={coverage} />);
+            ?? ((coverage, facts) => <ScmComparisonHeader viewLabel={t('scmComparison.view.files')} scopeLabel={scopeLabel} coverage={coverage}
+                reviewed={facts?.viewed ?? null} />);
         return { renderBarLeading: () => null,
             indexPlacement: 'stream', ...props.comparisonChrome, rootPath: props.comparison.repository.rootPath, renderFileNotes,
             renderHeader };
@@ -120,9 +122,14 @@ export function CapturedComparisonFilesView(props: Readonly<{
         return response.success && typeof response.diff === 'string' ? { success: true, diff: response.diff }
             : { success: false, errorCode: response.errorCode ?? 'invalid_action_output', error: response.error ?? t('scmComparison.unsupportedReason') };
     }, [props.comparison, getSnapshot, props.host, props.sessionId, props.workspaceScope, binding, evidenceKey, cwd]);
+    const unavailableEmpty = comparison.inventory.state !== 'complete' && comparison.inventory.files.length === 0;
+    const emptyState = unavailableEmpty ? <SurfaceStateCard testID="captured-comparison-unavailable" kind="error"
+        title={comparison.inventory.reasons.join(' · ') || t('hunkReview.noticeUnavailable')}
+        action={props.onRefresh ? { label: t('common.retry'), onPress: props.onRefresh } : undefined} /> : undefined;
     const renderReview = (hunkReview?: ReviewProps['hunkReview']) => <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId}
             reviewScopeKey={JSON.stringify([props.reviewScopeKey ?? props.sessionId, evidenceKey])}
             snapshot={projected.snapshot} changedFilesViewMode="repository"
+            emptyState={emptyState}
             allRepositoryChangedFiles={projected.files} sessionAttributedFiles={NO_ATTRIBUTED_FILES} repositoryOnlyFiles={NO_FILES}
             maxFiles={props.maxFiles} maxChangedLines={props.maxChangedLines} onFilePress={doNotOpenWorkingFile}
             evidenceOnly workspaceScope={props.workspaceScope} hunkReview={hunkReview}
@@ -133,12 +140,13 @@ export function CapturedComparisonFilesView(props: Readonly<{
     return <View testID="captured-comparison-files" style={{ flex: 1, minHeight: 0 }}>
         {props.error ? <SurfaceFreshnessLine testID="captured-comparison-refresh-error" tone="warning" reason={props.error}
             action={props.onRefresh ? { label: t('common.retry'), onPress: props.onRefresh } : undefined} /> : null}
-        {props.comparison.inventory.state !== 'complete' ? <AttentionBanner presentation="strip" testID="captured-inventory-incomplete" tone="warning"
+        {props.comparison.inventory.state !== 'complete' && !unavailableEmpty ? <AttentionBanner presentation="strip" testID="captured-inventory-incomplete" tone="warning"
             title={t('walkthrough.evidence.unavailable', { reason: props.comparison.inventory.reasons.join(' · ') })} /> : null}
         {props.comparison.freshness === 'stale' || props.comparison.freshness === 'unknown' ? <SurfaceFreshnessLine testID="captured-comparison-freshness" tone="warning"
             reason={t(props.comparison.freshness === 'stale' ? 'scmComparison.capturedStale' : 'scmComparison.capturedFreshnessUnknown')} /> : null}
         {resolvingEvidence ? <SurfaceStateCard kind="loading" title={t('common.loading')} />
             : props.workspaceScope ? <CapturedReviewControls scope={props.workspaceScope} comparison={comparison}
+            active={props.active !== false}
             sessionId={props.sessionId} marks={props.marks} discard={props.discardEnabled === true}
             refresh={props.onRefresh ?? doNotOpenWorkingFile}>{renderReview}</CapturedReviewControls> : renderReview()}
         {props.page?.nextCursor != null ? <View testID="captured-comparison-pagination">
@@ -151,6 +159,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
 
 function CapturedReviewControls(props: Readonly<{
     scope: WorkspaceScopeBase; comparison: ScmComparison; sessionId?: string; marks?: ScmReviewedMarks;
+    active?: boolean;
     discard: boolean; refresh: () => void; children: (review: NonNullable<ReviewProps['hunkReview']>) => React.ReactNode;
 }>) {
     const review = useReviewListHunkReview(props);

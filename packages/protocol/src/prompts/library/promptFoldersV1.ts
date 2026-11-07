@@ -14,6 +14,7 @@ export const PromptFoldersV1Schema = lazyZodSchema(() => z.looseObject({
   v: z.literal(1),
   folders: z._default(z.array(PromptFolderEntryV1Schema), []),
   artifactHeadersById: z.optional(z.record(z.string().check(z.minLength(1)), ArtifactOrganizationHeaderV1Schema)),
+  deletedLegacyFolderIds: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));
 export type PromptFoldersV1 = z.infer<typeof PromptFoldersV1Schema>;
 export const StoredPromptFoldersV1Schema = createStoredReadSchema(PromptFoldersV1Schema);
@@ -23,6 +24,7 @@ export const PromptFoldersV1RecordSchema = defineStoredReadProjection(lazyZodSch
   v: z.literal(1),
   folders: z.array((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptFolderEntryV1Schema)),
   artifactHeadersById: z.optional(z.record(z.string().check(z.minLength(1)), ArtifactOrganizationHeaderV1Schema)),
+  deletedLegacyFolderIds: z.optional(z.array(z.string().check(z.minLength(1)))),
 })), () => StoredPromptFoldersV1Schema);
 
 /** New folder mutations require a valid tree, independently of retained storage admission. */
@@ -117,19 +119,17 @@ export function movePromptFolderV1(current: PromptFoldersV1 | null | undefined,
 }
 
 export function removePromptFolderV1(current: PromptFoldersV1 | null | undefined,
-  input: Readonly<{ folderId: string; artifactIds?: readonly string[] }>): PromptFoldersV1 {
+  input: Readonly<{ folderId: string }>): PromptFoldersV1 {
   const value = currentFolders(current);
   const removed = requireFolder(value, input.folderId);
   const artifactHeadersById = { ...value.artifactHeadersById };
   for (const [artifactId, header] of Object.entries(artifactHeadersById)) {
     if (header.folderId === removed.id) artifactHeadersById[artifactId] = { ...header, folderId: null };
   }
-  for (const artifactId of input.artifactIds ?? []) {
-    if (!artifactId) throw folderFailure('invalid_artifact_id');
-    const previous = Object.hasOwn(artifactHeadersById, artifactId) ? artifactHeadersById[artifactId] : {};
-    artifactHeadersById[artifactId] = { ...previous, folderId: null };
-  }
   return writeFolders({ ...value,
+    // Legacy membership remains in encrypted Artifact headers. Remember only the
+    // deleted folder identity so reusing it cannot resurrect those placements.
+    deletedLegacyFolderIds: [...new Set([...(value.deletedLegacyFolderIds ?? []), removed.id])],
     folders: value.folders.filter(folder => folder.id !== removed.id).map(folder => folder.parentId === removed.id
       ? { ...folder, parentId: removed.parentId ?? null } : folder),
     ...(value.artifactHeadersById || Object.keys(artifactHeadersById).length ? { artifactHeadersById } : {}),

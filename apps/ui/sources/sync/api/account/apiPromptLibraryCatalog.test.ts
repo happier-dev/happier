@@ -36,6 +36,63 @@ afterEach(async () => {
 });
 
 describe('Prompt catalog captured Account mutation publication', () => {
+  it.each([false, true])('publishes cold folder and rule data only for its captured Account while a wake requires a trailing read (retired: %s)', async retired => {
+    const boundary = createPromptLibraryCatalogBoundary({ records: [
+      { key: 'folders', value: { v: 1, folders: [{ id: 'work', name: 'Client work' }] } },
+      { key: 'skill-rules', value: { v: 1, rules: [{ id: 'everywhere', skillId: 'review',
+        target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 1 }] } },
+    ] });
+    const initialRead = createDeferred<void>();
+    const trailingRead = createDeferred<void>();
+    let reads = 0;
+    const accountId = 'cold-prompt-wake';
+    const fixture = await createPlainArtifactHomeFixture('https://cold-prompt-wake.test', { accountId, handleRequest: async (path, init) => {
+      const response = await boundary.handle(path, init);
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) {
+        reads += 1;
+        await (reads === 1 ? initialRead : trailingRead).promise;
+      }
+      if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
+      return response;
+    } });
+    const scope = { serverId: fixture.home.id, accountId };
+    const release = observePromptLibraryCatalog(scope);
+    const pending = refreshPromptLibraryCatalog(scope);
+    let replacement: Awaited<ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>> = null;
+    try {
+      await vi.waitFor(() => expect(reads).toBe(1));
+      publishHomeAccountChange(scope.serverId, [buildPromptLibraryPhysicalKeyV1('skill-rules')]);
+      if (retired) {
+        release();
+        replacement = await TokenStorage.setCredentialsForServerUrlWithRollback(fixture.home.serverUrl, { serverId: fixture.home.id }, {
+          token: `e30.${Buffer.from(JSON.stringify({ sub: 'replacement-account' })).toString('base64url')}.signature`,
+        });
+        expect(replacement).not.toBeNull();
+      }
+      initialRead.resolve();
+      if (retired) {
+        trailingRead.resolve();
+        await pending;
+        expect(getPromptLibraryCatalogValue(scope, 'folders').value).toBeNull();
+        expect(getPromptLibraryCatalogValue(scope, 'skill-rules').value).toBeNull();
+        return;
+      }
+      await vi.waitFor(() => expect(reads).toBe(2));
+      expect(getPromptLibraryCatalogValue(scope, 'folders')).toMatchObject({
+        status: 'loading', stale: true, value: { folders: [{ id: 'work', name: 'Client work' }] },
+      });
+      expect(getPromptLibraryCatalogValue(scope, 'skill-rules')).toMatchObject({
+        status: 'loading', stale: true, value: { rules: [{ skillId: 'review', enabled: true }] },
+      });
+      trailingRead.resolve();
+      await pending;
+      expect(getPromptLibraryCatalogValue(scope, 'folders')).toMatchObject({ status: 'ready', stale: false });
+    } finally {
+      initialRead.resolve(); trailingRead.resolve();
+      await pending;
+      release(); await replacement?.rollback(); await fixture.dispose();
+    }
+  });
   it('shares a pending row across captures without borrowing cancellation or retaining the settled response', async () => {
     const boundary = createPromptLibraryCatalogBoundary();
     let held = createDeferred<void>();

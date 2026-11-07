@@ -39,6 +39,16 @@ describe('promptFoldersV1 schema', () => {
 });
 
 describe('canonical library folder mutations', () => {
+  it('retains the deleted legacy folder identity when a public create reuses that id', () => {
+    const removed = folders.removePromptFolderV1({ v: 1, folders: [{ id: 'reused', name: 'Original' }],
+      deletedLegacyFolderIds: ['earlier'] }, { folderId: 'reused' });
+    expect(removed).toMatchObject({ folders: [], deletedLegacyFolderIds: ['earlier', 'reused'] });
+    const recreated = folders.createPromptFolderV1(removed, { id: 'reused', name: 'Recreated' });
+    expect(folders.PromptFoldersV1RecordSchema.parse(recreated)).toMatchObject({
+      folders: [{ id: 'reused', name: 'Recreated' }], deletedLegacyFolderIds: ['earlier', 'reused'],
+    });
+  });
+
   it('creates nested folders and preserves personal organization through rename and move', () => {
     const current = PromptFoldersV1Schema.parse({ v: 1, folders: [{ id: 'root', name: 'Root' }],
       artifactHeadersById: { memory: { folderId: 'root', tags: ['facts'] } } });
@@ -71,11 +81,10 @@ describe('canonical library folder mutations', () => {
     ], artifactHeadersById: {
       workflow: { folderId: 'child', tags: ['daily'] }, memory: { folderId: 'root', tags: ['facts'] },
     } });
-    expect(folders.removePromptFolderV1(current, { folderId: 'child', artifactIds: ['legacy-owned-role'] })).toEqual({ v: 1, folders: [
+    expect(folders.removePromptFolderV1(current, { folderId: 'child' })).toEqual({ v: 1, deletedLegacyFolderIds: ['child'], folders: [
       { id: 'root', name: 'Root' }, { id: 'grandchild', name: 'Grandchild', parentId: 'root' },
     ], artifactHeadersById: {
       workflow: { folderId: null, tags: ['daily'] }, memory: { folderId: 'root', tags: ['facts'] },
-      'legacy-owned-role': { folderId: null },
     } });
     const placed = folders.placeArtifactInPromptFolderV1(current, { artifactId: 'shared-document', folderId: 'grandchild', tags: ['private'] });
     const unplaced = folders.placeArtifactInPromptFolderV1(placed, { artifactId: 'shared-document', folderId: null });

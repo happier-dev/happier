@@ -1,18 +1,24 @@
 import { buildPromptLibraryPhysicalKeyV1, parsePromptLibraryPhysicalKeyV1, type PromptLibraryCatalogKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { readPromptLibraryCatalogProjection, readPromptLibraryCatalogRowsProjection } from '@/sync/api/account/apiPromptLibraryCatalog';
+import { readPromptLibraryCatalogProjection, readPromptLibraryCatalogRowsProjection,
+    type PromptLibraryAccountContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
+import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
+import { homeAccountChangeAffectsPrivateAccountRows } from '@/sync/runtime/orchestration/changesPlanner';
 import { applyPromptLibraryCatalogSnapshot, beginPromptLibraryCatalogLoad, getPromptLibraryCatalogSnapshot,
     applyPromptLibraryCatalogRowsSnapshot, beginPromptLibraryCatalogRowsLoad, getAcknowledgedPromptLibraryCatalogValue,
-    invalidatePromptLibraryCatalogsForServer, type PromptLibraryCatalogProjection } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
-type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
+    invalidatePromptLibraryCatalogsForServer, getPromptLibraryCatalogValue, type PromptLibraryCatalogProjection } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
+type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; finite?: true }>;
 const targetFor = (scope: ServerAccountScope): Target => ({ key: `prompt-library:${serverAccountScopeKeySuffix(scope)}`, serverId: scope.serverId, scope });
 const publicationGuards = new Map<string, () => void>();
 // Demand pending on the existing single-flight loader, consumed by its next pass.
 // null requires a full activation/maintenance pass; numeric hints permit skipping a received revision.
 const pendingRows = new Map<string, Map<PromptLibraryCatalogKeyV1, number | undefined> | null>();
 const loader = createScopedSnapshotLoader<Target>({
-    load: async ({ key, scope }, context) => {
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    load: async ({ key, scope, finite }, context) => {
         const guard = publicationGuards.get(key);
         try { guard?.(); } catch { return; }
         const demand = pendingRows.get(key);
@@ -28,20 +34,33 @@ const loader = createScopedSnapshotLoader<Target>({
                 return;
             }
             const read = await readPromptLibraryCatalogRowsProjection(scope, keys);
+            // Row reads publish directly rather than through readWithMaintenance.
+            // A canceled reader's late success or refusal belongs to no consumer.
+            if (context.signal.aborted) return;
             try { guard?.(); } catch { return; }
             if (read) {
                 if (!read.isAccountCurrent()) return;
-                applyPromptLibraryCatalogRowsSnapshot(scope, keys, read.projection, true);
-                if (!context.isCurrent()) beginPromptLibraryCatalogRowsLoad(scope, keys);
+                applyPromptLibraryCatalogRowsSnapshot(scope, keys, read.projection, true, !context.isCurrent());
                 return;
             }
         }
         beginPromptLibraryCatalogLoad(scope);
+        if (finite) {
+            // Finite Actions use this same acquisition without the observer's retained-source cleanup.
+            const projection = await readPromptLibraryCatalogProjection(scope, context.signal, guard);
+            if (context.signal.aborted) return;
+            try { guard?.(); } catch { return; }
+            applyPromptLibraryCatalogSnapshot(scope, projection, context.isCurrent());
+            return;
+        }
         return context.readWithMaintenance<PromptLibraryCatalogProjection>({
             read: publication => readPromptLibraryCatalogProjection(scope, undefined, guard, publication),
-            publish: (projection, current) => {
+            publish: (projection, current, isAccountCurrent) => {
                 try { guard?.(); } catch { return; }
-                applyPromptLibraryCatalogSnapshot(scope, projection, current);
+                // A wake lapses freshness, not the captured Account's right to
+                // retain readable data while the coalesced current read runs.
+                const accountCurrent = isAccountCurrent ? isAccountCurrent() : current;
+                applyPromptLibraryCatalogSnapshot(scope, projection, accountCurrent, undefined, !current);
             },
             getPublication: () => getPromptLibraryCatalogSnapshot(scope),
         });
@@ -58,8 +77,8 @@ const loader = createScopedSnapshotLoader<Target>({
     observeCatchUpPending: true,
     // Exact focused-Home wakes identify catalog rows or their retained Settings source.
     // Content-free wakes still revalidate through the existing lifecycle owner.
-    matchesWake: event => event.entityIds === undefined || event.entityIds.some(id =>
-        id === 'self' || parsePromptLibraryPhysicalKeyV1(id) !== null),
+    matchesWake: event => event.entityIds === undefined ? homeAccountChangeAffectsPrivateAccountRows(event)
+        : event.entityIds.some(id => id === 'self' || parsePromptLibraryPhysicalKeyV1(id) !== null),
     prepareWake: (event, { key, scope }) => {
         const catalog = getPromptLibraryCatalogSnapshot(scope)?.catalog;
         if ((catalog?.status !== 'ready' && catalog?.status !== 'partial') || event.entityIds?.includes('self')
@@ -96,6 +115,24 @@ const loader = createScopedSnapshotLoader<Target>({
     },
 });
 export function observePromptLibraryCatalog(scope: ServerAccountScope): () => void { return loader.observe(targetFor(scope)); }
+/** Finite readers borrow current foreground acquisition without starting its retained-source cleanup. */
+export async function readPromptLibraryCatalogInCapturedAccount(account: PromptLibraryAccountContext,
+    signal?: AbortSignal, key: PromptLibraryCatalogKeyV1 = 'folders'): Promise<PromptLibraryCatalogProjection> {
+    return withActionAccountRequestSignal(account, signal, async signal => {
+        throwIfAborted(signal);
+        account.assertCurrent();
+        const scope = { serverId: account.serverId, accountId: account.accountId };
+        const row = getPromptLibraryCatalogValue(scope, key);
+        if (row.status !== 'ready' || row.stale) {
+            await loader.refresh({ ...targetFor(scope), finite: true }, signal);
+        }
+        throwIfAborted(signal);
+        account.assertCurrent();
+        const projection = getPromptLibraryCatalogSnapshot(scope);
+        if (!projection) throw new Error('Artifact folder catalog is unavailable');
+        return projection;
+    });
+}
 export function refreshPromptLibraryCatalog(scope: ServerAccountScope): Promise<void> { return loader.refresh(targetFor(scope)); }
 export function invalidatePromptLibraryCatalogProjection(scope: ServerAccountScope): Promise<void> {
     const target = targetFor(scope);

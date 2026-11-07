@@ -17,10 +17,14 @@ describe('Prompt library scoped publications', () => {
         applyPromptLibraryCatalogSnapshot(scope, projection, true);
         for (const reason of ['loading', 'unreachable', 'encryption-material-unavailable'] as const) {
             beginPromptLibraryCatalogLoad(scope);
-            if (reason === 'unreachable') applyPromptLibraryCatalogSnapshot(scope, { ...projection,
+            if (reason !== 'loading') applyPromptLibraryCatalogSnapshot(scope, { ...projection,
                 catalog: { status: 'unavailable', reason } }, true);
             const folders = getPromptLibraryCatalogValue(scope, 'folders');
             const sources = getPromptLibraryCatalogValue(scope, 'registry-sources');
+            if (reason === 'encryption-material-unavailable') {
+                expect(folders).toMatchObject({ status: 'unavailable', reason, value: null });
+                expect(sources).toMatchObject({ status: 'unavailable', reason, value: null });
+            }
             applyPromptLibraryCatalogRowsSnapshot(scope, ['skill-rules'], rules, true);
             expect(getPromptLibraryCatalogValue(scope, 'folders')).toBe(folders);
             expect(getPromptLibraryCatalogValue(scope, 'registry-sources')).toBe(sources);
@@ -106,6 +110,9 @@ describe('Prompt library scoped publications', () => {
         applyPromptLibraryCatalogAcknowledgedRecord(scope, record, 4, true);
         applyPromptLibraryCatalogSnapshot(scope, { catalog, rawSettings: {}, sourceSettingsVersion: 1 }, true);
         expect(getPromptLibraryCatalogValue(scope, 'folders')).toMatchObject({ revision: 4, value: record.value, stale: false });
+        expect(getPromptLibraryCatalogSnapshot(scope)?.catalog).toMatchObject({ rows: [{ record, revision: 4 }] });
+        applyPromptLibraryCatalogSnapshot(scope, { catalog, rawSettings: {}, sourceSettingsVersion: 1 }, true, undefined, true);
+        expect(getPromptLibraryCatalogValue(scope, 'folders')).toMatchObject({ status: 'loading', revision: 4, value: record.value, stale: true });
         expect(getPromptLibraryCatalogSnapshot(scope)?.catalog).toMatchObject({ rows: [{ record, revision: 4 }] });
     });
     it('withdraws pending display intent with lost Account admission, not merely its received row', () => {

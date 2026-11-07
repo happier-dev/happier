@@ -6,7 +6,8 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { writePromptLibraryRecord } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { getPromptLibraryCatalogValue, resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { refreshPromptLibraryCatalog, resetPromptLibraryCatalogEngineForTests } from '@/sync/engine/settings/promptLibraryCatalogEngine';
-import { executeArtifactFolderActionV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
+import { executeArtifactFolderActionV1, readArtifactOrganizationV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { createUiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
@@ -17,6 +18,63 @@ afterEach(() => {
 });
 
 describe('folder command Account port', () => {
+    it('deletes a selected folder without reading the Account-wide Artifact inventory', async () => {
+        const boundary = createPromptLibraryCatalogBoundary({ revision: 4, records: [{ key: 'folders', value: {
+            v: 1, folders: [{ id: 'selected', name: 'Selected' }, { id: 'child', name: 'Child', parentId: 'selected' },
+                { id: 'other', name: 'Other' }], artifactHeadersById: {
+                member: { folderId: 'selected', tags: ['private'] }, unrelated: { folderId: 'other', tags: ['keep'] },
+            },
+        } }] });
+        const fixture = await createPlainArtifactHomeFixture('https://folder-delete-cost.test', { handleRequest: boundary.handle });
+        const account = await captureLazyActionAccountContext(fixture.home.id);
+        const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
+        try {
+            expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folders.delete', input: {
+                folderId: 'selected', expectedRevision: 4,
+            } })).toEqual({ status: 'updated', revision: 5 });
+            expect(boundary.read('folders')).toMatchObject({ value: {
+                folders: [{ id: 'child', name: 'Child', parentId: null }, { id: 'other', name: 'Other' }],
+                artifactHeadersById: { member: { folderId: null, tags: ['private'] }, unrelated: { folderId: 'other', tags: ['keep'] } },
+            },
+            });
+            // Reject the global query even with an empty response: its cost otherwise scales with every unrelated Artifact.
+            expect(fixture.requests.filter(request => request.path.startsWith('/v1/artifacts'))).toEqual([]);
+        } finally { account.dispose(); await fixture.dispose(); }
+    });
+
+    it('keeps a legacy member unfiled after deleting and recreating the same folder id without losing tags', async () => {
+        const boundary = createPromptLibraryCatalogBoundary({ revision: 4, records: [{ key: 'folders', value: {
+            v: 1, folders: [{ id: 'legacy', name: 'Original' }],
+        } }] });
+        const fixture = await createPlainArtifactHomeFixture('https://folder-delete-legacy.test', { handleRequest: boundary.handle });
+        await fixture.boundary.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            id: 'legacy-member', header: encodePlainArtifactStoredContent({ v: 1, kind: 'role.v1', folderId: 'legacy', tags: ['legacy-tag'] }),
+            body: encodePlainArtifactStoredContent({ body: 'unchanged' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        }) });
+        const account = await captureLazyActionAccountContext(fixture.home.id);
+        const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
+        try {
+            expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folders.delete', input: {
+                folderId: 'legacy', expectedRevision: 4,
+            } })).toEqual({ status: 'updated', revision: 5 });
+            expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folders.create', input: {
+                id: 'legacy', name: 'Recreated', expectedRevision: 5,
+            } })).toEqual({ status: 'updated', revision: 6 });
+            expect(await readArtifactOrganizationV1({ port, artifactId: 'legacy-member' })).toMatchObject({
+                status: 'ready', header: { folderId: null, tags: ['legacy-tag'] },
+            });
+            expect(boundary.read('folders')).toMatchObject({ value: { deletedLegacyFolderIds: ['legacy'] } });
+            expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folder.set', input: {
+                artifactId: 'legacy-member', folderId: 'legacy', expectedRevision: 6,
+            } })).toEqual({ status: 'updated', revision: 7 });
+            expect(await readArtifactOrganizationV1({ port, artifactId: 'legacy-member' })).toMatchObject({
+                status: 'ready', header: { folderId: 'legacy', tags: ['legacy-tag'] },
+            });
+            expect(fixture.requests.filter(request => request.method !== 'GET' && request.path.startsWith('/v1/artifacts')
+                && request.projection !== 'headers')).toEqual([]);
+        } finally { account.dispose(); await fixture.dispose(); }
+    });
+
     it('reads empty folders from the captured Home catalog without loading document bodies', async () => {
         const boundary = createPromptLibraryCatalogBoundary({ revision: 4, records: [{ key: 'folders', value: {
             v: 1, folders: [{ id: 'parent', name: 'Parent' }, { id: 'empty', name: 'Empty', parentId: 'parent' }],

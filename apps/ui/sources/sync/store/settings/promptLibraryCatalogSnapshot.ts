@@ -83,8 +83,9 @@ export function applyPromptLibraryCatalogAcknowledgedRecord(scope: ServerAccount
         rawSettings: previous?.projection.rawSettings ?? {}, sourceSettingsVersion: previous?.projection.sourceSettingsVersion ?? 0 } }));
     for (const listener of [...listeners]) listener();
 }
+/** Account admission and read freshness are separate: stale data can display, but grants no row write authority. */
 export function applyPromptLibraryCatalogSnapshot(scope: ServerAccountScope, projection: PromptLibraryCatalogProjection, current: boolean,
-    changedKeys?: readonly PromptLibraryCatalogKeyV1[]): void {
+    changedKeys?: readonly PromptLibraryCatalogKeyV1[], stale = false): void {
     if (!current) return;
     const scopeKey = serverAccountScopeKeySuffix(scope);
     const previous = snapshots.get(scopeKey);
@@ -136,8 +137,9 @@ export function applyPromptLibraryCatalogSnapshot(scope: ServerAccountScope, pro
                 continue;
             }
             const value = old?.value && JSON.stringify(old.value) === JSON.stringify(read.record.value) ? old.value : read.record.value;
-            next = { status: 'ready', value, revision: read.revision,
-                sourceSettingsVersion: read.authority === 'inactive' ? projection.sourceSettingsVersion : null, stale: false };
+            next = { status: stale ? 'loading' : 'ready', value, revision: read.revision,
+                sourceSettingsVersion: read.authority === 'inactive' ? projection.sourceSettingsVersion : null, stale,
+                ...(stale ? { reason: 'loading' } : {}) };
         } else {
             const withdraw = admissionLossReasons.includes(read.reason);
             next = { status: read.reason === 'loading' ? 'loading' : 'unavailable', value: withdraw ? null : old?.value ?? null,
@@ -171,7 +173,7 @@ export function beginPromptLibraryCatalogRowsLoad(scope: ServerAccountScope, key
     for (const listener of [...listeners]) listener();
 }
 export function applyPromptLibraryCatalogRowsSnapshot(scope: ServerAccountScope, keys: readonly PromptLibraryCatalogKeyV1[],
-    projection: PromptLibraryCatalogProjection, current: boolean): void {
+    projection: PromptLibraryCatalogProjection, current: boolean, stale = false): void {
     if (!current) return;
     const previous = getPromptLibraryCatalogSnapshot(scope);
     const base = previous?.catalog.status === 'ready' || previous?.catalog.status === 'partial' ? previous.catalog : null;
@@ -183,7 +185,7 @@ export function applyPromptLibraryCatalogRowsSnapshot(scope: ServerAccountScope,
     }
     if (incoming.status !== 'ready' && incoming.status !== 'partial') {
         applyPromptLibraryCatalogSnapshot(scope, { ...projection, rawSettings: previous?.rawSettings ?? {},
-            sourceSettingsVersion: previous?.sourceSettingsVersion ?? 0 }, current, keys);
+            sourceSettingsVersion: previous?.sourceSettingsVersion ?? 0 }, current, keys, stale);
         return;
     }
     const rows = [...(base?.rows ?? []).filter(row => !keys.includes(row.record.key)),
@@ -194,7 +196,7 @@ export function applyPromptLibraryCatalogRowsSnapshot(scope: ServerAccountScope,
         ...incoming.diagnostics.filter(row => keys.includes(row.key))];
     // A demanded row cannot establish the exhaustive base or its retained Settings authority.
     applyPromptLibraryCatalogSnapshot(scope, { rawSettings: previous?.rawSettings ?? {}, sourceSettingsVersion: previous?.sourceSettingsVersion ?? 0, catalog: { ...base,
-        status: !base || diagnostics.length ? 'partial' : base.status, rows, tombstones, diagnostics } }, current, keys);
+        status: !base || diagnostics.length ? 'partial' : base.status, rows, tombstones, diagnostics } }, current, keys, stale);
 }
 export function beginPromptLibraryCatalogLoad(scope: ServerAccountScope): void {
     const previous = getPromptLibraryCatalogSnapshot(scope);

@@ -1,6 +1,7 @@
 import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
-import { getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindIsTextDocumentV1, getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { WIDGET_SURFACE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/widgets';
 import type { ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { WorkflowDefinitionArtifactBodyV1ReadSchema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
@@ -24,6 +25,7 @@ import { roleRoute } from '@/components/settings/roles/roleCollectionRoutes';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { createInboxItemRoute, readInboxApprovalServerId } from '@/components/inbox/inboxItemFocus';
+import { buildBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
 
 /**
  * The Artifacts browser's one reading of an Account Artifact: which kind it is, where it came from,
@@ -38,7 +40,7 @@ export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document
 
 const USE_TARGET_TO_BROWSER_KIND = {
     open: 'document', prompt_doc: 'prompt', prompt_bundle: 'prompt', memory: 'memory', board: 'board', widget: 'widget',
-    workflow: 'workflow', role: 'role', launch_profile: 'launchProfile', approval: 'document',
+    workflow: 'workflow', role: 'role', launch_profile: 'launchProfile', approval: 'document', bot_template: 'document',
 } as const satisfies Readonly<Record<ReturnType<typeof getArtifactUseTargetV1>['kind'], ArtifactBrowserKind>>;
 
 /** The browser kind, or `null` for a row the browser does not list. Unresolved locked rows remain visible. */
@@ -59,11 +61,30 @@ export function classifyArtifactBrowserKind(artifact: ArtifactBrowserArtifact): 
     return target.browserListed ? USE_TARGET_TO_BROWSER_KIND[target.kind] : null;
 }
 
+/** What the Artifact view names an artifact: its browser kind, or a kind the browser never lists. */
+export type ArtifactViewKind = ArtifactBrowserKind | 'dashboard';
+
+/** Kinds that open only in the Artifact view, by header kind. */
+const VIEW_ONLY_KINDS: ReadonlyMap<unknown, Exclude<ArtifactViewKind, ArtifactBrowserKind>> = new Map([
+    [WIDGET_SURFACE_ARTIFACT_KIND_V1, 'dashboard'],
+]);
+
+export function classifyArtifactViewKind(artifact: ArtifactBrowserArtifact): ArtifactViewKind {
+    return classifyArtifactBrowserKind(artifact)
+        ?? VIEW_ONLY_KINDS.get((artifact.rawHeader ?? artifact.header)?.kind)
+        ?? 'document';
+}
+
 /** Where opening an artifact goes: its kind's own page, else the Artifacts view. */
-export function resolveArtifactOpenRoute(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader'>): string {
+export function resolveArtifactOpenRoute(artifact: Pick<ArtifactBrowserArtifact, 'id' | 'header' | 'rawHeader'> & Pick<DecryptedArtifact, 'sourceServerId'>): string {
     const header = artifact.rawHeader ?? artifact.header ?? {};
     const target = getArtifactUseTargetV1({ artifactId: artifact.id, header, body: null });
     switch (target.kind) {
+        case 'bot_template': {
+            if (!artifact.sourceServerId) return artifactViewRoute(artifact.id);
+            const route = buildBotTemplateRecipientRoute({ kind: 'artifact', serverId: artifact.sourceServerId, artifactId: artifact.id }, artifact.sourceServerId);
+            return `${route.pathname}?${new URLSearchParams(route.params)}`;
+        }
         case 'approval': {
             const route = createInboxItemRoute({ kind: 'approval', id: artifact.id, serverId: readInboxApprovalServerId(header) });
             return `${route.pathname}?${new URLSearchParams(route.params)}`;
@@ -87,8 +108,25 @@ export function artifactViewRoute(artifactId: string): string {
     return `/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
+/**
+ * Whether this artifact is a text document: offered to the text editor and open to passage comments.
+ * Its kind's policy decides; a structured kind (a dashboard layout) is changed only by its own owner.
+ */
+export function isArtifactTextDocument(artifact: Pick<ArtifactBrowserArtifact, 'header' | 'rawHeader'>): boolean {
+    return artifactKindIsTextDocumentV1((artifact.rawHeader ?? artifact.header)?.kind);
+}
+
+/**
+ * Where an edit link goes instead of the text editor: the kind's own destination, or its view when its
+ * policy says it is not a text document. `null` when the text editor may open it.
+ */
+export function resolveArtifactEditRedirect(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader' | 'sourceServerId'>): string | null {
+    if (!opensInArtifactView(artifact)) return resolveArtifactOpenRoute(artifact);
+    return isArtifactTextDocument(artifact) ? null : artifactViewRoute(artifact.id);
+}
+
 /** Whether the browser opens this artifact in its own view (beside the list, or as the page). */
-export function opensInArtifactView(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader'>): boolean {
+export function opensInArtifactView(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader' | 'sourceServerId'>): boolean {
     return resolveArtifactOpenRoute(artifact) === artifactViewRoute(artifact.id);
 }
 
@@ -320,7 +358,7 @@ export function projectArtifactBrowserRows<T extends ArtifactBrowserArtifact>(
         if (organization.folders) {
             try {
                 placement = resolveArtifactOrganizationHeaderV1({ artifactId: artifact.id,
-                    artifactHeadersById: organization.folders.artifactHeadersById, header: artifact.rawHeader ?? artifact.header ?? {},
+                    organization: organization.folders, header: artifact.rawHeader ?? artifact.header ?? {},
                     owned: artifact.access === 'owner' });
             } catch { organizationError = 'invalid-stored-content'; }
         }

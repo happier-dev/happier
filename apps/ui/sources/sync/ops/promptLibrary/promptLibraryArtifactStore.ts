@@ -16,7 +16,8 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { randomUUID } from '@/platform/randomUUID';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { isArtifactInventoryLoaded, PROMPT_LIBRARY_ARTIFACT_KINDS } from '@/sync/domains/artifacts/artifactInventory';
+import { isArtifactInventoryLoaded } from '@/sync/domains/artifacts/artifactInventory';
+import { readPromptLibraryCatalogInCapturedAccount } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 
 function readCompleteAccountArtifactInventory(scope: ServerAccountScope, kinds?: readonly string[]) {
   const state = readRegisteredStorageState();
@@ -85,10 +86,9 @@ export async function withUiPromptLibraryArtifactReader<T>(
   const defaultServerId =
     options?.serverId?.trim() || options?.accountContext?.serverId || getActiveServerAccountScope()?.serverId;
   const accounts = new Map<string, Promise<LazyActionAccountContext>>();
-  const headers = new Map<
-    string,
-    Promise<Readonly<{ items: ReadonlyMap<string, Readonly<{ header: Readonly<Record<string, unknown>>; access: PromptLibraryStoredArtifact['access'] }>>; coverage: 'complete' | 'partial' }>>
-  >();
+  const headers = new Map<string, Promise<Readonly<{
+    header: Readonly<Record<string, unknown>>; access: PromptLibraryStoredArtifact['access'];
+  }> | null>>();
   const accountFor = (ref: PromptArtifactRefV1) => {
     throwIfAborted(options?.signal);
     const serverId = ref.serverId?.trim() || defaultServerId;
@@ -122,37 +122,25 @@ export async function withUiPromptLibraryArtifactReader<T>(
       },
       readArtifactHeader: async (ref) => {
         const { serverId, pending } = accountFor(ref);
-        let inventory = headers.get(serverId);
-        if (!inventory) {
-          inventory = pending.then(async (account) => {
-            const admitted = readCompleteAccountArtifactInventory(account.accountLifetime.scope, PROMPT_LIBRARY_ARTIFACT_KINDS);
-            if (admitted) return { items: new Map(admitted.map(item => [item.id,
-              { header: item.rawHeader!, access: item.access }])), coverage: 'complete' as const };
-            const page = await listArtifactHeadersV1({
-              options: { includeBody: false, kinds: PROMPT_LIBRARY_ARTIFACT_KINDS, signal: options?.signal },
-              readPage: (options) => account.listArtifacts(options ?? {}),
-              encodeCursor: (item) =>
-                account.encodeArtifactListCursor({
-                  artifactId: item.artifactId,
-                  updatedAt: item.updatedAt,
-                }),
-            });
+        const key = JSON.stringify([serverId, ref.artifactId]);
+        let header = headers.get(key);
+        if (!header) {
+          header = pending.then(async (account) => {
+            // The existing exact-read owner joins concurrent ids into its one
+            // headers batch, preserving transport limits and per-id refusals.
+            // The captured transport's Home-change revision excludes pre-wake
+            // joins while allowing this read's concurrent requested ids to batch.
+            const artifact = await account.readArtifactHeader(ref.artifactId, { signal: options?.signal });
             account.assertCurrent();
-            return { items: new Map(page.items.map((item) => [item.artifactId, { header: item.header, access: item.access }])), coverage: page.coverage };
+            if (!artifact) return null;
+            if (!artifact.isDecrypted || !artifact.rawHeader || artifact.access === undefined)
+              throw Object.assign(new Error('Artifact header is unavailable'), { code: 'content_unavailable' });
+            return { header: artifact.rawHeader, access: artifact.access };
           });
-          headers.set(serverId, inventory);
+          headers.set(key, header);
         }
-        const page = await inventory;
-        const artifact = page.items.get(ref.artifactId);
+        const artifact = await header;
         (await pending).assertCurrent();
-        if (!artifact) {
-          if (page.coverage !== 'complete') throw Object.assign(new Error('Artifact header inventory is incomplete'), { code: 'artifact_read_unavailable' });
-          return null;
-        }
-        if (Object.keys(artifact.header).length === 0)
-          throw Object.assign(new Error('Artifact header is locked'), {
-            code: 'content_unavailable',
-          });
         return artifact;
       },
     });
@@ -184,27 +172,7 @@ export function createUiPromptLibraryArtifactStore(
     serverId: account.serverId,
     matchesServerId: serverId => areServerProfileIdentifiersEquivalent(serverId, account.serverId),
     assertCurrent: account.assertCurrent,
-    readCatalog: async (signal, key = 'folders') => {
-      const { getPromptLibraryCatalogSnapshot, getPromptLibraryCatalogValue } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
-      throwIfAborted(signal);
-      account.assertCurrent();
-      const scope = { serverId: account.serverId, accountId: account.accountId };
-      // The reviewed fresh row is usable authority; the Home CAS detects any unobserved remote edit.
-      // A known-stale row is never used to construct a mutation.
-      const row = getPromptLibraryCatalogValue(scope, key);
-      if (row.status !== 'ready' || row.stale) {
-        const { readPromptLibraryCatalogProjectionInContext } = await import('@/sync/api/account/apiPromptLibraryCatalog');
-        const projection = await readPromptLibraryCatalogProjectionInContext(account, signal);
-        throwIfAborted(signal);
-        account.assertCurrent();
-        return projection;
-      }
-      throwIfAborted(signal);
-      account.assertCurrent();
-      const projection = getPromptLibraryCatalogSnapshot(scope);
-      if (!projection) throw new Error('Artifact folder catalog is unavailable');
-      return projection;
-    },
+    readCatalog: (signal, key = 'folders') => readPromptLibraryCatalogInCapturedAccount(account, signal, key),
     writeRecord: async (input, signal) => {
       const { writePromptLibraryRecordAndPublishInContext } = await import('@/sync/api/account/apiPromptLibraryCatalog');
       return await writePromptLibraryRecordAndPublishInContext(account, input, signal);
@@ -217,14 +185,6 @@ export function createUiPromptLibraryArtifactStore(
         throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
       return { header: artifact.rawHeader, owned: artifact.access === 'owner' };
     },
-    listArtifactHeaders: async signal => {
-      const page = await listArtifactHeadersV1({ options: { includeBody: false, signal },
-        readPage: options => account.listArtifacts(options ?? {}),
-        encodeCursor: item => account.encodeArtifactListCursor({ artifactId: item.artifactId, updatedAt: item.updatedAt }) });
-      account.assertCurrent();
-      return { items: page.items.map(item => ({ artifactId: item.artifactId, header: item.header, owned: item.access === 'owner' })),
-        coverage: page.nextCursor ? 'partial' : page.coverage };
-    },
   } : undefined;
   return {
     ...(organization ? { organization } : {}),
@@ -234,6 +194,18 @@ export function createUiPromptLibraryArtifactStore(
       account.assertCurrent(); throwIfAborted(options?.signal);
       return results.map(result => result.status === 'rejected' ? result
         : { status: 'fulfilled' as const, value: storedArtifact(result.value) });
+    }, readHeadersByIds: async (ids: readonly string[], options?: Readonly<{ signal?: AbortSignal }>) => {
+      throwIfAborted(options?.signal);
+      return Promise.allSettled(ids.map(async id => {
+        const artifact = await account.readArtifactHeader(id, options);
+        account.assertCurrent(); throwIfAborted(options?.signal);
+        if (!artifact) return null;
+        if (!artifact.isDecrypted || !artifact.rawHeader || artifact.bodyVersion === undefined || artifact.access === undefined)
+          throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+        return { id: artifact.id, header: artifact.rawHeader, body: null,
+          revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
+          ...(artifact.provenance ? { provenance: artifact.provenance } : {}), owned: artifact.access === 'owner', access: artifact.access };
+      }));
     } } : {}),
     read: async (id, options) => {
       throwIfAborted(options?.signal);
@@ -270,7 +242,10 @@ export function createUiPromptLibraryArtifactStore(
       const scope = account?.accountLifetime.scope;
       // A selective read must not wait for an unrelated full inventory scan.
       const filtered = (options?.coarseKind !== undefined || options?.kinds !== undefined) && account !== undefined;
-      let rows = scope ? readCompleteAccountArtifactInventory(scope, options?.kinds) : null;
+      // Background inventory deliberately omits private attribution. Demand the
+      // existing header projection when listing Skills so absence stays honest.
+      const skills = options?.coarseKind === 'skill' || options?.kinds?.includes('prompt_bundle.v2');
+      let rows = scope && !skills ? readCompleteAccountArtifactInventory(scope, options?.kinds) : null;
       if (!filtered && !rows && account && scope
         && areServerAccountScopesEqual(getActiveServerAccountScope(), scope)
         && areServerAccountScopesEqual(readRegisteredStorageState()?.settingsScope, scope)) {
@@ -287,12 +262,15 @@ export function createUiPromptLibraryArtifactStore(
         const page = selectArtifactHeaderPageV1({
           items: rows.map(artifact => ({ artifactId: artifact.id,
             header: artifact.isDecrypted ? artifact.rawHeader ?? {} : {},
+            provenance: artifact.provenance, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
             createdAt: artifact.createdAt, updatedAt: artifact.updatedAt, access: artifact.access })),
           options,
           encodeCursor: item => account.encodeArtifactListCursor(item),
         });
         account.assertCurrent();
         return { items: page.items.map(item => ({ id: item.artifactId, header: item.header,
+          ...(item.bodyVersion === undefined ? {} : { revision: { headerVersion: item.headerVersion, bodyVersion: item.bodyVersion } }),
+          ...(item.provenance ? { provenance: item.provenance } : {}),
           updatedAtMs: item.updatedAt, owned: item.access === 'owner' })), coverage: 'complete',
           ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
       }
@@ -305,6 +283,8 @@ export function createUiPromptLibraryArtifactStore(
         items: page.items.map((item) => ({
           id: item.artifactId,
           header: item.header,
+          ...(item.bodyVersion === undefined ? {} : { revision: { headerVersion: item.headerVersion, bodyVersion: item.bodyVersion } }),
+          ...(item.provenance ? { provenance: item.provenance } : {}),
           updatedAtMs: item.updatedAt,
           owned: item.access === 'owner',
         })),

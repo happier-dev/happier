@@ -46,8 +46,6 @@ export type ArtifactFolderActionPortV1 = Readonly<{
   writeRecord(input: Readonly<{ record: PromptLibraryRecordV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>,
     signal?: AbortSignal): Promise<ReturnType<typeof PromptLibraryRowMutationResponseV1Schema.parse>>;
   readArtifactHeader(artifactId: string, signal?: AbortSignal): Promise<Omit<ArtifactFolderHeaderV1, 'artifactId'> | null>;
-  listArtifactHeaders(signal?: AbortSignal): Promise<Readonly<{ items: readonly ArtifactFolderHeaderV1[];
-    coverage: 'complete' | 'partial' | 'unavailable' }>>;
 }>;
 type FolderReadV1 = Readonly<{ status: 'ready'; value: PromptFoldersV1; revision: number | 'absent'; sourceSettingsVersion?: number }>
   | Readonly<{ status: 'unavailable'; reason: string }>;
@@ -89,7 +87,7 @@ export async function readArtifactOrganizationV1(input: Readonly<{ port: Artifac
   assertCurrent(input.port, input.signal);
   if (!artifact) return { status: 'unavailable', reason: 'artifact_not_found' };
   return { status: 'ready', revision: read.revision, header: resolveArtifactOrganizationHeaderV1({ artifactId: input.artifactId,
-    artifactHeadersById: read.value.artifactHeadersById, ...artifact }) };
+    organization: read.value, ...artifact }) };
 }
 export async function mutateArtifactOrganizationV1(input: Readonly<{ port: ArtifactFolderActionPortV1; artifactId: string;
   change: Readonly<{ folderId?: string | null; tags?: readonly string[] }>; expectedRevision?: number | 'absent'; signal?: AbortSignal }>): Promise<ArtifactFolderMutationResultV1> {
@@ -100,7 +98,7 @@ export async function mutateArtifactOrganizationV1(input: Readonly<{ port: Artif
   assertCurrent(input.port, input.signal);
   if (!artifact) return { status: 'unavailable', reason: 'artifact_not_found' };
   const previous = resolveArtifactOrganizationHeaderV1({ artifactId: input.artifactId,
-    artifactHeadersById: read.value.artifactHeadersById, ...artifact });
+    organization: read.value, ...artifact });
   const next = placeArtifactInPromptFolderV1(read.value, { artifactId: input.artifactId,
     folderId: input.change.folderId === undefined ? previous.folderId ?? null : input.change.folderId,
     ...(input.change.tags === undefined ? previous.tags === undefined ? {} : { tags: previous.tags } : { tags: input.change.tags }) });
@@ -136,18 +134,7 @@ export async function executeArtifactFolderActionV1(input: Readonly<{ port: Arti
     case 'artifact.folders.move': next = movePromptFolderV1(read.value, ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1[input.actionId].parse(request)); break;
     case 'artifact.folders.delete': {
       const deletion = ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1[input.actionId].parse(request);
-      const inventory = await input.port.listArtifactHeaders(input.signal);
-      assertCurrent(input.port, input.signal);
-      if (inventory.coverage !== 'complete') return { status: 'unavailable', reason: 'artifact_inventory_incomplete' };
-      const artifactHeadersById = { ...read.value.artifactHeadersById };
-      const artifactIds: string[] = [];
-      for (const artifact of inventory.items) {
-        const header = resolveArtifactOrganizationHeaderV1({ ...artifact, artifactHeadersById });
-        if (header.folderId !== deletion.folderId) continue;
-        artifactHeadersById[artifact.artifactId] = header;
-        artifactIds.push(artifact.artifactId);
-      }
-      next = removePromptFolderV1({ ...read.value, artifactHeadersById }, { ...deletion, artifactIds });
+      next = removePromptFolderV1(read.value, deletion);
       break;
     }
   }

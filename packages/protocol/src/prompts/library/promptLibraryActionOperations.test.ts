@@ -31,7 +31,6 @@ function emptyOrganizationPort(): ArtifactFolderActionPortV1 {
       { record: { key: 'folders', value: { v: 1, folders: [] } }, revision: 1 },
     ], tombstones: [], diagnostics: [] } }),
     readArtifactHeader: async () => null,
-    listArtifactHeaders: async () => ({ items: [], coverage: 'complete' }),
     writeRecord: async () => { throw new Error('Read-only inventory fixture'); },
   };
 }
@@ -352,7 +351,6 @@ describe('prompt library action operations', () => {
           status: 'ready', rows: [{ record: folderRecord, revision: folderRevision }], tombstones: [], diagnostics: [],
         } satisfies PromptLibraryCatalogSnapshotV1 }),
         readArtifactHeader: async () => stored ? { header: stored.header ?? {}, owned: true } : null,
-        listArtifactHeaders: async () => ({ items: stored ? [{ artifactId: stored.id, header: stored.header ?? {}, owned: true }] : [], coverage: 'complete' as const }),
         writeRecord: async (input: Readonly<{ record: PromptLibraryRecordV1; expectedRevision: number | 'absent' }>) => {
           if (input.expectedRevision !== folderRevision) return { status: 'conflict' as const, revision: folderRevision };
           if (input.record.key !== 'folders') throw new Error('wrong-domain');
@@ -373,7 +371,7 @@ describe('prompt library action operations', () => {
 
   it('sanitizes memory writes, retains provenance/history and refuses stale reviewed revisions', async () => {
     let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
-      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, facts: [], archive: [] }) };
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [], topics: [] })) };
     const store: PromptLibraryArtifactStore = { read: async () => stored, update: async (input) => {
       if (input.expectedRevision.bodyVersion !== stored.revision.bodyVersion) throw Object.assign(new Error('conflict'), { code: 'version_mismatch' });
       stored = { ...stored, revision: { headerVersion: stored.revision.headerVersion + 1, bodyVersion: stored.revision.bodyVersion + 1 }, header: input.header, body: input.body };
@@ -398,7 +396,7 @@ describe('prompt library action operations', () => {
   it('returns the currently readable memory version after a CAS race without retrying the write', async () => {
     const fact = { id: 'first', text: 'Original', createdAtMs: 1, sourceSessionRef: null };
     let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
-      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, facts: [fact], archive: [] }) };
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [fact], topics: [] })) };
     const latest: PromptLibraryStoredArtifact = { ...stored, revision: { headerVersion: 2, bodyVersion: 2 },
       body: JSON.stringify({ v: 1, index: [{ ...fact, text: 'Concurrent truth' }], topics: [] }) };
     let attempts = 0;
@@ -489,7 +487,7 @@ describe('prompt library action operations', () => {
   it('does not disclose a raced memory version when the current store read loses access', async () => {
     let readable = true;
     const stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
-      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, facts: [], archive: [] }) };
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [], topics: [] })) };
     const store: PromptLibraryArtifactStore = { read: async () => {
       if (!readable) throw Object.assign(new Error('revoked'), { code: 'access_denied' });
       return stored;
@@ -504,7 +502,7 @@ describe('prompt library action operations', () => {
 
   it('creates topics in one Artifact, moves an updated key fact into detail and reads only the selected section', async () => {
     let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
-      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, facts: [], archive: [] }) };
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify(MemoryDocBodyV1Schema.parse({ v: 1, index: [], topics: [] })) };
     const store: PromptLibraryArtifactStore = { read: async () => stored, update: async input => {
       if (input.expectedRevision.bodyVersion !== stored.revision.bodyVersion) throw Object.assign(new Error('conflict'), { code: 'version_mismatch' });
       stored = { ...stored, revision: { headerVersion: stored.revision.headerVersion + 1, bodyVersion: stored.revision.bodyVersion + 1 }, header: input.header, body: input.body };

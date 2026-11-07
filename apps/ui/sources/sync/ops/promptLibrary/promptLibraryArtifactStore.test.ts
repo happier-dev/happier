@@ -93,6 +93,12 @@ describe('UI qualified prompt-library Artifact authority', () => {
       const row = await store.read('current');
       expect(row?.header).not.toHaveProperty('savedBy');
       expect(JSON.parse(row!.body!)).not.toHaveProperty('savedBy');
+      const before = f.requests.length;
+      expect(store.readHeadersByIds).toBeTypeOf('function');
+      expect(await store.readHeadersByIds!(['current'])).toMatchObject([{ status: 'fulfilled', value: {
+        id: 'current', body: null, provenance: { savedBy }, revision: row!.revision,
+      } }]);
+      expect(f.requests.slice(before)).toMatchObject([{ path: '/v1/artifacts/read', projection: 'headers' }]);
     }, { serverId: f.home.id });
   });
   it('reads and updates one Artifact organization through exact headers without enumerating the Account', async () => {
@@ -283,35 +289,6 @@ describe('UI qualified prompt-library Artifact authority', () => {
     }, { serverId: f.home.id });
   });
 
-  it('keeps organization membership full when only Prompt kinds are admitted', async () => {
-    const f = await home();
-    await Promise.all(Array.from({ length: 501 }, (_, index) => f.boundary.handle('/v1/artifacts', {
-      method: 'POST', body: JSON.stringify({ id: `organization-role-${index}`,
-        header: encodePlainArtifactStoredContent({ v: 1, kind: 'role.v1', title: 'Role' }),
-        body: encodePlainArtifactStoredContent({ body: 'Not demanded' }),
-        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER }),
-    })));
-    await withUiPromptLibraryArtifactStore(async (store, account) => {
-      const prompt = await account.fetchArtifact('current');
-      if (!prompt?.isDecrypted || !store.organization) throw new Error('Expected readable Prompt and organization owner');
-      storage.getState().applyArtifacts([prompt], storage.getState().artifacts, PROMPT_LIBRARY_ARTIFACT_KINDS);
-      expect(storage.getState().artifactsLoaded).toBe(false);
-      const before = f.requests.length;
-      const inventory = await store.organization.listArtifactHeaders();
-      expect(inventory.coverage).toBe('complete');
-      expect(inventory.items).toHaveLength(502);
-      expect(inventory.items.some(item => item.header.kind === 'role.v1')).toBe(true);
-      const reads = f.requests.slice(before).filter(request => request.path.startsWith('/v1/artifacts'));
-      expect(reads).toHaveLength(2);
-      for (const read of reads) {
-        const query = new URL(read.path, 'https://home.test').searchParams;
-        expect(read.method).toBe('GET');
-        expect(query.has('kinds')).toBe(false);
-        expect(query.has('kind')).toBe(false);
-        expect(query.get('includeBody')).not.toBe('true');
-      }
-    }, { serverId: f.home.id });
-  });
 
   it('shares finite catalog rows without starting retained Settings maintenance', async () => {
     const { resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
@@ -352,17 +329,108 @@ describe('UI qualified prompt-library Artifact authority', () => {
     await withUiPromptLibraryArtifactStore(async store => {
       if (!store.organization) throw new Error('Expected captured organization reader');
       const controller = new AbortController();
-      const cancelled = store.organization.readCatalog(controller.signal).catch(error => error);
+      let cancelledSettled = false;
+      const cancelled = store.organization.readCatalog(controller.signal).catch(error => error).then(outcome => {
+        cancelledSettled = true;
+        return outcome;
+      });
+      let surviving: ReturnType<typeof store.organization.readCatalog> | undefined;
       try {
         await requested.promise;
+        surviving = store.organization.readCatalog();
         controller.abort();
-        const surviving = await store.organization.readCatalog();
-        expect(surviving.catalog.status).toBe('ready');
-        expect(reads).toBe(2);
+        await vi.waitFor(() => expect(cancelledSettled).toBe(true));
+        expect(reads).toBe(1);
       } finally { release.resolve(); }
+      expect((await surviving)?.catalog.status).toBe('ready');
+      expect(reads).toBe(1);
       const outcome = await cancelled;
       expect(outcome).not.toMatchObject({ catalog: { status: 'ready' } });
     }, { serverId: f.home.id });
+  });
+  it('forgets settled finite acquisitions and fences pending joins after a Home change', async () => {
+    const { readPromptLibraryCatalogProjectionInContext } = await import('@/sync/api/account/apiPromptLibraryCatalog');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { buildPromptLibraryPhysicalKeyV1, PromptLibraryRowMutationV1Schema, sealPromptLibraryContentV1 } =
+      await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');
+    const catalog = createPromptLibraryCatalogBoundary();
+    const requested = createDeferred<void>();
+    const release = createDeferred<void>();
+    let reads = 0;
+    const f = await home('prompt_doc.v2', undefined, { handleRequest: async (path, init) => {
+      const response = await catalog.handle(path, init);
+      if (path === '/v1/account/entity-rows/prompt-library' && (init?.method ?? 'GET') === 'GET') {
+        reads++;
+        if (reads === 1) { requested.resolve(); await release.promise; }
+      }
+      return response;
+    } });
+    await withUiPromptLibraryArtifactStore(async (_store, account) => {
+      const pending = readPromptLibraryCatalogProjectionInContext(account);
+      try {
+        await requested.promise;
+        const changedRow = await catalog.handle('/v1/account/entity-rows/prompt-library/folders', {
+          method: 'POST', body: JSON.stringify(PromptLibraryRowMutationV1Schema.parse({ expectedRevision: 1,
+            content: sealPromptLibraryContentV1({ mode: 'plain', material: null,
+              record: { key: 'folders', value: { v: 1, folders: [{ id: 'current', name: 'Current folder' }] } } }) })),
+        });
+        expect(await changedRow?.json()).toMatchObject({ status: 'updated', revision: 2 });
+        publishHomeAccountChange(f.home.id, [buildPromptLibraryPhysicalKeyV1('folders')]);
+        const changed = await readPromptLibraryCatalogProjectionInContext(account);
+        expect(changed.catalog).toMatchObject({ status: 'ready', rows: expect.arrayContaining([
+          expect.objectContaining({ revision: 2, record: { key: 'folders', value: {
+            v: 1, folders: [{ id: 'current', name: 'Current folder' }],
+          } } }),
+        ]) });
+        expect(reads).toBe(2);
+      } finally { release.resolve(); }
+      expect((await pending).catalog).toMatchObject({ status: 'ready', rows: expect.arrayContaining([
+        expect.objectContaining({ revision: 1, record: { key: 'folders', value: { v: 1, folders: [] } } }),
+      ]) });
+      expect((await readPromptLibraryCatalogProjectionInContext(account)).catalog.status).toBe('ready');
+      expect(reads).toBe(3);
+    }, { serverId: f.home.id });
+  });
+  it('returns typed unavailability after a captured finite reader retires', async () => {
+    const { readPromptLibraryCatalogProjectionInContext } = await import('@/sync/api/account/apiPromptLibraryCatalog');
+    const catalog = createPromptLibraryCatalogBoundary();
+    const f = await home('prompt_doc.v2', undefined, { handleRequest: catalog.handle });
+    await withUiPromptLibraryArtifactStore(async (_store, account) => {
+      await f.dispose();
+      fixture = undefined;
+      expect((await readPromptLibraryCatalogProjectionInContext(account)).catalog)
+        .toMatchObject({ status: 'unavailable', reason: 'scope-retired' });
+    }, { serverId: f.home.id });
+  });
+  it('releases a captured invocation cancellation while the foreground catalog remains pending', async () => {
+    const { observePromptLibraryCatalog, readPromptLibraryCatalogInCapturedAccount, resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    resetPromptLibraryCatalogEngineForTests();
+    resetPromptLibraryCatalogSnapshotsForTests();
+    const catalog = createPromptLibraryCatalogBoundary();
+    const requested = createDeferred<void>();
+    const release = createDeferred<void>();
+    const f = await home('prompt_doc.v2', undefined, { handleRequest: async (path, init) => {
+      if (path === '/v1/account/entity-rows/prompt-library') { requested.resolve(); await release.promise; }
+      return catalog.handle(path, init);
+    } });
+    const controller = new AbortController();
+    const account = await captureLazyActionAccountContext(f.home.id, controller.signal);
+    const stop = observePromptLibraryCatalog({ serverId: account.serverId, accountId: account.accountId });
+    let pending: ReturnType<typeof readPromptLibraryCatalogInCapturedAccount> | undefined;
+    try {
+      await requested.promise;
+      pending = readPromptLibraryCatalogInCapturedAccount(account);
+      let refused = false;
+      void pending.catch(() => { refused = true; });
+      controller.abort();
+      await vi.waitFor(() => expect(refused).toBe(true));
+      expect(f.requests.filter(request => request.path === '/v1/account/entity-rows/prompt-library')).toHaveLength(1);
+    } finally {
+      release.resolve();
+      await pending?.catch(() => {});
+      stop(); account.dispose(); resetPromptLibraryCatalogEngineForTests();
+    }
   });
   it('prepares addressed skill reach from independent current catalog and content reads before writing', async () => {
     const catalog = createPromptLibraryCatalogBoundary();
@@ -743,11 +811,11 @@ describe('UI qualified prompt-library Artifact authority', () => {
       [result.artifactId]: { folderId: null, tags: ['Personal'] },
     } } });
   });
-  it('does not report missing from an incomplete header inventory', async () => {
+  it('establishes exact absence beside unreadable inventory and distinguishes an unreadable requested header', async () => {
     const f = await home();
     const row = f.boundary.read('current')!;
-    // The genuine Home transport may carry an unreadable row; the canonical
-    // header loader must preserve partial coverage rather than invent absence.
+    // An unrelated unreadable census row cannot turn an authoritative exact
+    // miss into uncertainty. The requested unreadable row remains unavailable.
     setRuntimeFetch(async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }), { status: 200 });
@@ -755,7 +823,10 @@ describe('UI qualified prompt-library Artifact authority', () => {
       return (await f.boundary.handle(path, init)) ?? new Response('{}', { status: 404 });
     });
     await expect(withUiPromptLibraryArtifactReader(reader => reader.readArtifactHeader({ kind: 'doc', artifactId: 'missing' }),
-      { serverId: f.home.id })).rejects.toMatchObject({ code: 'artifact_read_unavailable' });
+      { serverId: f.home.id })).resolves.toBeNull();
+    f.boundary.replaceStoredRow({ ...row, header: 'invalid stored header' });
+    await expect(withUiPromptLibraryArtifactReader(reader => reader.readArtifactHeader({ kind: 'doc', artifactId: 'current' }),
+      { serverId: f.home.id })).rejects.toMatchObject({ code: 'content_unavailable' });
   });
   it('reads the current Home document again even when its display projection has a body', async () => {
     const f = await home();

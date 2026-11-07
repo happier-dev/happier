@@ -1,10 +1,10 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import type { ArtifactBrowserKind } from './artifactBrowserModel';
+import type { ArtifactBrowserKind, ArtifactViewKind } from './artifactBrowserModel';
 
 /** Each kind's mark: the same glyph its own destination uses (Boards, Workflows, Prompts, Roles, Launch profiles). */
-export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactBrowserKind, IconName>> = {
+export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactViewKind, IconName>> = {
     document: 'file-text',
     prompt: 'books',
     memory: 'bookmark',
@@ -13,10 +13,11 @@ export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactBrowserKind, IconName>
     workflow: 'tree-structure',
     role: 'users',
     launchProfile: 'person',
+    dashboard: 'squares-four',
 };
 
 /** A kind's name for one artifact ("Board"). */
-export function artifactKindLabel(kind: ArtifactBrowserKind): string {
+export function artifactKindLabel(kind: ArtifactViewKind): string {
     switch (kind) {
         case 'document': return t('artifacts.browser.kindOne.document');
         case 'prompt': return t('artifacts.browser.kindOne.prompt');
@@ -26,6 +27,7 @@ export function artifactKindLabel(kind: ArtifactBrowserKind): string {
         case 'workflow': return t('artifacts.browser.kindOne.workflow');
         case 'role': return t('artifacts.browser.kindOne.role');
         case 'launchProfile': return t('artifacts.browser.kindOne.launchProfile');
+        case 'dashboard': return t('artifacts.browser.kindOne.dashboard');
     }
 }
 
@@ -33,7 +35,7 @@ export function artifactKindLabel(kind: ArtifactBrowserKind): string {
  * What one artifact is, as its card, row and header say it: a code document names its language
  * ("TypeScript") with the code mark; every other artifact says its kind.
  */
-export function artifactKindFact(kind: ArtifactBrowserKind, language: string | null): Readonly<{ label: string; icon: IconName }> {
+export function artifactKindFact(kind: ArtifactViewKind, language: string | null): Readonly<{ label: string; icon: IconName }> {
     return language !== null && kind === 'document'
         ? { label: language, icon: 'code' }
         : { label: artifactKindLabel(kind), icon: ARTIFACT_KIND_ICONS[kind] };

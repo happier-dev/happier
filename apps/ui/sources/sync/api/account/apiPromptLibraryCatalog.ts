@@ -1,5 +1,4 @@
 import { loadPromptLibraryCatalogV1, readPromptLibraryCatalogRecordV1, type PromptLibraryCatalogSnapshotV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
-import { core } from 'zod/mini';
 import { applyRoleOverrideMutationV1, type RoleOverrideMutationV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import { createRoleArtifactStoreV1, retainLegacyRoleArtifactsV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema, PromptLibraryRowMutationV1Schema,
@@ -8,7 +7,7 @@ import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema, Pr
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -26,6 +25,9 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 export type PromptLibraryAccountContext = Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>>;
 export type PromptLibraryRowMutationResponseV1 = ReturnType<typeof PromptLibraryRowMutationResponseV1Schema.parse>;
 const catalogReads = createScopedResolutionSingleFlight<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>>();
+// Coalesce before Account admission can stagger sibling finite reads. Authority
+// stays with this exact captured context; neutral wire sharing remains separate.
+const finiteCatalogAcquisitions = createScopedResolutionSingleFlight<PromptLibraryCatalogProjection>();
 const rowReads = createScopedResolutionSingleFlight<ReturnType<typeof PromptLibraryRowReadResponseV1Schema.parse>>();
 export class PromptLibraryRowOperationError extends Error {
     constructor(readonly code: string, readonly cause?: unknown) { super(code); this.name = 'PromptLibraryRowOperationError'; }
@@ -51,15 +53,7 @@ async function withAccount<T>(scope: ServerAccountScope, signal: AbortSignal | u
     } finally { context.dispose(); }
 }
 function failure(error: unknown, signal?: AbortSignal): PromptLibraryCatalogSnapshotV1 {
-    if (signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    const code = error instanceof Error ? 'code' in error ? error.code : error.message : undefined;
-    if (code === 'scope-retired' || code === 'action_account_scope_changed' || code === 'action_home_not_found') return { status: 'unavailable', reason: 'scope-retired' };
-    if (code === 'unauthorized' || code === 'action_home_signed_out') return { status: 'unavailable', reason: 'unauthorized' };
-    if (code === 'forbidden' || code === 'unsupported') return { status: 'unavailable', reason: code };
-    if (code === 'account-mode-mismatch') return { status: 'unavailable', reason: code };
-    if (code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable') return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-    if (error instanceof core.$ZodError) return { status: 'unavailable', reason: 'invalid-stored-content' };
-    return { status: 'unavailable', reason: 'unreachable' };
+    return { status: 'unavailable', reason: classifyAccountStorageReadFailure(error, signal) };
 }
 function readCatalogResource<T>(context: PromptLibraryAccountContext, path: string, parse: (value: unknown) => T,
     reads: ScopedResolutionSingleFlight<T>, signal?: AbortSignal): Promise<T> {
@@ -97,7 +91,7 @@ async function readPromptLibraryCatalogWithMaintenanceInContext(context: PromptL
             const source: { value: Awaited<ReturnType<typeof readAccountSettingsBaseline>> | null } = { value: null };
             const project = async (catalog: PromptLibraryCatalogSnapshotV1): Promise<PromptLibraryCatalogProjection> => {
                 const { encryption } = await context.resolveAccountEncryption();
-                const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+                const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
                 context.assertCurrent();
                 return { catalog: current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' },
                     rawSettings: source.value?.raw ?? {}, sourceSettingsVersion: source.value?.version ?? 0 };
@@ -153,7 +147,19 @@ async function readPromptLibraryCatalogWithMaintenanceInContext(context: PromptL
 /** Finite Actions borrow admitted rows; the existing Account watch owns the cleanup tail. */
 export function readPromptLibraryCatalogProjectionInContext(context: PromptLibraryAccountContext, signal?: AbortSignal,
     publication?: PromptLibraryReadPublication): Promise<PromptLibraryCatalogProjection> {
-    return readPromptLibraryCatalogWithMaintenanceInContext(context, signal, publication);
+    if (publication) return readPromptLibraryCatalogWithMaintenanceInContext(context, signal, publication);
+    return withActionAccountRequestSignal(context, signal, async signal => {
+        context.assertCurrent();
+        throwIfAborted(signal);
+        const transport = context.readTransport;
+        const projection = await finiteCatalogAcquisitions.run(PROMPT_LIBRARY_ROWS_ROUTE_V1,
+            sharedSignal => readPromptLibraryCatalogWithMaintenanceInContext(context, sharedSignal), {
+                scope: transport ? [context, transport.key] : context, signal,
+            });
+        throwIfAborted(signal);
+        context.assertCurrent();
+        return projection;
+    }).catch((error: unknown) => ({ catalog: failure(error, signal), rawSettings: {}, sourceSettingsVersion: 0 }));
 }
 export async function readPromptLibraryCatalogProjection(scope: ServerAccountScope, signal?: AbortSignal,
     assertCapturedAccountCurrent?: () => void, publication?: PromptLibraryReadPublication): Promise<PromptLibraryCatalogProjection> {
@@ -194,7 +200,7 @@ export async function readPromptLibraryCatalogRowsProjection(scope: ServerAccoun
                 return { status: 'listed', rows };
             } });
             const { encryption } = await context.resolveAccountEncryption();
-            const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+            const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
             context.assertCurrent();
             const projection: PromptLibraryCatalogProjection = { catalog: current.mode === mode ? catalog
                 : { status: 'unavailable', reason: 'account-mode-mismatch' }, rawSettings: {}, sourceSettingsVersion: 0 };
@@ -246,6 +252,7 @@ export function writePromptLibraryRecordInContext(context: PromptLibraryAccountC
         } finally {
             // A subsequent read must not join a pre-write request, even when
             // the issued mutation's response is lost or cannot be admitted.
+            finiteCatalogAcquisitions.invalidate(context);
             const transport = context.readTransport;
             if (transport) {
                 const scope = transport.scope ? [transport.scope, transport.key] : transport.key;
