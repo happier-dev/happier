@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 import {
     resolveMachineControlTargetForSessionFromState,
@@ -19,6 +20,39 @@ function activeMachine(id: string, host: string) {
 }
 
 describe('resolveMachineTargetForSessionFromState', () => {
+    it.each(['retained', 'missing'] as const)('keeps an explicit guest identity while it boots (%s)', (origin) => {
+        const metadata = { ...createMachineFixture().metadata!, host: 'lume.local', homeDir: '/Users/lume' };
+        const guest = createMachineFixture({ id: 'guest', active: false, metadata });
+        const clone = createMachineFixture({ id: 'older-guest', active: true, metadata });
+        const session = createSessionFixture({ id: 'wake-session', active: false,
+            metadata: { machineId: guest.id, path: '/Users/lume/project', host: metadata.host, homeDir: metadata.homeDir } });
+        const state = { sessions: { [session.id]: session }, machines: {
+            ...(origin === 'retained' ? { [guest.id]: guest } : {}), [clone.id]: clone,
+        } };
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual(origin === 'retained' ? null : {
+            machineId: guest.id, basePath: '/Users/lume/project', confidence: 'metadata_direct',
+        });
+        const ready = { ...state, machines: { ...state.machines, [guest.id]: { ...guest, active: true } } };
+        expect(resolveMachineTargetForSessionFromState(ready, session.id)).toEqual({
+            machineId: guest.id, basePath: '/Users/lume/project',
+        });
+    });
+
+    it('reads current Machine activity when the retained inventory object is unchanged', () => {
+        const machine = createMachineFixture({ id: 'presence-machine', active: true });
+        const session = createSessionFixture({ id: 'presence-session', active: true,
+            metadata: { machineId: machine.id, path: '/workspace', host: 'presence.local' } });
+        const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine } };
+        const target = { machineId: machine.id, basePath: '/workspace' };
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
+        publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
+        publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 1 }, []);
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
+    });
+
     it('uses the exact Home owner view when the compact row has no private machine target', () => {
         const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: true,
             metadataLayoutVersion: 1, metadata: { path: '', host: '' },
@@ -52,6 +86,60 @@ describe('resolveMachineTargetForSessionFromState', () => {
         const state = { sessions: {}, machines: {}, machineListByServerId: { 'home-a': [machine] },
             sessionListRowsByServerId: { 'home-a': { s1: row } } };
         expect(resolveMachineControlTargetForSessionFromState(state, { serverId: 'home-a', sessionId: 's1' })).toBeNull();
+    });
+
+    it.each(['legacy', 'owner'] as const)('recovers an empty external Session path from its same-machine mapping (%s)', (layout) => {
+        const metadata = {
+            machineId: 'machine-1', path: '', host: 'host.local',
+            sessionWorkspaceLocationV1: { v: 1 as const, machineId: 'machine-1',
+                agentPath: '/agent/project', machinePath: '/host/project' },
+        };
+        const session = createSessionFixture({ id: 's1', active: true,
+            ...(layout === 'owner'
+                ? { metadataLayoutVersion: 1, metadata: { path: '', host: 'host.local' }, ownerMetadataView: metadata }
+                : { metadata }),
+        });
+        const state = { sessions: { s1: session }, machines: {} };
+        expect(resolveMachineControlTargetForSessionFromState(state, 's1')).toEqual({
+            machineId: 'machine-1', basePath: '/host/project', agentBasePath: '/agent/project',
+            confidence: 'metadata_direct',
+        });
+        const foreign = { ...metadata, machineId: 'other-machine' };
+        expect(resolveMachineControlTargetForSessionFromState({ ...state, sessions: {
+            s1: { ...session, ...(layout === 'owner' ? { ownerMetadataView: foreign } : { metadata: foreign }) },
+        } }, 's1')).toBeNull();
+    });
+
+    it.each(['replacement', 'same-host locality', 'same-host missing source'] as const)('does not recover an empty root on a foreign target (%s)', (route) => {
+        const session = createSessionFixture({ id: 's1', active: false, metadata: {
+            path: '', host: 'old.local', homeDir: '/home/user', machineId: 'machine-old',
+            sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-old',
+                agentPath: '/agent/old-project', machinePath: '/host/old-project' },
+        } });
+        const machineMetadata = { ...createMachineFixture().metadata!, host: 'old.local', homeDir: '/home/user' };
+        const state = { sessions: { s1: session }, machines: {
+            ...(route === 'same-host missing source' ? {} : {
+                'machine-old': createMachineFixture({ id: 'machine-old', active: false,
+                    ...(route === 'replacement' ? { replacedByMachineId: 'machine-new' } : {}) }),
+            }),
+            'machine-new': createMachineFixture({ id: 'machine-new', active: true,
+                ...(route !== 'replacement' ? { metadata: machineMetadata } : {}) }),
+        } };
+        expect(resolveMachineTargetForSessionFromState(state, 's1')).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, 's1')).toEqual(route === 'same-host missing source' ? {
+            machineId: 'machine-old', basePath: '/host/old-project', agentBasePath: '/agent/old-project',
+            confidence: 'metadata_direct',
+        } : null);
+
+        const withProject = { ...state, getProjectForSession: () => ({
+            key: { machineId: 'machine-new', rootPath: '/new/project' },
+        }) };
+        expect(resolveMachineTargetForSessionFromState(withProject, 's1')).toEqual(route === 'replacement' ? {
+            machineId: 'machine-new', basePath: '/new/project',
+        } : null);
+        expect(resolveMachineControlTargetForSessionFromState(withProject, 's1')).toEqual(route === 'replacement' ? {
+            machineId: 'machine-new', basePath: '/new/project', confidence: 'reachable',
+        } : null);
     });
 
     it('distinguishes target hydration from a settled ambiguous Home target', () => {

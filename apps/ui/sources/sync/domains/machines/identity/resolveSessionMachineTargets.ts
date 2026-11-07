@@ -1,3 +1,4 @@
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
@@ -6,19 +7,26 @@ import { findMachineInCollection, type MachineCollection } from './machineCollec
 import { normalizeMachineIdentityString, type MachineTargetResolution } from './machineIdentityTypes';
 import { resolveCanonicalMachineId } from './resolveCanonicalMachineId';
 
-function chooseBasePath(input: Readonly<{
+export function resolveSessionBasePathForMachine(input: Readonly<{
     sessionActive?: boolean | null;
     sessionPath?: string | null;
+    sessionWorkspaceMetadata?: unknown;
     projectPath?: string | null;
     projectMachineId?: string | null;
     originMachineId?: string | null;
     targetMachineId?: string | null;
 }>): string | null {
-    const sessionPath = normalizeMachineIdentityString(input.sessionPath);
+
     const projectPath = normalizeMachineIdentityString(input.projectPath);
     const projectMachineId = normalizeMachineIdentityString(input.projectMachineId);
     const originMachineId = normalizeMachineIdentityString(input.originMachineId);
     const targetMachineId = normalizeMachineIdentityString(input.targetMachineId);
+    const sessionPath = normalizeMachineIdentityString(input.sessionPath)
+        ?? (targetMachineId ? resolveSessionWorkspaceRootForMachine({
+            metadata: input.sessionWorkspaceMetadata,
+            machineId: targetMachineId,
+            candidatePath: '',
+        }).agentPath ?? null : null);
 
     if (input.sessionActive === true && sessionPath) return sessionPath;
     if (
@@ -48,6 +56,7 @@ export function resolveSessionDisplayTarget(input: Readonly<{
     sessionActive?: boolean | null;
     sessionMachineId?: string | null;
     sessionPath?: string | null;
+    sessionWorkspaceMetadata?: unknown;
     projectMachineId?: string | null;
     projectPath?: string | null;
     machines: MachineCollection<Machine>;
@@ -59,9 +68,10 @@ export function resolveSessionDisplayTarget(input: Readonly<{
     const machineId = canonical?.reason === 'missingReplacementTarget'
         ? originMachineId
         : canonical?.machineId ?? originMachineId;
-    const basePath = chooseBasePath({
+    const basePath = resolveSessionBasePathForMachine({
         sessionActive: input.sessionActive,
         sessionPath: input.sessionPath,
+        sessionWorkspaceMetadata: input.sessionWorkspaceMetadata,
         projectPath: input.projectPath,
         projectMachineId: input.projectMachineId,
         originMachineId,
@@ -81,6 +91,7 @@ export function resolveSessionRpcTarget(input: Readonly<{
     sessionActive?: boolean | null;
     sessionMachineId?: string | null;
     sessionPath?: string | null;
+    sessionWorkspaceMetadata?: unknown;
     projectMachineId?: string | null;
     projectPath?: string | null;
     machines: MachineCollection<Machine>;

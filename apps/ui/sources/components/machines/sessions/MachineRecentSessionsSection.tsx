@@ -1,13 +1,12 @@
 import * as React from 'react';
 
-import { filterUserFacingMachineDetailSessions } from '@/components/machines/machineDetailSessionQueries';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { useSessions } from '@/sync/domains/state/storage';
-import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { useMachineRecentSessions } from '@/sync/store/sessionListMachineRecent';
 import { t } from '@/text';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 
@@ -16,18 +15,10 @@ export const MachineRecentSessionsSection = React.memo(function MachineRecentSes
     machineId: string;
     serverId: string;
 }>) {
-    const sessions = useSessions();
     const navigateToSession = useNavigateToSession();
-    const recent = React.useMemo(() => {
-        if (!sessions || !props.machineId) return [];
-        return filterUserFacingMachineDetailSessions(sessions)
-            .filter((session) => readDisplayMachineIdForSession({
-                sessionId: session.id,
-                metadata: readSessionOwnerMetadataView(session),
-            }) === props.machineId)
-            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-            .slice(0, 5);
-    }, [props.machineId, sessions]);
+    const presented = useLayoutPresentationActive();
+    const isSessionVisible = useSessionRecordingVisibility(presented);
+    const recent = useMachineRecentSessions(props.serverId, props.machineId, isSessionVisible, presented);
 
     if (recent.length === 0) return null;
     return (
