@@ -16,6 +16,9 @@ import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { Modal } from '@/modal';
 import {
   SegmentedChoiceItem,
   type SegmentedChoiceOption,
@@ -24,6 +27,8 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { t } from '@/text';
 import type { ManagedReceiptFact } from './managedMachineDisplay';
 import { normalizeMachineSetup } from './normalizeMachineSetup';
+import { groupMachineSetupItems, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
+  type MachineSetupItemKind } from './machineSetupItems';
 export { normalizeMachineSetup } from './normalizeMachineSetup';
 
 /**
@@ -150,7 +155,54 @@ export const MachineSetupSection = React.memo(
           : undefined,
       });
     };
+    const items = setup.items ?? [];
+    const groups = groupMachineSetupItems(items);
+    const renameApp = async (index: number) => {
+      const item = items[index];
+      if (item?.kind !== 'app') return;
+      const name = await Modal.prompt(t('machinePresets.setup.appEnvironmentName'), undefined, { defaultValue: item.definition.name });
+      if (name !== null && name !== undefined) change({ items: renameMachineSetupApp(items, index, name) });
+    };
     return (
+      <>
+      {/* The one ordered item list (S60-U3b): shown by kind in apply order, every edit writes the same array; saving stays inert. */}
+      {groups.map((group, groupIndex) => (
+        <ItemGroup key={group.kind} testID={`${props.testID}.items.${group.kind}`}
+          title={t(ITEM_GROUP_TITLE[group.kind])}
+          {...(groupIndex === 0 ? { description: t('machinePresets.setup.itemsOrder') } : {})}>
+          {group.rows.map(({ item, index }, at) => {
+            const title = item.kind === 'app' ? item.definition.name : item.selection.ref.recipeId;
+            const actions: ItemAction[] = props.editable ? [
+              ...(item.kind === 'app' ? [{ id: 'rename', title: t('machinePresets.setup.renameApp'), icon: 'pencil' as const,
+                onPress: () => { void renameApp(index); } }] : []),
+              { id: 'moveUp', title: t('common.moveUp'), icon: 'caret-up', disabled: at === 0,
+                onPress: () => change({ items: moveMachineSetupItem(items, index, -1) }) },
+              { id: 'moveDown', title: t('common.moveDown'), icon: 'caret-down', disabled: at === group.rows.length - 1,
+                onPress: () => change({ items: moveMachineSetupItem(items, index, 1) }) },
+              { id: 'remove', title: t('common.remove'), icon: 'trash', destructive: true,
+                onPress: () => change({ items: removeMachineSetupItem(items, index) }) },
+            ] : [];
+            return (
+              <Item
+                key={`${item.kind}:${index}:${title}`}
+                testID={`${props.testID}.item.${index}`}
+                icon={<Icon name={ITEM_ICON[item.kind]} size={20} color={theme.colors.text.secondary} />}
+                title={title}
+                subtitle={item.kind === 'app'
+                  ? item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject')
+                  : undefined}
+                mode="info"
+                showChevron={false}
+                rightElementOutsidePressable
+                rightElement={actions.length ? (
+                  <ItemRowActions title={title} actions={actions} overflowOnly
+                    overflowTriggerTestID={`${props.testID}.item.${index}.more`} />
+                ) : undefined}
+              />
+            );
+          })}
+        </ItemGroup>
+      ))}
       <ItemGroup
         title={t('machinePresets.setup.title')}
         description={t('machinePresets.setup.description')}
@@ -359,9 +411,17 @@ export const MachineSetupSection = React.memo(
           />
         ) : null}
       </ItemGroup>
+      </>
     );
   },
 );
+
+const ITEM_GROUP_TITLE = {
+  setupRecipe: 'machinePresets.setup.itemsGroupSetup',
+  softwareRecipe: 'machinePresets.setup.itemsGroupSoftware',
+  app: 'machinePresets.setup.itemsGroupApps',
+} as const satisfies Record<MachineSetupItemKind, string>;
+const ITEM_ICON = { setupRecipe: 'wrench', softwareRecipe: 'download', app: 'cube' } as const satisfies Record<MachineSetupItemKind, string>;
 
 /** The receipt's read-only environment lines: what each new machine is set up with. */
 export function describeMachineSetup(
