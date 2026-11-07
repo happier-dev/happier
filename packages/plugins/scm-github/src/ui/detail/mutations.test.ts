@@ -14,6 +14,7 @@ import {
   buildGithubIssueReopenInputV1,
   buildGithubPullRequestReviewersInputV1,
   buildGithubPendingReviewCreateInputV1,
+  buildGithubSubIssueReprioritizeInputV1,
   buildGithubPullRequestTargetInputV1,
   buildGithubPullRequestThreadResolutionInputV1,
   buildGithubPullRequestUpdateBranchInputV1,
@@ -198,6 +199,48 @@ const APPLIED_OBSERVATION: TriageSourceObservationV1 = {
   },
   viewer: { involvement: ['reviewRequested'] },
 };
+
+describe('observed sub-issue ordering', () => {
+  const childrenInput = (complete = true, routed = true) => {
+    const input = detailInput({ kindId: 'issue' });
+    return TriageDetailSurfaceInputV1Schema.parse({
+      ...input,
+      observation: { ...input.observation, snapshot: { ...input.observation.snapshot,
+        relations: { children: { total: 3, ...(complete ? { complete: true } : {}), entries: [
+          { source: SOURCE_CONTRIBUTION, kindId: 'issue', collisionScope: 'github:9876', entryId: '42',
+            ...(routed ? { locator: { v: 1, routingToken: 'other-org/child-repo' } } : {}) },
+          { source: SOURCE_CONTRIBUTION, kindId: 'issue', collisionScope: 'github:1296269', entryId: '42',
+            locator: { v: 1, routingToken: 'octo-org/example-app' } },
+          { source: SOURCE_CONTRIBUTION, kindId: 'issue', collisionScope: 'github:1296269', entryId: '43',
+            locator: { v: 1, routingToken: 'octo-org/example-app' } },
+        ] } },
+      } },
+    });
+  };
+
+  it('names exact observed children and uses the surviving neighbour at either end', () => {
+    const input = childrenInput();
+    const entries = input.observation.snapshot.relations!.children!.entries!;
+    const child = entries[0]!;
+    expect(buildGithubSubIssueReprioritizeInputV1(input, child, entries[1]!)).toMatchObject({
+      related: { localRef: { kindId: 'issue', collisionScope: 'github:9876', entryId: '42' },
+        routingToken: 'other-org/child-repo' },
+      before: { localRef: { kindId: 'issue', collisionScope: 'github:1296269', entryId: '42' },
+        routingToken: 'octo-org/example-app' },
+    });
+    expect(buildGithubSubIssueReprioritizeInputV1(input, child, null)).toMatchObject({
+      after: { localRef: { kindId: 'issue', collisionScope: 'github:1296269', entryId: '43' },
+        routingToken: 'octo-org/example-app' },
+    });
+  });
+
+  it('does not reorder partial evidence or guess a missing child repository route', () => {
+    for (const input of [childrenInput(false), childrenInput(true, false)]) {
+      const entries = input.observation.snapshot.relations!.children!.entries!;
+      expect(buildGithubSubIssueReprioritizeInputV1(input, entries[0]!, entries[1]!)).toBeNull();
+    }
+  });
+});
 
 describe('pending review creation', () => {
   it('pins the observed head, preserves the summary and omits an empty optional summary', () => {

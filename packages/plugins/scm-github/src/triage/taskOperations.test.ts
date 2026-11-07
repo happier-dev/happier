@@ -3,7 +3,7 @@ import { TriageGetResultV1Schema, TriageTaskWriteResultV1Schema } from '@happier
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
-import { activate } from '../activate.js';
+import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
 import { GITHUB_ISSUE_RESPONSE, GITHUB_REPOSITORY_RESPONSE } from './__fixtures__/githubResponses.js';
@@ -58,10 +58,14 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       }
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
+      expect(await plugin.invokeAction('github/issue/create', { v: 1, instance, kindId: 'issue',
+        initialStatusId: 'native-state', fields: { title: 'Created task', scopeId: route },
+      })).toEqual({ kind: 'refused', reason: 'unsupported_field' });
+      expect(transport.requests).toHaveLength(0);
       const createdRaw = await plugin.invokeAction('github/issue/create', {
         v: 1, instance: { ...instance, configuration: { v: 1, token: JSON.stringify({ v: 1,
           selection: { kind: 'selected', unitIds: [route] } }) } },
@@ -76,8 +80,14 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       expect(edited).toMatchObject({ kind: 'applied', observation: { kind: 'present', snapshot: { title: 'Updated task' } } });
       expect(issue.assignees).toEqual([{ login: 'concurrent-owner' }, { login: 'new-owner' }]);
       expect(issue.labels).toEqual([{ name: 'concurrent-label' }, { name: 'new-label' }]);
-      const closed = TriageTaskWriteResultV1Schema.parse(await plugin.invokeAction('github/issue/transition', {
+      const beforeTransition = transport.requests.length;
+      expect(await plugin.invokeAction('github/issue/transition', {
         v: 1, instance, localRef, lastKnownLocator: locator, transitionId: 'not_planned',
+        fieldValues: [{ fieldId: 'resolution', value: 'done' }],
+      })).toEqual({ kind: 'refused', reason: 'unsupported_field' });
+      expect(transport.requests).toHaveLength(beforeTransition);
+      const closed = TriageTaskWriteResultV1Schema.parse(await plugin.invokeAction('github/issue/transition', {
+        v: 1, instance, localRef, lastKnownLocator: locator, transitionId: 'not_planned', fieldValues: [],
       }));
       expect(closed).toMatchObject({ kind: 'applied', observation: { snapshot: { state: { presentation: 'closed', completionReason: 'canceled' } } } });
       const writes = transport.requests.filter(({ method }) => method !== 'GET');
@@ -93,7 +103,7 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       if (request.method === 'POST') throw new Error('response lost after dispatch');
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
@@ -114,7 +124,7 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       if (new URL(request.url).pathname.endsWith(`/issues/${issueNumber}`)) return { status: 200, body: issue };
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
@@ -139,7 +149,7 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       } };
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
@@ -158,28 +168,48 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
   it.each(['named', 'repository-id'] as const)('reads live parent, paged %s sub-issues and blocked-by identities without inventing missing permissions', async (routeKind) => {
     let denied = false;
     const related = (number: number, state = 'open') => ({ ...GITHUB_ISSUE_RESPONSE, number, state, html_url: `https://github.com/${route}/issues/${number}`, repository_url: `https://api.github.com/repos/${route}` });
+    const crossRepository = 'other-org/child-repo';
+    const child = { ...related(43, 'closed'), title: 'Cross-repository\nchild',
+      repository: { id: 9876, owner: { login: 'other-org' }, name: 'child-repo' },
+      repository_url: `https://api.github.com/repos/${crossRepository}`,
+      html_url: `https://github.com/${crossRepository}/issues/43` };
     const transport = createStubGithubTransport({ respond: (request) => {
       const url = new URL(request.url);
       if (url.pathname.endsWith(`/issues/${issueNumber}`)) return { status: 200, body: { ...related(Number(issueNumber)), sub_issues_summary: { total: 2, completed: 1 } } };
       if (denied && /parent|sub_issues|blocked_by/u.test(url.pathname)) return { status: 403, body: { message: 'Forbidden' } };
       if (url.pathname.endsWith('/parent')) return { status: 200, body: related(41) };
       if (url.pathname.endsWith('/sub_issues')) return url.searchParams.get('page') === '2'
-        ? { status: 200, body: [related(43, 'closed')] }
-        : { status: 200, body: [related(42)], headers: { link: `<${routeKind === 'named' ? url.toString()
+        ? { status: 200, body: [child] }
+        : { status: 200, body: [{ ...related(42), title: 'First native child' }], headers: { link: `<${routeKind === 'named' ? url.toString()
           : url.toString().replace(`/repos/${route}/`, `/repositories/${String(GITHUB_REPOSITORY_RESPONSE.id)}/`)}&page=2>; rel="next"` } };
       if (url.pathname.endsWith('/dependencies/blocked_by')) return { status: 200, body: [related(44)] };
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
       const result = TriageGetResultV1Schema.parse(await plugin.invokeAction('triage/get-github-entry', { v: 1, instance, localRef, lastKnownLocator: locator }));
       expect(result).toMatchObject({ kind: 'present', snapshot: { relations: {
         parent: { ...localRef, entryId: '41', source: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-forge' } },
-        children: { total: 2, completed: 1, complete: true, entries: [expect.objectContaining({ entryId: '42' }), expect.objectContaining({ entryId: '43' })] },
+        children: { total: 2, completed: 1, complete: true, entries: [
+          expect.objectContaining({ entryId: '42', title: 'First native child',
+            locator: { v: 1, routingToken: route, displayPath: `${route}#42`, webUrl: `https://github.com/${route}/issues/42` } }),
+          expect.objectContaining({ entryId: '43', collisionScope: 'github:9876', title: 'Cross-repository child',
+            locator: { v: 1, routingToken: crossRepository, displayPath: `${crossRepository}#43`, webUrl: child.html_url } }),
+        ] },
         blockedBy: [expect.objectContaining({ entryId: '44' })],
       } } });
+      // Titles and routing come from the same paged relation DTOs: no per-child
+      // issue or repository read is needed to present the returned child rows.
+      expect(transport.requests.map(({ url }) => new URL(url).pathname).sort()).toEqual([
+        `/repos/${route}`, `/repos/${route}/issues/${issueNumber}`,
+        `/repos/${route}/issues/${issueNumber}/parent`,
+        `/repos/${route}/issues/${issueNumber}/sub_issues`,
+        routeKind === 'named' ? `/repos/${route}/issues/${issueNumber}/sub_issues`
+          : `/repositories/${String(GITHUB_REPOSITORY_RESPONSE.id)}/issues/${issueNumber}/sub_issues`,
+        `/repos/${route}/issues/${issueNumber}/dependencies/blocked_by`,
+      ].sort());
       denied = true;
       const unavailable = TriageGetResultV1Schema.parse(await plugin.invokeAction('triage/get-github-entry', { v: 1, instance, localRef, lastKnownLocator: locator }));
       expect(unavailable.kind).toBe('present');

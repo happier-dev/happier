@@ -20,12 +20,14 @@ import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeurist
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { EntityDropOutcomeV1 } from '@/components/ui/treeDragDrop/entityDragDropTypes';
+import { entityReorderOutcome } from '@/components/ui/treeDragDrop/entityReorderOutcome';
 
 import { CollectionSpaceSwipeZone, useCollectionSpaceSwipeTrack } from './CollectionSpaceSwipeZone';
 import { renderCollectionSpacesStripTabs, useCollectionSpacesStripEdgeMask } from './CollectionSpacesStrip';
 
 type StripHost = NonNullable<PluginUiPresentationHost['collectionSpacesStrip']>;
 type ReorderInput = Parameters<NonNullable<StripHost['useReorder']>>[0];
+type FlatReorderInput = Parameters<NonNullable<PluginUiPresentationHost['renderEntityFlatReorderList']>>[0];
 
 const SAVED_VIEWS_LOCAL_ID = 'saved-views';
 
@@ -105,6 +107,30 @@ function usePluginSavedViewsReorderBinding(pluginId: string, input: ReorderInput
     items,
     onReorder: settle,
   }), [accountId, items, pluginId, serverId, settle]);
+}
+
+/** Public plugin rows use core's grip, touch chooser and keyboard move path. */
+export function PluginEntityFlatReorderList({ pluginId, input }: Readonly<{ pluginId: string; input: FlatReorderInput }>) {
+  const accountScope = useActiveServerAccountScope();
+  const enabled = input.onReorder !== undefined && input.items.length > 1;
+  const serverId = enabled ? accountScope?.serverId : undefined;
+  const accountId = enabled ? accountScope?.accountId : undefined;
+  const settle = useEventCallback((id: string, beforeId: string | null) => input.onReorder?.(id, beforeId) ?? Promise.resolve(false));
+  const binding = React.useMemo(() => createPluginFlatReorderBinding({
+    pluginId, localId: input.localId, items: input.items,
+    scope: serverId === undefined || accountId === undefined ? null : { serverId, accountId },
+    executeMove: async (id, beforeId) => await settle(id, beforeId)
+      ? { status: 'applied' }
+      : entityReorderOutcome({ status: 'refused', reason: 'reorder_unavailable' }),
+  }), [accountId, input.items, input.localId, pluginId, serverId, settle]);
+  return <EntityFlatReorderList binding={binding} testID={input.testID} alwaysOrganizing>
+    {input.items.map(item => <EntityFlatReorderRow key={item.id} id={item.id}>
+      {({ renderHandle, moveBy }) => input.renderItem(item, {
+        renderHandle,
+        moveBy: async delta => (await moveBy(delta))?.status === 'applied',
+      })}
+    </EntityFlatReorderRow>)}
+  </EntityFlatReorderList>;
 }
 
 function SavedViewsSwipeZone(props: React.ComponentProps<NonNullable<StripHost['SwipeZone']>>) {

@@ -2046,6 +2046,13 @@ at the existing observation owner, not a permission-masked 404. Unsubscribe
 means GitHub's ordinary participation/mention notifications, not Ignore. These
 outward writes retain individually configurable Ask defaults on agent surfaces.
 
+The developing Notifications group reads issue pin and subscription facts only
+when opened, through one small admitted GraphQL read. Opening an issue without
+that group makes no additional request; showing it reads both facts together.
+The canonical REST issue overview stays unchanged. Unknown facts show no guessed
+switch state, and confirmed mutation payloads settle switches without another
+facts read. Pull-request subscription joins its existing status query.
+
 The native pending-review Submit Action also carries the selected head. Its one
 review-identity read supplies the draft commit and current PR head; changed-head
 or mismatched-draft submission is refused before publication. The existing

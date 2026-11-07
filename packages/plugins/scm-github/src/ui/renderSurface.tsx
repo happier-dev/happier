@@ -101,6 +101,8 @@ import {
 import { GithubChecksRunDrilldown } from './detail/checksRunDrilldown.js';
 import { GithubReadFailure, GithubReadFailureDetails } from './detail/readFailure.js';
 import { GithubEntryPropertyPicker } from './detail/entryPropertyPicker.js';
+import { GithubIssueNotifications } from './detail/notifications.js';
+import { GithubSubIssueOrder } from './detail/subIssueOrder.js';
 import { GithubPullRequestPreviewStep } from './pullRequestPreview.js';
 import type { GithubReadFailureV1 } from './detail/readBoundary.js';
 import { useGithubFileViewedSource } from './detail/filesViewed.js';
@@ -251,6 +253,7 @@ import {
   buildGithubPullRequestRevertInputV1,
   buildGithubRelatedEntryInputV1,
   buildGithubSubIssueAddInputV1,
+  buildGithubSubIssueReprioritizeInputV1,
   readGithubSameRepositoryNumberV1,
   buildGithubPendingReviewCreateInputV1,
   buildGithubPendingReviewDeleteInputV1,
@@ -594,6 +597,7 @@ type GithubWritePayloadV1 =
   | NonNullable<ReturnType<typeof buildGithubPullRequestHeadBranchInputV1>>
   | NonNullable<ReturnType<typeof buildGithubRelatedEntryInputV1>>
   | NonNullable<ReturnType<typeof buildGithubSubIssueAddInputV1>>
+  | NonNullable<ReturnType<typeof buildGithubSubIssueReprioritizeInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPendingReviewSubmitInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPendingReviewDeleteInputV1>>
   | NonNullable<ReturnType<typeof buildGithubReviewDismissInputV1>>;
@@ -1410,7 +1414,16 @@ function IssueWrites({
         fallback="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
       />
       <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
-      <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} />
+      <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} capabilities={capabilities} />
+      <GithubIssueNotifications input={input} renderControls={(facts, update) => <Stack gap="small">
+        <GithubNotificationToggle input={input} checked={facts.viewerSubscription === 'SUBSCRIBED'}
+          operation={facts.viewerSubscription === 'SUBSCRIBED' ? 'entryUnsubscribe' : 'entrySubscribe'}
+          onObserved={onObserved} capabilities={capabilities}
+          onConfirmed={entry => { if (entry.subscription !== undefined) update({ viewerSubscription: entry.subscription }); }} />
+        <GithubNotificationToggle input={input} checked={facts.isPinned}
+          operation={facts.isPinned ? 'issueUnpin' : 'issuePin'} onObserved={onObserved} capabilities={capabilities}
+          onConfirmed={entry => { if (entry.pinned !== undefined) update({ isPinned: entry.pinned }); }} />
+      </Stack>} />
       <SingleProposalPublicationWrite
         input={input}
         proposals={publicationProposals.proposals}
@@ -1678,7 +1691,7 @@ const GITHUB_LOCK_REASON_COPY: Readonly<Record<GithubLockReasonV1, string>> = Ob
 });
 
 /** One relationship edited by the related entry's number in this repository: Add and Remove, each its own Action. */
-function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove, onObserved }: Readonly<{
+function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove, onObserved, children }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   title: string;
   value?: string;
@@ -1686,6 +1699,7 @@ function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove
   add: Readonly<{ localId: string; title: string; titleKey: string }>;
   remove: Readonly<{ localId: string; title: string; titleKey: string }>;
   onObserved: GithubObservedEntryHandlerV1;
+  children?: React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [numberValue, setNumberValue] = React.useState('');
@@ -1700,6 +1714,7 @@ function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove
   const outcome = removeWrite.outcome ?? addWrite.outcome;
   return (
     <GithubPropertyRow title={title} {...(value === undefined ? {} : { value })}>
+      {children}
       <Form.TextField
         label={relatedKindId === 'issue'
           ? text('plugins.github.ui.parity.issueNumber', 'Issue number')
@@ -1718,6 +1733,20 @@ function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove
   );
 }
 
+function GithubSubIssueRelationshipRow({ disabledReason, ...props }: React.ComponentProps<typeof GithubRelationshipRow> & Readonly<{
+  disabledReason: string | null;
+}>): React.ReactElement {
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueReprioritize, parseRelationshipResult, props.onObserved);
+  const reorder = React.useCallback(async (payload: NonNullable<ReturnType<typeof buildGithubSubIssueReprioritizeInputV1>>) => {
+    const result = await write.run(payload);
+    return result?.kind === 'applied';
+  }, [write.run]);
+  return <GithubRelationshipRow {...props}>
+    <GithubSubIssueOrder input={props.input} reorder={reorder} {...(disabledReason === null ? {} : { disabledReason })} />
+    {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
+  </GithubRelationshipRow>;
+}
+
 /** Same-repository references the observation already read, as "#12, #14"; another repository's are counted. */
 function githubRelatedNumbersText(
   text: PluginTranslate,
@@ -1730,10 +1759,11 @@ function githubRelatedNumbersText(
 }
 
 /** github.com's Development and Relationships: closing references, sub-issues and dependencies. */
-function GithubEntryRelationships({ input, kindId, onObserved }: Readonly<{
+function GithubEntryRelationships({ input, kindId, onObserved, capabilities }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const relations = input.observation.snapshot.relations;
@@ -1752,7 +1782,8 @@ function GithubEntryRelationships({ input, kindId, onObserved }: Readonly<{
   const blockedBy = githubRelatedNumbersText(text, input, relations?.blockedBy);
   return (
     <ItemGroup title={text('plugins.github.ui.parity.relationships', 'Relationships')}>
-      <GithubRelationshipRow input={input} onObserved={onObserved} relatedKindId="issue"
+      <GithubSubIssueRelationshipRow input={input} onObserved={onObserved} relatedKindId="issue"
+        disabledReason={githubOperationCapabilityReason(text, capabilities, 'subIssueReprioritize')}
         title={text('plugins.github.ui.parity.subIssues', 'Sub-issues')}
         {...(children === undefined ? {} : {
           value: children.total === 0 ? text('plugins.github.ui.parity.none', 'None')
@@ -1962,6 +1993,38 @@ function PullRequestHeadBranchWrite({ input, overview, onObserved, capabilities 
   );
 }
 
+function GithubNotificationToggle({ input, checked, operation, onObserved, capabilities, onConfirmed }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  checked: boolean;
+  operation: 'entrySubscribe' | 'entryUnsubscribe' | 'issuePin' | 'issueUnpin';
+  onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  onConfirmed: (entry: Extract<GithubEntryAdministrationResultV1, { kind: 'applied' }>['entry']) => void;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const pin = operation === 'issuePin' || operation === 'issueUnpin';
+  const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[operation], parseAdministrationResult, onObserved);
+  const payload = React.useMemo(() => input.observation.entryRef.kindId === 'issue'
+    ? buildGithubIssueReopenInputV1(input) : buildGithubPullRequestTargetInputV1(input), [input]);
+  const reason = githubOperationCapabilityReason(text, capabilities, operation);
+  const label = pin ? text('plugins.github.ui.notifications.pinned', 'Pinned to the repository')
+    : text('plugins.github.ui.notifications.subscribed', 'Subscribed');
+  return <Stack gap="small">
+    <Item title={label} subtitle={reason ?? (pin
+      ? text('plugins.github.ui.notifications.pinDescription', "Shown at the top of the repository’s issues.")
+      : text('plugins.github.ui.notifications.description', "You’ll get GitHub notifications for activity here."))}
+      accessory={<Form.Toggle label={label} value={checked}
+        disabled={write.pending || payload === null || reason !== null}
+        onChange={async () => {
+          if (payload === null) return;
+          const result = await write.run(payload);
+          if (result?.kind === 'applied') onConfirmed(result.entry);
+        }} />}
+    />
+    {write.outcome !== null && write.outcome.kind !== 'applied' ? <WriteOutcome outcome={write.outcome} /> : null}
+  </Stack>;
+}
+
 function GithubNotifications({ input, overview, onObserved, capabilities }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   overview: GithubOverviewValueV1 | null;
@@ -1977,34 +2040,14 @@ function GithubNotifications({ input, overview, onObserved, capabilities }: Read
   const subscribed = confirmed?.source === overview
     ? confirmed.subscribed
     : observed === 'SUBSCRIBED';
-  const operation = subscribed ? 'entryUnsubscribe' : 'entrySubscribe';
-  const write = useGithubWrite(
-    GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[operation], parseAdministrationResult, onObserved,
-  );
-  const payload = React.useMemo(() => buildGithubPullRequestTargetInputV1(input), [input]);
-  const reason = githubOperationCapabilityReason(text, capabilities, operation);
   if (overview === null || observed === undefined) return null;
   return (
     <ItemGroup title={text('plugins.github.ui.notifications.title', 'Notifications')}>
-      <Item
-        title={text('plugins.github.ui.notifications.subscribed', 'Subscribed')}
-        subtitle={reason ?? text('plugins.github.ui.notifications.description', 'Receive notifications about this pull request.')}
-        accessory={(
-          <Form.Toggle
-            label={text('plugins.github.ui.notifications.subscribed', 'Subscribed')}
-            value={subscribed}
-            disabled={write.pending || payload === null || reason !== null}
-            onChange={async () => {
-              if (payload === null) return;
-              const result = await write.run(payload);
-              if (result?.kind === 'applied' && result.entry.subscription !== undefined) {
-                setConfirmed({ source: overview, subscribed: result.entry.subscription === 'SUBSCRIBED' });
-              }
-            }}
-          />
-        )}
-      />
-      {write.outcome !== null && write.outcome.kind !== 'applied' ? <WriteOutcome outcome={write.outcome} /> : null}
+      <GithubNotificationToggle input={input} checked={subscribed}
+        operation={subscribed ? 'entryUnsubscribe' : 'entrySubscribe'} onObserved={onObserved} capabilities={capabilities}
+        onConfirmed={entry => {
+          if (entry.subscription !== undefined) setConfirmed({ source: overview, subscribed: entry.subscription === 'SUBSCRIBED' });
+        }} />
     </ItemGroup>
   );
 }
@@ -2196,7 +2239,7 @@ function WritesSection({
               )
               : null}
             <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
-            <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} />
+            <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} capabilities={capabilities} />
             <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
             {input.observation.snapshot.state.presentation === 'active'
               ? (

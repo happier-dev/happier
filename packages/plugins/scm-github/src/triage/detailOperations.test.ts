@@ -44,6 +44,7 @@ import {
   GithubTimelineResultV1Schema,
 } from './detail/contracts.js';
 import { decodeGithubDetailContinuation, encodeGithubDetailContinuation } from './detail/continuation.js';
+import { githubNativeReadActionId } from './readActions.js';
 import {
   readGithubCapabilities,
   readGithubOverview,
@@ -223,6 +224,67 @@ describe('GitHub capability plane', () => {
       expect(stub.requests.filter((request) =>
         new URL(request.url).pathname === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`))
         .toHaveLength(1);
+    } finally { await plugin.dispose(); }
+  });
+});
+
+describe('registered GitHub issue facts read', () => {
+  it('refuses a pull request before reading issue facts', async () => {
+    const stub = createStubGithubTransport({ respond: () => undefined });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    try {
+      expect(await plugin.invokeAction(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readIssueFacts, {
+        v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY,
+      })).toEqual({ kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'github_detail_kind_unsupported' } });
+      expect(stub.requests).toHaveLength(0);
+    } finally { await plugin.dispose(); }
+  });
+
+  it.each([
+    { native: false, isPinned: true, viewerSubscription: 'SUBSCRIBED' },
+    { native: false, isPinned: false, viewerSubscription: 'IGNORED' },
+    { native: true, isPinned: false, viewerSubscription: 'UNSUBSCRIBED' },
+  ])('reads current issue facts with one request (%j)', async ({ native, ...facts }) => {
+    const stub = createStubGithubTransport({ respond: request => new URL(request.url).pathname === '/graphql'
+      ? jsonResponse({ data: { repository: { databaseId: 4210, issue: facts } } }) : undefined });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    try {
+      const actionId = GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readIssueFacts;
+      const result = await plugin.invokeAction(native ? githubNativeReadActionId(actionId) : actionId, {
+        v: 1, instance: configuredInstance(), localRef: ISSUE_REF, routingToken: REPOSITORY_KEY,
+      });
+      expect(result).toEqual({ kind: 'issueFacts', ...facts });
+      expect(stub.requests).toHaveLength(1);
+      expect(readRecordedJsonBody(stub.requests[0]!)).toMatchObject({
+        variables: { owner: GITHUB_FIXTURE_OWNER, name: GITHUB_FIXTURE_REPOSITORY, number: 1284 },
+        query: expect.stringContaining('isPinned viewerSubscription'),
+      });
+    } finally { await plugin.dispose(); }
+  });
+
+  it.each([
+    { body: { errors: [{ type: 'FORBIDDEN' }], data: null }, failure: { class: 'permission', code: 'github_forbidden' } },
+    { body: { data: { repository: { databaseId: 4210, issue: { isPinned: true, viewerSubscription: null } } } },
+      failure: { class: 'unsupportedContract', code: 'github_graphql_response_invalid' } },
+    { body: { data: { repository: { databaseId: 4210, issue: { isPinned: null, viewerSubscription: 'UNSUBSCRIBED' } } } },
+      failure: { class: 'unsupportedContract', code: 'github_graphql_response_invalid' } },
+    { body: { data: { repository: { databaseId: 9999, issue: { isPinned: false, viewerSubscription: 'SUBSCRIBED' } } } },
+      failure: { class: 'unknown', code: 'route-body-mismatch' } },
+  ])('preserves a typed issue-facts failure without guessed state (%j)', async ({ body, failure }) => {
+    const stub = createStubGithubTransport({ respond: request => new URL(request.url).pathname === '/graphql'
+      ? jsonResponse(body) : undefined });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    try {
+      expect(await plugin.invokeAction(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readIssueFacts, {
+        v: 1, instance: configuredInstance(), localRef: ISSUE_REF, routingToken: REPOSITORY_KEY,
+      })).toEqual({ kind: 'unavailable', failure });
+      expect(stub.requests).toHaveLength(1);
     } finally { await plugin.dispose(); }
   });
 });

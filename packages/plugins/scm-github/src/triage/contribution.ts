@@ -50,6 +50,7 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
  * reach the same configured-entry admission through these native Actions.
  */
 export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
+  readIssueFacts: 'triage/read-github-issue-facts',
   readCapabilities: 'triage/read-github-capabilities',
   readOverview: 'triage/read-github-overview',
   readPreview: 'github/pull-request/preview',

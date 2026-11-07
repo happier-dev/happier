@@ -88,6 +88,7 @@ import {
 import {
   GithubRelatedEntryInputV1Schema,
   GithubSubIssueAddInputV1Schema,
+  GithubSubIssueReprioritizeInputV1Schema,
 } from '../../triage/mutations/relationshipContracts.js';
 import type { GithubTriageKindIdV1 } from '../../triage/types.js';
 import type { GithubSecurityAlertMutationResultV1 } from '../../triage/securityAlerts/actionContracts.js';
@@ -451,6 +452,30 @@ export function buildGithubSubIssueAddInputV1(input: TriageDetailSurfaceInputV1,
   const related = buildGithubRelatedEntryInputV1(input, 'issue', number);
   if (related === null) return null;
   const parsed = GithubSubIssueAddInputV1Schema.safeParse(related);
+  return parsed.success ? parsed.data : null;
+}
+
+type GithubObservedChildV1 = NonNullable<NonNullable<NonNullable<TriageDetailSurfaceInputV1['observation']['snapshot']['relations']>['children']>['entries']>[number];
+
+/** Reorders only the complete observed list, preserving every child's own repository route. */
+export function buildGithubSubIssueReprioritizeInputV1(
+  input: TriageDetailSurfaceInputV1,
+  child: GithubObservedChildV1,
+  before: GithubObservedChildV1 | null,
+) {
+  const children = input.observation.snapshot.relations?.children;
+  if (children?.complete !== true) return null;
+  const remaining = children.entries?.filter(entry => entry !== child);
+  const neighbour = before ?? remaining?.at(-1);
+  if (neighbour === undefined) return null;
+  const operand = (entry: GithubObservedChildV1) => ({
+    localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId },
+    routingToken: entry.locator?.routingToken,
+  });
+  const parsed = GithubSubIssueReprioritizeInputV1Schema.safeParse({
+    ...mutationTargetOf(input), related: operand(child),
+    ...(before === null ? { after: operand(neighbour) } : { before: operand(neighbour) }),
+  });
   return parsed.success ? parsed.data : null;
 }
 

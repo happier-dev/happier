@@ -7,6 +7,7 @@ import {
     defineProtocolUnion,
     defineProtocolUniqueArray,
     defineProtocolUtf8String,
+    TriageEntryRefV1Fields,
     type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import { ScmHostingProviderKindProtocolSchema, type ProtocolScmHostingProviderKind } from '@happier-dev/plugin-sdk/scm';
@@ -209,7 +210,12 @@ export const TriageEntryRelationsV1Schema = defineProtocolObject({
     children: defineProtocolObject({
         total: defineProtocolNumber({ integer: true, minimum: 0 }),
         completed: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
-        entries: defineProtocolArray(TriageEntryRefV1Schema).optional(),
+        entries: defineProtocolArray(defineProtocolObject({
+            ...TriageEntryRefV1Fields,
+            /** Presentation from the same relation read; identity remains the canonical ref. */
+            title: TriageTextV1ProtocolSchema.optional(),
+            locator: TriageEntryLocatorV1Schema.optional(),
+        }, { policy: 'closed' })).optional(),
         complete: defineProtocolLiteral(true).optional(),
     }, { policy: 'closed' }).optional(),
     blockedBy: defineProtocolArray(TriageEntryRefV1Schema).optional(),
@@ -282,6 +288,16 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
      * `observedAtMs` before it can request local preparation.
      */
     reviewRevision: TriagePullRequestReviewRevisionV1Schema.optional(),
+    /**
+     * A pull/merge request's branch names as the provider writes them: the branch it
+     * merges from (`head`) and into (`base`). Presentation only, never a checkout or
+     * revision fact (`reviewRevision` owns those). Omitted when either is unknown,
+     * including on list rows whose provider read does not carry them.
+     */
+    branches: defineProtocolObject({
+        head: TriageTextV1ProtocolSchema,
+        base: TriageTextV1ProtocolSchema,
+    }, { policy: 'closed' }).optional(),
     projectionTruncated: triageProtocolTrue.optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageSourceEntrySnapshotV1 = ReturnType<

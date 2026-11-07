@@ -255,6 +255,19 @@ export const GithubViewerSubscriptionV1Schema = defineProtocolUnion([
 ]);
 export type GithubViewerSubscriptionV1 = ReturnType<typeof GithubViewerSubscriptionV1Schema.parse>;
 
+/** Narrow, on-demand facts for issue notification and repository-pin controls. */
+export const GithubIssueFactsInputV1Schema = defineProtocolObject(exactEntryInput, { policy: 'closed' });
+export type GithubIssueFactsInputV1 = ReturnType<typeof GithubIssueFactsInputV1Schema.parse>;
+export const GithubIssueFactsResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('issueFacts'),
+    isPinned: GithubBooleanSchema,
+    viewerSubscription: GithubViewerSubscriptionV1Schema,
+  }, { policy: 'closed' }),
+  GithubDetailUnavailableSchema,
+]);
+export type GithubIssueFactsResultV1 = ReturnType<typeof GithubIssueFactsResultV1Schema.parse>;
+
 const GithubOverviewCommonV1 = {
   kind: defineProtocolLiteral('overview'),
   observedAtMs: TimestampSchema,

@@ -3,8 +3,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform, StyleSheet, Text, type ScrollView } from 'react-native';
-import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, TodoReorderInputV1Schema,
-    type TodoReorderInputV1 } from '@happier-dev/protocol';
+import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1} from '@happier-dev/protocol/actions/anchoredListOrderV1';
+import { TodoReorderInputV1Schema,
+    type TodoReorderInputV1 } from '@happier-dev/protocol/actions/listReorderAction';
 import { createDeferred, flushHookEffects, renderScreen, type RenderScreenResult } from '@/dev/testkit';
 import type { TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -14,6 +15,117 @@ import { PopoverScrollSourceProvider } from '@/components/ui/popover/PopoverScro
 import { EntityFlatReorderList, EntityFlatReorderRow, entityReorderPreview, settleEntityReorderWrite, type EntityFlatReorderBinding } from './EntityFlatReorder';
 import { EntityDragGripTrigger, EntityStagedMoveDock, StagedMoveDockSlotContext, type StagedMoveDockSlot } from './EntityReleasePreview';
 import { TreeDropIndicatorLine } from './TreeDropIndicatorLine';
+import { EntityFlatReorderList as PublicFlatReorderList } from '@happier-dev/plugin-ui/components';
+import { PluginUiPresentationHostProviderInternal } from '../../../../../../../packages/plugin-ui/src/presentationHost/context';
+import { HappierUiEnvironmentProvider } from '../../../../../../../packages/plugin-ui/src/environment/context';
+import { projectHappierUiEnvironment } from '../../../../../../../packages/plugin-ui/src/environment/projectEnvironment';
+import { createPluginUiPrivatePresentationHost } from '@/components/plugins/surfaces/pluginUiPrivatePresentationHost';
+import { storage } from '@/sync/domains/state/storage';
+
+it('moves a public plugin row through the incumbent host and reports refusal without applying it', async () => {
+    const previousScope = storage.getState().profileScope;
+    storage.setState({ profileScope: scope });
+    const moves: unknown[] = [];
+    let accepted = true;
+    let moveBy: (delta: number) => Promise<boolean> = async () => false;
+    const host = createPluginUiPrivatePresentationHost(undefined, { pluginId: 'com.acme.issues' });
+    const screen = await renderScreen(<PluginUiPresentationHostProviderInternal host={host}>
+        <PublicFlatReorderList localId="children" testID="public-child-order" items={[
+            { id: 'a', title: '#1 First' }, { id: 'b', title: '#2 Second' }, { id: 'c', title: '#3 Third' },
+        ]} onReorder={async (id, beforeId) => { moves.push({ id, beforeId }); return accepted; }}
+        renderItem={(item, controls) => { if (item.id === 'c') moveBy = controls.moveBy; return <Text>{item.title}</Text>; }} />
+    </PluginUiPresentationHostProviderInternal>);
+    try {
+        await act(async () => { expect(await moveBy(-1)).toBe(true); });
+        expect(moves).toEqual([{ id: 'c', beforeId: 'b' }]);
+        accepted = false;
+        await act(async () => { expect(await moveBy(-2)).toBe(false); });
+        expect(moves).toEqual([{ id: 'c', beforeId: 'b' }, { id: 'c', beforeId: 'a' }]);
+    } finally {
+        await screen.unmount();
+        storage.setState({ profileScope: previousScope });
+    }
+});
+
+it('moves an observed cross-repository sub-issue from the public host grip through its registered Action', async () => {
+    const [{ createPluginTestkit, createSurfaceContextFixture }, { TriageDetailSurfaceInputV1Schema }, { activate, activateAccount },
+        { PLUGIN_MANIFEST }, { configuredInstance, REPOSITORY_KEY }, { createStubGithubTransport, readRecordedJsonBody },
+        { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 }, { GithubSubIssueOrder }, { GithubRelationshipMutationResultV1Schema }] = await Promise.all([
+        import('@happier-dev/plugin-sdk/testing'), import('@happier-dev/triage-protocol/v1'),
+        import('../../../../../../../packages/plugins/scm-github/src/activate'),
+        import('../../../../../../../packages/plugins/scm-github/src/manifest'),
+        import('../../../../../../../packages/plugins/scm-github/src/triage/testkit/githubMutation.test-support'),
+        import('../../../../../../../packages/plugins/scm-github/src/triage/testkit/githubTriage.test-support'),
+        import('../../../../../../../packages/plugins/scm-github/src/triage/contribution'),
+        import('../../../../../../../packages/plugins/scm-github/src/ui/detail/subIssueOrder'),
+        import('../../../../../../../packages/plugins/scm-github/src/triage/mutations/relationshipContracts'),
+    ]);
+    const instance = configuredInstance();
+    const input = TriageDetailSurfaceInputV1Schema.parse({ v: 1, panel: 'actions', instance, linkedSessions: [],
+        observation: { entryRef: { source: instance.instance.source, kindId: 'issue', collisionScope: 'github:4210', entryId: '7' },
+            observedAtMs: 1, locator: { v: 1, routingToken: REPOSITORY_KEY }, viewer: { involvement: [] },
+            snapshot: { v: 1, title: 'Parent', scopeLabel: REPOSITORY_KEY, facts: [],
+                state: { presentation: 'active', nativeLabel: 'Open' }, relations: { children: { total: 2, complete: true, entries: [
+                    { source: instance.instance.source, kindId: 'issue', collisionScope: 'github:9876', entryId: '42',
+                        title: 'Cross-repository child', locator: { v: 1, routingToken: 'other-org/child-repo' } },
+                    { source: instance.instance.source, kindId: 'issue', collisionScope: 'github:4210', entryId: '42',
+                        title: 'Same-number neighbour', locator: { v: 1, routingToken: REPOSITORY_KEY } },
+                ] } } } } });
+    const stub = createStubGithubTransport({ respond: request => {
+        const document = readRecordedJsonBody(request) as { query: string; variables: { owner?: string; number?: number } };
+        if (document.query.startsWith('query GithubRelationshipEntry')) {
+            const cross = document.variables.owner === 'other-org';
+            return { status: 200, body: { data: { repository: { databaseId: cross ? 9876 : 4210,
+                name: cross ? 'child-repo' : 'example-app', owner: { login: cross ? 'other-org' : 'octo-org' },
+                entry: { __typename: 'Issue', id: cross ? 'I_CROSS42' : `I${document.variables.number}`, number: document.variables.number },
+            } } } };
+        }
+        return { status: 200, body: { data: { result: { issue: { id: 'I7' } } } } };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: stub.context.services });
+    const previousScope = storage.getState().profileScope;
+    storage.setState({ profileScope: scope });
+    const settled = createDeferred<void>();
+    const host = createPluginUiPrivatePresentationHost(undefined, { pluginId: instance.instance.source.pluginId });
+    const environment = projectHappierUiEnvironment(createSurfaceContextFixture());
+    const renderOrder = (value: typeof input) => <HappierUiEnvironmentProvider environment={environment}>
+      <PluginUiPresentationHostProviderInternal host={host}>
+        <GithubSubIssueOrder input={value} reorder={async payload => {
+            try {
+                const result = GithubRelationshipMutationResultV1Schema.parse(await plugin.invokeAction(
+                    GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueReprioritize, payload, { surface: 'ui' }));
+                return result.kind === 'applied';
+            } finally { settled.resolve(); }
+        }} />
+      </PluginUiPresentationHostProviderInternal>
+    </HappierUiEnvironmentProvider>;
+    const screen = await renderScreen(renderOrder(input));
+    try {
+        const pressKey = async (value: string) => act(async () => {
+            screen.root.findAllByType(EntityDragGripTrigger)[0]!.props.onKeyDown?.({ key: value, preventDefault() {}, stopPropagation() {} });
+        });
+        await pressKey(' ');
+        await pressKey('ArrowDown');
+        await pressKey('Enter');
+        await act(async () => { await settled.promise; });
+        const writes = stub.requests.map(readRecordedJsonBody).filter(value => {
+            return typeof value === 'object' && value !== null && 'query' in value
+                && typeof value.query === 'string' && value.query.startsWith('mutation ');
+        });
+        expect(writes).toEqual([expect.objectContaining({ variables: { input: { issueId: 'I7', subIssueId: 'I_CROSS42', afterId: 'I42' } } })]);
+        const partial = TriageDetailSurfaceInputV1Schema.parse({ ...input, observation: { ...input.observation,
+            snapshot: { ...input.observation.snapshot, relations: { children: {
+                total: 3, entries: input.observation.snapshot.relations!.children!.entries,
+            } } },
+        } });
+        await screen.update(renderOrder(partial));
+        expect(screen.root.findAllByType(EntityDragGripTrigger)).toHaveLength(0);
+    } finally {
+        await screen.unmount();
+        storage.setState({ profileScope: previousScope });
+        await plugin.dispose();
+    }
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

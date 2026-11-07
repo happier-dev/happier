@@ -117,6 +117,28 @@ describe('Triage source observation union', () => {
 });
 
 describe('Triage snapshot and row facts', () => {
+    it('retains optional child presentation without expanding canonical entry identity', () => {
+        const entry = { source: fixture.configuredInstance.instance.source, ...localRef };
+        const child = { ...entry, title: 'Keep the returned error',
+            locator: { v: 1, routingToken: 'another-owner/another-repository',
+                webUrl: 'https://github.com/another-owner/another-repository/issues/17' } };
+        const relations = { children: { total: 1, complete: true, entries: [child] } };
+        expect(TriageSourceEntrySnapshotV1Schema.parse({ ...present.snapshot, relations })).toMatchObject({ relations });
+        expect(TriageSourceEntrySnapshotV1Schema.parse({ ...present.snapshot,
+            relations: { children: { total: 1, entries: [entry] } } })).toMatchObject({
+            relations: { children: { entries: [entry] } },
+        });
+        expect(TriageEntryRefV1Schema.safeParse(child).success).toBe(false);
+    });
+    it('preserves every source fact independently of row display density', () => {
+        const facts = Array.from({ length: 7 }, (_, index) => ({
+            id: `fact-${index}`, importance: 'secondary' as const,
+            value: { kind: 'text' as const, value: `Value ${index}` },
+        }));
+        expect(TriageSourceObservationV1Schema.parse({
+            ...present, snapshot: { ...present.snapshot, facts },
+        })).toMatchObject({ snapshot: { facts } });
+    });
     it('keeps optional due and completion facts and an explicit completing transition in the source snapshot', () => {
         const facts = { dueDate: '2026-10-25', completedAtMs: 1_799_000_000_000,
             taskCapabilities: { completingTransitionId: 'done', transitions: [{ id: 'done', label: 'Done', state: { presentation: 'resolved' } }] } };

@@ -7,7 +7,7 @@ import {
 import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
 import { usePluginVoiceAttempt } from './PluginVoicePresence';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
-import { createCollectionSpacesStripHost } from '@/components/ui/lists/collection/collectionSpacesStripHost';
+import { createCollectionSpacesStripHost, PluginEntityFlatReorderList } from '@/components/ui/lists/collection/collectionSpacesStripHost';
 import * as React from 'react';
 import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
@@ -717,6 +717,9 @@ export function createPluginUiPrivatePresentationHost(
         paneHeaderScroll: PLUGIN_UI_PANE_HEADER_SCROLL,
         collectionRowNeedsYou: PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU,
         collectionSpacesStrip: createCollectionSpacesStripHost(pluginId),
+        ...(pluginId === undefined ? {} : { renderEntityFlatReorderList(input) {
+            return <PluginEntityFlatReorderList pluginId={pluginId} input={input} />;
+        } }),
         ...(options?.renderDragSource === undefined ? {} : { renderDragSource: options.renderDragSource }),
         ...(options?.renderDropTarget === undefined ? {} : { renderDropTarget: options.renderDropTarget }),
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),
