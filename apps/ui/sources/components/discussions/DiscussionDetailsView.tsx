@@ -75,6 +75,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SaveMemoryDecisionSheet, seedMemoryDecisionFromMessage } from '@/components/memory/SaveMemoryDecisionSheet';
 import { DiscussionMessageMenu, type DiscussionMessageMenuItemId } from './DiscussionMessageMenu';
 import { DiscussionCheckInBanner } from './DiscussionCheckInBanner';
+import { DiscussionReplySendToSession } from './DiscussionReplySendToSession';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import { useSessionAgentActivityRoster } from '@/hooks/session/useSessionAgentActivity';
@@ -722,6 +723,19 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         roleLabels: { user: t('session.collaboration.discussion.collaborator'), assistant: t('voiceActivity.format.assistant') },
         agentAttributionLabel: t('session.collaboration.discussion.viaAgent'),
     }), [messages, props.target.address.serverId, props.target.discussionId, resolveAccountLabel, resolveSessionLabel, transcriptBulkCopyFormat]);
+    // P3 (CL-B): an agent's finished reply can go to the Session this Discussion hangs off, as information.
+    // CL-B's row owns the send and its receipt; this page only says where and which reply.
+    const replySendSessionId = discussion?.capabilities.sendToSession === true && props.source?.canSendToSession === true
+        ? props.source.address.sessionId : null;
+    const renderReplySend = React.useCallback((message: DiscussionDisplayMessage) => {
+        if (!replySendSessionId || message.producerV1?.kind !== 'agent' || message.producerV1.sessionId === replySendSessionId) return null;
+        return <DiscussionReplySendToSession scope={props.scope} sessionId={replySendSessionId} sessionName={anchorTitle}
+            discussionId={props.target.discussionId} messageId={message.id}
+            prepare={() => {
+                const selected = selectableMessages.find((candidate) => candidate.id === message.id);
+                return selected ? prepareSelection([selected]) : null;
+            }} />;
+    }, [anchorTitle, prepareSelection, props.scope, props.target.discussionId, replySendSessionId, selectableMessages]);
     const [localId, setLocalId] = React.useState<string | null>(null);
     const clearingLocalId = React.useRef<string | null>(null);
     const recoveredPostMutation = Object.values(snapshot.mutations).find((item) => item.kind === 'post' && item.discussionId === props.target.discussionId) ?? null;
@@ -1272,6 +1286,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             attributionLine={resolveDiscussionReplyAttributionLine(item.message, props.scope, { account: labels.account })}
             requesterApprovals={requesterApprovalsByMessage.get(item.message.id)}
             returnHref={discussionReturnHref}
+            renderReplySend={replySendSessionId ? renderReplySend : undefined}
             pendingMutation={pendingMutation}
             onRetryMutation={repository.retry}
             onDismissMutation={dismissRefusal}
@@ -1400,7 +1415,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                     extraData={rowContextVersion.current.revision}
                     frame={frame}
                     webDomObservation={observation}
-                    keyExtractor={(item) => item.kind === 'human_message' ? `message:${item.message.localId ?? item.message.id}` : item.kind === 'workflow_run' ? `workflow:${item.run.id}` : item.kind === 'workflow_run_end' ? `workflow-end:${item.run.id}` : item.kind === 'workflow_round' ? `round:${JSON.stringify([item.round.runId, item.round.index, item.rows[0]!.message.id])}` : `run:${item.entry.runId ?? item.subagent.id}`}
+                    keyExtractor={(item) => item.kind === 'human_message' ? `message:${item.message.localId ?? item.message.id}` : item.kind === 'workflow_run' ? `workflow:${item.run.id}` : item.kind === 'workflow_run_end' ? `workflow-end:${item.run.id}` : item.kind === 'workflow_round' ? `round:${JSON.stringify([item.round.runId, item.round.index, item.rows[0]!.message.id])}` : item.kind === 'participant_reply' ? `participant:${JSON.stringify([item.message.id, item.sessionId])}` : `run:${item.entry.runId ?? item.subagent.id}`}
                     onViewableItemsChanged={onVisible}
                     viewabilityConfig={VIEWABILITY}
                     onStartReached={thread.hasMoreOlder ? () => void repository.loadOlderMessages(props.target.discussionId) : undefined}
@@ -1433,8 +1448,9 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                                 ? <DiscussionWorkflowRunEndRow {...runProps} replyTextInset={THREAD_ROW_SELECTION_EDGE_PX + SPEAKER_FACE_PX + theme.space.s10} />
                                 : <DiscussionWorkflowRunRow {...runProps} endRow={item.endRow === true} />}
                                 {item.kind === 'workflow_run' && factError ? <SurfaceStateCard size="line" kind="unavailable" title={factError.title} reason={factError.message}
-                                    action={{ label: t('common.retry'), onPress: workflowInvocations.retry }} /> : null}</>;
+                                    action={{ label: t('common.retry'), onPress: () => workflowInvocations.retry(item.run.id) }} /> : null}</>;
                         }
+                        if (item.kind === 'participant_reply') return null;
                         if (item.kind === 'workflow_round') {
                             const digest = item.rows.find(row => row.message.id === item.round.digestMessageId);
                             return <DiscussionWorkflowRoundRow round={item.round} resolveSessionLabel={resolveSessionLabel}
@@ -1570,6 +1586,8 @@ const DiscussionPresenceFaces = React.memo((props: Readonly<{ viewers: readonly 
 const DiscussionMessageRow = React.memo((props: Readonly<{
     message: DiscussionDisplayMessage;
     workflowRetry?: React.ReactNode;
+    /** P3: the page's Send-to-Session row for a finished agent reply (CL-B owns it); absent where it can't send. */
+    renderReplySend?: (message: DiscussionDisplayMessage) => React.ReactNode;
     parentMessage?: DiscussionDisplayMessage;
     parentAuthorLabel: string | null;
     onOpenMessage: (messageId: string) => void;
@@ -1756,6 +1774,8 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                 {/* DISC-19: the kept partial stays a readable answer; this says only that it isn't finished. */}
                 {stopped ? <Text testID={`session-discussion-message-stopped-${message.id}`}>{t('session.collaboration.discussion.reply.stopped')}</Text> : null}
             </Text> : null}
+            {props.renderReplySend && agentOutcome === 'answer' && !stopped && isCommittedDisplayMessage(message)
+                ? props.renderReplySend(message) : null}
             {message.participantDeliveryV1?.map((delivery) => <Text
                 key={delivery.participantSessionId}
                 testID={`session-discussion-participant-${delivery.disposition === 'failed' ? 'failed' : 'held'}-${message.id}-${delivery.participantSessionId}`}

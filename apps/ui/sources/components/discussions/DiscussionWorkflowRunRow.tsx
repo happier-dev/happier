@@ -17,6 +17,9 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { TranscriptContentDemandProvider, useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
+import type { DiscussionWorkflowRound } from './discussionTimelineProjection';
 import { WorkflowRunFoldHeader } from '@/components/workflows/presentation/WorkflowRunFoldHeader';
 import { WorkflowRunStateMark } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 import {
@@ -345,3 +348,42 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
   },
 }));
+
+
+/** One recorded round wraps the same Discussion rows used outside a round. */
+export function DiscussionWorkflowRoundRow(props: Readonly<{
+  round: DiscussionWorkflowRound;
+  children: React.ReactNode;
+  digest: React.ReactNode;
+  rows: readonly Readonly<{ message: Readonly<{ id: string }> }>[];
+  onVisibleMessageIdsChange: (key: string, messageIds: readonly string[] | null) => void;
+  resolveSessionLabel: (sessionId: string) => string | null;
+}>) {
+  const viewable = useTranscriptRowContentDemand();
+  const messageIds = React.useMemo(() => props.rows.map(row => row.message.id), [props.rows]);
+  const [choice, setChoice] = React.useState<boolean | null>(null);
+  const expanded = !props.round.finished || props.round.digestMessageId === null || choice === true;
+  const roundKey = JSON.stringify([props.round.runId, props.round.index, messageIds[0]]);
+  const digestMessageId = props.round.digestMessageId;
+  const displayedMessageIds = React.useMemo(() => expanded ? messageIds
+    : digestMessageId && messageIds.includes(digestMessageId) ? [digestMessageId] : [], [digestMessageId, expanded, messageIds]);
+  React.useEffect(() => {
+    props.onVisibleMessageIdsChange(roundKey, viewable ? displayedMessageIds : []);
+    return () => props.onVisibleMessageIdsChange(roundKey, null);
+  }, [displayedMessageIds, props.onVisibleMessageIdsChange, roundKey, viewable]);
+  const names = props.round.sitOut.map(id => props.resolveSessionLabel(id) ?? t('session.collaboration.discussion.participants.session')).join(', ');
+  return <View testID={`discussion-workflow-round:${props.round.runId}:${props.round.index}`}>
+    <ExpandableItem expanded={expanded} onExpandedChange={setChoice} showDivider={false}
+      testID={`discussion-workflow-round-fold:${props.round.runId}:${props.round.index}`}
+      header={({ expanded: disclosed, headerProps }) => <WorkflowRunFoldHeader
+        runId={`${props.round.runId}:round:${props.round.index}`}
+        disclosure={{ expanded: disclosed, headerProps }}
+        presentation={{ verb: t('workflows.run.occurrenceRound', { number: String(props.round.index + 1) }),
+          details: [t('session.collaboration.discussion.workflowRound.speakers', { count: props.round.speakerCount })],
+          meta: null, purpose: null, workflowName: null, trigger: null }} onOpen={null} />}
+    ><TranscriptContentDemandProvider enabled={expanded}>{props.children}</TranscriptContentDemandProvider></ExpandableItem>
+    {!expanded ? props.digest : null}
+    {names ? <Text style={styles.endLine}>{t('session.collaboration.discussion.workflowRound.sitOut', { names })}</Text> : null}
+    {props.round.allPassed ? <Text style={styles.endLine} accessibilityLiveRegion="polite">{t('session.collaboration.discussion.workflowRound.everyonePassed')}</Text> : null}
+  </View>;
+}

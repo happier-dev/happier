@@ -24,13 +24,34 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
-const { DiscussionWorkflowRunEndRow, DiscussionWorkflowRunRow } = await import('./DiscussionWorkflowRunRow');
+const { DiscussionWorkflowRoundRow, DiscussionWorkflowRunEndRow, DiscussionWorkflowRunRow } = await import('./DiscussionWorkflowRunRow');
 const { projectWorkflowRunPublishedAnswerIds } = await import('./prepareDiscussionSelectionHandoff');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
 
 // The shared UI setup resets runtimeFetch after each case; reclaim the real HTTP boundary.
 beforeEach(() => homes.reset());
+
+it('folds a finished round to its digest and reports only presented rows to the existing read owner', async () => {
+    const { Text } = await import('react-native');
+    const { TranscriptContentDemandProvider } = await import('@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand');
+    const round = { runId: 'debate', index: 0, messageIds: ['reply', 'digest'], digestMessageId: 'digest',
+        speakerCount: 2, sitOut: [], allPassed: false, finished: true };
+    const rows = [{ message: { id: 'reply' } }, { message: { id: 'digest' } }];
+    const presented = vi.fn();
+    const renderRound = (visible: boolean) => <TranscriptContentDemandProvider enabled={visible}>
+        <DiscussionWorkflowRoundRow round={round} rows={rows} resolveSessionLabel={() => null}
+            onVisibleMessageIdsChange={presented} digest={<Text>Digest</Text>}>
+            <Text>First reply</Text><Text>Digest</Text>
+        </DiscussionWorkflowRoundRow>
+    </TranscriptContentDemandProvider>;
+    const screen = await renderScreen(renderRound(true));
+    expect(presented.mock.lastCall?.[1]).toEqual(['digest']);
+    await screen.pressByTestIdAsync('workflow-run-fold-toggle:debate:round:0');
+    expect(presented.mock.lastCall?.[1]).toEqual(['reply', 'digest']);
+    await act(async () => screen.update(renderRound(false)));
+    expect(presented.mock.lastCall?.[1]).toEqual([]);
+});
 
 afterEach(async () => {
     viewport.width = 1440;

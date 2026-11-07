@@ -1,4 +1,9 @@
 import * as React from 'react';
+import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
+import { projectWorkflowInvocationRecovery } from './workflowRunDetailPresentation';
+import { useShallow } from 'zustand/react/shallow';
+import type { WorkflowInvocationDetailV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import type { WorkflowRunAcceptedContextV1, WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -116,4 +121,142 @@ export function useWorkflowInlineRunControls(params: Readonly<{
         start,
         replayStart,
     };
+}
+
+const NO_INLINE_INVOCATIONS: readonly WorkflowInvocationDetailV1[] = Object.freeze([]);
+
+/** Discussion round facts use the Run page's scoped invocation store and its Account-change wake. */
+export function useWorkflowInlineRunInvocations(params: Readonly<{
+    runIds: readonly string[];
+    accountLifetime: ServerAccountScopeLifetime;
+    enabled: boolean;
+}>) {
+    const { accountLifetime } = params;
+    const previousIds = React.useRef(params.runIds);
+    if (previousIds.current.length !== params.runIds.length || params.runIds.some((id, index) => id !== previousIds.current[index])) {
+        previousIds.current = params.runIds;
+    }
+    const runIds = previousIds.current;
+    const facts = getStorage()(useShallow(state => runIds.map(id =>
+        state.workflowRunInvocationsByRunId[workflowRunStoreKey(id, accountLifetime.scope)]?.factsById)));
+    const [errors, setErrors] = React.useState<Readonly<Record<string, WorkflowProblemPresentation>>>({});
+    const requestRef = React.useRef<((ids: readonly string[]) => void) | null>(null);
+    React.useEffect(() => {
+        if (!params.enabled || runIds.length === 0) return;
+        const controller = new AbortController();
+        const retirement = accountLifetime.onRetire(() => controller.abort());
+        const actions = createWorkflowRunDetailActions({ accountLifetime });
+        const load = async (runId: string) => {
+            let cursor: string | undefined;
+            do {
+                const page = await actions.listInvocations({ runId, includeContent: true, ...(cursor ? { cursor } : {}) }, controller.signal);
+                if (controller.signal.aborted || !accountLifetime.isCurrent()) return;
+                const state = getStorage().getState();
+                state.applyWorkflowRunInvocationPage({ scope: accountLifetime.scope, runId,
+                    invocations: page.invocations, invocationDetails: page.invocationDetails,
+                    nextCursor: page.nextCursor ?? null, parentRevision: page.parentRevision,
+                    mode: cursor ? 'append' : state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId, accountLifetime.scope)]?.history.loaded ? 'refresh' : 'replace' });
+                cursor = page.nextCursor ?? undefined;
+            } while (cursor);
+            if (!controller.signal.aborted && accountLifetime.isCurrent()) setErrors(previous => {
+                if (!previous[runId]) return previous;
+                const next = { ...previous };
+                delete next[runId];
+                return next;
+            });
+        };
+        // Reconnect and per-run Account-change events restate facts; nothing polls.
+        const request = (ids: readonly string[]) => {
+            for (const runId of ids) void load(runId).catch(error => {
+                if (!controller.signal.aborted && accountLifetime.isCurrent()) {
+                    setErrors(previous => ({ ...previous, [runId]: resolveWorkflowProblemPresentation(error, 'run') }));
+                }
+            });
+        };
+        requestRef.current = request;
+        const state = getStorage().getState();
+        request(runIds.filter(runId => {
+            const key = workflowRunStoreKey(runId, accountLifetime.scope);
+            const known = state.workflowRunInvocationsByRunId[key];
+            return !known?.history.loaded || known.history.nextCursor !== null
+                || known.history.parentRevision !== state.workflowRunsById[key]?.revision
+                || known.history.invocationIds.some(id => known.factsById[id]?.opened?.parentRevision !== known.history.parentRevision);
+        }));
+        const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({ lifetime: accountLifetime, runIds,
+            isVisibleWindowLoaded: () => true, invalidate: change => request(change.runIds ?? runIds) });
+        return () => { requestRef.current = null; controller.abort(); retirement.dispose(); unsubscribe(); };
+    }, [accountLifetime, params.enabled, runIds]);
+    const byRunId = React.useMemo(() => new Map(runIds.map((id, index) => [id,
+        facts[index] ? Object.values(facts[index]).flatMap(fact => fact.opened ? [fact.opened] : []) : NO_INLINE_INVOCATIONS])), [facts, runIds]);
+    const retry = React.useCallback((runId: string) => requestRef.current?.([runId]), []);
+    const byInvocationId = React.useMemo(() => new Map([...byRunId].map(([id, invocations]) => [id, new Map(invocations.map(fact => [fact.index.id, fact]))])), [byRunId]);
+    return { byRunId, byInvocationId, errors, retry };
+}
+
+/** Inline recovery consumes the same exact private-evidence projection as the Run screen. */
+export function useWorkflowInlineInvocationRetry(params: Readonly<{
+    run: WorkflowRunSummaryV1;
+    invocation: WorkflowInvocationDetailV1;
+    accountLifetime: ServerAccountScopeLifetime;
+    canEdit: boolean;
+}>) {
+    const { run, invocation, accountLifetime, canEdit } = params;
+    const contentDemand = useTranscriptRowContentDemand();
+    const actions = React.useMemo(() => createWorkflowRunDetailActions({ accountLifetime }), [accountLifetime]);
+    const opened = getStorage()(state => state.workflowRunInvocationsByRunId[workflowRunStoreKey(run.id, accountLifetime.scope)]
+        ?.factsById[invocation.index.id]?.opened ?? invocation);
+    const recovery = projectWorkflowInvocationRecovery({ run, invocation: opened.index, progress: opened.progress,
+        recoveryAvailability: opened.recoveryAvailability, machineHomeDirectory: null });
+    const mounted = useMountedRef();
+    const pendingRef = React.useRef(false);
+    const [pending, setPending] = React.useState(false);
+    const [accepted, setAccepted] = React.useState(false);
+    const [error, setError] = React.useState<WorkflowProblemPresentation | null>(null);
+    React.useEffect(() => {
+        setPending(false);
+        setAccepted(false);
+        setError(null);
+    }, [accountLifetime, invocation.index.id]);
+    React.useEffect(() => {
+        if (!contentDemand || !canEdit || opened.recoveryAvailability !== undefined) return;
+        const controller = new AbortController();
+        const retirement = accountLifetime.onRetire(() => controller.abort());
+        void actions.getInvocation({ runId: run.id, invocationId: invocation.index.id }, controller.signal).then(result => {
+            if (controller.signal.aborted || !accountLifetime.isCurrent()) return;
+            getStorage().getState().upsertWorkflowRunInvocation({ scope: accountLifetime.scope, runId: run.id,
+                parentRevision: result.invocation.parentRevision, invocation: { ...result.invocation.index, opened: result.invocation } });
+        }, failure => {
+            if (!controller.signal.aborted && accountLifetime.isCurrent()) setError(resolveWorkflowProblemPresentation(failure, 'run'));
+        });
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [accountLifetime, actions, canEdit, contentDemand, invocation.index.id, opened.recoveryAvailability, run.id]);
+    const retry = React.useCallback(async () => {
+        if (!canEdit || pendingRef.current || !accountLifetime.isCurrent()
+            || !recovery.canRetrySameConversation || recovery.requiresUncertaintyAcknowledgement) return;
+        pendingRef.current = true;
+        setPending(true);
+        setError(null);
+        try {
+            const current = getStorage().getState().workflowRunsById[workflowRunStoreKey(run.id, accountLifetime.scope)]?.summary ?? run;
+            const result = await actions.retryInvocation({ runId: run.id, expectedRevision: current.revision,
+                invocation: { recordId: opened.index.id }, causalInvocationIds: [...recovery.retryCausalInvocationIds],
+                conversation: 'same_conversation', input: { kind: 'original' } });
+            if (!mounted.current || !accountLifetime.isCurrent()) return;
+            getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(result.run)], accountLifetime.scope);
+            if (result.disposition === 'accepted') {
+                getStorage().getState().upsertWorkflowRunInvocation({ scope: accountLifetime.scope, runId: run.id,
+                    parentRevision: result.run.revision, invocation: result.invocation });
+                setAccepted(true);
+            } else setError(resolveWorkflowProblemPresentation(new WorkflowActionError({ message: result.disposition, rawCode: 'invalid_input' }), 'run'));
+        } catch (failure) {
+            if (failure instanceof WorkflowActionError && isActionApprovalDeclinedErrorCode(failure.rawCode)) return;
+            if (mounted.current && accountLifetime.isCurrent()) setError(resolveWorkflowProblemPresentation(failure, 'run'));
+        } finally {
+            pendingRef.current = false;
+            if (mounted.current) setPending(false);
+        }
+    }, [accountLifetime, actions, canEdit, mounted, opened.index.id, recovery.canRetrySameConversation,
+        recovery.requiresUncertaintyAcknowledgement, recovery.retryCausalInvocationIds, run]);
+    return { retry, pending, accepted, error,
+        canRetry: canEdit && recovery.canRetrySameConversation && !recovery.requiresUncertaintyAcknowledgement };
 }

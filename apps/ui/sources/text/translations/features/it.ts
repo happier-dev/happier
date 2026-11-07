@@ -1063,6 +1063,7 @@ const artifactsBrowserTranslations = { it: {
             restoreFailed: 'Impossibile ripristinare questa versione. Riprova.',
             compareUnavailable: 'Confronto non disponibile',
             compareCurrentUnavailable: 'La versione attuale non è disponibile in questa vista della cronologia. Puoi comunque leggere le versioni precedenti.',
+            compareReviewedUnavailable: 'La versione esaminata non è più nella cronologia conservata. Puoi comunque leggere le versioni disponibili.',
             savedByUser: 'Salvato da un utente',
             savedByAgentSession: 'Salvato da una sessione agente',
             restoredVersion: ({ n }) => `Ripristinato dalla versione ${n}`,

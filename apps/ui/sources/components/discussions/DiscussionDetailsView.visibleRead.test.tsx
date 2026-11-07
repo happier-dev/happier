@@ -2,10 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-    DiscussionMessageContentV1,
+    DiscussionMessageContentV1} from '@happier-dev/protocol/discussions/content';
+import type {
     DiscussionOpenedMessageV1,
     DiscussionOpenedSummaryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/discussions/actions';
 import type { SessionDiscussionDraftMutationAttempt, SessionDiscussionDraftMutationAttemptInput } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { DiscussionDraftSubmittedContentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { buildDiscussionContentFromPendingText } from './discussionComposerDocument';
@@ -14,7 +15,8 @@ import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protoco
 import { SessionHumanPresenceVisibleReplaceV1Schema } from '@happier-dev/protocol/sessions';
 import { attachSessionHumanPresenceSocket } from '@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime';
 
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { DiscussionRepositoryClient } from '@/sync/ops/discussions/discussionRepository';
 import { clearDiscussionRepositoryRegistryForTests } from '@/sync/ops/discussions/discussionRepositoryRegistry';
@@ -41,14 +43,7 @@ const network = vi.hoisted(() => ({ client: null as null | Record<string, unknow
 const sourceSessionReads = vi.hoisted(() => vi.fn());
 const transcriptProps = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 const composerProps = vi.hoisted(() => ({ current: null as null | Readonly<{ onSend: (content: DiscussionMessageContentV1) => void }> }));
-const exactHomeBinding = vi.hoisted(() => ({
-    serverId: 'server-a',
-    accountId: 'viewer',
-    scope: { serverId: 'server-a', accountId: 'viewer' },
-    revision: 1,
-    isCurrent: () => true,
-    onRetire: () => ({ dispose: () => undefined }),
-}));
+const exactHomeBinding = { accountId: 'viewer', scope: { serverId: 'server-a', accountId: 'viewer' } };
 const draftState = vi.hoisted(() => ({
     title: '', text: '', mentions: [] as readonly ComposerStructuredInputMention[], status: 'clean' as const, conflict: null,
     pendingMutationAttempt: null as SessionDiscussionDraftMutationAttempt | null,
@@ -62,7 +57,7 @@ const draftState = vi.hoisted(() => ({
     participants: [] as readonly never[], setParticipants: () => undefined,
     captureSubmittedCurrentness: (attempt?: SessionDiscussionDraftMutationAttemptInput) => {
         const address = attempt?.kind === 'post' ? { kind: 'discussion' as const, discussionId: attempt.discussionId } : { kind: 'newDiscussion' as const };
-        return { scope: { serverId: 'server-a', accountId: 'viewer' }, address, currentness: { address, mutationIds: {} } };
+        return { scope: exactHomeBinding.scope, address, currentness: { address, mutationIds: {} } };
     },
     clearAfterObservedSuccess: async () => undefined, releaseSubmittedAttempt: () => undefined,
     purgePresentation: async () => undefined,
@@ -73,15 +68,16 @@ vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.f
 vi.mock('@/sync/api/discussions/discussionActions', () => ({
     createDiscussionClient: () => network.client,
 }));
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
-    useServerCredentialAccountScopeBindings: () => new Map([[exactHomeBinding.serverId, exactHomeBinding]]),
-}));
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({ useAppPaneScope: () => ({ openDetailsTab: vi.fn(), closeDetails: vi.fn() }) }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
-vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({ useSessionCollaborationAvailability: () => 'available' }));
+vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({ useSessionCollaborationAvailabilityState: () => 'available' }));
 vi.mock('@/hooks/session/useSessionAgentActivity', () => ({ useSessionAgentActivityRoster: () => ({ subagents: [], readExecutionRunEntry: () => null }) }));
-vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({ useSessionExecutionRunLaunchability: () => ({
-    canLaunchExecutionRuns: false, canShowExecutionRunLauncher: false, executionRunsBackends: {}, executionRunsSupported: false, sessionServerId: 'server-a',
+vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', async importOriginal => ({
+    ...await importOriginal<typeof import('@/hooks/session/useSessionExecutionRunLaunchability')>(),
+    useSessionExecutionRunLaunchability: () => ({
+    canLaunchExecutionRuns: false, canShowExecutionRunLauncher: false, launchUnavailableReason: 'notEnabled', executionRunsBackends: {}, executionRunsSupported: false, sessionServerId: 'server-a',
 }) }));
 vi.mock('@/components/sessions/shell/sessionViewStableSession', () => ({ useSessionViewShellSession: (...args: unknown[]) => { sourceSessionReads(...args); return null; } }));
 vi.mock('react-native', async () => {
@@ -105,9 +101,11 @@ vi.mock('@/components/sessions/transcript/viewport/shell/TranscriptListShell', (
     },
 }));
 
-import { DiscussionDetailsView } from '@/components/discussions/DiscussionDetailsView';
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { DiscussionDetailsView } = await import('@/components/discussions/DiscussionDetailsView');
 
-const address = { serverId: 'server-a' } as const;
+const address = { serverId: 'server-a' };
 const target = { kind: 'discussion' as const, address, discussionId: 'discussion-a' };
 
 function summary(messageSeq: number, lastReadSeq = 0): DiscussionOpenedSummaryV1 {
@@ -186,7 +184,10 @@ async function reportAllRowsVisible(): Promise<void> {
 }
 
 describe('DiscussionDetailsView visible read', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await homes.reset();
+        address.serverId = await homes.addHome({ name: 'Discussion', serverUrl: 'https://discussion.test', serverIdentityId: 'server-a', accountId: 'viewer', currentAccount: true });
+        exactHomeBinding.scope.serverId = address.serverId;
         const state = getStorage().getState();
         getStorage().setState({ sessions: {}, settings: { ...state.settings, transcriptBulkCopyFormat: 'markdown_labeled', transcriptMessageSendToSessionTemplate: '{{MESSAGES}}' } });
         sourceSessionReads.mockClear();
@@ -204,7 +205,9 @@ describe('DiscussionDetailsView visible read', () => {
         draftState.submitted = null;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        standardCleanup();
+        await homes.reset();
         resetSessionSurfaceVisibilityForTests();
         clearDiscussionRepositoryRegistryForTests();
     });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { Message } from '@happier-dev/session-core/messages';
 
@@ -16,15 +16,21 @@ import {
   type SessionMessageInvocationTarget,
 } from '@/components/sessions/transcript/references/useSessionMessageInvocation';
 import { useTranscriptSessionIdentity } from '@/components/sessions/transcript/references/useTranscriptSessionIdentity';
+import { useSessionReturnedAnswers } from '@/sync/store/hooks';
+import { readSessionMessageInvocation } from '@/components/sessions/transcript/references/readSessionMessageInvocation';
+import { sessionMessageReplyKey } from '@/sync/api/session/sessionMessageReplyApi';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import {
   StatusPill,
   type StatusPillVariant,
 } from '@/components/ui/status/StatusPill';
+import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
 import { Text } from '@/components/ui/text/Text';
+import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EVENT_ICON_CONTAINER_SIZE = 20;
 const TALK_SELECTORS = [
@@ -44,9 +50,22 @@ type TargetState = Readonly<{
   failed: boolean;
 }>;
 
+/** The facts one target's chip reads; a reply-less send needs no reply read. */
+export type SessionAskTargetChipTarget = Pick<SessionMessageInvocationTarget, 'status' | 'requestBound'>
+  & Partial<Pick<SessionMessageInvocationTarget, 'replyStatus'>>;
+
+/** One target's state chip, in the ask record's one vocabulary, for any surface that sends to a Session. */
+export function SessionAskTargetChip(props: Readonly<{
+  target: SessionAskTargetChipTarget;
+  reply: 'none' | 'wait' | 'return';
+  testID?: string;
+}>) {
+  return <TargetStatePill state={describeTargetState(props.target, props.reply)} testID={props.testID} />;
+}
+
 /** What one target's chip says. An unavailable read is never evidence of an answer or of its absence. */
 function describeTargetState(
-  target: SessionMessageInvocationTarget,
+  target: SessionAskTargetChipTarget,
   reply: 'none' | 'wait' | 'return',
 ): TargetState {
   switch (target.status) {
@@ -165,7 +184,7 @@ function summarize(
 }
 
 function TargetStatePill(
-  props: Readonly<{ state: TargetState; testID?: string }>,
+  props: Readonly<{ state: TargetState; testID?: string; style?: ViewStyle }>,
 ) {
   const { theme } = useUnistyles();
   const color =
@@ -173,6 +192,7 @@ function TargetStatePill(
   return (
     <StatusPill
       testID={props.testID}
+      style={props.style}
       variant={props.state.variant}
       label={props.state.label}
       labelVariant="phrase"
@@ -193,6 +213,7 @@ function TargetName(
   props: Readonly<{
     target: SessionMessageInvocationTarget;
     serverId: string | null;
+    /** A line under a group header: the agent mark and a step smaller than the header's name. */
     mark?: boolean;
     testID?: string;
   }>,
@@ -223,8 +244,8 @@ function TargetName(
     : undefined;
   const name = (
     <Text
-      variant="label"
-      emphasis="semiBold"
+      variant={props.mark ? 'meta' : 'label'}
+      emphasis={props.mark ? 'medium' : 'semiBold'}
       numberOfLines={1}
       style={{ color: theme.colors.text.primary }}
     >
@@ -237,12 +258,11 @@ function TargetName(
         <AgentIcon agentId={identity.agentId} size={ICON_SIZE.xs} />
       ) : null}
       {open ? (
-        <Pressable
+        <HappierPressable
           testID={props.testID}
           accessibilityRole="link"
           accessibilityLabel={identity.name}
           onPress={open}
-          hitSlop={6}
           style={({ pressed }) => ({
             opacity: pressed ? 0.7 : 1,
             flexShrink: 1,
@@ -250,11 +270,26 @@ function TargetName(
           })}
         >
           {name}
-        </Pressable>
+        </HappierPressable>
       ) : (
         name
       )}
     </View>
+  );
+}
+
+/** What the target answered, as one muted line that gives way to the name and the chip. */
+function TargetSnippet(props: Readonly<{ text: string | undefined }>) {
+  const { theme } = useUnistyles();
+  if (!props.text) return <View style={styles.grow} />;
+  return (
+    <Text
+      variant="meta"
+      numberOfLines={1}
+      style={[styles.snippet, { color: theme.colors.text.secondary }]}
+    >
+      {props.text}
+    </Text>
   );
 }
 
@@ -265,6 +300,8 @@ export type SessionAskRecordProps = Readonly<{
   serverId: string | null;
   /** Inside a row that already owns its horizontal inset (the tool row). */
   embedded?: boolean;
+  /** The agent's tool-call origin keeps its generic tool details one press away (the message detail page). */
+  details?: Readonly<{ routeMessageId: string | null; revealed: boolean }>;
 }>;
 
 /**
@@ -275,12 +312,41 @@ export type SessionAskRecordProps = Readonly<{
 export function SessionAskRecord(props: SessionAskRecordProps) {
   const { theme } = useUnistyles();
   const scope = useActiveServerAccountScope(props.serverId);
+  const navigate = useSessionTranscriptSource().navigate;
+  // The returns already sit in this transcript: they settle the chips and give each answered line its snippet.
+  const requestKeys = React.useMemo(() => {
+    if (!scope) return [];
+    const entry = readSessionMessageInvocation(props.message, { serverId: scope.serverId, sessionId: props.sessionId });
+    return entry?.invocation.targets.flatMap(row => row.localId
+      ? [sessionMessageReplyKey({ sessionId: row.target.sessionId, localId: row.localId })] : []) ?? [];
+  }, [props.message, props.sessionId, scope?.serverId]);
+  const returned = useSessionReturnedAnswers(props.sessionId, requestKeys);
+  const returnedAnswers = React.useMemo(
+    () => returned.map((entry) => entry.answer),
+    [returned],
+  );
   const record = useSessionMessageInvocation({
     scope,
     sessionId: props.sessionId,
     message: props.message,
     active: true,
+    returnedAnswers,
   });
+  const snippets = React.useMemo(
+    () =>
+      new Map(
+        returned
+          .filter((entry) => entry.answer.outcome === 'answer' && entry.snippet)
+          .map((entry) => [
+            sessionMessageReplyKey({
+              sessionId: entry.answer.requestSessionId,
+              localId: entry.answer.requestLocalId,
+            }),
+            entry.snippet,
+          ]),
+      ),
+    [returned],
+  );
   if (record.status !== 'ready') return null;
   const { invocation, targets } = record;
   const reply = invocation.reply;
@@ -300,9 +366,14 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
   const headerState: TargetState = group
     ? {
         variant: 'neutral',
-        icon: targets.every((target) => target.status === 'answered')
-          ? 'check'
-          : 'clock',
+        // Waiting only while something still waits; a settled group with a failure is not a clock.
+        icon: targets.some(
+          (target) => target.status === 'queued' || target.status === 'held',
+        )
+          ? 'clock'
+          : failedTargets.length > 0
+            ? 'warning'
+            : 'check',
         failed: false,
         label: summarize(targets, reply),
       }
@@ -360,43 +431,59 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
           />
         </View>
         <View style={styles.headline}>
-          <Text
-            variant="label"
-            numberOfLines={1}
-            style={{ color: theme.colors.text.secondary }}
-          >{verb}</Text>
-          {group ? (
-            <Text
-              variant="label"
-              emphasis="semiBold"
-              numberOfLines={1}
-              style={{ color: theme.colors.text.primary }}
-            >
-              {selectorTitle}
+          {group || !first ? (
+            // One run of text, so a narrow phone wraps it as a sentence beside the chip.
+            <Text variant="label" style={{ color: theme.colors.text.secondary }}>
+              {verb}{' '}
+              <Text
+                variant="label"
+                emphasis="semiBold"
+                style={{ color: theme.colors.text.primary }}
+              >
+                {selectorTitle}
+              </Text>
+              {group ? ` · ${targets.length}` : null}
             </Text>
-          ) : first ? (
-            <TargetName target={first} serverId={props.serverId} />
           ) : (
-            <Text
-              variant="label"
-              emphasis="semiBold"
-              numberOfLines={1}
-              style={{ color: theme.colors.text.primary }}
-            >
-              {selectorTitle}
-            </Text>
+            <>
+              <Text
+                variant="label"
+                numberOfLines={1}
+                style={[styles.verb, { color: theme.colors.text.secondary }]}
+              >
+                {verb}
+              </Text>
+              <TargetName target={first} serverId={props.serverId} />
+            </>
           )}
-          {group ? (
-            <Text
-              variant="label"
-              numberOfLines={1}
-              style={{ color: theme.colors.text.secondary }}
-            >{` · ${targets.length}`}</Text>
-          ) : null}
         </View>
+        {props.details?.routeMessageId && navigate ? (
+          <RowActionRevealSlot
+            revealed={props.details.revealed}
+            testID={`session-ask-record-details-slot:${record.sourceRowId}`}
+          >
+            <HappierPressable
+              testID={`session-ask-record-details:${record.sourceRowId}`}
+              accessibilityRole="link"
+              onPress={() => {
+                const routeMessageId = props.details?.routeMessageId;
+                if (!routeMessageId) return;
+                navigateWithBlurOnWeb(() => navigate(buildScopedSessionRouteHref({
+                  sessionId: props.sessionId,
+                  serverId: props.serverId,
+                  suffix: `/message/${encodeURIComponent(routeMessageId)}`,
+                })));
+              }}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+            >
+              <Text variant="meta" style={{ color: theme.colors.text.tertiary }}>{t('common.details')}</Text>
+            </HappierPressable>
+          </RowActionRevealSlot>
+        ) : null}
         <TargetStatePill
           state={headerState}
           testID={`session-ask-record-state:${record.sourceRowId}`}
+          style={styles.headerChip}
         />
       </View>
       {group && targets.length > 0 ? (
@@ -411,7 +498,18 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
               testID={`session-ask-record-target:${target.target.sessionId}`}
             >
               <TargetName target={target} serverId={props.serverId} mark />
-              <View style={styles.grow} />
+              <TargetSnippet
+                text={
+                  target.status === 'answered' && target.localId
+                    ? snippets.get(
+                        sessionMessageReplyKey({
+                          sessionId: target.target.sessionId,
+                          localId: target.localId,
+                        }),
+                      )
+                    : undefined
+                }
+              />
               <TargetStatePill state={describeTargetState(target, reply)} testID={`session-ask-record-target-state:${target.target.sessionId}`} />
             </View>
           ))}
@@ -445,11 +543,17 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s12,
   },
   bubbleAligner: userMessageBubbleAlignerStyle,
+  // A long summary chip drops under the sentence on a phone rather than squeezing it to a sliver.
   row: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: theme.space.s10,
+    columnGap: theme.space.s10,
+    rowGap: theme.space.s4,
     minWidth: 0,
+  },
+  headerChip: {
+    marginLeft: 'auto',
   },
   iconSlot: {
     width: EVENT_ICON_CONTAINER_SIZE,
@@ -458,11 +562,16 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   headline: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 190,
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s4,
     minWidth: 0,
+  },
+  verb: {
+    flexShrink: 0,
   },
   targetName: {
     flexDirection: 'row',
@@ -489,8 +598,13 @@ const styles = StyleSheet.create((theme) => ({
   grow: {
     flex: 1,
   },
+  snippet: {
+    flex: 1,
+    minWidth: 0,
+  },
+  // Under the target lines, on their content edge: icon slot, rule, rule padding.
   hint: {
     marginTop: theme.space.s6,
-    marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s10,
+    marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s4 + 1 + theme.space.s10,
   },
 }));

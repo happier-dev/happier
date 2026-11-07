@@ -1063,6 +1063,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             restoreFailed: '无法恢复此版本，请重试。',
             compareUnavailable: '无法比较',
             compareCurrentUnavailable: '当前版本在此历史记录视图中不可用。你仍可阅读早期版本。',
+            compareReviewedUnavailable: '已审阅的版本已不在保留的历史记录中。你仍可阅读可用的版本。',
             savedByUser: '由用户保存',
             savedByAgentSession: '由代理会话保存',
             restoredVersion: ({ n }) => `从版本 ${n} 恢复`,

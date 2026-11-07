@@ -6,6 +6,8 @@ import {
   readDiscussionMessagePartsV1,
 } from '@happier-dev/protocol/discussions/content';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
+import type { WorkflowInvocationDetailV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowDiscussionRoundProjectResultV1Schema } from '@happier-dev/protocol/workflows/workflowDiscussionRoundV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
@@ -600,15 +602,97 @@ export function placeDiscussionRequesterApprovals<
 export type DiscussionTimelineMessage = Pick<
   DiscussionOpenedMessageV1,
   'id' | 'seq'
->;
+> & Partial<Pick<DiscussionOpenedMessageV1, 'producerV1' | 'addressingV1' | 'participantDeliveryV1' | 'replyTarget'>>;
+
+export type DiscussionWorkflowRound = Readonly<{
+  runId: string;
+  index: number;
+  messageIds: readonly string[];
+  digestMessageId: string | null;
+  speakerCount: number;
+  sitOut: readonly string[];
+  allPassed: boolean;
+  finished: boolean;
+}>;
+
+/** Round identity and outcomes come from the recorded builtin coordinates, never inferred consensus. */
+export function projectDiscussionWorkflowRounds<TMessage extends DiscussionTimelineMessage>(params: Readonly<{
+  messages: readonly TMessage[];
+  run: WorkflowRunSummaryV1;
+  invocations: readonly WorkflowInvocationDetailV1[];
+}>): readonly DiscussionWorkflowRound[] {
+  const rounds = new Map<number, { facts: WorkflowInvocationDetailV1[]; messageIds: string[]; digestMessageId: string | null }>();
+  const roundByInvocation = new Map<string, number>();
+  const factsById = new Map<string, WorkflowInvocationDetailV1>();
+  for (const fact of params.invocations) {
+    if (fact.index.runId !== params.run.id) continue;
+    const coordinate = fact.progress.invocationPath.scope.find(part => part.kind === 'iteration' && part.blockId === 'rounds');
+    if (coordinate?.kind !== 'iteration') continue;
+    let round = rounds.get(coordinate.index);
+    if (!round) {
+      round = { facts: [], messageIds: [], digestMessageId: null };
+      rounds.set(coordinate.index, round);
+    }
+    round.facts.push(fact);
+    roundByInvocation.set(fact.index.id, coordinate.index);
+    factsById.set(fact.index.id, fact);
+  }
+  for (const message of params.messages) {
+    const producer = message.producerV1;
+    if (producer?.kind !== 'workflow' || producer.runId !== params.run.id) continue;
+    const index = producer.invocationRecordId ? roundByInvocation.get(producer.invocationRecordId) : undefined;
+    if (index === undefined) continue;
+    const round = rounds.get(index)!;
+    round.messageIds.push(message.id);
+    const blockId = producer.invocationRecordId ? factsById.get(producer.invocationRecordId)?.progress.invocationPath.blockId : undefined;
+    if (blockId === 'default-digest' || blockId === 'selected-digest') round.digestMessageId = message.id;
+  }
+  let latest = -1;
+  for (const index of rounds.keys()) latest = Math.max(latest, index);
+  const latestFact = (facts: readonly WorkflowInvocationDetailV1[], blockId: string) => facts.reduce<WorkflowInvocationDetailV1 | undefined>((found, fact) =>
+    fact.progress.invocationPath.blockId === blockId && fact.index.lifecycle !== 'superseded'
+      && (!found || BigInt(fact.index.sequence) > BigInt(found.index.sequence)) ? fact : found, undefined);
+  return [...rounds].sort(([left], [right]) => left - right).flatMap(([index, round]) => {
+    if (round.messageIds.length === 0) return [];
+    const preparation = WorkflowDiscussionRoundProjectResultV1Schema.safeParse(latestFact(round.facts, 'context')?.progress.result);
+    const outcome = WorkflowDiscussionRoundProjectResultV1Schema.safeParse(latestFact(round.facts, 'outcomes')?.progress.result);
+    const priorOutcome = WorkflowDiscussionRoundProjectResultV1Schema.safeParse(latestFact(rounds.get(index - 1)?.facts ?? [], 'outcomes')?.progress.result);
+    const passed = priorOutcome.success ? priorOutcome.data.outcomeReferences.filter(ref => ref.kind === 'pass') : [];
+    const digest = latestFact(round.facts, 'default-digest') ?? latestFact(round.facts, 'selected-digest');
+    const replySlots = new Set(round.facts.filter(fact => fact.progress.invocationPath.blockId === 'reply')
+      .map(fact => JSON.stringify([fact.index.parentRecordId, fact.index.memberOrdinal])));
+    const allPassed = outcome.success && outcome.data.allPassed;
+    return [{ runId: params.run.id, index, messageIds: round.messageIds, digestMessageId: round.digestMessageId,
+      speakerCount: preparation.success ? preparation.data.nextParticipants.length : replySlots.size,
+      sitOut: passed.flatMap(ref => ref.executionSessionId ? [ref.executionSessionId]
+        : ref.participant.kind === 'session' ? [ref.participant.session.sessionId] : []),
+      allPassed,
+      // A failed or stopped current round keeps its partial replies and recovery visible.
+      finished: digest?.index.lifecycle === 'completed' || index < latest || allPassed || params.run.state === 'succeeded' }];
+  });
+}
+
+export type DiscussionTimelineMessageRow<TMessage extends DiscussionTimelineMessage = DiscussionOpenedMessageV1> = Readonly<{
+      kind: 'human_message';
+      message: TMessage;
+      labels?: DiscussionMessageLabelProjection;
+    }>;
 
 export type DiscussionTimelineItem<
   TMessage extends DiscussionTimelineMessage = DiscussionOpenedMessageV1,
 > =
+  | DiscussionTimelineMessageRow<TMessage>
   | Readonly<{
-      kind: 'human_message';
+      /** The original question's admitted Session, until its stamped return is loaded. */
+      kind: 'participant_reply';
       message: TMessage;
-      labels?: DiscussionMessageLabelProjection;
+      sessionId: string;
+      delivery?: NonNullable<DiscussionOpenedMessageV1['participantDeliveryV1']>[number];
+    }>
+  | Readonly<{
+      kind: 'workflow_round';
+      round: DiscussionWorkflowRound;
+      rows: readonly DiscussionTimelineMessageRow<TMessage>[];
     }>
   | Readonly<{
       kind: 'agent_activity_reference';
@@ -668,6 +752,7 @@ export function buildDiscussionTimelineItems<
     workflowRuns?: readonly WorkflowRunSummaryV1[];
     /** Each Run's committed replies published here (`projectWorkflowRunPublishedAnswerIds`); a finished Run ends after its last. */
     workflowRunAnswerIds?: ReadonlyMap<string, readonly string[]>;
+    workflowRounds?: readonly DiscussionWorkflowRound[];
     messageLabels?: ReadonlyMap<string, DiscussionMessageLabelProjection>;
   }>,
   previous: readonly DiscussionTimelineItem<TMessage>[] = [],
@@ -675,16 +760,33 @@ export function buildDiscussionTimelineItems<
   const previousMessages = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'human_message' }>>();
   const previousRuns = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_run' }>>();
   const previousRunEnds = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_run_end' }>>();
+  const previousRounds = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_round' }>>();
+  const roundKey = (runId: string, index: number, messageId: string) => JSON.stringify([runId, index, messageId]);
   const previousReferences = new Map<string, AgentActivityReference>();
+  const previousParticipants = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'participant_reply' }>>();
+  const participantKey = (messageId: string, sessionId: string) => JSON.stringify([messageId, sessionId]);
   for (const item of previous) {
     if (item.kind === 'human_message') previousMessages.set(item.message.id, item);
     else if (item.kind === 'workflow_run') previousRuns.set(item.run.id, item);
     else if (item.kind === 'workflow_run_end') previousRunEnds.set(item.run.id, item);
+    else if (item.kind === 'participant_reply') previousParticipants.set(participantKey(item.message.id, item.sessionId), item);
+    else if (item.kind === 'workflow_round') {
+      for (const row of item.rows) previousMessages.set(row.message.id, row);
+      previousRounds.set(roundKey(item.round.runId, item.round.index, item.rows[0]!.message.id), item);
+    }
     else previousReferences.set(item.entry.runId ?? item.subagent.id, item);
   }
   const messageById = new Map(
     params.messages.map((message) => [message.id, message]),
   );
+  const returnedParticipants = new Set<string>();
+  for (const message of params.messages) {
+    const producer = message.producerV1;
+    if (producer?.kind === 'agent' && producer.replyReturn && message.replyTarget?.kind === 'message'
+      && areServerProfileIdentifiersEquivalent(producer.replyReturn.serverId, params.serverId)) {
+      returnedParticipants.add(participantKey(message.replyTarget.messageId, producer.sessionId));
+    }
+  }
   const referencesByAnchorSeq = new Map<number, AgentActivityReference[]>();
 
   for (const subagent of params.subagents) {
@@ -786,6 +888,15 @@ export function buildDiscussionTimelineItems<
     const known = previousMessages.get(message.id);
     items.push(known?.message === message && known.labels === labels
       ? known : { kind: 'human_message', message, ...(labels ? { labels } : {}) });
+    const watchers = new Set(message.addressingV1?.watcherSessionIds ?? []);
+    for (const sessionId of message.addressingV1?.participantSessionIds ?? []) {
+      const key = participantKey(message.id, sessionId);
+      if (watchers.has(sessionId) || returnedParticipants.has(key)) continue;
+      const delivery = message.participantDeliveryV1?.find(item => item.participantSessionId === sessionId);
+      const previousParticipant = previousParticipants.get(key);
+      items.push(previousParticipant?.message === message && previousParticipant.delivery === delivery ? previousParticipant
+        : { kind: 'participant_reply', message, sessionId, ...(delivery ? { delivery } : {}) });
+    }
     // The end row closes an earlier Run before any Run this message starts.
     for (const run of runEndsAfterMessageId.get(message.id) ?? []) {
       if (!startedRunIds.has(run.id)) continue;
@@ -801,7 +912,29 @@ export function buildDiscussionTimelineItems<
     }
     items.push(...(referencesByAnchorSeq.get(message.seq) ?? []));
   }
-  return items.length === previous.length && items.every((item, index) => item === previous[index]) ? previous : items;
+  const roundByMessageId = new Map<string, DiscussionWorkflowRound>();
+  for (const round of params.workflowRounds ?? []) {
+    if (!startedRunIds.has(round.runId)) continue;
+    for (const id of round.messageIds) roundByMessageId.set(id, round);
+  }
+  const grouped: DiscussionTimelineItem<TMessage>[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    const round = item.kind === 'human_message' ? roundByMessageId.get(item.message.id) : undefined;
+    if (item.kind !== 'human_message' || !round) { grouped.push(item); continue; }
+    const rows = [item];
+    // Preserve human interruptions and other run/activity rows in their original chronology.
+    while (index + 1 < items.length) {
+      const next = items[index + 1]!;
+      if (next.kind !== 'human_message' || roundByMessageId.get(next.message.id) !== round) break;
+      rows.push(next);
+      index += 1;
+    }
+    const known = previousRounds.get(roundKey(round.runId, round.index, item.message.id));
+    grouped.push(known?.round === round && known.rows.length === rows.length && rows.every((row, index) => row === known.rows[index])
+      ? known : { kind: 'workflow_round', round, rows });
+  }
+  return grouped.length === previous.length && grouped.every((item, index) => item === previous[index]) ? previous : grouped;
 }
 
 /**

@@ -1063,6 +1063,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             restoreFailed: '無法還原此版本，請重試。',
             compareUnavailable: '無法比較',
             compareCurrentUnavailable: '目前版本在此歷史記錄檢視中無法使用。你仍可閱讀較早的版本。',
+            compareReviewedUnavailable: '已檢閱的版本已不在保留的歷史記錄中。你仍可閱讀可用的版本。',
             savedByUser: '由使用者儲存',
             savedByAgentSession: '由代理工作階段儲存',
             restoredVersion: ({ n }) => `從版本 ${n} 還原`,

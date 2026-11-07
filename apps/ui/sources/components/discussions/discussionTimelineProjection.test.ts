@@ -7,7 +7,7 @@ import {
 } from '@/sync/domains/session/agentActivity';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
-import { buildDiscussionTimelineItems, placeDiscussionRequesterApprovals, projectDiscussionMessageReferences, projectDiscussionMessageLabels, readDiscussionMessagePreview, resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel, resolveDiscussionMessageSpeakerKind, resolveDiscussionOutwardReply, resolveDiscussionReplyAttributionLine, resolveDiscussionReplyOutcome, resolveDiscussionWorkflowAttribution, readDiscussionWorkflowResultDetail, resolveDiscussionReplyPresentation, startsDiscussionMessageGroup } from '@/components/discussions/discussionTimelineProjection';
+import { buildDiscussionTimelineItems, projectDiscussionWorkflowRounds, placeDiscussionRequesterApprovals, projectDiscussionMessageReferences, projectDiscussionMessageLabels, readDiscussionMessagePreview, resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel, resolveDiscussionMessageSpeakerKind, resolveDiscussionOutwardReply, resolveDiscussionReplyAttributionLine, resolveDiscussionReplyOutcome, resolveDiscussionWorkflowAttribution, readDiscussionWorkflowResultDetail, resolveDiscussionReplyPresentation, startsDiscussionMessageGroup } from '@/components/discussions/discussionTimelineProjection';
 import { t } from '@/text';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
@@ -675,3 +675,79 @@ describe('reply outcome presentation and speaker groups', () => {
         expect(startsDiscussionMessageGroup(person, undefined)).toBe(true);
     });
 });
+
+// CL-C: rounds use recorded invocation coordinates, never reply order or inferred agreement.
+it('groups a completed debate round around its digest and keeps the next round open', () => {
+    const producer = (invocationRecordId: string) => ({ v: 1 as const, kind: 'workflow' as const, runId: 'debate', invocationRecordId,
+        invocationAttempt: '0', execution: { kind: 'action' as const, actionId: 'review.verdict' }, outcome: 'answer' as const });
+    const messages = [
+        { ...message('ask', 1), producerV1: null },
+        { ...message('first-answer', 2), producerV1: producer('reply-0') },
+        { ...message('digest', 3), producerV1: producer('digest-0') },
+        { ...message('second-answer', 4), producerV1: producer('reply-1') },
+    ];
+    const invocation = (id: string, blockId: string, index: number, result?: string) => ({
+        index: { id, runId: 'debate', sequence: String(index), parentRecordId: null, memberOrdinal: '0', attempt: '0',
+            contentRevision: '0', lifecycle: 'completed' as const, createdAt: '2026-11-07T10:00:00Z', updatedAt: '2026-11-07T10:00:00Z' },
+        progress: { kind: 'happier.workflow-progress.v1' as const, logicalInvocationRecordId: id, invocationPath: { blockId,
+            scope: [{ kind: 'iteration' as const, blockId: 'rounds', index }] }, blockKind: 'step' as const, attempt: '0', ...(result ? { result } : {}) },
+        parentRevision: 1,
+    });
+    const facts = [invocation('reply-0', 'reply', 0), invocation('digest-0', 'default-digest', 0, 'Retain the dissent'),
+        invocation('reply-1', 'reply', 1)];
+    const rounds = projectDiscussionWorkflowRounds({ messages, run: workflowRun('debate', { messageId: 'ask' }), invocations: facts });
+    expect(rounds).toMatchObject([
+        { runId: 'debate', index: 0, digestMessageId: 'digest', finished: true, allPassed: false, messageIds: ['first-answer', 'digest'] },
+        { runId: 'debate', index: 1, digestMessageId: null, finished: false, messageIds: ['second-answer'] },
+    ]);
+    const params = { serverId: 'home-1', discussionId: 'discussion-1', messages, subagents: [], readExecutionRunEntry: () => null,
+        workflowRuns: [workflowRun('debate', { messageId: 'ask' })], workflowRounds: rounds };
+    const items = buildDiscussionTimelineItems(params);
+    expect(items.map(item => item.kind)).toEqual(['human_message', 'workflow_run', 'workflow_round', 'workflow_round']);
+    expect(items.filter(item => item.kind === 'workflow_round').map(item => item.rows.map(row => row.message.id)))
+        .toEqual([['first-answer', 'digest'], ['second-answer']]);
+    expect(buildDiscussionTimelineItems(params, items)).toBe(items);
+    const interleaved = buildDiscussionTimelineItems({ ...params, messages: [messages[0]!, messages[1]!,
+        { ...message('interruption', 2.5), producerV1: null }, messages[2]!, messages[3]!] });
+    expect(interleaved.flatMap(item => item.kind === 'human_message' ? [item.message.id]
+        : item.kind === 'workflow_round' ? item.rows.map(row => row.message.id) : []))
+        .toEqual(['ask', 'first-answer', 'interruption', 'digest', 'second-answer']);
+    expect(projectDiscussionWorkflowRounds({ messages, run: { ...workflowRun('debate', { messageId: 'ask' }), state: 'failed' }, invocations: facts })[1]?.finished).toBe(false);
+    const participant = (sessionId: string) => ({ kind: 'session' as const, session: { serverId: 'home-1', sessionId } });
+    const outcomes = (index: number, allPassed: boolean) => ({
+        ...invocation(`outcomes-${index}`, 'outcomes', index),
+        progress: { ...invocation(`outcomes-${index}`, 'outcomes', index).progress,
+            result: { allPassed, hasNext: !allPassed, nextParticipants: allPassed ? [] : [participant('remaining-speaker')],
+                outcomeReferences: [{ runId: 'debate', invocationRecordId: `reply-${index}`,
+                    participant: participant(index === 0 ? 'passed-speaker' : 'remaining-speaker'), kind: 'pass' as const }] } },
+    });
+    const withOutcomes = projectDiscussionWorkflowRounds({ messages, run: workflowRun('debate', { messageId: 'ask' }),
+        invocations: [...facts, outcomes(0, false), outcomes(1, true)] });
+    expect(withOutcomes[1]).toMatchObject({ allPassed: true, finished: true, sitOut: ['passed-speaker'] });
+    const withoutEndDecision = projectDiscussionWorkflowRounds({ messages, run: workflowRun('debate', { messageId: 'ask' }),
+        invocations: [...facts, outcomes(0, false), outcomes(1, false)] });
+    expect(withoutEndDecision[1]?.allPassed).toBe(false);
+    // A partially loaded or ordinary Workflow never guesses the round from the message position.
+    expect(projectDiscussionWorkflowRounds({ messages, run: workflowRun('debate', { messageId: 'ask' }), invocations: [] })).toEqual([]);
+});
+
+ it('places each unanswered addressed participant after the question and removes only its stamped return', () => {
+    const question = { id: 'question', seq: 1, addressingV1: { throughSeq: 1,
+        participantSessionIds: ['reviewer', 'watcher', 'offline'], watcherSessionIds: ['watcher'] },
+        participantDeliveryV1: [{ participantSessionId: 'offline', disposition: 'held' as const, code: 'session_input_target_unavailable' as const }] };
+    const base = { serverId: 'home', discussionId: 'discussion', subagents: [], readExecutionRunEntry: () => null };
+    const first = buildDiscussionTimelineItems({ ...base, messages: [question] });
+    expect(first.map(item => item.kind)).toEqual(['human_message', 'participant_reply', 'participant_reply']);
+    expect(first.slice(1)).toMatchObject([{ message: question, sessionId: 'reviewer' },
+        { message: question, sessionId: 'offline', delivery: question.participantDeliveryV1[0] }]);
+    expect(buildDiscussionTimelineItems({ ...base, messages: [question] }, first)).toBe(first);
+    const unrelated = { id: 'unrelated', seq: 2, replyTarget: { kind: 'message' as const, messageId: question.id },
+        producerV1: DiscussionProducerV1Schema.parse({ v: 1, kind: 'agent', sessionId: 'reviewer' }) };
+    const next = buildDiscussionTimelineItems({ ...base, messages: [question, unrelated] }, first);
+    expect(next[1]).toBe(first[1]);
+    const returned = { ...unrelated, producerV1: DiscussionProducerV1Schema.parse({ v: 1, kind: 'agent', sessionId: 'reviewer',
+        replyReturn: { serverId: 'home', requestLocalId: 'request', outcome: 'pass' } }) };
+    const final = buildDiscussionTimelineItems({ ...base, messages: [question, returned] }, next);
+    expect(final.map(item => item.kind)).toEqual(['human_message', 'participant_reply', 'human_message']);
+    expect(final[1]).toBe(first[2]);
+ });

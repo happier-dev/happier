@@ -1063,6 +1063,7 @@ const artifactsBrowserTranslations = { ja: {
             restoreFailed: 'このバージョンを復元できませんでした。もう一度お試しください。',
             compareUnavailable: '比較できません',
             compareCurrentUnavailable: 'この履歴画面では現在のバージョンを利用できません。以前のバージョンは引き続き読むことができます。',
+            compareReviewedUnavailable: '確認したバージョンは保存された履歴に残っていません。利用可能なバージョンは引き続き読むことができます。',
             savedByUser: 'ユーザーが保存',
             savedByAgentSession: 'エージェントセッションが保存',
             restoredVersion: ({ n }) => `バージョン${n}から復元`,
