@@ -230,15 +230,18 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
   values: Readonly<Record<string, unknown>>,
   choicesOf: (field: Field) => PlatformFieldChoices,
   paged: (field: Field) => boolean,
-): Readonly<{ fields: readonly Field[]; failure: Readonly<{ code: string }> | null }> {
+): Readonly<{ fields: readonly Field[]; failure: Readonly<{ code: string }> | null; canCheck: boolean }> {
   const drawn: Field[] = [];
+  // Check reads the provider for the chosen project: a failed choices read or no choice at all can only fail again.
+  const answered = fields.length === 0
+    || fields.some((field) => readHappierActionInputPath(values as Record<string, unknown>, field.path) !== undefined);
   for (const field of fields) {
     const choices = choicesOf(field);
-    if (choices.status === 'failed') return { fields: drawn, failure: { code: choices.errorCode ?? 'unknown_error' } };
+    if (choices.status === 'failed') return { fields: drawn, failure: { code: choices.errorCode ?? 'unknown_error' }, canCheck: false };
     if (field.required || readHappierActionInputPath(values as Record<string, unknown>, field.path) !== undefined
       || choices.status !== 'ready' || choices.options.length > 0 || paged(field)) drawn.push(field);
   }
-  return { fields: drawn, failure: null };
+  return { fields: drawn, failure: null, canCheck: answered };
 }
 
 /** A changed choice clears the ones after it: they were read for the old answer. `changedIndex` is -1 when nothing changed. */

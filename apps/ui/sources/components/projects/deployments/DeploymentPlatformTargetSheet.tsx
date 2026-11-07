@@ -395,7 +395,7 @@ function DeploymentPlatformTargetSheet(
         }
         size="normal"
         loading={busy !== null}
-        disabled={busy !== null || !draft || !target || missing || needsConnect}
+        disabled={busy !== null || !draft || !target || missing || needsConnect || !drawn.canCheck}
         title={
           ready && target
             ? t('projects.deployments.platformLink.link', {
@@ -561,7 +561,8 @@ function DeploymentPlatformTargetSheet(
                 }}
               />
             ) : null}
-            <DeploymentPlatformInspectState outcome={outcome} />
+            {/* One cause, one message: a failed choices read is the sheet's message, not a stale Check result too. */}
+            {drawn.failure ? null : <DeploymentPlatformInspectState outcome={outcome} />}
             {linkRefused ? (
               <SurfaceStateCard
                 testID="project-deployments.platform.linkRefused"

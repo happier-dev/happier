@@ -316,6 +316,15 @@ describe('platform choice disclosure', () => {
     const drawn = drawPlatformFields(fields, { account: 'team-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
     expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['account']);
     expect(drawn.failure).toEqual({ code: 'provider_response_invalid' });
+    // A Check after a failed read can only repeat the same cause.
+    expect(drawn.canCheck).toBe(false);
+  });
+
+  it('offers Check only once a choice is made, even when every choice is optional', () => {
+    const optional = [field('product', false), field('project', false)];
+    const ready = () => ({ status: 'ready' as const, options: [{ value: 'x' }] });
+    expect(drawPlatformFields(optional, {}, ready, () => false).canCheck).toBe(false);
+    expect(drawPlatformFields(optional, { project: 'site' }, ready, () => false).canCheck).toBe(true);
   });
 
   it('leaves out an optional choice this target has nothing for (a Worker has no Pages project)', () => {

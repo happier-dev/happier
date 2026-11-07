@@ -51,7 +51,9 @@ describe('Environment draft Machine Home', () => {
       createDeploymentSecretVariableBindingV1({ name: 'KEEP', phase: 'runtime', resourceId: 'saved-a', resourceRevision: 1 }),
       createDeploymentSecretVariableBindingV1({ name: 'EMPTY', phase: 'runtime', resourceId: 'saved-b', resourceRevision: 1 }),
       { purpose: 'variable', name: 'PUBLIC', phase: 'runtime', source: { kind: 'value', value: 'visible' } },
-    ] }, targetLinks: [...base.targetLinks, { targetLink: createDeploymentTargetLinkHeaderV1({
+    ] }, targetLinks: [...base.targetLinks.map(row => row.targetLink.role !== 'runtime' ? row : { ...row, targetLink: {
+      ...row.targetLink, machines: ['runtime'], members: [{ machineId: 'runtime', installationId: 'runtime-installation', state: 'active' as const }] } }),
+    { targetLink: createDeploymentTargetLinkHeaderV1({
       id: 'source-data', role: 'data', targetKind: 'database',
       source: { kind: 'plugin', contribution: { pluginId: 'database', localId: 'database' } },
       machines: [], members: [], machineId: 'runtime', installationId: 'runtime-installation' }), content: {} }] });
@@ -71,13 +73,18 @@ describe('Environment draft Machine Home', () => {
         return { body: { v: 1, actionId: 'deployments.environments.create', requestId: envelope.requestId,
           execution: { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' } } };
       } });
+      // Another answering Machine comes first; a copy still starts on the source's own Machine.
       await publishMachineInventoryForTest(account.accountLifetime.scope,
-        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
+        [createMachineFixture({ id: 'elsewhere', installationId: 'elsewhere-installation' }),
+          createMachineFixture({ id: 'runtime', installationId: 'runtime-installation' })]);
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')} copyFrom={detail}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
       const header = () => screen.findAllByType(PageHeader)[0]!;
       expect(header().props.titleEditor.value).toBe('Staging copy');
+      // The page says what a copy does once, in its header.
+      const purpose = header().props.description as string;
+      expect(screen.getTextContent().split(purpose).length - 1).toBe(1);
       await screen.pressByTestIdAsync('project-deployments.draft.copy.secret:1:omit');
       // Data comes along by an explicit choice: a new copy starts empty unless the person picks another.
       await screen.pressByTestIdAsync('project-deployments.draft.copy.data:0:restoreBackup');
@@ -93,6 +100,7 @@ describe('Environment draft Machine Home', () => {
           data: [{ targetLinkId: 'source-data', kind: 'restoreBackup' }] },
       } });
       expect(authored).not.toHaveProperty('definition');
+      expect(authored).toMatchObject({ firstTargetLink: { machines: [{ machineId: 'runtime' }] } });
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.refused'), node => node !== null);
       await screen.pressByTestIdAsync('project-deployments.draft.refused.details');
       expect(screen.getTextContent()).toContain('deployment_conflict');

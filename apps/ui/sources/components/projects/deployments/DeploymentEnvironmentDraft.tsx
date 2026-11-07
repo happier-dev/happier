@@ -104,7 +104,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [name, setName] = React.useState(() => props.copyFrom
       ? t('projects.deployments.copy.name', { name: props.copyFrom.content.name }) : '');
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
-    const [machineId, setMachineId] = React.useState<string | null>(null);
+    // A copy starts on the Machine its source runs on; the person can choose another.
+    const [machineId, setMachineId] = React.useState<string | null>(() => props.copyFrom ? copySourceMachineId(props.copyFrom) : null);
     const router = useRouter();
     // Create takes a machine as its first target; a platform is linked on the new Environment right after.
     const platforms = useDeploymentPlatformTargets(props.platformAvailable === true ? props.lifetime : null);
@@ -517,7 +518,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : null}
           <ItemGroup
             title={t('projects.deployments.whoTitle')}
-            description={props.copyFrom ? t('projects.deployments.copy.description')
+            description={props.copyFrom ? undefined
               : `${t('projects.deployments.whoManagers')} · ${t('projects.deployments.whoDescription')}`}
           >
             <Item
@@ -571,6 +572,11 @@ function copyBindingIdentity({ source: _source, ...identity }: EnvironmentSecret
     return registry;
   }
   return identity;
+}
+
+/** The source's runtime Machine, else its controller: where the copy is most likely meant to run. */
+function copySourceMachineId(source: DeploymentEnvironmentDetailV1): string {
+  return source.targetLinks.find((row) => row.targetLink.role === 'runtime')?.targetLink.machines[0] ?? source.environment.controllerMachineId;
 }
 
 /** Copy admission requires an explicit choice per source row; no values or credentials are opened here. */
