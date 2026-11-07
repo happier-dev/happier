@@ -260,6 +260,7 @@ export function enableAuthentication(app: Fastify) {
             request.externalActionDeploymentChildAdmission = verified.deploymentChildAdmission;
             request.externalActionDeploymentChildArtifactRead = verified.deploymentChildArtifactRead;
             request.externalActionAcceptedDeploymentRead = verified.acceptedDeploymentReceipt?.read;
+            request.externalActionRegistryAppUpdateRead = verified.registryAppUpdateRead;
             request.externalActionDeploymentCreateSource = verified.createPreparationAdmission?.source;
             const reviewedEnvironmentId = verified.createPreparationAdmission?.child?.environmentId
                 ?? verified.deploymentDomainPurpose?.input.environmentId;

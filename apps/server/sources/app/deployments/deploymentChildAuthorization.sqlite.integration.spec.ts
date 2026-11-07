@@ -3112,6 +3112,83 @@ describe('deployment children retain their controller Action authority', () => {
         });
     });
 
+    it.each(['deployments.publish.prepare', 'machines.setup.plan'] as const)(
+        'retains admitted defaults reads after Source withdrawal for %s without lending content or unrelated Sources', async actionId => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true, separateContentOwner: true });
+        const [owner, outsider] = await Promise.all(Array.from({ length: 2 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
+        await db.teamMembership.create({ data: { teamId: f.team!.id, accountId: owner.id, role: 'owner' } });
+        const source = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId } });
+        const content = await f.content('project-deployment-defaults.v1');
+        const artifact = await db.artifact.findUniqueOrThrow({ where: { id: content.contentArtifactId } });
+        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: f.account.id,
+            accessLevel: 'view', createdByAccountId: artifact.accountId } });
+        await db.projectDeploymentDefaults.create({ data: { projectSourceId: source.id, revision: 1, ...content } });
+        const input = getActionSpec(actionId).inputSchema.parse(actionId === 'deployments.publish.prepare'
+            ? { serverId, machineId: f.controller.id, installationId: f.controller.installationId,
+                projectSourceId: source.id, sourceRevision: source.revision, templateRef: f.templateInput.templateRef }
+            : { homeId: serverId, machineId: f.controller.id, targets: [{ homeId: serverId, machineId: f.controller.id,
+                sources: [{ kind: 'direct', setup: { items: [{ kind: 'app', authoredKey: crypto.randomUUID(),
+                    definition: { name: 'Catalog app', project: { kind: 'existing', projectSourceId: source.id },
+                        definition: { from: 'compose', document: 'services: {}', profiles: [], services: [] }, bindings: [] } }] } }],
+                appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: 'deployments.templates.instantiate', input: f.templateInput }],
+            }] });
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const tokens = await Promise.all([owner, f.account, outsider].map(account =>
+            auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' })));
+        await withAuthenticatedTestApp(app => { projectSourceRoutes(app); artifactsRoutes(app); }, async app => {
+            const defaultsPath = `/v1/projects/${source.id}/deployment-defaults?serverId=${serverId}`;
+            const artifactPath = `/v1/artifacts/${artifact.id}`;
+            const signedGet = (path: string) => app.inject({ method: 'GET', url: path, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId,
+                    requestId: envelope.requestId, method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+            } });
+            const ordinaryGet = (token: string) => app.inject({ method: 'GET', url: defaultsPath,
+                headers: { authorization: `Bearer ${token}` } });
+            expect((await ordinaryGet(tokens[0]!)).statusCode).toBe(200);
+            expect((await ordinaryGet(tokens[1]!)).statusCode).toBe(200);
+            expect((await ordinaryGet(tokens[2]!)).statusCode).toBe(404);
+            expect((await signedGet(defaultsPath)).statusCode).toBe(200);
+            expect((await signedGet(artifactPath)).statusCode).toBe(200);
+            // Source membership ends for new requests; independent Artifact custody survives this finite admission.
+            await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+                data: { status: 'suspended' } });
+            expect((await ordinaryGet(tokens[0]!)).statusCode).toBe(200);
+            expect((await ordinaryGet(tokens[1]!)).statusCode).toBe(404);
+            expect((await ordinaryGet(tokens[2]!)).statusCode).toBe(404);
+            expect(await readArtifactForCallerInTx(db, { actorAccountId: f.account.id, artifactId: artifact.id })).toMatchObject({ ok: true });
+            const defaults = await signedGet(defaultsPath);
+            expect.soft(defaults.statusCode, defaults.body).toBe(200);
+            expect.soft(defaults.json()).toMatchObject({ ok: true, projectSourceId: source.id, revision: 1, content });
+            const opened = await signedGet(artifactPath);
+            expect.soft(opened.statusCode, opened.body).toBe(200);
+            const unrelated = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId,
+                requestKey: crypto.randomUUID(), name: 'Unrelated defaults', audience: [], repository: { protocol: 'https',
+                    provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'other/app', cloneUrl: 'https://github.com/other/app.git' } } }));
+            if (!unrelated.ok) throw new Error(unrelated.error);
+            const unrelatedPath = `/v1/projects/${unrelated.source.id}/deployment-defaults?serverId=${serverId}`;
+            expect((await app.inject({ method: 'GET', url: unrelatedPath,
+                headers: { authorization: `Bearer ${tokens[1]!}` } })).statusCode).toBe(200);
+            expect((await signedGet(unrelatedPath)).statusCode).toBe(401);
+            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: artifact.id, accountId: f.account.id } } });
+            expect((await signedGet(artifactPath)).statusCode).toBe(401);
+            const unavailable = await signedGet(defaultsPath);
+            expect(unavailable.statusCode, unavailable.body).toBe(409);
+            expect(unavailable.json()).toEqual({ ok: false, error: 'project_defaults_content_unavailable' });
+        }, { authentication: 'real' });
+    });
+
     it.each([
         { withdrawal: 'machine', workflowOrigin: false, templateRoot: true }, { withdrawal: 'team', workflowOrigin: false, templateRoot: true },
         { withdrawal: 'machine', workflowOrigin: true, templateRoot: true }, { withdrawal: 'team', workflowOrigin: true, templateRoot: true },
@@ -3328,8 +3405,68 @@ describe('deployment children retain their controller Action authority', () => {
         } finally { logger.level = level; write.mockRestore(); }
     });
 
-    it.each(['deployment_registry_current', 'deployment_registry_purpose'] as const)(
-        'logs one private HTTP warning for the refused %s branch', async phase => {
+    it.each((['plain', 'e2ee'] as const).flatMap(contentMode =>
+        (['revision', 'source access'] as const).map(change => ({ contentMode, change }))))(
+        'keeps admitted registry reads scoped after selected $change changes ($contentMode)', async ({ change, contentMode }) => {
+        const f = await fixture('team', 'account', { contentMode, separateMemberCustodian: true, separateContentOwner: true });
+        const sibling = await db.deploymentEnvironment.create({ data: { ...f.environment,
+            id: crypto.randomUUID(), ...await f.content('deployment-environment.v1') } });
+        const actionId = 'registries.updates.check';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { kind: 'app', environments: [
+            { environmentId: f.environment.id, expectedRevision: f.environmentRevision },
+            { environmentId: sibling.id, expectedRevision: sibling.revision },
+        ] };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const mint = () => auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+            serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
+            machineId: f.controller.id, target, requestId: envelope.requestId,
+            registryAppUpdateAdmission: projectRegistryAppUpdateAdmissionV1(actionId, input),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const authorization = await mint();
+        const read = (artifactId: string) => {
+            const path = `/v1/artifacts/${artifactId}`;
+            return verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token, effectActionId: actionId,
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method: 'GET', path, body: undefined,
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method: 'GET', path, privateKey: f.controller.keys.secretKey }) });
+        };
+        expect(await read(f.environment.contentArtifactId)).not.toBeNull();
+        if (change === 'revision') await db.deploymentEnvironment.update({ where: { id: sibling.id },
+            data: { revision: { increment: 1 } } });
+        else await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+        const queries: string[] = [];
+        const stop = observeSqliteRequests({ before: request => { if (request.model) queries.push(request.model); } });
+        try {
+            expect(await read(f.environment.contentArtifactId)).not.toBeNull();
+            expect(await read(sibling.contentArtifactId)).not.toBeNull();
+            expect(await read(f.receipt.contentArtifactId)).toBeNull();
+        } finally { stop(); }
+        expect(queries.filter(model => model === 'ProjectSource')).toEqual([]);
+        await withAuthenticatedTestApp(async app => { await registerDeploymentRoutes(app); await artifactsRoutes(app); }, async app => {
+            const get = (path: string, effectActionId = actionId) => app.inject({ method: 'GET', url: path, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+            } });
+            for (const environment of [f.environment, sibling]) {
+                const metadata = await get(`/v1/deployments/environments/${environment.id}?serverId=${serverId}`, 'deployments.environments.get');
+                expect(metadata.statusCode, metadata.body).toBe(200);
+                const content = await get(`/v1/artifacts/${environment.contentArtifactId}`);
+                expect(content.statusCode, content.body).toBe(200);
+            }
+            expect((await get(`/v1/artifacts/${f.receipt.contentArtifactId}`)).statusCode).toBe(401);
+            expect((await get(`/v1/deployments/environments/${crypto.randomUUID()}?serverId=${serverId}`, 'deployments.environments.get')).statusCode).toBe(401);
+        }, { authentication: 'real' });
+        await expect(mint()).rejects.toThrow();
+    });
+
+    it('logs one private HTTP warning for a registry Artifact outside the admitted Environments', async () => {
             const f = await fixture();
             const actionId = 'registries.updates.check';
             const target = { kind: 'machine' as const, machineId: f.controller.id };
@@ -3347,12 +3484,9 @@ describe('deployment children retain their controller Action authority', () => {
                     effectActionId: actionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
                     method: 'GET', path, privateKey: f.controller.keys.secretKey }) });
             expect(await verifyExternalActionDomainExecutionRequest(signedRead(`/v1/artifacts/${f.environment.contentArtifactId}`))).not.toBeNull();
-            if (phase === 'deployment_registry_current') await db.deploymentEnvironment.update({
-                where: { id: f.environment.id }, data: { revision: { increment: 1 } },
-            });
-            const path = `/v1/artifacts/${phase === 'deployment_registry_current' ? f.environment.contentArtifactId : f.receipt.contentArtifactId}`;
+            const path = `/v1/artifacts/${f.receipt.contentArtifactId}`;
             const proof = signedRead(path);
-            await expectHttpRefusalWarning({ phase, method: 'GET', path },
+            await expectHttpRefusalWarning({ phase: 'deployment_registry_purpose', method: 'GET', path },
                 async () => { expect(await verifyExternalActionDomainExecutionRequest(proof)).toBeNull(); },
                 [authorization.token, proof.machineSignature]);
         });

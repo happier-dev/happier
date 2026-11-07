@@ -585,6 +585,15 @@ can reach the daemon while retaining Account placement, strict inputs and the
 existing approval policy. Expected upstream failures return per-item `unchecked`
 reasons; a headerless rate limit has no reset time and requires manual Retry.
 
+An Environment app check admits its selected Environments and their revisions
+when the root is issued. Its finite HTTP continuation requires an active binding
+and remains scoped to those Environments and their current Artifact references;
+it does not repeat Source permission or revision admission. The Environment and
+Artifact readers consume that verified scope, retaining Artifact mode, envelope
+and version validation. The update protocol still owns revision comparison, so
+editing one selected Environment does not invalidate reads for every other one.
+New checks use current Source authority.
+
 An unchanged pending skill update is still eligible for its explicit automatic
 policy, including when that policy was enabled after the last check. The same
 checker invokes the skill owner's existing CAS/apply operation; it does not

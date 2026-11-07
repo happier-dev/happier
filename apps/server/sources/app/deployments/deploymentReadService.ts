@@ -133,9 +133,11 @@ export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId
 export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: string, input: DeploymentEnvironmentGetInputV1,
     authentication: DeploymentAuthentication = {},
     acceptedRead?: AcceptedDeploymentRead,
+    registryRead?: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'],
 ) {
+    const registryEnvironment = registryRead?.environmentId === input.environmentId ? registryRead : undefined;
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
-        acceptedEnvironmentRead(acceptedRead, input.environmentId));
+        acceptedEnvironmentRead(acceptedRead, input.environmentId) ?? registryEnvironment);
     if (!loaded.ok) return loaded;
     const pending = readDeploymentPendingContent(loaded.row);
     if (!pending.ok) return pending;
@@ -143,7 +145,9 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     const targetRows = await loadDeploymentTargetRowsInTx(tx, loaded.row.id);
     const targetLinks = targetRows.map(projectDeploymentTargetHeader);
     if (loaded.row.runtimeTargetLinkId && !targetLinks.some(link => link.id === loaded.row.runtimeTargetLinkId)) return deploymentFailure('deployment_unavailable');
-    const failures = await admitDeploymentStoredContentsInTx(tx, actorAccountId, loaded.admission.owner, [
+    // Registry admission already selected this Environment. Its Artifact GET
+    // consumes the current reference through the existing mode/envelope reader.
+    const failures = registryEnvironment ? [] : await admitDeploymentStoredContentsInTx(tx, actorAccountId, loaded.admission.owner, [
         { reference: loaded.row, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read', pendingDeploy: pending.pendingDeploy },
         ...targetLinks.map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
     ]);
