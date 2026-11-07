@@ -3,6 +3,7 @@ import { AutomationEventAdmitInputV1Schema, type AutomationEventAdmitItemResultV
 import { runRepositoryPushObserver } from '../../examples/automation-event-source/src/index.js';
 import type { BackgroundServiceContext } from '../backgroundServices.js';
 import type { HostEventEnvelope } from '../events.js';
+import { PluginError } from '../errors.js';
 import { readCheckpointedPluginEventSourcesV1, runCheckpointedPluginEventObserverV1, type PluginCheckpointedEventAttemptContextV1, type PluginCheckpointedEventAttemptResultV1, type PluginCheckpointedEventSourceAdapterV1, type PluginCheckpointedEventSourceDefinitionV1 } from '../background-services/index.js';
 
 const materialization = { pluginId: 'com.example.events', machineId: 'machine-1', materializationId: 'installation-1' };
@@ -23,6 +24,8 @@ function fixture() {
     let safe = true;
     let failCurrentRead = false;
     let failCatalogStatus = false;
+    let admissionFailure: unknown;
+    let admissionResult: unknown;
     let unsafeOccurrence: string | undefined;
     const skippedAdmissions = new Map<string, Extract<AutomationEventAdmitItemResultV1, { kind: 'skipped' }>['reason']>();
     const runs = new Set<string>();
@@ -46,6 +49,8 @@ function fixture() {
         }
         if (id === 'automation.event.source.status.report') return { kind: 'reported' };
         if (id === 'automation.event.admit') {
+            if (admissionFailure !== undefined) throw admissionFailure;
+            if (admissionResult !== undefined) return admissionResult;
             const request = AutomationEventAdmitInputV1Schema.parse(input);
             return { results: safe && request.occurrenceId !== unsafeOccurrence ? request.definitions.map(selector => {
                 const key = `${selector.triggerId}/${request.occurrenceId}`;
@@ -71,6 +76,8 @@ function fixture() {
     const source: PluginCheckpointedEventSourceAdapterV1<string, string> = { decode: () => 'source', observe, save, retryAt: ({ now }) => now + 1000 };
     return { context, controller, source, observe, observation, save, execute, executions,
         setSafe(value: boolean) { safe = value; },
+        setAdmissionFailure(error: unknown) { admissionFailure = error; },
+        setAdmissionResult(result: unknown) { admissionResult = result; },
         setUnsafeOccurrence(value: string) { unsafeOccurrence = value; },
         skipAdmission(triggerId: string, occurrenceId: string, reason: Extract<AutomationEventAdmitItemResultV1, { kind: 'skipped' }>['reason']) {
             skippedAdmissions.set(`${triggerId}/${occurrenceId}`, reason);
@@ -87,6 +94,77 @@ function fixture() {
 }
 
 describe('checkpointed observer ownership', () => {
+    it('settles an unavailable attempt without a deadline and resumes only on source invalidation', async () => {
+        const f = fixture();
+        let available = false;
+        const source: typeof f.source = { ...f.source, retryAt: () => null,
+            async observe() {
+                if (!available) throw new PluginError({ code: 'service_unavailable', retryable: false,
+                    message: 'Private provider diagnostic', details: { secret: 'never-publish' } });
+                return { observations: [], complete: true, nextEligibleAt: null };
+            } };
+        const sleep = vi.fn(async () => {});
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source, sleep });
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const statuses = () => f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
+                .map(([, value]) => value);
+            expect(statuses()).toMatchObject([{ state: 'attention', code: 'service_unavailable', nextRetryAt: null }]);
+            expect(JSON.stringify(statuses())).not.toContain('Private provider diagnostic');
+            expect(JSON.stringify(statuses())).not.toContain('never-publish');
+            expect(sleep).not.toHaveBeenCalled();
+            available = true;
+            f.invalidate({ reason: 'reconnect', definitionsChanged: false });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(statuses()).toMatchObject([
+                { state: 'attention', code: 'service_unavailable', nextRetryAt: null },
+                { state: 'observing', code: 'none', nextRetryAt: null },
+            ]);
+            expect(sleep).not.toHaveBeenCalled();
+        } finally {
+            f.controller.abort();
+            await running;
+        }
+    });
+
+    it('parks a nonretryable admission refusal until an authenticated source wake', async () => {
+        const f = fixture();
+        f.setAdmissionFailure(new PluginError({ code: 'verification_purpose', retryable: false }));
+        const sleep = vi.fn(async (_delayMs: number, signal: AbortSignal) => new Promise<void>(resolve => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+            if (signal.aborted) resolve();
+        }));
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, sleep });
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const statuses = () => f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
+                .map(([, value]) => value);
+            expect(statuses()).toContainEqual(expect.objectContaining({ state: 'attention', code: 'verification_purpose', nextRetryAt: null }));
+            expect(f.save).not.toHaveBeenCalled();
+            expect(f.observe).toHaveBeenCalledOnce();
+            expect(sleep).not.toHaveBeenCalled();
+            f.setAdmissionFailure(undefined);
+            f.invalidate({ reason: 'reconnect', definitionsChanged: false });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(f.save).toHaveBeenCalledOnce();
+            expect(f.runCount()).toBe(1);
+        } finally {
+            f.controller.abort();
+            await running;
+        }
+    });
+
+    it('keeps malformed admission unavailable when the provider reports observing without a retry deadline', async () => {
+        const f = fixture();
+        f.setAdmissionResult({ results: 'invalid' });
+        f.observe.mockResolvedValue({ ...f.observation(), nextEligibleAt: null, status: { state: 'observing', code: 'none' } });
+        await runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, mode: 'once' });
+        const statuses = f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
+            .map(([, value]) => value);
+        expect(statuses.at(-1)).toMatchObject({ state: 'attention', code: 'admissionUnavailable', nextRetryAt: null });
+        expect(f.save).not.toHaveBeenCalled();
+    });
+
     it('keeps the maintained external author example behind its host assignment', async () => {
         const f = fixture();
         const pluginId = 'examples.automation-event-source';
@@ -406,6 +484,24 @@ describe('checkpointed observer ownership', () => {
             f.controller.abort();
             await running;
         }
+    });
+
+    it('retries an unsettled admission on the source backoff even when its replay deadline is already due', async () => {
+        // A replaying source (P03 QA health-observer) reports the stale probe
+        // deadline it did not advance; a deferred-approval receipt is not an
+        // admission. Without backoff this retried 1,691 times in ~30 minutes.
+        const f = fixture();
+        let clock = 1000;
+        f.observe.mockImplementation(async () => ({ ...f.observation(), nextEligibleAt: clock }));
+        f.setAdmissionResult({ kind: 'approval_request_created', artifactId: 'ask', actionId: 'automation.event.admit' });
+        const admissions = () => f.executions.filter(id => id === 'automation.event.admit').length;
+        const sleep = vi.fn(async (delay: number) => {
+            clock += delay;
+            if (clock >= 11_000 || admissions() >= 50) f.controller.abort();
+        });
+        await runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, sleep, now: () => clock });
+        // 10 s of source time at the adapter's 1 s retryAt.
+        expect({ admissions: admissions(), clock: clock >= 11_000 }).toEqual({ admissions: 10, clock: true });
     });
 
     it('keeps status transport failures observational rather than blocking valid work', async () => {

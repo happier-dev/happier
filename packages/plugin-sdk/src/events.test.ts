@@ -18,6 +18,7 @@ import type {
     PluginEventAutomationHistoryGapResetActionResultV1 as CanonicalPluginEventAutomationHistoryGapResetActionResultV1,
 } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import * as publicEvents from './events/index.js';
+import { definePlugin } from './definePlugin.js';
 import type {
     EventSubscriptionTarget,
     EventsService,
@@ -42,6 +43,7 @@ import type {
     PluginEventSourceConnectionStatusV1,
 } from './events/index.js';
 import type { PluginInvocationContext } from './invocation.js';
+import { PluginError } from './errors.js';
 
 function sourceDefinition(triggerId: string) {
     return {
@@ -67,6 +69,59 @@ function sourceDefinition(triggerId: string) {
 }
 
 describe('EventsService contract', () => {
+    it('settles a typed admission refusal with its safe cause instead of losing it', async () => {
+        const reports: unknown[] = [];
+        const context = {
+            signal: new AbortController().signal,
+            services: { actions: { async execute(actionId: string, input: unknown) {
+                if (actionId === 'automation.event.sources.list') return {
+                    kind: 'page', revision: '1', definitions: [sourceDefinition('trigger-1')], nextCursor: null,
+                };
+                if (actionId === 'automation.event.admit') throw new PluginError({
+                    code: 'verification_purpose', retryable: false,
+                    message: 'Private admission diagnostic', details: { private: 'never-publish' },
+                });
+                if (actionId === 'automation.event.source.status.report') { reports.push(input); return {}; }
+                throw new Error(`Unexpected Action ${actionId}`);
+            } } },
+        } as unknown as PluginInvocationContext;
+        await expect(publicEvents.admitCheckpointedPluginEventObservationV1({
+            eventRef: sourceDefinition('trigger-1').eventRef, sourceInstanceId: 'source:trigger-1',
+            sourceContractVersion: 1, occurrenceId: 'occurrence-1', occurredAt: 1,
+            observationReceivedAt: 1, observedDelta: 1, payload: {},
+        }, context)).resolves.toEqual({ kind: 'unsettled', failure: { code: 'verification_purpose', retryable: false } });
+        expect(reports).toContainEqual(expect.objectContaining({ kind: 'source', state: 'attention',
+            code: 'verification_purpose', nextRetryAt: null, observedDelta: 1, admittedDelta: 0 }));
+        expect(JSON.stringify(reports)).not.toContain('Private admission diagnostic');
+        expect(JSON.stringify(reports)).not.toContain('never-publish');
+    });
+
+    it('retains an author-declared durable-push webhook reference through the public manifest', () => {
+        const sourceConfigSchema = { type: 'object' as const, additionalProperties: false, properties: {
+            delivery: { type: 'object' as const, additionalProperties: false, properties: { endpointId: { type: 'string' as const } } },
+        } };
+        const plugin = definePlugin({ id: 'com.example.events', version: '1.0.0',
+            actions: {
+                setup: { title: 'Set up source', execution: { target: 'daemon' }, surfaces: ['plugin'], dangerLevel: 'safe',
+                    resultSchema: publicEvents.createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
+                    run: async () => null },
+                receive: { title: 'Receive delivery', execution: { target: 'daemon' }, surfaces: ['plugin'], dangerLevel: 'safe', run: async () => null },
+            },
+            webhooks: { delivery: { title: 'Delivery', verifier: { kind: 'github_hmac_sha256_v1', routing: 'accountEndpoint' }, handlerAction: { localId: 'receive' } } },
+            events: { changed: { declaration: { kind: 'event', title: 'Changed', payloadSchema: { type: 'object' },
+                automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+                    supportedObservationTransports: ['checkpointedPull', 'durablePush'], sourceConfigSchema,
+                    webhookContributionRef: { pluginId: 'com.example.events', localId: 'delivery' },
+                    setupActionRef: { pluginId: 'com.example.events', localId: 'setup' },
+                } },
+            } } },
+        });
+        expect(plugin.manifest.contributes.events?.[0]).toMatchObject({ automation: { source: {
+            webhookContributionRef: { pluginId: 'com.example.events', localId: 'delivery' },
+            supportedObservationTransports: ['checkpointedPull', 'durablePush'],
+        } } });
+    });
+
     it('keeps typed plugin and Host Event namespaces distinct', () => {
         expectTypeOf<keyof EventsService>().toEqualTypeOf<'plugin' | 'host'>();
         expectTypeOf<'@happier/runtime/turn-complete'>().toMatchTypeOf<HostEventId>();
@@ -334,11 +389,11 @@ describe('EventsService contract', () => {
             observationReceivedAt: 1,
             observedDelta: 1,
             payload: {},
-        }, context)).resolves.toEqual({ kind: 'unsettled' });
+        }, context)).resolves.toEqual({ kind: 'unsettled', failure: { code: 'admissionUnavailable' } });
         expect(reports).toContainEqual(expect.objectContaining({
             kind: 'source',
             triggerId: 'trigger-1',
-            state: 'backingOff',
+            state: 'attention',
             code: 'admissionUnavailable',
             observedDelta: 1,
             admittedDelta: 0,

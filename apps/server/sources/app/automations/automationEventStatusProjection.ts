@@ -1,4 +1,4 @@
-import { AutomationEventSourceStatusV1Schema, type AutomationEventSourceStatusV1 } from '@happier-dev/protocol/automations/automationEventSourceStatusV1';
+import { AutomationEventSourceStatusV1Schema, explainAutomationEventSourceStatusV1, type AutomationEventSourceStatusV1 } from '@happier-dev/protocol/automations/automationEventSourceStatusV1';
 import { AutomationEventSourceCatalogStatusSchema, type AutomationEventSourceCatalogStatus } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { automationEventSourceCatalogScopeKeyV1, type AutomationEventSourceCatalogScopeKeyV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { type PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
@@ -70,7 +70,7 @@ function sourceStatusFromRow(row: Readonly<{
     skippedCount: number;
     revision: number;
 }>): AutomationEventSourceStatusV1 {
-    return AutomationEventSourceStatusV1Schema.parse({
+    const status = AutomationEventSourceStatusV1Schema.parse({
         automationId: row.automationId,
         triggerId: row.triggerId,
         triggerRevision: row.triggerRevision,
@@ -82,7 +82,10 @@ function sourceStatusFromRow(row: Readonly<{
             pluginId: row.eventPluginId,
         },
         reporterSourceCustody: row.reporterSourceCustody,
-        state: row.state,
+        // Historical generic failures without a deadline were already parked.
+        // Expose that fact without rewriting the row or claiming admission recovered.
+        state: row.state === "backingOff" && row.code === "admissionUnavailable" && row.nextRetryAt === null
+            ? "attention" : row.state,
         code: row.code,
         lastObservedAt: row.lastObservedAt?.getTime() ?? null,
         lastDispositionAt: row.lastDispositionAt?.getTime() ?? null,
@@ -92,6 +95,8 @@ function sourceStatusFromRow(row: Readonly<{
         skippedCount: row.skippedCount,
         revision: row.revision,
     });
+    const explanation = explainAutomationEventSourceStatusV1(status.code);
+    return explanation === undefined ? status : { ...status, explanation };
 }
 
 function catalogStatusFromRow(row: Readonly<{
@@ -104,7 +109,9 @@ function catalogStatusFromRow(row: Readonly<{
     return AutomationEventSourceCatalogStatusSchema.parse({
         observedRevision: row.observedRevision.toString(),
         adoptedRevision: row.adoptedRevision?.toString() ?? null,
-        state: row.state,
+        // Retained 0.3 development rows may carry the removed diagnostic
+        // threshold's state. Its underlying fact is still reconciliation.
+        state: row.state === "reconciliationLate" ? "reconciling" : row.state,
         scanStartedAt: row.scanStartedAt?.getTime() ?? null,
         nextRetryAt: row.nextRetryAt?.getTime() ?? null,
     });
@@ -207,10 +214,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
                         id: webhookEndpointId,
                         accountId: automation.accountId,
                         pluginId: eventPluginId,
-                        enabled: true,
-                        revokedAt: null,
                         releasedAt: null,
-                        route: { enabled: true, revokedAt: null },
                     })),
                 },
                 select: {

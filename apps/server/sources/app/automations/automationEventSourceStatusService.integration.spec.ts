@@ -20,7 +20,8 @@ import {
     AutomationEventSourceStatusReportError,
     reportAutomationEventSourceStatusV1,
 } from "./automationEventSourceStatusService";
-import { getAutomation } from "./automationCrudService";
+import { getAutomation, listAutomations } from "./automationCrudService";
+import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
 import { loadAutomationEventStatusProjections } from "./automationEventStatusProjection";
 
 const ACCOUNT_ID = "account-automation-source-status";
@@ -380,6 +381,63 @@ describe("Automation Event source status", () => {
         });
     });
 
+    it.each(["admissionUnavailable", "service_unavailable", "historyGap"] as const)("explains %s through the saved source list and detail projection", async (failureCode) => {
+        await seed();
+        const report = (state: "backingOff" | "observing", code: typeof failureCode | "none", nextRetryAt: number | null = null) => reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                kind: "source",
+                automationId: AUTOMATION_ID,
+                triggerId: TRIGGER_ID,
+                triggerRevision: TRIGGER_REVISION,
+                eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                sourceSelectorId: SOURCE_SELECTOR_ID,
+                state,
+                code,
+                lastObservedAt: 1_723_247_200_000,
+                lastDispositionAt: null,
+                nextRetryAt,
+                observedDelta: 1,
+                admittedDelta: 0,
+                skippedDelta: 0,
+            },
+        });
+        await report("backingOff", failureCode);
+
+        const automations = await listAutomations({ accountId: ACCOUNT_ID });
+        const statuses = await loadAutomationEventStatusProjections({ automations });
+        const listed = toAutomationDefinitionListItemApiDto(automations[0]!, null, statuses);
+        const explanation = failureCode === "historyGap" ? undefined : {
+            reason: failureCode,
+            requiredFact: "availableSourceObservationOrAdmission",
+            remedy: "restoreSourceRegistrationOrAdmission",
+            ...(failureCode === "admissionUnavailable" ? { underlyingCause: "notRecorded" } : {}),
+        };
+        expect(listed.triggers[0]).toMatchObject({ sourceStatus: {
+            state: failureCode === "admissionUnavailable" ? "attention" : "backingOff",
+            code: failureCode,
+            ...(explanation === undefined ? {} : { explanation }),
+            observedCount: 1,
+            admittedCount: 0,
+            lastDispositionAt: null,
+        } });
+        if (explanation === undefined) expect(listed.triggers[0]?.sourceStatus).not.toHaveProperty("explanation");
+        const detail = await getAutomation({ accountId: ACCOUNT_ID, automationId: AUTOMATION_ID });
+        if (!detail) throw new Error("Expected seeded Automation");
+        const detailStatuses = await loadAutomationEventStatusProjections({ automations: [detail] });
+        expect(detailStatuses.get(TRIGGER_ID)?.sourceStatus).toEqual(statuses.get(TRIGGER_ID)?.sourceStatus);
+
+        await report("backingOff", failureCode, 1_723_247_200_001);
+        const scheduled = await loadAutomationEventStatusProjections({ automations });
+        expect(scheduled.get(TRIGGER_ID)?.sourceStatus).toMatchObject({ state: "backingOff", nextRetryAt: 1_723_247_200_001 });
+
+        await report("observing", "none");
+        const recovered = await loadAutomationEventStatusProjections({ automations });
+        expect(recovered.get(TRIGGER_ID)?.sourceStatus).toMatchObject({ state: "observing", code: null });
+        expect(recovered.get(TRIGGER_ID)?.sourceStatus).not.toHaveProperty("explanation");
+    });
+
     it("keeps source status independent for two Event triggers on one Automation", async () => {
         await seed();
         const secondTriggerId = `${TRIGGER_ID}-second`;
@@ -609,6 +667,24 @@ describe("Automation Event source status", () => {
             },
         });
 
+        // Earlier 0.3 development observers persisted the diagnostic-only late
+        // variant. Keep that history readable without carrying its deadline.
+        await db.automationEventSourceCatalogStatus.updateMany({
+            where: { accountId: ACCOUNT_ID },
+            data: { state: "reconciliationLate" },
+        });
+        const retained = await loadAutomationEventStatusProjections({ automations: [automation] });
+        expect(retained.get(TRIGGER_ID)?.sourceCatalogStatus).toEqual({
+            observedRevision: "7",
+            adoptedRevision: "6",
+            state: "reconciling",
+            scanStartedAt: 1_723_247_200_000,
+            nextRetryAt: 1_723_247_260_000,
+        });
+        expect(await db.automationEventSourceCatalogStatus.findFirst({
+            where: { accountId: ACCOUNT_ID }, select: { state: true },
+        })).toEqual({ state: "reconciliationLate" });
+
         await db.automationEventSourceStatus.update({
             where: { triggerId: TRIGGER_ID },
             data: { triggerRevision: TRIGGER_REVISION - 1 },
@@ -746,6 +822,12 @@ describe("Automation Event source status", () => {
             state: "observing",
             observedCount: 1,
         });
+
+        await db.pluginWebhookEndpoint.update({
+            where: { id: DURABLE_PUSH_ENDPOINT_ID }, data: { enabled: false, revokedAt: new Date() },
+        });
+        const fallback = await loadAutomationEventStatusProjections({ automations: [automation] });
+        expect(fallback.get(TRIGGER_ID)).toEqual(current.get(TRIGGER_ID));
 
         await db.pluginWebhookEndpoint.update({
             where: { id: DURABLE_PUSH_ENDPOINT_ID },
@@ -1258,7 +1340,7 @@ describe("Automation Event source status", () => {
         })]);
     });
 
-    it("rejoins catalog adoption status when its reporter materialization moves machines", async () => {
+    it("keeps catalog adoption status independent for the same Machine-local materialization on different Machines", async () => {
         await seed();
         const secondCaller = {
             pluginId: PLUGIN_ID,
@@ -1318,7 +1400,7 @@ describe("Automation Event source status", () => {
             input,
         });
 
-        await expect(db.automationEventSourceCatalogStatus.findMany({
+        const statuses = await db.automationEventSourceCatalogStatus.findMany({
             where: {
                 accountId: ACCOUNT_ID,
                 eventPluginId: PLUGIN_ID,
@@ -1331,14 +1413,22 @@ describe("Automation Event source status", () => {
                 reporterSourceCustody: true,
                 revision: true,
             },
-        })).resolves.toEqual([
+        });
+        expect(statuses).toHaveLength(2);
+        expect(statuses).toEqual(expect.arrayContaining([
+            {
+                reporterMachineId: caller.machineId,
+                reporterMachineInstallationId: caller.machineInstallationId,
+                reporterSourceCustody: caller.sourceCustody,
+                revision: 1,
+            },
             {
                 reporterMachineId: secondCaller.machineId,
                 reporterMachineInstallationId: secondCaller.machineInstallationId,
                 reporterSourceCustody: secondCaller.sourceCustody,
-                revision: 2,
+                revision: 1,
             },
-        ]);
+        ]));
     });
 
     it("does not let the first catalog report create an absent catalog revision", async () => {
@@ -1361,7 +1451,7 @@ describe("Automation Event source status", () => {
         await expect(db.automationEventSourceCatalogStatus.count()).resolves.toBe(0);
     });
 
-    it("accepts durable-push source status from the current reporter and definition without delivery correspondence", async () => {
+    it.each(["active", "disabled", "revoked", "routeRevoked"] as const)("accepts durable-push source status from its current monitoring target while the route is %s", async availability => {
         await seed();
         const durableRelease = releaseFacts({ supportedObservationTransports: ["durablePush"] });
         await db.accountPluginRelease.update({
@@ -1375,6 +1465,17 @@ describe("Automation Event source status", () => {
             data: { normalizedManifest: durableRelease.normalizedManifest },
         });
         await seedCurrentDurablePushEndpoint();
+        if (availability === "disabled" || availability === "revoked") {
+            await db.pluginWebhookEndpoint.update({
+                where: { id: DURABLE_PUSH_ENDPOINT_ID },
+                data: availability === "disabled" ? { enabled: false } : { enabled: false, revokedAt: new Date() },
+            });
+        } else if (availability === "routeRevoked") {
+            await db.pluginWebhookRoute.update({
+                where: { accountEndpointId: DURABLE_PUSH_ENDPOINT_ID },
+                data: { enabled: false, revokedAt: new Date() },
+            });
+        }
         await db.automationTrigger.update({
             where: { id: TRIGGER_ID },
             data: {
@@ -1666,7 +1767,7 @@ describe("Automation Event source status", () => {
         await expect(db.automationEventSourceStatus.count()).resolves.toBe(1);
     });
 
-    it("records durable-push catalog reconciliation only for the current endpoint scope", async () => {
+    it.each([false, true])("records durable-push catalog reconciliation only for the current endpoint scope (revoked: %s)", async revoked => {
         await seed();
         const durableRelease = releaseFacts({ supportedObservationTransports: ["durablePush"] });
         await db.accountPluginRelease.update({
@@ -1680,6 +1781,9 @@ describe("Automation Event source status", () => {
             data: { normalizedManifest: durableRelease.normalizedManifest },
         });
         await seedCurrentDurablePushEndpoint();
+        if (revoked) await db.pluginWebhookEndpoint.update({
+            where: { id: DURABLE_PUSH_ENDPOINT_ID }, data: { enabled: false, revokedAt: new Date() },
+        });
         await expect(reportAutomationEventSourceStatusV1({
             accountId: ACCOUNT_ID,
             caller,

@@ -71,6 +71,13 @@ describe('Automation event V1 privacy projections', () => {
 
     expect(AutomationEventSourceStatusReportV1Schema.safeParse(sourceReport).success).toBe(true);
     expect(AutomationEventSourceStatusV1Schema.safeParse(sourceProjection).success).toBe(true);
+    expect(AutomationEventSourceStatusReportV1Schema.safeParse({
+      ...sourceReport, state: 'attention', code: 'service_unavailable',
+    }).success).toBe(true);
+    for (const code of ['Private diagnostic text', 'https://provider.test/?token=private']) {
+      expect(AutomationEventSourceStatusReportV1Schema.safeParse({ ...sourceReport, code }).success).toBe(false);
+      expect(AutomationEventSourceStatusV1Schema.safeParse({ ...sourceProjection, code }).success).toBe(false);
+    }
     expect(AutomationEventSourceCatalogStatusV1Schema.safeParse(catalogProjection).success).toBe(true);
     const {
       reporterSourceCustody: _catalogGeneration,

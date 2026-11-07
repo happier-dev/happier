@@ -1,4 +1,6 @@
 import { AutomationEventAdmitResultV1Schema, AutomationEventSourcesListResultV1Schema, isAutomationEventSourcesListPageProgressingV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { PluginActionInputById, PluginActionResultById } from './actions/index.js';
 import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { PluginInvocationContext } from './invocation.js';
@@ -51,6 +53,8 @@ export type PluginEventObservationV1 = Readonly<{
 
 export type PluginEventDispositionV1 = Readonly<{
     kind: 'checkpointSafe' | 'unsettled';
+    /** Content-free admission failure; absent retryability means it was not classified. */
+    failure?: Readonly<{ code: string; retryable?: boolean }>;
     /**
      * Exact server outcomes, not an inference from checkpoint safety. A skipped
      * occurrence may be safe to checkpoint without admitting any execution.
@@ -189,6 +193,7 @@ export function projectPluginEventAdmissionSourceStatusV1(input: Readonly<{
     result: PluginActionResultById['automation.event.admit']['results'][number] | undefined;
     observationReceivedAt: number;
     observedDelta: 0 | 1;
+    failure?: PluginEventDispositionV1['failure'];
 }>): Extract<
     PluginActionInputById['automation.event.source.status.report'],
     Readonly<{ kind: 'source' }>
@@ -200,7 +205,7 @@ export function projectPluginEventAdmissionSourceStatusV1(input: Readonly<{
             ? { state: 'attention' as const, code: 'definitionStale' as const }
             : input.result?.kind === 'blocked' && input.result.reason === 'capacity'
                 ? { state: 'backingOff' as const, code: 'capacityBlocked' as const }
-                : { state: 'backingOff' as const, code: 'admissionUnavailable' as const };
+                : { state: 'attention' as const, code: input.failure?.code ?? 'admissionUnavailable' };
     return {
         kind: 'source',
         automationId: input.definition.automationId,
@@ -225,6 +230,7 @@ async function reportAdmissionStatuses(input: Readonly<{
     results: readonly AdmitItemResult[];
     observationReceivedAt: number;
     observedDelta: 0 | 1;
+    failure?: PluginEventDispositionV1['failure'];
 }>): Promise<void> {
     for (let index = 0; index < input.definitions.length; index += 1) {
         await reportPluginEventSourceStatus(input.context,
@@ -233,6 +239,7 @@ async function reportAdmissionStatuses(input: Readonly<{
                     result: input.results[index],
                     observationReceivedAt: input.observationReceivedAt,
                     observedDelta: input.observedDelta,
+                    ...(input.failure === undefined ? {} : { failure: input.failure }),
             }),
         );
     }
@@ -347,6 +354,7 @@ export async function admitPluginEventObservationUnderScopeV1(
         })),
     };
     let admitted: PluginActionResultById['automation.event.admit'] | null = null;
+    let failure: PluginEventDispositionV1['failure'];
     try {
         const result = await context.services.actions.execute(
             'automation.event.admit',
@@ -358,16 +366,20 @@ export async function admitPluginEventObservationUnderScopeV1(
         if (parsed.success) admitted = projectProtocolValue<PluginActionResultById['automation.event.admit']>(parsed.data);
     } catch (error) {
         if (context.signal.aborted) throw error;
+        failure = { code: readActionErrorCodeV1(error) ?? 'admissionUnavailable',
+            ...(isPluginError(error) ? { retryable: error.retryable } : {}) };
     }
     if (admitted === null) {
+        failure ??= { code: 'admissionUnavailable' };
         await reportAdmissionStatuses({
             context,
             definitions: matchingDefinitions,
             results: [],
             observationReceivedAt: observation.observationReceivedAt,
             observedDelta: observation.observedDelta,
+            failure,
         });
-        return { kind: 'unsettled' };
+        return { kind: 'unsettled', failure };
     }
     await reportAdmissionStatuses({
         context,

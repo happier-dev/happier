@@ -7,6 +7,7 @@ import { createCanonicalJsonSigningInput } from '../identity.js';
 import type { PluginInvocationContext } from '../invocation.js';
 import type { Disposable } from '../lifecycle.js';
 import type { HostEventEnvelope } from '../events.js';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 
 export type PluginCheckpointedEventSourceDefinitionV1 = Extract<
     PluginActionResultById['automation.event.sources.list'], { kind: 'page' }
@@ -116,7 +117,7 @@ async function processCheckpointedAttempt(
             pendingObservations?.add(occurrenceKey);
             const disposition = await admitPluginEventObservationUnderScopeV1(accountedObservation, input.context, scope, matching, false);
             if (disposition.admissions !== undefined) admissions.push(...disposition.admissions);
-            if (disposition.kind !== 'checkpointSafe') return { kind: 'unsettled', admissions };
+            if (disposition.kind !== 'checkpointSafe') return { ...disposition, admissions };
         }
     }
     input.context.signal.throwIfAborted();
@@ -318,15 +319,24 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         const disposition = await processCheckpointedAttempt({ context: cycleContext, definitions: group, observations: result.observations, complete: result.complete,
                             isCurrent, save: async disposition => { if (result.checkpoint !== undefined) await source.save({ ...attemptContext, checkpoint: result.checkpoint, disposition }); } }, pending);
                         if (disposition.kind === 'checkpointSafe') state.pendingObservations.delete(key);
-                        const nextEligibleAt = eligibility(result.nextEligibleAt);
+                        const reportedEligibleAt = disposition.failure?.retryable === false ? null : eligibility(result.nextEligibleAt);
+                        // An unsettled admission retries on the source's own backoff, never
+                        // sooner: a replaying source may report a probe deadline it did not advance.
+                        const failureRetryAt = disposition.failure === undefined || reportedEligibleAt === null ? null
+                            : eligibility(source.retryAt({ error: Object.assign(new Error(disposition.failure.code), { code: disposition.failure.code }),
+                                now: now(), definition }));
+                        const nextEligibleAt = disposition.failure === undefined || reportedEligibleAt === null ? reportedEligibleAt
+                            : failureRetryAt === null ? null : Math.max(failureRetryAt, reportedEligibleAt);
                         state.nextEligibleAt.set(key, nextEligibleAt);
-                        if (result.status !== undefined) await reportSource(result.status, nextEligibleAt);
+                        if (disposition.failure !== undefined && nextEligibleAt !== null) {
+                            await reportSource({ state: 'backingOff', code: disposition.failure.code }, nextEligibleAt);
+                        } else if (disposition.failure === undefined && result.status !== undefined) await reportSource(result.status, nextEligibleAt);
                         else if (result.observations.length === 0 && disposition.kind === 'checkpointSafe') await reportSource({ state: 'observing', code: 'none' }, null);
                     } catch (error) {
                         if (cycleContext.signal.aborted) throw error;
                         const nextEligibleAt = eligibility(source.retryAt({ error, now: now(), definition }));
                         state.nextEligibleAt.set(key, nextEligibleAt);
-                        await reportSource({ state: 'backingOff', code: 'admissionUnavailable' }, nextEligibleAt);
+                        await reportSource({ state: nextEligibleAt === null ? 'attention' : 'backingOff', code: readActionErrorCodeV1(error) ?? 'admissionUnavailable' }, nextEligibleAt);
                     }
                 }
                 for (const next of state.nextEligibleAt.values()) if (next !== null && (wakeAt === null || next < wakeAt)) wakeAt = next;
