@@ -524,6 +524,18 @@ means the lifecycle is incomplete in its applicable realm. The matrix describes
 Software options use recipes explicitly marked `software: true`; old declarations
 without that optional marker remain valid recipes. Selection carries the same
 exact plugin/id/revision reference and closed inputs, not another software DTO.
+The existing `action.options.resolve` source `machines.setup.software.available`
+accepts an empty draft for inert browsing without a Machine. Its ordinary option
+values retain recipe references or native toolchain identities; labels, icons
+and short descriptions come from those owners. The UI demand-loads the enabled
+Account recipe declarations through the existing availability reader; the CLI
+uses its admitted bundled declarations and a receiving daemon its own registry.
+These descriptors establish neither installation nor target support. A draft
+with both `homeId` and `machineId` retains target-qualified choices; partial
+targets and Plan/Apply recipe fields still require their target operands.
+Inert reads omit executable recipe details. Consumers hold one existing options
+subscription per open, with no idle refetch, and request target facts only when
+selecting a Machine. This changes no Action, wire shape or persisted format.
 Package declarations retain manager-specific identity and optional version pins;
 compact observations retain the exact observed manager, package and version.
 These fields do not establish native support for a package manager or pin.
@@ -4037,6 +4049,17 @@ remain stale rather than becoming absent; no total plugin-count or census-byte
 ceiling substitutes for paging. Account lifetime,
 server generation and superseded-request fences still apply before adoption.
 Interactive managed-resource review retains the exact `intent.read` action.
+That complete read serves the first load, structural requests (Sync bootstrap,
+gap/long-offline snapshot refresh, a declaration claim) and any refresh without
+named plugins. An Availability AccountChange names its plugin, and while the UI
+holds a complete projection (every Machine readable, census complete) it reads
+only the named plugins: `materializations.read` with `pluginIds` (every current
+Account Machine, filtered to them) plus one `intent.read` each, merged into the
+held projection by its single writer. Other plugins keep their last-good facts;
+a held Machine the filtered answer omits has left the inventory, as a complete
+read would show. An incomplete filtered answer falls back to the complete read.
+Named plugins stay pending until their read is adopted, so a superseded or
+failed row-level read keeps them for the trailing refresh.
 This is an undeployed 0.3 source contract, not a released wire transition.
 
 Catalog-scale Action, contribution-projection and Account-settings schemas in
@@ -4904,6 +4927,15 @@ and the server answers `{ access }` only, after the same exact-ref admission.
 Refusals are unchanged. A new digest (plugin upgrade or reinstall) is not held
 and receives the full contract. Before this, every operation re-downloaded and
 re-compared the whole contract (about 0.5 MB for Channels `channel-state`).
+
+The client compiles the contract schema when an operation first materializes a
+row or validates a value, not when it is created, so an absent get, an empty
+page or a watch never compiles it. In 0.3 development source, Channels
+`channel-state` V21 publishes the V20 document with each repeated subschema
+once under root `$defs` (about 130 KB instead of 500 KB). Inlining those
+references reproduces the V20 document exactly, so validation is unchanged;
+V20→V21 is an identity migration. Root properties, `$ref` targets and
+subschemas holding a `$ref` stay inline.
 
 Constructing a dormant Account storage binding does not prepare retained rows.
 A real Collection operation promotes its provisional declaration refusal through

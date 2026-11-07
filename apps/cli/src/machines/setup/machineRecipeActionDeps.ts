@@ -28,7 +28,7 @@ export function createMachineRecipeReadAction(params: Readonly<{
 }>): NonNullable<ActionExecutorDeps['machineRecipesRead']> {
   return async (input, context) => {
     const unavailable = { ok: false as const, errorCode: 'unavailable', error: 'unavailable' };
-    const matchesReceiver = () => input.homeId === params.homeId && input.machineId === params.machineId
+    const matchesReceiver = () => (input.offerings || input.homeId === params.homeId && input.machineId === params.machineId)
       && (!context.externalActionTarget || context.externalActionTarget.kind === 'machine'
         && context.externalActionTarget.machineId === params.machineId);
     const isCurrent = async () => {
@@ -51,7 +51,7 @@ export function createMachineRecipeReadAction(params: Readonly<{
             readPluginBrandAsset: pluginId => runtimeRegistry.getPluginBrandAsset?.(pluginId),
             ...(input.recipeRefs !== undefined ? { machineRecipeRefs: input.recipeRefs } : {}),
           }, machineRecipesProjectionFamily);
-          const target = projectMachineRecipeReadTarget(params.readMachineMetadataSnapshot?.());
+          const target = input.offerings ? undefined : projectMachineRecipeReadTarget(params.readMachineMetadataSnapshot?.());
           result = { entries: Object.values(family.entriesById), ...(target ? { target } : {}) };
         }
       } finally { await lease?.release(); }

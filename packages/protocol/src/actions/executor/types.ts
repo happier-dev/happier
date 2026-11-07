@@ -2112,8 +2112,9 @@ export type ActionExecutorDeps = Readonly<{
   promptInvocationsList?: (args: Readonly<{ limit?: number; signal?: AbortSignal }>) => Promise<unknown>;
   promptInvocationResolve?: (args: Readonly<{ invocationId: string; argsText?: string; sessionId?: string | null; signal?: AbortSignal }>) => Promise<unknown>;
   machinesList?: (args: Readonly<{ serverId?: string; limit?: number; refresh?: boolean; purpose?: 'input' }>) => Promise<unknown>;
-  /** Exact target's admitted cold recipe family; absence is unavailable, not an empty catalog. */
-  machineRecipesRead?: (args: Readonly<{ homeId: string; machineId: string;
+  /** Inert declarations or the exact target's cold recipe family; neither grants installation authority. */
+  machineRecipesRead?: (args: Readonly<({ offerings: true; homeId?: never; machineId?: never }
+    | { offerings?: never; homeId: string; machineId: string }) & {
     recipeRefs?: readonly import('../../machines/setup/machineRecipeV1.js').MachineRecipeReferenceV1[] }>, context: ActionExecutorContext) => Promise<
     Readonly<{ entries: readonly import('../../daemon/contributionRegistryProjection.js').PluginProjectedMachineRecipeEntryV1[];
       target?: import('../../daemon/contributionRegistryProjection.js').MachineRecipeReadTargetV1 }> | ActionExecuteFailure

@@ -20,6 +20,7 @@ export type PluginHostBundledUiDeclaration = Readonly<{
     /** Demand index from the canonical declaration projector; schemas stay lazy. */
     hasMachineProvisioners?: boolean;
     hasDeploymentTargets?: boolean;
+    hasMachineRecipes?: boolean;
     entriesById: PluginDeclaredUiEntriesV1;
     /** Validated authored facts retained by the existing bundled declaration producer. */
     normalizedManifest?: PluginPortableReleaseManifestV1;

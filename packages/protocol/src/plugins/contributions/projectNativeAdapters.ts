@@ -64,19 +64,19 @@ const machineSetupToolchainSoftwareEntries = [
     { value: { kind: 'toolchain', adapterId: 'mise', tool: 'python' }, label: 'Python' },
 ] as const;
 
-/** Exact admitted target facts qualify the incumbent adapter; listing never probes native tools. */
+/** No target means an inert offering. Exact target facts alone qualify support; neither path probes native tools. */
 export function projectMachineSetupToolchainSoftwareOptionsV1(
-    target: Pick<MachinePublishedMetadataV1, 'platform' | 'arch'>,
+    target?: Pick<MachinePublishedMetadataV1, 'platform' | 'arch'>,
 ): readonly InputHintOptionDescriptor<string, MachineSetupToolchainSoftwareChoiceV1>[] {
-    const adapter = listMachineSetupAdaptersV1(target.platform).find(candidate => candidate.id === 'mise');
-    const supported = adapter !== undefined && target.arch === adapter.architecture;
-    const qualification = target.arch === undefined
+    const adapter = target && listMachineSetupAdaptersV1(target.platform).find(candidate => candidate.id === 'mise');
+    const supported = adapter !== undefined && target?.arch === adapter.architecture;
+    const qualification = !target ? '' : target.arch === undefined
         ? ' Waiting for this Machine to report its architecture.'
         : supported ? '' : ' Needs a Linux x64 Machine.';
     return machineSetupToolchainSoftwareEntries.map(entry => ({
         ...entry,
         description: `Run ${entry.label} at the versions you choose.${qualification}`,
-        ...(supported ? {} : { disabled: true }),
+        ...(!target || supported ? {} : { disabled: true }),
     }));
 }
 

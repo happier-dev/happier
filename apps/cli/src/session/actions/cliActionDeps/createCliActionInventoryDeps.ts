@@ -4,7 +4,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AccountProfile, ActionExecutorContext, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { configuration } from '@/configuration';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSchema,
@@ -51,6 +51,8 @@ import {
 
 import { normalizeLimit } from './sessionStateReaders';
 import { createMachineInventoryProbe } from './probeMachineInventory';
+import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 type ModelInventoryItem = Readonly<{
   id: string;
@@ -348,6 +350,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   serverHttpBaseUrl?: string;
   credentials?: StoredCredentials;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
+  getSessionRoleContext?: () => import('@/session/roles/sessionRoleContext').SessionRoleContext;
   authorizeConnectedAccountRequest?: (context: ActionExecutorContext | undefined,
     request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
   sessionId: string;
@@ -530,6 +533,14 @@ export function createCliActionInventoryDeps(params: Readonly<{
   return {
     machineRecipesRead: params.machineRecipesRead ?? (async (args, context) => {
       const unavailable = { ok: false as const, errorCode: 'unavailable', error: 'unavailable' };
+      if (args.offerings) {
+        context.signal?.throwIfAborted();
+        return { entries: loadCurrentBundledPluginLocatorResult().loadedPlugins.flatMap(plugin =>
+          (plugin.manifest.contributes.machineRecipes ?? []).map(definition => ({
+            id: buildQualifiedPluginContributionKey({ pluginId: plugin.pluginId, localId: definition.id }),
+            pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version, definition,
+          }))) };
+      }
       if (!params.callMachineAction) return unavailable;
       try {
         const raw = await params.callMachineAction({ machineId: args.machineId, serverId: args.homeId,
@@ -636,6 +647,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
         accountSettings: captured.account.settings,
         acpCatalogSnapshot: captured.catalog,
+        agentCatalogSnapshot: params.getSessionRoleContext?.().readAgentCatalogSnapshot?.(),
       });
       await captured.assertCurrent();
       return { items };
@@ -885,11 +897,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
         store.assertCurrent();
       };
       await assertCurrent();
-      const purposeCatalog = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => readActiveConnectedAccountCatalog({
+      const includeDefaults = args.includeDefaults !== false;
+      const purposeCatalog = includeDefaults ? await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => readActiveConnectedAccountCatalog({
         ...storeInput, key: 'purposes',
-      }));
+      })) : null;
       await assertCurrent();
-      if (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes') {
+      if (purposeCatalog && (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes')) {
         const { ConnectedServicesDefaultUnavailableError } = await import("@/session/services/spawnConnectedServicesDefaults");
         throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
       }
@@ -897,7 +910,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         : await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => fetchAccountProfile({ token: credentials.token,
           signal: context?.signal, authorizeRequest }));
       await assertCurrent();
-      const accountSettings = await readAccountSettings();
+      const accountSettings = includeDefaults ? await readAccountSettings() : null;
       await assertCurrent();
       // Labels are optional display hints. Partial catalogs retain readable
       // neighbors; unavailable metadata must not withdraw credential inventory.
@@ -962,11 +975,11 @@ export function createCliActionInventoryDeps(params: Readonly<{
             })),
         ]),
       );
-      const defaultBindings = resolveSpawnConnectedServicesDefaults({
+      const defaultBindings = purposeCatalog ? resolveSpawnConnectedServicesDefaults({
         accountSettings,
         agentId,
         purposeCatalog,
-      });
+      }) : null;
       const includeUnavailable = (args as { includeUnavailable?: unknown }).includeUnavailable === true;
       const profileItems = Object.entries(normalizedProfileOptionsByServiceId).flatMap(([serviceId, options]) => (
         options

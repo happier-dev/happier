@@ -128,6 +128,45 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    it('keeps each Machine Event declaration current across equal-version claims and same-Machine edits', () => {
+        const base = intentRead();
+        const full = PluginPortableReleaseManifestV1Schema.parse({ ...base.release!.normalizedManifest,
+            contributes: { events: [{ kind: 'event', id: 'changed', title: 'Changed',
+                payloadSchema: { type: 'object', properties: {}, additionalProperties: false },
+                automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+                    supportedObservationTransports: ['checkpointedPull'],
+                    sourceConfigSchema: { type: 'object', properties: {}, additionalProperties: false },
+                    setupActionRef: { pluginId: 'com.acme.fixture', localId: 'setup' } } } }] } });
+        const smaller = PluginPortableReleaseManifestV1Schema.parse({ ...full, contributes: {} });
+        const entry = (machineId: string, manifest = full) => ({ machineId,
+            machineInstallationId: `${machineId}-installation`, declaration: { manifest,
+                declarationDigestSha256: `sha256:${(manifest === full ? 'c' : 'd').repeat(64)}` } });
+        const response = (machineDeclarations: readonly ReturnType<typeof entry>[]) =>
+            PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...base, intent: { ...base.intent, desiredVersion: null }, release: null,
+                currentDeclaration: null, machineDeclarations });
+        const store = createPluginAccountAvailabilityReaderStore();
+        const publish = (machineDeclarations: readonly ReturnType<typeof entry>[]) => store.replace({ scope,
+            snapshot: snapshot({ intentReads: [{ pluginId: full.id, response: response(machineDeclarations) }] }) });
+        publish([entry('machine-a')]);
+        const reader = store.bind(scope);
+        const request = { pluginId: full.id, version: full.version, eventLocalId: 'changed', sourceContractVersion: 1,
+            machineId: 'machine-a', machineInstallationId: 'machine-a-installation' };
+        expect(reader.readCurrentAutomationEventContribution(request)).not.toBeNull();
+        publish([entry('machine-a'), entry('machine-b', smaller)]);
+        expect(reader.readCurrentAutomationEventContribution(request)).not.toBeNull();
+        expect(reader.readCurrentAutomationEventContribution({ ...request,
+            machineId: 'machine-b', machineInstallationId: 'machine-b-installation' })).toBeNull();
+        expect(reader.readCurrentAutomationEventContribution({ ...request,
+            machineInstallationId: 'replaced-installation' })).toBeNull();
+        expect(reader.readCurrentAutomationEventContribution({ ...request, machineId: 'absent-machine' })).toBeNull();
+        publish([entry('machine-a', smaller), entry('machine-b')]);
+        expect(reader.readCurrentAutomationEventContribution(request)).toBeNull();
+        const legacy = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...base,
+            currentDeclaration: entry('machine-a').declaration });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [{ pluginId: full.id, response: legacy }] }) });
+        expect(reader.readCurrentAutomationEventContribution(request)).not.toBeNull();
+    });
+
     it('publishes a plugin lifecycle only when its observed facts change', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         const response = intentRead();
@@ -866,6 +905,32 @@ describe('Plugin Account Availability reader', () => {
                 { manifest: { id: 'happier.machine.agent37' } }, { manifest: { id: 'happier.machine.maritime' } },
             ] });
         expect(loaded).toEqual(['happier.machine.agent37', 'happier.machine.maritime', 'happier.machine.vercel']);
+    });
+
+    it('loads inert Software recipes once without a Machine and preserves disabled Account intent', async () => {
+        const loaded: string[] = [];
+        const { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } = await import(
+            '../../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
+        const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/machine-recipes/src/manifest');
+        const declaration = await projectBundledPluginUiDeclaration({ packageName: '@happier-dev/plugins-machine-recipes',
+            packageVersion: PLUGIN_MANIFEST.version, manifest: PLUGIN_MANIFEST, artifactGraphs: [] });
+        const firstPaint = await projectBundledPluginUiFirstPaintDeclaration(declaration);
+        const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: [{ ...firstPaint,
+            loadDeclaration: async () => { loaded.push(declaration.pluginId); return declaration; } }] });
+        store.replace({ scope, snapshot: snapshot({ intentReads: [], materializations: [], snapshots: [] }) });
+        const reader = store.bind(scope);
+        const result = await reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineRecipes' });
+        expect(result).toMatchObject({ kind: 'available', declarations: [{ manifest: { contributes: { machineRecipes:
+            expect.arrayContaining([expect.objectContaining({ id: 'google-chrome', title: 'Google Chrome', software: true })]),
+        } } }] });
+        await reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineRecipes' });
+        expect(loaded).toEqual([declaration.pluginId]);
+        store.replace({ scope, snapshot: snapshot({ materializations: [], snapshots: [], intentReads: [{
+            pluginId: declaration.pluginId, response: { ...intentRead(), release: null, uiArtifacts: [], packageAssets: [],
+                intent: { ...intentRead().intent!, pluginId: declaration.pluginId, enabled: false } },
+        }] }) });
+        expect(await reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineRecipes' }))
+            .toEqual({ kind: 'available', declarations: [] });
     });
 
     it('loads only deployment target declarations for the opened platform sheet', async () => {

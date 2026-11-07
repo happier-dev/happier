@@ -15,6 +15,8 @@ export async function projectBundledPluginUiDeclaration({ packageName, packageVe
   return {
     pluginId, pluginVersion: packageVersion, packageName,
     ...((normalizedManifest.contributes.machineProvisioners?.length ?? 0) > 0 ? { hasMachineProvisioners: true } : {}),
+    ...((normalizedManifest.contributes.deploymentTargets?.length ?? 0) > 0 ? { hasDeploymentTargets: true } : {}),
+    ...((normalizedManifest.contributes.machineRecipes?.length ?? 0) > 0 ? { hasMachineRecipes: true } : {}),
     displayName: typeof normalizedManifest.displayName === 'string' ? normalizedManifest.displayName : normalizedManifest.displayName.fallback,
     normalizedManifest,
     artifactGraphs,
