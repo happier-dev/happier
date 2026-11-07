@@ -1,4 +1,3 @@
-import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { IncomingMessage, Server, ServerResponse } from "http";
@@ -19,6 +18,11 @@ import type { ExternalActionTargetV1, ExternalActionExecutionAuthorizationBindin
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { CurrentSessionPublisherAuthority } from '@/app/presence/sessionPublisherPresence';
+import type { RunFollowOccurrenceUnavailableCode } from '@/app/session/follow/sessionFollowEdgeService';
+import type { ExecutionRunFollowRpcUnavailableCode } from '@/app/session/follow/executionRunFollowSource';
+import type { SessionFollowRunRouteReleaseReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import type { DeploymentChildMachineRead } from '@/app/deployments/deploymentChildAuthorization';
+import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 
 /**
  * Exact request field that names the Session an HTTP route acts on. A route
@@ -117,6 +121,19 @@ declare module 'fastify' {
     }
     interface FastifyRequest {
         userId: string;
+        /** Route-produced ids/codes for the existing content-free completion record. */
+        followSourceRoute?: Readonly<{
+            sourceKind?: 'execution_run' | 'workflow_run' | 'discussion';
+            sourceSessionId?: string;
+            sourceRunId?: string;
+            sourceMachineId?: string;
+            sourceTargetMachineId?: string;
+            releaseReason?: SessionFollowRunRouteReleaseReasonV1;
+            sourceRpcCode?: ExecutionRunFollowRpcUnavailableCode;
+            sourceDiscussionId?: string;
+            resultCode: 'ok' | 'invalid_request' | 'forbidden' | 'source_unavailable' | 'unknown';
+            sourceReadCode?: 'ready' | 'target_unavailable' | 'rpc_unavailable' | 'rpc_invalid' | RunFollowOccurrenceUnavailableCode;
+        }>;
         /** Verified credential provenance; missing is never present-user authority. */
         authTokenKind?: "account" | "account_directory" | "terminal" | "api_token" | "ephemeral_session_runner";
         /** Server-stamped authority for Action ingress; never caller-provided input. */
@@ -137,6 +154,8 @@ declare module 'fastify' {
         externalActionSessionAccessAdmitted?: true;
         /** Exact immutable binding admitted by the installed execution proof. */
         externalActionExecutionAuthorizationBinding?: ExternalActionExecutionAuthorizationBindingV1;
+        /** Exact native child packet already verified by the template HTTP purpose owner. */
+        /** Exact native Apply consent consumed by the authorization issuer. */
         /** Immutable caller input ceiling from verified invocation admission, not a later PAT grant. */
         externalActionInputConstraints?: CallerInputConstraintsV1;
         /** Effect id from the verified Machine signature; never read from caller input. */
@@ -154,8 +173,21 @@ declare module 'fastify' {
         /** Custodian from the verified execution binding, independent of requester principal. */
         externalActionExecutionCustodianAccountId?: string;
         /** Home-derived retained guest scope; only verified controller signatures stamp it. */
-        externalActionReviewedChildAdmission?: NonNullable<VerifiedExternalActionExecutionRequest['reviewedChildAdmission']>
         externalActionManagedGuestActivity?: Readonly<{ machineId: string; installationId: string; encryptionMode: 'plain' | 'e2ee' }>;
+        /** Exact original-requester codec read; the authenticated principal is unchanged. */
+        externalActionDeploymentChildMachineRead?: DeploymentChildMachineRead;
+        /** Installed receiver identity for the closed finite phase, never the original principal. */
+        externalActionDeploymentChildSigner?: VerifiedExternalActionExecutionRequest['deploymentChildSigner'];
+        /** Request-local admitted job facts, consumed by the secret owner without another admission. */
+        externalActionDeploymentChildAdmission?: VerifiedExternalActionExecutionRequest['deploymentChildAdmission'];
+        externalActionDeploymentChildArtifactRead?: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
+        /** Exact HTTP read scope proven by this controller's accepted receipt. */
+        externalActionAcceptedDeploymentRead?: NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
+        /** Exact metadata projected by the admitted create allocation; conveys no Source edit authority. */
+        externalActionDeploymentCreateSource?: NonNullable<VerifiedExternalActionExecutionRequest['createPreparationAdmission']>['source'];
+        /** Exact generic reviewed child after signature and admitted-job scope validation. */
+        externalActionReviewedChildAdmission?: NonNullable<VerifiedExternalActionExecutionRequest['reviewedChildAdmission']>
+            & Readonly<{ environmentId?: string }>;
         startTime?: number;
         accountStoredContentCompatibility?: AccountStoredContentCompatibilityEvaluation;
     }

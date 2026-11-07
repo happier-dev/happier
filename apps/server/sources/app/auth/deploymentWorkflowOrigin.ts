@@ -6,7 +6,7 @@ import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvir
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import type { Tx } from '@/storage/inTx';
 import { hasAcceptedDeploymentReceiptInTx, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
-import { isTemplateInstantiationAuthorizedInTx } from '@/app/deployments/deploymentPreparationAuthorization';
+import { isAdmittedTemplateInstantiationScopeCurrentInTx, isTemplateInstantiationAuthorizedInTx } from '@/app/deployments/deploymentPreparationAuthorization';
 
 export type MachineWorkflowOriginPhase = 'admission' | 'execution';
 
@@ -14,6 +14,7 @@ export type DeploymentWorkflowOriginInput = Readonly<{
     accountId: string; machineId: string; actionId: string; requestId: string; target: ExternalActionTargetV1;
     requestEnvelopeDigest?: string; idempotencyKey?: string; publisherMachineId?: string;
     serverIdentityId?: string; installationId?: string; custodianAccountId?: string; environmentId?: string;
+    admittedMachineRole?: ExternalActionExecutionAuthorizationBindingV1['admittedMachineRole'];
     authentication?: Readonly<{ evidence?: readonly AuthTokenAuthenticationEvidenceV1[] }>;
     deploymentNativeAdmission?: Readonly<{ environmentId: string }>;
     deploymentCandidatePublication?: ExternalActionExecutionAuthorizationBindingV1['deploymentCandidatePublication'];
@@ -65,9 +66,16 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
     if (continuation) return hasAcceptedDeploymentReceiptInTx(reader, input, continuation);
     const target = await readCurrentMachineWorkflowOriginInTx(reader, input, phase);
     if (!target) return false;
+    // Prepare is source/workspace work; its existing preparation admission owns
+    // those operands and does not require an Environment to exist yet.
+    if (input.actionId === 'deployments.prepare') return input.deploymentPreparationAdmission?.operation === 'prepare';
     if (input.actionId === 'deployments.templates.instantiate') {
         const admission = input.deploymentPreparationAdmission;
-        return admission?.operation === 'template' && await isTemplateInstantiationAuthorizedInTx(reader, {
+        if (admission?.operation !== 'template') return false;
+        if (phase === 'execution') return isAdmittedTemplateInstantiationScopeCurrentInTx(reader, {
+            ...input, machineId: input.target.machineId,
+        }, admission);
+        return isTemplateInstantiationAuthorizedInTx(reader, {
             ...input, serverIdentityId: input.serverIdentityId ?? await getOrCreateServerIdentityId(),
             machineId: input.target.machineId, installationId: target.installationId,
         }, admission, { authenticationAuthority: 'account_automation', authenticationEvidence: input.authentication?.evidence });
@@ -78,8 +86,9 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
     const environment = await loadDeploymentEnvironmentInTx(reader, input.accountId,
         input.serverIdentityId ?? await getOrCreateServerIdentityId(), environmentId, {
             authenticationAuthority: 'account_automation', authenticationEvidence: input.authentication?.evidence,
-        });
-    if (!environment.ok || !canDeployDeploymentEnvironment(environment.admission, environment.row)
+        }, phase === 'execution' ? { environmentId } : undefined);
+    if (!environment.ok || environment.row.deletedAt
+        || phase === 'admission' && !canDeployDeploymentEnvironment(environment.admission, environment.row)
         || scope && (scope.source.id !== environment.admission.source.id || scope.source.revision !== environment.admission.source.revision)
         || environment.row.controllerMachineId !== input.target.machineId) return false;
     if (input.actionId !== 'deployments.teardown') {
@@ -87,7 +96,7 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
             environmentId, role: 'runtime', deletedAt: null, detachedAt: null }, select: { id: true } });
         if (!link) return false;
     }
-    if (await admitDeploymentMachineInTx(reader, environment.admission.owner,
+    if (phase === 'admission' && await admitDeploymentMachineInTx(reader, environment.admission.owner,
         input.target.machineId, 'controller', target.installationId)) return false;
     return true;
 }

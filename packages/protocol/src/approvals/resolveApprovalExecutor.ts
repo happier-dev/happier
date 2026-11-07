@@ -1,15 +1,18 @@
-import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
-import { isSessionDiscussionApprovalPublicationV1, type ApprovalRequest } from './approvalRequestV1.js';
+import { isHistoricalPublishApprovalRequestV2, isSessionDiscussionApprovalPublicationV1, type ApprovalRequest } from './approvalRequestV1.js';
 import type { TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
 import { ConfidentialActionInputReviewV1Schema } from './privateSecretContinuationV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { isNativeSecretFillAction } from '../actions/executor/confidentialInputs.js';
-import { deploymentOperationForRootActionV1 } from '../deployments/deploymentActionIdsV1.js';
+import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { HostReviewedChildrenPlanV1Schema } from '../actions/executor/hostReviewedChildrenV1.js';
 import { isManagedRetainedControlInvocation } from '../machines/managed/actionsV1.js';
+import { isDeploymentEnvironmentUpdateNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+import { isPresentUserHostInvocation } from '../actions/invocationAuthority.js';
+import type { ActionExecutionPlacement } from '../actions/metadata.js';
 
 export type ApprovalExecutor =
-  | Readonly<{ kind: 'app'; placement: 'account' | 'client' }>
+  | Readonly<{ kind: 'app'; placement: ActionExecutionPlacement }>
   | Readonly<{ kind: 'daemon'; machineId: string; sessionId?: string }>
   | Readonly<{ kind: 'live_invocation'; daemonMachineId?: string }>
   | Readonly<{ kind: 'unavailable'; reason: 'legacy_request' | 'invalid_input' | 'missing_machine' }>;
@@ -37,9 +40,9 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
       : { kind: 'unavailable', reason: 'missing_machine' };
   }
   if (request.v !== 2) return { kind: 'unavailable', reason: 'legacy_request' };
-  const actionId = ActionIdSchema.safeParse(request.actionId);
-  if (!actionId.success) return { kind: 'unavailable', reason: 'invalid_input' };
-  const spec = getActionSpec(actionId.data);
+  if (isHistoricalPublishApprovalRequestV2(request)) return { kind: 'unavailable', reason: 'invalid_input' };
+  const actionId = request.actionId;
+  const spec = getActionSpec(actionId);
   const origin = request.executionOriginV1;
   if (ConfidentialActionInputReviewV1Schema.safeParse(readRecord(request.preview).confidentialInputs).success) {
     return { kind: 'live_invocation', ...(origin.machineId ? { daemonMachineId: origin.machineId } : {}) };
@@ -50,14 +53,16 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     || spec.approvalResultCustody === 'live_only' && request.approval?.flow !== 'deferred'
     // The person's value or Saved Secret selection is supplied only to the
     // authenticated confidential continuation, never to durable replay.
-    || isNativeSecretFillAction(actionId.data)
+    || isNativeSecretFillAction(actionId)
     || request.approval?.flow === 'blocking'
       && (origin.surface === 'ui' || origin.surface === 'cli' || origin.surface === 'plugin')
       && (origin.caller.kind === 'host' || origin.caller.kind === 'plugin')) {
     const appOrTerminalInvocation = !origin.externalActionExecutionAuthorization
       && (origin.caller.kind === 'host' || origin.caller.kind === 'plugin')
       && (origin.surface === 'ui' || origin.surface === 'voice' || origin.surface === 'plugin' || origin.surface === 'cli');
-    const daemonMachineId = appOrTerminalInvocation ? undefined : origin.machineId?.trim();
+    const daemonMachineId = origin.caller.kind === 'plugin' && origin.target?.kind === 'machine'
+      ? origin.target.machineId.trim()
+      : appOrTerminalInvocation ? undefined : origin.machineId?.trim();
     return { kind: 'live_invocation', ...(daemonMachineId ? { daemonMachineId } : {}) };
   }
   const input = spec.inputSchema.safeParse(request.actionArgs);
@@ -67,26 +72,45 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   // Ordinary Account proposals still belong to the deciding app.
   const placement = isSessionDiscussionApprovalPublicationV1(request)
     ? 'session'
-    : actionId.data === 'discussion.invite' && origin.caller.kind === 'workflowRun'
+    : actionId === 'discussion.invite' && origin.caller.kind === 'workflowRun'
       && origin.caller.discussionModelReservation
       ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data);
   // Native deployment roots and retained managed controls return to their controller, including
   // public read projections that omit private replay authorization. The daemon
   // reads that custody from the original Artifact; location grants no authority.
   // Ordinary Account proposals keep their app executor.
-  if ((deploymentOperationForRootActionV1(actionId.data) !== undefined
-      || isManagedRetainedControlInvocation(actionId.data, input.data))
+  if ((deploymentOperationForRootActionV1(actionId) !== undefined
+      || actionId === 'deployments.environments.update'
+        && isDeploymentEnvironmentUpdateNativeAdmissionV1(projectDeploymentNativeAdmissionV1(actionId, input.data))
+      || isDeploymentDomainChildActionIdV1(actionId)
+      || actionId === 'deployments.targets.link' && !('contentArtifactId' in readRecord(input.data))
+      || isManagedRetainedControlInvocation(actionId, input.data))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
-  if (placement === 'account' && origin.target?.kind === 'machine'
-    && origin.principalId && origin.credentialId) {
+  if (placement === 'account' && origin.target?.kind === 'machine') {
     // A token's approved Account effect retains its original signed transport.
     // The deciding app's Account bearer cannot replace that credential custody.
-    return { kind: 'daemon', machineId: origin.target.machineId };
+    if (origin.principalId && origin.credentialId) return { kind: 'daemon', machineId: origin.target.machineId };
+    const reviewed = HostReviewedChildrenPlanV1Schema.safeParse(readRecord(request.preview).hostReviewedChildren);
+    // The Account root's reviewed native effects retain their original host.
+    // App replay would discard the Machine custody needed by those children.
+    if (reviewed.success && reviewed.data.children.some(child => typeof child.action === 'string'
+      && resolveActionExecutionPlacementForInput(getActionSpec(child.action), child.input ?? child.scopeInput) === 'machine')) {
+      return { kind: 'daemon', machineId: origin.target.machineId };
+    }
   }
   if (placement === 'account' || placement === 'client') return { kind: 'app', placement };
   const machineId = origin.machineId?.trim()
     || (origin.target?.kind === 'machine' ? origin.target.machineId.trim() : '');
-  if (!machineId) return { kind: 'unavailable', reason: 'missing_machine' };
+  if (!machineId) {
+    // A direct UI Ask has no originating daemon. Resume its built-in app
+    // adapter; the reviewed operands still select the Machine/Session effect.
+    // Signed, automated and retained invocations keep their existing custody.
+    if (origin.surface === 'ui' && spec.surfaces.ui
+      && isPresentUserHostInvocation({ ...origin, actionCaller: origin.caller })) {
+      return { kind: 'app', placement };
+    }
+    return { kind: 'unavailable', reason: 'missing_machine' };
+  }
   const sessionId = placement === 'session'
     ? origin.target?.kind === 'session' ? origin.target.sessionId
       : origin.sessionId ?? (origin.caller.kind === 'session' ? origin.caller.sessionId : undefined)

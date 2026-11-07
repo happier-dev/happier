@@ -338,8 +338,9 @@ owner; ordinary list responses keep private configuration closed. Observation-on
 retained definition without another read, including when it rejoins an existing
 enrollment. H4 projects its filter and period from that returned definition.
 Environment/Machine read Actions and `actions.policy.get` expose the other owner
-facts to agents. Existing owner removal remains available after an Environment
-is deleted; authoring and re-enabling still require admission.
+facts to agents. Observation-only and guided Agent triggers retain owner pause
+and removal after an Environment is deleted, through the same cleanup admission.
+Authoring and re-enabling still require admission.
 
 The SDK runner consumes the finite adapter's `result.nextEligibleAt`; it does
 not supply a polling interval. The generic source configuration accepts an explicit
@@ -2293,9 +2294,10 @@ the development teardown Action prepares the existing plain detach disposition.
 Its review says remote resources, data and costs remain; an unavailable descriptor
 is a typed refusal rather than evidence that the role is absent. Home executes
 the same manager-only unlink owner and returns its typed `detached: true` result.
-It creates no cleanup receipt or provider-absence claim. Stop and remove consumes
-that result, removes the Environment through the existing detach disposition
-when requested, and shows the existing keep-running notice. Retained/data links
+It creates no cleanup receipt or provider-absence claim. Explicit Detach keeps
+that behavior. Stop and remove requests Environment removal and refuses this
+keep-running fallback with a typed missing fact and remedy; it cannot claim
+that the workload stopped or the Environment was removed. Retained/data links
 keep the disposition owner's existing inventory and revision rules.
 
 The native teardown Action uses one receipt and the existing signed transition
@@ -2313,10 +2315,14 @@ labelled with each exact owned project in that same teardown step. Networks with
 active endpoints cannot be removed; the receipt retains the unproved step and
 its typed reason. Successful empty container and owned-network inventory is an
 idempotent absence proof; an unavailable engine is not. Named data volumes remain
-unless explicitly selected for data removal; images and source files are kept. The resulting
-signed teardown receipt permits the existing delete/unlink disposition; it never
-selects detach. Delete supplies the successful receipt id in `teardownDeploymentIds`
-(unlink uses `teardownDeploymentId`) with the current Environment revision.
+unless explicitly selected for data removal; images and source files are kept.
+Stop and remove supplies `removeEnvironment: true`. Home admits the existing
+manager permission once and captures that disposition on the admitted receipt.
+After native proof, the signed final transition invokes the canonical Environment
+removal writer in the same transaction and returns `environmentRemoved: true`.
+It never selects detach or starts another delete/unlink Action. Plain teardown
+without that flag may retain the Environment; its successful receipt remains
+usable by the existing explicit disposition Actions.
 Deleted Environments remain readable as retained tombstones with `deletedAtMs`.
 Imported native projects and multi-member native targets still return
 `unsupported_action` until their native custody/removal owner is available.
@@ -2519,8 +2525,13 @@ and check only that the admitted job remains active. The controller retires the
 captured Domains before target cleanup; it does not issue another Domain Remove
 Action or ask for another confirmation. A failed retirement returns a typed
 partial result naming the Domain and its required fact and remedy, records a
-cleanup failure, and leaves the Environment present. Signed teardown completion
-still refuses a contradictory live Domain inventory with `deployment_conflict`.
+cleanup failure, and leaves the Environment present. Environment removal is the
+last step of Stop and remove. A rejected or uncertain final removal returns a
+typed `removeEnvironment` partial with the Environment identity, required fact
+and remedy, preserving the original failure code. Only a committed removal
+returns `environmentRemoved: true`; clients consume that signed result without
+rereading the removed Environment. Signed teardown completion still refuses a
+contradictory live Domain inventory with `deployment_conflict`.
 Domain routing, credentials and native absence remain with the Domain owner.
 
 The selected Environment ingress mode lives in protected content. Its explicit

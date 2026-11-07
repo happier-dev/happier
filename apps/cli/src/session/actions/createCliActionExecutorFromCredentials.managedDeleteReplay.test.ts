@@ -1,70 +1,144 @@
 import Fastify from 'fastify';
+import nacl from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { AccountSettingsSchema, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ClientToServerEvents } from '@/api/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
-import { registerAccountHomeHttp, registerPlainArtifactRoutes } from './widgetApproval.testkit';
+import { registerAccountHomeHttp, registerAccountArtifactRoutes } from './widgetApproval.testkit';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['machines.managed.delete', 'machines.managed.power.set', 'machines.managed.inspect', 'machines.managed.acquire'] as const)('delivers public CLI %s approval to its retained controller instead of the Account effect endpoint', async actionId => {
+it.each([
+    ['machines.managed.delete', 'plain'], ['machines.managed.power.set', 'plain'],
+    ['machines.managed.inspect', 'plain'], ['machines.managed.acquire', 'plain'],
+    ['deployments.teardown', 'plain'], ['deployments.teardown', 'e2ee'],
+    ['deployments.environments.update', 'plain'], ['deployments.environments.update', 'e2ee'],
+] as const)('settles public CLI %s approval replay at its origin (%s)', async (actionId, encryptionMode) => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-delete-replay-' }, async () => {
         const accountId = 'delete-owner';
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
-        const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        const machineKey = new Uint8Array(32).fill(37);
+        const credentials = { token, encryption: encryptionMode === 'e2ee' ? { type: 'dataKey' as const,
+            machineKey, publicKey: libsodiumPublicKeyFromSecretKey(machineKey) } : null, credentialProvenance: 'stored_session' as const };
+        const resource = await createResourceDataKey({ credentials, mode: encryptionMode });
+        const detail = createDeploymentEnvironmentDetailV1();
+        const environment = { ...detail.environment, serverId: 'srv_home', controllerMachineId: 'controller',
+            owner: { kind: 'account' as const, accountId } };
+        const installationKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
+        const target = { kind: 'machine' as const, machineId: 'controller' };
         // Captured #48 shape: the explicit controller target survives a public
         // approval read even when private execution authorization is absent.
-        const actionArgs = actionId === 'machines.managed.inspect' ? { homeId: 'srv_home', managedId: 'lima-leaf' }
+        const actionArgs = actionId === 'deployments.environments.update' ? { serverId: configuration.activeServerId, environmentId: environment.id,
+            expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
+            contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+            patch: { ingress: { kind: 'cloudflareTunnel' } } }
+            : actionId === 'deployments.teardown' ? { serverId: 'srv_home', environmentId: 'environment',
+            expectedRevision: 3, targetLinkId: 'own-server', expectedTargetLinkRevision: 2, requestKey: 'teardown', reason: 'manual' }
+            : actionId === 'machines.managed.inspect' ? { homeId: 'srv_home', managedId: 'lima-leaf' }
             : actionId === 'machines.managed.acquire' ? { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
                 selection: { kind: 'one-off', homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
                     launch: { provider: { pluginId: 'compute.example', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
                     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }
             : { homeId: 'srv_home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
                 ...(actionId === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' }) };
+        // #82 retains the Account-auth root and the installation's proof over
+        // the original ingress-only input; this terminal has no machine signer.
+        const authorization = actionId === 'deployments.environments.update'
+            ? ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-ingress-root', binding: {
+                accountId, custodianAccountId: accountId, serverIdentityId: 'srv_home', machineId: 'controller',
+                installationId: 'installation', actionId, authentication: { kind: 'account', tokenEpoch: 1 },
+                accountEncryptionMode: encryptionMode, environmentId: environment.id,
+                requestId: 'original-delete', requestEnvelopeDigest: 'a'.repeat(43),
+                target, deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, actionArgs),
+            } }) : undefined;
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId,
             actionArgs, summary: 'Control managed machine.',
             approval: { flow: 'deferred', result: 'required' },
-            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+            executionOriginV1: { v: 1, authority: authorization ? 'account_automation' : 'present_user', surface: 'cli', caller: { kind: 'host' },
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', accountId,
                 machineId: 'controller', target: { kind: 'machine', machineId: 'controller' },
-                actionId, requestId: 'original-delete' } });
+                actionId, requestId: 'original-delete', ...(authorization ? {
+                    externalActionExecutionAuthorization: authorization,
+                    externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+                        actionId, input: actionArgs, target, privateKey: installationKeys.secretKey }),
+                } : {}) } });
         const app = Fastify();
-        const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_home' });
-        const artifacts = registerPlainArtifactRoutes(app, accountId);
-        artifacts.seed('delete-approval', encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
-            encodePlainArtifactStoredContent({ body: JSON.stringify(request) }));
+        const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_home', encryptionMode });
+        const artifacts = registerAccountArtifactRoutes(app, accountId, { encryptionMode });
+        const seal = (value: unknown) => resource.mode === 'e2ee'
+            ? encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64') : encodePlainArtifactStoredContent(value);
+        artifacts.seed('delete-approval', seal(buildApprovalRequestArtifactHeaderV1(request)),
+            seal({ body: JSON.stringify(request) }), resource.dataEncryptionKey ?? undefined);
+        if (actionId === 'deployments.environments.update') {
+            artifacts.seed(environment.contentArtifactId,
+                seal({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }),
+                seal({ body: JSON.stringify(detail.content) }), resource.dataEncryptionKey ?? undefined);
+            app.get(`/v1/deployments/environments/${environment.id}`, async () => ({ ok: true, environment,
+                targetLinks: detail.targetLinks.map(item => item.targetLink) }));
+        }
         const paths: string[] = [];
-        app.addHook('onRequest', async request => { paths.push(request.url); });
-        app.get('/v1/machines/controller', async () => ({ machine: { id: 'controller', kind: 'persistent', active: true,
-            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-            access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } }));
+        const environmentPatches: string[] = [];
+        app.addHook('onRequest', async request => {
+            paths.push(request.url);
+            if (request.method === 'PATCH' && request.url.startsWith('/v1/deployments/environments/')) environmentPatches.push(request.url);
+        });
+        const machine = { id: 'controller', kind: 'persistent', active: true,
+            installationId: 'installation', installationPublicKey: encodeBase64(installationKeys.publicKey, 'base64'),
+            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: resource.dataEncryptionKey, runnerContentKeyBinding: null,
+            access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: encryptionMode, accessState: 'ready' } };
+        app.get('/v1/machines/controller', async () => ({ machine }));
+        app.get('/v1/machines', async () => [machine]);
         const origin = 'https://delete-home.test';
         const restore = installAxiosFastifyAdapter({ app, origin });
         const sockets = await createRequesterCurrentnessSocketHarness();
         type Call = Parameters<ClientToServerEvents[typeof SOCKET_RPC_EVENTS.CALL]>[0];
         const calls: Call[] = [];
         const accountSettings = AccountSettingsSchema.parse({});
-        const deleted = { kind: 'accepted', managedId: 'lima-leaf', intentRevision: 1,
-            operation: { operationId: 'native-delete-operation' } };
+        const deleted = actionId === 'deployments.environments.update'
+            ? { ok: true, environmentId: environment.id, revision: environment.revision + 1 }
+            : { kind: 'accepted', managedId: 'lima-leaf', intentRevision: 1,
+                operation: { operationId: 'native-delete-operation' } };
         const outcome = { ok: true, status: 'executed', execution: { executedAtMs: 2,
             ok: true, effectAttempted: true, result: deleted } };
+        const machineCodec = createMachineContentCodec(resource.mode === 'plain' ? { encryptionMode: 'plain' }
+            : { encryptionKey: resource.dataKey, encryptionVariant: 'dataKey' });
+        const rpcContent: SocketRpcContent = machineCodec.mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
+            encryptRaw: async value => machineCodec.encodeRpc(value),
+            decryptRaw: async value => machineCodec.decodeRpc(value),
+        } };
         // Home HTTP and the remote controller's Socket.IO acknowledgement are
         // boundaries; the CLI, Artifact reader, decision and replay owner are real.
         sockets.server.on('connection', socket => {
-            socket.on(SOCKET_RPC_EVENTS.CALL, (call: Call, acknowledge: (result: unknown) => void) => {
+            socket.on(SOCKET_RPC_EVENTS.CALL, async (call: Call, acknowledge: (result: unknown) => void) => {
                 calls.push(call);
-                acknowledge({ ok: true, result: { ok: true, result: outcome } });
+                if (actionId === 'deployments.teardown') {
+                    acknowledge({ ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' });
+                    return;
+                }
+                const request = await socketRpcCodec.decodeRequestParams(rpcContent, call.params, call.method);
+                acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(rpcContent,
+                    { ok: true, result: outcome }, request.callId) });
             });
         });
         try {
@@ -75,10 +149,29 @@ it.each(['machines.managed.delete', 'machines.managed.power.set', 'machines.mana
                     getAccountSettings: () => accountSettings } });
             const result = await executor.execute('approval.request.decide', { artifactId: 'delete-approval', decision: 'approve' },
                 { surface: 'cli', authority: 'present_user', actionRequestId: 'approve-delete' });
+            if (actionId === 'deployments.teardown') {
+                // #59: a relay admission refusal must settle the existing approval,
+                // without admitting a teardown receipt or advertising unknown effects.
+                expect(result).toMatchObject({ ok: true, result: { status: 'failed',
+                    execution: { ok: false, effectAttempted: false, errorCode: 'RPC_FORBIDDEN' } } });
+                const persisted = await runWithServerHttpBaseUrl(origin, () =>
+                    createCredentialedAccountArtifactStore(credentials).read('delete-approval'));
+                expect(persisted).not.toBeNull();
+                expect(persisted && approvalArtifactBodyMatchesHeaderV1(persisted.header, persisted.body)).toMatchObject({
+                    family: 'built_in', request: { status: 'failed',
+                        execution: { ok: false, effectAttempted: false, errorCode: 'RPC_FORBIDDEN' } } });
+                expect(paths.some(path => path.endsWith('/teardown'))).toBe(false);
+                return;
+            }
             expect(result, JSON.stringify({ result, paths, calls })).toMatchObject({ ok: true, result: { ok: true, status: 'executed',
                 execution: { ok: true, effectAttempted: true, result: deleted } } });
             expect(calls).toMatchObject([{ method: `controller:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}` }]);
-            expect(paths).not.toContain(managedMachineActionEndpointPathV1(actionId));
+            if (actionId === 'deployments.environments.update') {
+                expect(calls).toHaveLength(1);
+                expect(environmentPatches).toEqual([]);
+            } else {
+                expect(paths).not.toContain(managedMachineActionEndpointPathV1(actionId));
+            }
         } finally {
             restore();
             await sockets.close();

@@ -5,6 +5,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from './approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema } from './targetActionApprovalRequestV1.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
+import { buildApprovalExecutionOriginV1 } from '../actions/executor/approvalOrigins.js';
 
 const surfaces = ['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli', 'rpc', 'api'] as const;
 const cases = [
@@ -28,6 +29,21 @@ function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknow
 }
 
 describe('resolveApprovalExecutor', () => {
+  it('replays a person\'s UI Ask on the app when no originating Machine exists', () => {
+    const request = requestFor('session.stop', { sessionId: 'session' }, 'ui');
+    const { machineId: _machineId, ...origin } = request.executionOriginV1;
+    const uiRequest = ApprovalRequestV2Schema.parse({ ...request,
+      executionOriginV1: { ...origin, authority: 'present_user' } });
+    expect(resolveApprovalExecutor(uiRequest)).toEqual({ kind: 'app', placement: 'session' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...uiRequest,
+      executionOriginV1: { ...uiRequest.executionOriginV1, authority: 'account_automation' } })))
+      .toEqual({ kind: 'unavailable', reason: 'missing_machine' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...uiRequest,
+      executionOriginV1: { ...uiRequest.executionOriginV1, machineId: 'captured',
+        target: { kind: 'machine', machineId: 'captured' } } })))
+      .toEqual({ kind: 'daemon', machineId: 'captured', sessionId: 'session' });
+  });
+
   it('routes deferred live-only authentication results to the captured Machine', () => {
     const request = requestFor('connectedServices.authentication.beginConnect', {
       machineId: 'machine', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual',
@@ -35,6 +51,79 @@ describe('resolveApprovalExecutor', () => {
     expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine' });
   });
 
+  it('returns an unprepared provider Link to its retained controller while prepared content stays Account-owned', () => {
+    const actionId = 'deployments.targets.link';
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link',
+      targetId: 'runtime', role: 'runtime', targetKind: 'platform', machines: [],
+      source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } },
+      provider: { credentialPrincipal: { kind: 'account', accountId: 'account',
+        purpose: { consumer: { pluginId: 'example.deploy', localId: 'platform' }, purpose: 'manage' },
+        target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
+        providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' } } };
+    const request = requestFor(actionId, input);
+    const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+      ...request.executionOriginV1, machineId: 'retained-controller',
+      target: { kind: 'machine', machineId: 'retained-controller' },
+    } });
+    expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted))))
+      .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+    const { provider: _provider, ...prepared } = input;
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted, actionArgs: {
+      ...prepared, contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
+    } }))).toEqual({ kind: 'app', placement: 'account' });
+  });
+
+  it.each(['deployments.environments.create', 'deployments.targets.link'] as const)(
+    'returns %s with a reviewed Machine retention edit to its captured executor', actionId => {
+      const content = { contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+      const machines = [{ machineId: 'guest', installationId: 'guest-installation' }];
+      const input = actionId === 'deployments.environments.create'
+        ? { serverId: 'home', projectSourceId: 'source', requestKey: 'enable', protection: 'nonProduction',
+          purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'machine', ...content,
+          firstTargetLink: { machines, ...content } }
+        : { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link',
+          targetId: 'own-server', role: 'runtime', machines, ...content };
+      const request = requestFor(actionId, input);
+      const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+        ...request.executionOriginV1, target: { kind: 'machine', machineId: 'machine' },
+      } });
+      expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'app', placement: 'account' });
+      const reviewed = ApprovalRequestV2Schema.parse({ ...targeted, preview: { hostReviewedChildren: { children: [{
+        action: 'machines.managed.retention.update', role: 'target-retention:guest', input: {
+          homeId: 'home', managedId: 'allocation', expectedIntentRevision: 4,
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+        },
+      }] } } });
+      expect(resolveApprovalExecutor(reviewed)).toEqual({ kind: 'daemon', machineId: 'machine' });
+      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(reviewed))))
+        .toEqual({ kind: 'daemon', machineId: 'machine' });
+      const accountChildren = ApprovalRequestV2Schema.parse({ ...targeted, preview: { hostReviewedChildren: { children: [{
+        action: 'machines.managed.list', role: 'allocations', input: { homeId: 'home' },
+      }] } } });
+      expect(resolveApprovalExecutor(accountChildren)).toEqual({ kind: 'app', placement: 'account' });
+    });
+
+  it.each([true, false])('routes retained plugin publication by background custody (background=%s)', background => {
+    const input = { discussionId: 'discussion', localId: 'publication',
+      content: { v: 1, parts: [{ t: 'text', text: 'Reviewed publication' }] } };
+    const origin = buildApprovalExecutionOriginV1({ actionId: 'discussion.post', input, targetSessionId: null,
+      context: { surface: 'plugin', authority: 'account_automation', serverId: 'home', serverIdentityId: 'stable-home',
+        runtimeAccountId: 'account', actionRequestId: 'background-publication', actionCaller: {
+          kind: 'plugin', pluginId: 'example.channels', contributionLocalId: 'ingress',
+          sourceCustody: { kind: 'development', registeredRootId: 'root' },
+          ...(background ? { originSurface: 'background' as const } : {}),
+          materialization: { pluginId: 'example.channels', machineId: 'origin-machine', materializationId: 'materialization' },
+        } } });
+    expect(origin?.target).toEqual(background ? { kind: 'machine', machineId: 'origin-machine' } : undefined);
+    const request = ApprovalRequestV2Schema.parse({ ...requestFor('discussion.post', input, 'plugin'),
+      executionOriginV1: origin, approval: { flow: 'blocking', result: 'required' } });
+    const expected = background ? { kind: 'live_invocation', daemonMachineId: 'origin-machine' } : { kind: 'live_invocation' };
+    expect(resolveApprovalExecutor(request)).toEqual(expected);
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(request))))
+      .toEqual(expected);
+  });
 
   it.each(surfaces)('returns a retained bootstrap retry to its captured Machine across %s approval replay', surface => {
     const request = requestFor('machines.managed.bootstrap.retry', {
@@ -73,15 +162,16 @@ describe('resolveApprovalExecutor', () => {
     }
   });
 
-  it.each(['machines.managed.inspect', 'machines.managed.acquire'] as const)('returns native %s approval to its controller after public projection', actionId => {
+  it.each(['machines.managed.inspect', 'machines.managed.bootstrap.retry', 'machines.managed.acquire'] as const)('returns native %s approval to its controller after public projection', actionId => {
     const input = actionId === 'machines.managed.inspect'
       ? { homeId: 'home', managedId: 'guest' }
+      : actionId === 'machines.managed.bootstrap.retry' ? { homeId: 'home', managedId: 'guest', expectedIntentRevision: 1 }
       : { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
           selection: { kind: 'one-off', homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'compute.example', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
     const request = requestFor(actionId, input);
-    if (actionId === 'machines.managed.inspect') expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+    if (actionId !== 'machines.managed.acquire') expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
     const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
       ...request.executionOriginV1, machineId: 'controller', target: { kind: 'machine', machineId: 'controller' },
     } });
@@ -146,17 +236,37 @@ describe('resolveApprovalExecutor', () => {
   });
 
   it('does not turn a signed Account request into a daemon effect', () => {
-    const request = requestFor('launch_profiles.delete', { id: 'profile', expectedRevision: 1 }, 'api');
+    const request = requestFor('launch_profiles.delete', { id: 'profile', expectedRevision: 1 }, 'cli');
     const target = { kind: 'machine' as const, machineId: 'machine' };
     const signed = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: { ...request.executionOriginV1,
       serverIdentityId: 'stable-home', target, externalActionInputSignature: 'a'.repeat(86),
       externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding: {
-        accountId: 'account', principalId: 'principal', credentialId: 'credential',
+        accountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
         serverIdentityId: 'stable-home', machineId: 'machine', custodianAccountId: 'account',
         installationId: 'installation', actionId: request.actionId, requestId: 'request',
-        requestEnvelopeDigest: 'a'.repeat(43), target, grant: API_TOKEN_FULL_GRANT_V1,
+        requestEnvelopeDigest: 'a'.repeat(43), target,
       } } } });
     expect(resolveApprovalExecutor(signed)).toEqual({ kind: 'app', placement: 'account' });
+  });
+
+  it('returns reviewed ingress preparation to its controller across private and public approval reads', () => {
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 21,
+      contentArtifactId: 'original-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+      patch: { ingress: { kind: 'cloudflareTunnel' } } };
+    const request = requestFor('deployments.environments.update', input);
+    // A controllerless Account proposal can still prepare using its own custody.
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+    const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+      ...request.executionOriginV1, machineId: 'controller', target: { kind: 'machine', machineId: 'controller' },
+    } });
+    // The public read omits private signing ports. Placement must still return
+    // the reviewed preparation to the installation that can rebuild them.
+    expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'controller' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted))))
+      .toEqual({ kind: 'daemon', machineId: 'controller' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
+      actionArgs: { ...input, patch: { buildMachineId: 'future-builder' } },
+    }))).toEqual({ kind: 'app', placement: 'account' });
   });
 
   it('retains signed API-token Account replay on its originating host after public projection', () => {
