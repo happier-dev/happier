@@ -332,6 +332,7 @@ function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | nul
         diagnostic: {
           ...diagnostic(event.issue.code, event.issue.sanitizedPreview ?? event.issue.code),
           details: {
+            v: 1,
             source: event.issue.source,
             ...(runtimeAuthClassification ? { runtimeAuthClassification: jsonValue(runtimeAuthClassification) } : {}),
             ...(event.issue.usageLimit ? { usageLimit: jsonValue(event.issue.usageLimit) } : {}),
