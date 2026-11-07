@@ -156,7 +156,7 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '' } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
@@ -242,12 +242,18 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
     close() {}
   }
   return await runQaBrowserSigninPage({ urls: { uiUrl, canonicalServerUrl, internalServerUrl },
-    cdpHttpUrl: 'http://127.0.0.1:9999', key: randomBytes(32).toString('base64url'), confirmHomeAliasUrl: aliasUrl,
+    cdpHttpUrl: `http://127.0.0.1:9999${cdpPath}`, key: randomBytes(32).toString('base64url'), confirmHomeAliasUrl: aliasUrl,
   }, { WebSocketImpl: BrowserSocket,
-    fetchImpl: async () => ({ ok: true, json: async () => [{ type: 'page', url: 'about:blank',
-      webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
+    // A pooled browser is addressed below its gateway path; the root list is refused.
+    fetchImpl: async (url) => !new URL(url).pathname.startsWith(`${cdpPath}/`) ? { ok: false, status: 409, json: async () => ({}) }
+      : ({ ok: true, json: async () => [{ type: 'page', url: 'about:blank',
+        webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
   });
 }
+
+test('signs in through a pooled browser addressed below its gateway path', async () => {
+  assert.deepEqual(await profileSignin({ cdpPath: '/browser/412ca381-13b2-431a-ad73-f71190c1c5ea' }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
+});
 
 test('keeps the signed-in Home through Account verification and final Home navigation despite a different browser default', async () => {
   assert.deepEqual(await profileSignin({ browserDefaultOrigin: aliasUrl }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });

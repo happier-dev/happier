@@ -168,7 +168,8 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     restoreUrl.hash = '';
     restoreUrl.searchParams.set('returnTo', '/');
     restoreUrl.searchParams.set('server', urls.canonicalServerUrl);
-    const response = await fetchImpl(new URL('/json/list', cdp));
+    // A pooled browser is addressed below its gateway path; keep that path.
+    const response = await fetchImpl(new URL(`${cdp.pathname.replace(/\/$/, '')}/json/list`, cdp));
     if (!response.ok) throw failure('browser_unavailable');
     const pages = await response.json();
     const page = pages.find(page => page.type === 'page' && page.url !== 'about:blank'
