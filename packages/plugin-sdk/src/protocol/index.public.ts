@@ -29,6 +29,7 @@ export {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    embedProtocolJsonSchema,
     defineProtocolString,
     defineProtocolUnion,
     defineProtocolUniqueArray,
@@ -44,6 +45,9 @@ export {
 export type { ProtocolComposerRefV1 } from './composerRef.js';
 export { ProtocolComposerRefV1Schema } from './composerRef.js';
 export { CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1, ProtocolCurrentUiContextSnapshotV1Schema } from './currentUiContext.js';
+/** Canonical Discussion content projection for human reads and previews. */
+export { readDiscussionMessagePartsV1 } from './discussionContent.js';
+export type { DiscussionMessageContentV1, DiscussionMessagePartV1 } from './discussionContent.js';
 /**
  * The canonical executable parser for a complete Composer reference
  * resolution, including Protocol's whole-value 16KiB boundary.

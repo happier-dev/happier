@@ -116,11 +116,10 @@ describe('Channels V1 connection management contracts', () => {
         }).success).toBe(false);
     });
 
-    it('keeps connection transfer caller-owned, revision-guarded, and strict across transport replacement', () => {
+    it('keeps transfer revision-guarded without a duplicate caller generation witness', () => {
         const transfer = {
             connectionId: 'connection-1',
             expectedRevision: 7,
-            expectedAuthorityEpoch: 3,
             providerSelection,
             providerSetupInput: { botToken: 'opaque' },
             credentialRef: null,

@@ -109,6 +109,21 @@ function operationFiles(values: readonly ChannelFileValueV1[], context: PluginIn
   };
 }
 
+/** Other native input writers consume the same provider file owner as Sessions. */
+export async function readChannelFileInputs(
+  attachments: readonly SessionSendAttachment[], context: PluginInvocationContext,
+): Promise<readonly Readonly<{ key: string; descriptor: ChannelFileValueV1['descriptor']; bytes: Uint8Array }>[]> {
+  const values = attachments.map(attachment => ChannelFileValueV1Schema.parse(attachment.value.value));
+  const fetch = operationFiles(values, context);
+  const files = [];
+  for (const [index, value] of values.entries()) {
+    context.signal.throwIfAborted();
+    const connection = await readAttachmentConnection(value, context);
+    files.push({ key: attachments[index]!.value.key, descriptor: value.descriptor, bytes: await fetch(value, connection) });
+  }
+  return files;
+}
+
 /** Remote Sessions keep inline text at admission; local dispatch consumes bytes and text together. */
 export async function prepareChannelFileSessionInput(input: Readonly<{
   text: string;

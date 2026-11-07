@@ -279,7 +279,6 @@ export const ConversationConnectionCreateInputV1JsonSchema: PluginJsonSchema =
 export const ConversationConnectionTransferInputV1Schema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedRevision: configurationRevision,
-    expectedAuthorityEpoch: authorityEpochV1,
     providerSelection: targetedContributionSelectionV1,
     providerSetupInput: ConversationJsonValueV1ProtocolSchema,
     credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(),
@@ -313,6 +312,29 @@ export type ConversationConnectionUpdateResultV1 = ReturnType<
 >;
 export const ConversationConnectionUpdateResultV1JsonSchema: PluginJsonSchema =
     /* @__PURE__ */ (() => ConversationConnectionUpdateResultV1Schema.jsonSchema)();
+
+/** Dismisses one current connection notice without changing transport progress. */
+export const ConversationStreamNoticeDismissInputV1Schema = defineProtocolObject({
+    connectionId: ConversationConnectionIdV1ProtocolSchema,
+    expectedRevision: configurationRevision,
+}, { policy: 'closed' });
+export type ConversationStreamNoticeDismissInputV1 = ReturnType<
+    typeof ConversationStreamNoticeDismissInputV1Schema.parse
+>;
+export const ConversationStreamNoticeDismissInputV1JsonSchema: PluginJsonSchema =
+    /* @__PURE__ */ (() => ConversationStreamNoticeDismissInputV1Schema.jsonSchema)();
+
+export const ConversationStreamNoticeDismissResultV1Schema = defineProtocolObject({
+    kind: defineProtocolLiteral('noticeDismissed'),
+    connectionId: ConversationConnectionIdV1ProtocolSchema,
+    revision: configurationRevision,
+    authorityEpoch: authorityEpochV1,
+}, { policy: 'closed' });
+export type ConversationStreamNoticeDismissResultV1 = ReturnType<
+    typeof ConversationStreamNoticeDismissResultV1Schema.parse
+>;
+export const ConversationStreamNoticeDismissResultV1JsonSchema: PluginJsonSchema =
+    /* @__PURE__ */ (() => ConversationStreamNoticeDismissResultV1Schema.jsonSchema)();
 
 export const ConversationConnectionDeleteInputV1Schema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,

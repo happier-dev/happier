@@ -111,6 +111,16 @@ function firstNonJsonPath(value: unknown, path = '$'): string | null {
 
 const PRIVATE_PROTOCOL_PACKAGE = ['@happier-dev', 'protocol'].join('/');
 
+async function readChannelsTranslationMessages(locale: string): Promise<Readonly<Record<string, unknown>>> {
+  const translation = PLUGIN_MANIFEST.contributes?.ui?.translations?.find(entry => entry.locale === locale);
+  if (!translation || !('resourceId' in translation)) throw new Error(`Expected a Channels locale Resource: ${locale}`);
+  const resource = PLUGIN_MANIFEST.contributes?.resources?.find(({ id }) => id === translation.resourceId);
+  if (typeof resource?.path !== 'string') throw new Error('Expected a packaged locale path');
+  const messages: unknown = JSON.parse(await readFile(new URL(`../${resource.path}`, import.meta.url), 'utf8'));
+  if (!messages || typeof messages !== 'object' || Array.isArray(messages)) throw new Error('Expected a locale message map');
+  return messages as Readonly<Record<string, unknown>>;
+}
+
 /**
  * Every TypeScript file this plugin ships or tests with, not a hand-kept
  * sample of them: `@happier-dev/protocol` is a host-internal package the
@@ -127,13 +137,41 @@ async function listPluginSourceUrls(directory: URL): Promise<readonly URL[]> {
 }
 
 describe('Channels core manifest', () => {
+  it('declares every UI locale through a packaged JSON Resource without inline copy', async () => {
+    const admitted = parsePluginManifest(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error(admitted.diagnostics.map(diagnostic => diagnostic.message).join('; '));
+    const normalized = admitted.manifest;
+    const translations = normalized.contributes?.ui?.translations ?? [];
+    expect(translations).toHaveLength(12);
+    for (const translation of translations) {
+      expect(translation).not.toHaveProperty('messages');
+      expect(translation).toHaveProperty('resourceId');
+      if (!('resourceId' in translation)) throw new Error('Expected a locale Resource reference');
+      const resource = normalized.contributes?.resources?.find(({ id }) => id === translation.resourceId);
+      expect(resource).toMatchObject({ kind: 'asset', contentType: 'application/json' });
+      if (typeof resource?.path !== 'string') throw new Error('Expected a packaged locale path');
+      const messages: unknown = JSON.parse(await readFile(new URL(`../${resource.path}`, import.meta.url), 'utf8'));
+      expect(messages).toBeTypeOf('object');
+      expect(messages).not.toBeNull();
+      expect(Object.values(messages as Record<string, unknown>).every(value => typeof value === 'string')).toBe(true);
+    }
+  });
+
   it('makes every management Action requestable by agents and MCP without changing confirmation policy', () => {
+    const noUiConfirmation = new Set<string>([
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate,
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCancel,
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingFinalize,
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamNoticeDismiss,
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionNoticeDismiss,
+    ]);
     const observational = new Set<string>([
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionList,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingList,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressAttention,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryAttention,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryRead,
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingRead,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest,
       CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead,
@@ -143,6 +181,9 @@ describe('Channels core manifest', () => {
       const action = PLUGIN_MANIFEST.contributes?.actions?.find((entry) => entry.id === id);
       expect(action, id).toBeDefined();
       expect(action?.surfaces, id).toEqual(expect.arrayContaining(['agent', 'mcp']));
+      if (noUiConfirmation.has(id)) {
+        expect(action?.confirmationWhen, id).toEqual({ presentUserUi: false });
+      }
       if (id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.conversationStart) {
         expect(action?.hostAccess).toEqual(['account-storage', 'bound-session']);
       }
@@ -159,6 +200,25 @@ describe('Channels core manifest', () => {
           title: expect.any(String), body: expect.any(String), confirmLabel: expect.any(String),
         });
       }
+    }
+  });
+
+  it('records a delivery resolution without requesting another confirmation', () => {
+    expect(PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve))
+      .toMatchObject({ confirmationWhen: { presentUserUi: false } });
+  });
+
+  it('declares binding changes as confirmed by the person\'s own UI click only', () => {
+    const parsed = parsePluginManifest(PLUGIN_MANIFEST);
+    if (!parsed.ok) throw new Error(parsed.diagnostics.map(diagnostic => diagnostic.message).join('; '));
+    for (const id of [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate,
+      CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate, CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled]) {
+      const action = parsed.manifest.contributes.actions?.find(declaration => declaration.id === id);
+      expect(action, id).toMatchObject({
+        dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
+        confirmation: { title: expect.any(String), body: expect.any(String), confirmLabel: expect.any(String) },
+      });
     }
   });
 
@@ -203,10 +263,12 @@ describe('Channels core manifest', () => {
       'composerAttachments',
       'composerControls',
       'events',
+      'notifications',
       'pluginContributionPoints',
       'resources',
       'sessionHeaderActions',
       'sessionInfoSections',
+      'settings',
       'transcriptActivities',
       'ui',
     ]);
@@ -264,10 +326,43 @@ describe('Channels core manifest', () => {
     });
   });
 
-  it('declares and observes the one Channels-owned provider contribution point', () => {
-    const point = PLUGIN_MANIFEST.contributes?.pluginContributionPoints?.[0];
+  it('admits the binding read/write confirmation predicate through canonical manifest normalization', () => {
+    const binding = PLUGIN_MANIFEST.contributes?.actions?.find(
+      action => action.id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+    );
+    if (!binding) throw new Error('Expected the Session PR binding Action');
+    // Retain the declared Resources required by the real manifest's brand icon.
+    const manifest = { ...PLUGIN_MANIFEST, contributes: { ...PLUGIN_MANIFEST.contributes, actions: [binding] } };
+    const parsed = parsePluginManifest(manifest);
+    if (!parsed.ok) throw new Error(parsed.diagnostics.map(diagnostic => diagnostic.message).join('; '));
+    expect(parsed.manifest.contributes.actions?.[0]).toMatchObject({
+      dangerLevel: 'writesLocal',
+      confirmationWhen: {
+        default: { op: 'and', all: [
+          { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
+          { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'readRelations' } },
+          { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'unlink' } },
+          { op: 'or', any: [
+            { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'attach' } },
+            { op: 'truthy', path: 'target' },
+          ] },
+        ] },
+        presentUserUi: false,
+      },
+      confirmation: { title: expect.any(String) },
+    });
+    expect(parsePluginManifest({ ...manifest, contributes: { actions: [{ ...binding,
+      confirmationWhen: { default: { op: 'and', predicates: [] }, presentUserUi: false },
+    }] } }).ok).toBe(false);
+  });
 
-    expect(PLUGIN_MANIFEST.contributes?.pluginContributionPoints).toHaveLength(1);
+  it('declares and observes the one Channels-owned provider contribution point', () => {
+    const providerPoints = PLUGIN_MANIFEST.contributes?.pluginContributionPoints?.filter(
+      point => point.id === CHANNELS_PROVIDER_POINT_ID,
+    );
+    const point = providerPoints?.[0];
+
+    expect(providerPoints).toHaveLength(1);
     expect(point).toMatchObject({
       id: CHANNELS_PROVIDER_POINT_ID,
       maxContributionsPerContributor: 1,
@@ -299,7 +394,7 @@ describe('Channels core manifest', () => {
     ]);
   });
 
-  it('projects one Resource-driven native settings page through the generic settings catalog', () => {
+  it('projects one Resource-driven native settings page through the generic settings catalog', async () => {
     const ui = PLUGIN_MANIFEST.contributes?.ui;
 
     expect(ui).toMatchObject({
@@ -330,21 +425,19 @@ describe('Channels core manifest', () => {
         kind: 'reactNative',
         artifact: 'channels-glance-native',
       }],
-      settingsGroups: [{
-        id: 'channels',
-        title: { key: 'plugins.channels.title', fallback: 'Conversation Channels' },
-        icon: 'settings',
-      }],
+      // Owner Q2 (2026-10-30): Channels setup lives at Settings → Channels, a host Settings group row.
       settingsPages: [{
         id: 'connections',
-        group: { kind: 'plugin', localId: 'channels' },
-        title: { key: 'plugins.channels.settings.connections', fallback: 'Connections' },
+        group: { kind: 'host', id: 'sessionsBehavior' },
+        title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
         renderer: 'channels-renderer',
       }],
     });
-    expect(ui?.translations?.[0]?.messages).toMatchObject({
+    expect(ui).not.toHaveProperty('settingsGroups');
+    const messages = await readChannelsTranslationMessages('en');
+    expect(messages).toMatchObject({
       'plugins.channels.surface.saved': 'Saved to your Account. The selected machine will reconcile this policy when it is available.',
-      'plugins.channels.surface.stopPending': 'Stop reconciliation pending',
+      'plugins.channels.surface.deleteRecoveryRequired': 'Delete again to finish cleanup',
       'plugins.channels.surface.providerFallback': 'Integration provider',
       'plugins.channels.surface.transportCheckpointedPull': 'Checkpointed pull',
       'plugins.channels.surface.selectedMachineSummary': 'Runs on your selected machine',
@@ -355,7 +448,7 @@ describe('Channels core manifest', () => {
       'plugins.channels.surface.minute': 'minute',
       'plugins.channels.surface.days': 'days',
     });
-    expect(ui?.translations?.[0]?.messages).not.toHaveProperty('plugins.channels.surface.backToConnections');
+    expect(messages).not.toHaveProperty('plugins.channels.surface.backToConnections');
   });
 
   it('leaves Channels encoded-row ceilings to the deployment Collection owner', () => {
@@ -395,8 +488,8 @@ describe('Channels core manifest', () => {
     ]);
     expect(collections?.find(({ id }) => id === CHANNEL_STATE_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_STATE_COLLECTION_ID,
-      schemaVersion: 10,
-      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      schemaVersion: 19,
+      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
       migrations: [{
         id: 'channel-state-v1-to-v2',
         fromSchemaVersion: 1,
@@ -433,6 +526,42 @@ describe('Channels core manifest', () => {
         id: 'channel-state-v9-to-v10',
         fromSchemaVersion: 9,
         toSchemaVersion: 10,
+      }, {
+        id: 'channel-state-v10-to-v11',
+        fromSchemaVersion: 10,
+        toSchemaVersion: 11,
+      }, {
+        id: 'channel-state-v11-to-v12',
+        fromSchemaVersion: 11,
+        toSchemaVersion: 12,
+      }, {
+        id: 'channel-state-v12-to-v13',
+        fromSchemaVersion: 12,
+        toSchemaVersion: 13,
+      }, {
+        id: 'channel-state-v13-to-v14',
+        fromSchemaVersion: 13,
+        toSchemaVersion: 14,
+      }, {
+        id: 'channel-state-v14-to-v15',
+        fromSchemaVersion: 14,
+        toSchemaVersion: 15,
+      }, {
+        id: 'channel-state-v15-to-v16',
+        fromSchemaVersion: 15,
+        toSchemaVersion: 16,
+      }, {
+        id: 'channel-state-v16-to-v17',
+        fromSchemaVersion: 16,
+        toSchemaVersion: 17,
+      }, {
+        id: 'channel-state-v17-to-v18',
+        fromSchemaVersion: 17,
+        toSchemaVersion: 18,
+      }, {
+        id: 'channel-state-v18-to-v19',
+        fromSchemaVersion: 18,
+        toSchemaVersion: 19,
       }],
       rowIdField: CHANNEL_STATE_FIELD.id,
       serverReadable: [
@@ -440,6 +569,9 @@ describe('Channels core manifest', () => {
         CHANNEL_STATE_FIELD.version,
         CHANNEL_STATE_FIELD.connectionId,
         CHANNEL_STATE_FIELD.bindingId,
+        CHANNEL_STATE_FIELD.sessionId,
+        CHANNEL_STATE_FIELD.prBinding,
+        CHANNEL_STATE_FIELD.prUpdateAt,
         CHANNEL_STATE_FIELD.terminal,
         CHANNEL_STATE_FIELD.attention,
         CHANNEL_STATE_FIELD.dueAt,
@@ -464,6 +596,31 @@ describe('Channels core manifest', () => {
           ],
         },
         {
+          id: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+          fields: [
+            { field: CHANNEL_STATE_FIELD.connectionId, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
+          ],
+        },
+        {
+          id: CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1,
+          fields: [
+            { field: CHANNEL_STATE_FIELD.sessionId, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.prUpdateAt, direction: 'desc' },
+          ],
+        },
+        {
+          id: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,
+          fields: [
+            { field: CHANNEL_STATE_FIELD.recordKind, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.prBinding, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.sessionId, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.bindingId, direction: 'asc' },
+          ],
+        },
+        {
           id: CHANNEL_STATE_INDEX_ID.byAttention,
           fields: [
             { field: CHANNEL_STATE_FIELD.attention, direction: 'asc' },
@@ -485,8 +642,8 @@ describe('Channels core manifest', () => {
     });
     expect(collections?.find(({ id }) => id === CHANNEL_DELIVERIES_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_DELIVERIES_COLLECTION_ID,
-      schemaVersion: 3,
-      readableSchemaVersions: [1, 2],
+      schemaVersion: 5,
+      readableSchemaVersions: [1, 2, 3, 4],
       rowIdField: CHANNEL_DELIVERIES_FIELD.id,
       serverReadable: [
         CHANNEL_DELIVERIES_FIELD.recordKind,
@@ -1127,7 +1284,7 @@ describe('Channels core manifest', () => {
       ...ingressCensus,
       payload: {
         ...ingressCensus.payload,
-        matchedBindings: [{ bindingId: 'binding-1', bindingRevision: 1 }],
+        matchedBindings: [{ bindingId: 'binding-1', arbitraryAuthority: true }],
       },
     })).toBe(false);
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -1180,9 +1337,8 @@ describe('Channels core manifest', () => {
         compacted: { ...compactedCensusPayload.compacted, replayDigest: 'not-a-digest' },
       },
     })).toBe(false);
-    // `replayDigest` is the only digest domain: it covers the canonical
-    // `{text, eventCandidate}` replay identity, and no predecessor text-only
-    // arm remains readable or writable.
+    // The retired digest remains readable, but new compacted rows need only
+    // their body-free occurrence envelope and exact member identities.
     expect(isValidPluginJsonSchemaValue(validate, {
       ...ingressCensus,
       payload: {
@@ -1203,7 +1359,7 @@ describe('Channels core manifest', () => {
           retainedAttentionObligationRowIds: [],
         },
       },
-    })).toBe(false);
+    })).toBe(true);
     // Retirement is atomic at the Collection owner, so a compact census never
     // stages member tombstone revisions of its own.
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -1424,7 +1580,7 @@ describe('Channels core manifest', () => {
         webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
         webhookSourceInstanceId: 'source-1',
       },
-      overlapSafety: 'destructive',
+      overlapSafety: 'providerExclusive',
       replayContinuity: 'checkpointed',
       outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
     });
@@ -1537,12 +1693,12 @@ describe('Channels core manifest', () => {
         content: { text: 'Please unarchive the thread before retrying.' },
         deliveryKey: 'binding-1:recovery-1',
         replyContext: null,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
         state: 'notDelivered',
         attemptCount: 1,
         attemptId: null,
-        startedAt: null,
+
         providerMessageIds: [],
         failedChunk: null,
         archiveRecovery: 'ownerMustUnarchiveOrRebind',
@@ -1585,7 +1741,7 @@ describe('Channels core manifest', () => {
     });
   });
 
-  it('persists one state-derived delivery projection and an active attempt timestamp', () => {
+  it('persists state-derived delivery projection and active attempt identity without an unused timestamp', () => {
     const validate = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
     const retryDue = {
       [CHANNEL_DELIVERIES_FIELD.id]: 'E'.repeat(43),
@@ -1609,12 +1765,12 @@ describe('Channels core manifest', () => {
         content: { text: 'Retrying shortly.' },
         deliveryKey: 'binding-1:retry-1',
         replyContext: null,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
         state: 'retryDue',
         attemptCount: 1,
         attemptId: null,
-        startedAt: null,
+
         providerMessageIds: [],
         failedChunk: null,
         archiveRecovery: null,
@@ -1663,14 +1819,13 @@ describe('Channels core manifest', () => {
         ...retryDue.payload,
         state: 'attempting',
         attemptId: 'attempt-1',
-        startedAt: null,
       },
       [CHANNEL_DELIVERIES_FIELD.retryNotBefore]: undefined,
     })).toBe(false);
     expect(isValidPluginJsonSchemaValue(validate, {
-      ...retryDue,
-      payload: { ...retryDue.payload, mentionPolicy: 'providerDefault' },
-    })).toBe(false);
+      ...retryDueWithoutDue,
+      payload: { ...retryDue.payload, state: 'attempting', attemptId: 'attempt-1' },
+    })).toBe(true);
 
     const { [CHANNEL_DELIVERIES_FIELD.retryNotBefore]: _due, ...partial } = {
       ...retryDue,
@@ -1749,7 +1904,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
     });
   });
 
-  it('is an app destination: a rail page with its own column, and a Home widget offered in Customize', () => {
+  it('is a contextual app destination with its own column (no rail icon, owner Q2), and a Home widget offered in Customize', async () => {
     const ui = PLUGIN_MANIFEST.contributes?.ui;
     const views = ui?.views ?? [];
 
@@ -1762,7 +1917,6 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
       renderer: 'channels-renderer',
       title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
       icon: 'conversations',
-      placement: { kind: 'rail' },
       column: { renderer: 'channels-glance' },
     });
     // Channels is bundled: a card on every Home would be empty for people who
@@ -1788,7 +1942,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
       artifact: 'channels-glance-native',
       requiredHostMethods: ['openSurface'],
     });
-    expect(ui?.translations?.[0]?.messages).toMatchObject({
+    expect(await readChannelsTranslationMessages('en')).toMatchObject({
       'plugins.channels.page.title': 'Channels',
       'plugins.channels.widget.title': 'Channels',
     });
@@ -1932,8 +2086,8 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
     expect(ComposerControlStateV1Schema.safeParse({ visible: true, count: 1 }).success).toBe(true);
   });
 
-  it('localizes every Session-facing string it contributes', () => {
-    expect(PLUGIN_MANIFEST.contributes?.ui?.translations?.[0]?.messages).toMatchObject({
+  it('localizes every Session-facing string it contributes', async () => {
+    expect(await readChannelsTranslationMessages('en')).toMatchObject({
       'plugins.channels.session.title': 'External conversations',
       'plugins.channels.session.composerChip': 'External conversations',
       'plugins.channels.session.composerChipAttention': 'External delivery needs attention',

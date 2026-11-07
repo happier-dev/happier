@@ -11,6 +11,17 @@ import type {
     AutomationResultDeliverySourceV1,
 } from '@happier-dev/protocol/automations/result-delivery';
 import type { PluginJsonSchema } from './identity.js';
+import { AutomationConversationEventActorsV1Schema as canonicalAutomationConversationEventActorsV1Schema } from '@happier-dev/protocol/automations/result-delivery';
+
+type AutomationConversationEventActorsV1 = NonNullable<NonNullable<AutomationConversationAdmitInputV1['hostEvidence']>['eventActors']>;
+/** Identity-only native evidence; shared by the input and its private recovery owner. */
+export const AutomationConversationEventActorsV1Schema: Readonly<{
+    jsonSchema: PluginJsonSchema;
+    parse(value: unknown): AutomationConversationEventActorsV1;
+    safeParse(value: unknown):
+        | Readonly<{ success: true; data: AutomationConversationEventActorsV1 }>
+        | Readonly<{ success: false; error: unknown }>;
+}> = canonicalAutomationConversationEventActorsV1Schema;
 
 /**
  * Declaration-neutral projection of the canonical immutable automation

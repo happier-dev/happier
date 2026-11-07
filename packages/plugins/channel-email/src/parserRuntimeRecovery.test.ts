@@ -48,7 +48,7 @@ describe('Email parser runtime recovery', () => {
     expect(checkpoint()).toEqual(baseline);
     expect(admitted).toEqual([]);
     expect([...f.state.rows.values()].filter(row => row.value['record-kind'] === 'ingress-census')).toEqual([]);
-    await expect(f.invoke(ids.messageDeliver, delivery)).resolves.toMatchObject({ kind: 'notDelivered', retry: 'safe', code: 'providerInvocationUnavailable' });
+    await expect(f.invoke(ids.messageDeliver, delivery)).resolves.toMatchObject({ kind: 'notDelivered', retry: 'safe' });
     await expect(f.invoke(ids.attachmentFetch, { ...connection, messageId: '<incoming@example.com>', attachmentIds: ['mime:1'] }))
       .rejects.toMatchObject({ code: 'email_parser_syntax_error', retryable: true });
     expect(f.submissions).toEqual([]);

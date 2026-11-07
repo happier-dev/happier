@@ -8,6 +8,7 @@ import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/ht
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import {
+  FeaturesResponseSchema,
   type AccountEncryptionCurrentnessResponse,
   createPlainSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
@@ -279,6 +280,35 @@ describe('plugin sessions inventory public service boundary', () => {
     });
 
     expect(inventory.current).toBeNull();
+  });
+
+  it('projects the exact bound Session destination without inventory or extra Session reads, and retains context when Home evidence is unavailable', async () => {
+    const features = { status: 'ready' as const, features: FeaturesResponseSchema.parse({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_bound_home' } } }) };
+    let ready = true;
+    const fetchById = vi.fn(async () => rawSession({ id: 'session-bound', active: true }));
+    const fetchPage = vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false }));
+    const inventory = createTestPluginSessionsInventory({ credentials, currentSessionId: 'session-bound',
+      isCurrent: () => true, readStoragePolicy: async () => 'optional', fetchById, fetchPage,
+      resolveServerFeaturesSnapshot: () => ready ? features : undefined,
+      serverUrl: 'https://bound.example.test',
+    });
+    const summary = await inventory.current!.summary();
+    expect(summary).toMatchObject({ id: 'session-bound', address: {
+      sessionId: 'session-bound', serverId: 'srv_bound_home', serverUrl: 'https://bound.example.test' } });
+    expect(fetchById).toHaveBeenCalledTimes(1);
+    expect(fetchPage).not.toHaveBeenCalled();
+    ready = false;
+    const unavailable = await inventory.current!.summary();
+    expect(unavailable).toMatchObject({ id: 'session-bound', state: 'active' });
+    expect(unavailable).not.toHaveProperty('address');
+    const localOnly = createTestPluginSessionsInventory({ credentials, currentSessionId: 'session-bound',
+      isCurrent: () => true, readStoragePolicy: async () => 'optional', fetchById, fetchPage,
+      resolveServerFeaturesSnapshot: () => features, serverUrl: 'http://127.0.0.1:43123' });
+    const localSummary = await localOnly.current!.summary();
+    expect(localSummary).toMatchObject({ id: 'session-bound', state: 'active' });
+    expect(localSummary).not.toHaveProperty('address');
+    expect(fetchPage).not.toHaveBeenCalled();
   });
 
   it('fails closed when no final Session HostAccess scope was bound', async () => {

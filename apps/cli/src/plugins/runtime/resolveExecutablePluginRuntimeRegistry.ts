@@ -3304,6 +3304,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         }
     };
     const sessionCredentialsServerId = configuration.activeServerId;
+    const notificationServerUrl = params?.accountExecution?.serverUrl ?? configuration.serverUrl;
     const notificationServerHttpBaseUrl = params?.accountExecution?.serverUrl ?? resolveServerHttpBaseUrl();
     const sessionCredentials = await readSessionCredentials();
     // Only explicitly daemon-owned probes and admitted shared Provider bindings
@@ -4742,6 +4743,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                         credentials: sessionCredentials,
                         signal: seed.signal,
                         readCredentials: readSessionCredentials,
+                        serverUrl: notificationServerUrl,
                         ...(resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot } : {}),
                         currentSessionId: seed.session?.id ?? null,
                         sessionScopes: binding.sessionScopes ?? Object.freeze([]),

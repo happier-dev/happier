@@ -8,14 +8,13 @@ export const CONVERSATION_CORE_PLUGIN_ID_V1 = 'happier.channels';
 
 /** Content-free reasons retained by ingress and exposed by terminal attention reads. */
 export const CONVERSATION_NON_ADMISSION_REASONS_V1 = [
-    'connectionUnavailable',
+    // Read-only legacy reason; current dispatch publishes its policy result.
     'staleAuthority',
     'endpointMismatch',
     'actorUnattributable',
     'actorNotAllowed',
     'integrationSelf',
     'botSenderDisabled',
-    'messageTooOld',
     'messageTooLarge',
     'unsupportedContent',
     'unsupportedEdit',
@@ -23,7 +22,6 @@ export const CONVERSATION_NON_ADMISSION_REASONS_V1 = [
     'malformedCommand',
     'commandNotAuthorized',
     'targetUnavailable',
-    'permissionCeilingUnavailable',
     'routeNotMatched',
 ] as const;
 
@@ -60,11 +58,11 @@ export const CONVERSATION_MANAGEMENT_ACTION_IDS_V1 = Object.freeze({
     connectionTransfer: 'connection/transfer-v1',
     connectionUpdate: 'connection/update-v1',
     connectionDelete: 'connection/delete-v1',
-    connectionAbandon: 'connection/abandon-v1',
     connectionPrepare: 'connection/prepare-v1',
     connectionSetupRemediate: 'connection/setup-remediate-v1',
     connectionRetest: 'connection/retest-v1',
     connectionPairingCreate: 'connection/pairing-create-v1',
+    connectionPairingRead: 'connection/pairing-read-v1',
     connectionPairingFinalize: 'connection/pairing-finalize-v1',
     connectionPairingCancel: 'connection/pairing-cancel-v1',
     bindingRead: 'binding/read-v1',
@@ -73,8 +71,8 @@ export const CONVERSATION_MANAGEMENT_ACTION_IDS_V1 = Object.freeze({
     bindingUpdate: 'binding/update-v1',
     bindingSetEnabled: 'binding/set-enabled-v1',
     bindingDelete: 'binding/delete-v1',
-    sessionProjectionBaselineAccept: 'binding/session-projection-baseline-accept-v1',
-    streamBaselineAccept: 'stream/baseline-accept-v1',
+    sessionProjectionNoticeDismiss: 'binding/session-projection-notice-dismiss-v1',
+    streamNoticeDismiss: 'stream/notice-dismiss-v1',
     deliveryResolve: 'delivery/resolve-v1',
     ingressRetry: 'ingress/retry-v1',
     connectionPollRetry: 'connection/poll-retry-v1',
@@ -91,7 +89,6 @@ export const MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS = 256;
 export const MAX_CONVERSATION_RESOLUTION_CANDIDATES = 50;
 export const MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES = 1024;
 export const MAX_CONVERSATION_PAIRING_DEEP_LINK_TEMPLATE_UTF8_BYTES = 2 * 1024;
-export const MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES = 48 * 1024;
 export const MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES = 128;
 /**
  * An Event source instance is an opaque provider-owned fact. The ceiling
@@ -209,9 +206,7 @@ export const CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1 = [
     'viaBot',
 ] as const;
 
-export const CONVERSATION_DELIVERY_MENTION_POLICIES_V1 = [
-    'suppress',
-] as const;
+
 
 export const CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1 = [
     'suppress',
@@ -246,7 +241,7 @@ export type ConversationObservationAddressingEvidenceV1 = (typeof CONVERSATION_O
 export type ConversationConnectionHistoryGapReasonV1 = (typeof CONVERSATION_CONNECTION_HISTORY_GAP_REASONS_V1)[number];
 export type ConversationProviderReadinessAttentionCodeV1 = (typeof CONVERSATION_PROVIDER_READINESS_ATTENTION_CODES_V1)[number];
 export type ConversationMessageContentProvenanceV1 = (typeof CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1)[number];
-export type ConversationDeliveryMentionPolicyV1 = (typeof CONVERSATION_DELIVERY_MENTION_POLICIES_V1)[number];
+
 export type ConversationDeliveryLinkPreviewPolicyV1 = (typeof CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1)[number];
 export type ConversationDeliveryRetryKindV1 = (typeof CONVERSATION_DELIVERY_RETRY_KINDS_V1)[number];
 export type ConversationDeliveryArchiveRecoveryV1 = (typeof CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1)[number];

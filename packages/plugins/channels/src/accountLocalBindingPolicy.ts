@@ -1,5 +1,6 @@
 import {
   PluginError,
+  isPluginError,
   type JsonValue,
 } from '@happier-dev/plugin-sdk';
 import {
@@ -17,6 +18,7 @@ import {
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
   conversationBindingInputModesForEndpointV1,
   isConversationBindingInputModeDeliverableV1,
+  isConversationBindingTargetKindKnownV1,
   type ConversationBindingInputModeV1,
   type ConversationBindingTargetV1,
   type ConversationBindingV1,
@@ -38,7 +40,6 @@ import {
   ConversationConnectionTransportOriginV1Schema,
   readConversationPendingEndpointRetargetIntent,
   isConversationPendingEndpointRetarget,
-  owesOnlyConversationEndpointRetarget,
   transitionConversationConnection,
   type ConversationCheckpointedPollInvocationBasisV1,
   type ConversationConnectionEnabledResultV1,
@@ -55,7 +56,9 @@ import { readPersistedConversationConnectionPollFailure } from './connectionPoll
 import {
   revokeConversationBindingPrincipals,
   transitionConversationBinding,
+  conversationThreadRouterPolicyError,
   type ConversationBindingStateV1,
+  type ConversationBindingTransitionResultV1,
 } from './bindingTransition.js';
 import {
   CONVERSATION_NON_ADMISSION_REASONS,
@@ -118,10 +121,11 @@ export type ConversationBindingManagementRow = Readonly<{
     label?: string;
   }>;
   target: Readonly<{
-    kind: 'session' | 'automation' | 'threadRouter';
+    kind: 'session' | 'automation' | 'threadRouter' | 'discussion';
     summary: string;
     /** Exact retained identity; summary is display-only and may be shortened. */
     sessionId?: string;
+    discussionId?: string;
   }>;
   inputMode: 'directMentionsOnly' | 'addressedMessages' | 'allAllowedMessages';
   deliveryMode: 'repliesOnly' | 'mirrorSession' | 'finalResult' | 'none';
@@ -225,17 +229,9 @@ export type ConversationIngressTerminalAttentionRow = Readonly<{
   reason?: ConversationNonAdmissionReason;
 }>;
 
-export type ConversationIngressOccurrenceConflictAttentionRow = Readonly<{
-  kind: 'occurrenceConflict';
-  censusId: string;
-  revision: number;
-  connectionId: string;
-}>;
-
 export type ConversationIngressAttentionRow =
   (ConversationIngressBlockedAttentionRow
-  | ConversationIngressTerminalAttentionRow
-  | ConversationIngressOccurrenceConflictAttentionRow) & Readonly<{ recommendedRecovery?: ConversationRecommendedRecoveryV1 | null }>;
+  | ConversationIngressTerminalAttentionRow) & Readonly<{ recommendedRecovery?: ConversationRecommendedRecoveryV1 | null }>;
 
 export type ConversationBindingEnablementResult = Readonly<{
   kind: 'updated' | 'unchanged';
@@ -537,11 +533,12 @@ export function withConversationConnectionPayload(input: Readonly<{
   if (changed && current.configurationRevision >= PLUGIN_COLLECTION_REVISION_MAX) {
     throw policyError('channels_connection_configuration_revision_exhausted', 'Connection configuration cannot advance further.');
   }
-  return {
+  const value = {
     ...input.row.value,
     [CHANNEL_STATE_FIELD.updatedAt]: input.updatedAt ?? Date.now(),
     payload: { ...input.payload, configurationRevision: current.configurationRevision + (changed ? 1 : 0) },
-  };
+  } satisfies ConversationConnectionWriteValue;
+  return { ...withChannelStateDeleteFinalizationDueAt(value), payload: value.payload };
 }
 
 /** Rebuilds the one retained connection row from the shared lifecycle state. */
@@ -627,6 +624,28 @@ export function assertConversationBindingInputModeIsDeliverable(input: Readonly<
   });
 }
 
+/** Online and Account-local mutations persist the same validated resulting policy. */
+export function assertConversationBindingMutationCanPersist(
+  transition: ConversationBindingTransitionResultV1,
+  connectionPayload: ChannelStateJsonRecord,
+  operation: 'channels_binding_update' | 'channels_binding_set_enabled',
+): asserts transition is Exclude<ConversationBindingTransitionResultV1, Readonly<{ kind: 'rejected' }>> {
+  if (transition.kind === 'rejected') {
+    if (transition.code === 'authorityEpochExhausted') {
+      throw policyError(`${operation}_authority_epoch_exhausted`, 'Binding authority cannot advance further.');
+    }
+    throw policyError(`${operation}_corrupt`, 'Binding mutation could not preserve the canonical binding relation.');
+  }
+  if (transition.binding.enabled) {
+    assertConversationBindingInputModeIsDeliverable({
+      audience: transition.binding.endpoint.audience,
+      inputMode: transition.binding.inputMode,
+      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connectionPayload),
+      operation,
+    });
+  }
+}
+
 /** The connection revision serializes only changes to enabled delivery demand. */
 export function hasConversationBindingDeliveryDemandChanged(
   current: ConversationBindingStateV1,
@@ -706,78 +725,16 @@ function projectConversationConnectionManagementRow(
       pollFailure,
       bestEffortBeforeDurableAdmission: selectedTransport === 'socket'
         && replayContinuity === 'sessionBound',
-      oldTransportStopUnconfirmed: current.lifecycle.pendingOldTransportStop !== null,
-      endpointRetargetOwed: owesOnlyConversationEndpointRetarget(
-        current.lifecycle.pendingOldTransportStop,
-      ),
-      acceptedPossibleLoss: current.lifecycle.pendingOldTransportStop !== null
-        && !isConversationPendingEndpointRetarget(current.lifecycle.pendingOldTransportStop)
-        && current.lifecycle.pendingOldTransportStop.acceptedPossibleLoss,
+      // Historical stop fields stay readable but have no lifecycle authority.
+      oldTransportStopUnconfirmed: false,
+      endpointRetargetOwed: false,
+      acceptedPossibleLoss: false,
     },
   };
   const recommendedRecovery = recommendConversationConnectionRecovery(result, ownChannelStateValue(current.payload, 'credentialRef'));
   return { ...result, ...(recommendedRecovery === null ? {} : { recommendedRecovery }) };
 }
 
-function projectConversationIngressConflictAttention(input: Readonly<{
-  row: ChannelStateRow;
-  connectionId: string;
-}>): Exclude<ConversationIngressConflictAttention, null> {
-  const value = input.row.value;
-  const payload = ownChannelStateValue(value, 'payload');
-  const id = ownChannelStateValue(value, CHANNEL_STATE_FIELD.id);
-  const recordKind = ownChannelStateValue(value, CHANNEL_STATE_FIELD.recordKind);
-  const connectionId = ownChannelStateValue(value, CHANNEL_STATE_FIELD.connectionId);
-  const bindingId = ownChannelStateValue(value, CHANNEL_STATE_FIELD.bindingId);
-  const attention = ownChannelStateValue(value, CHANNEL_STATE_FIELD.attention);
-  const conflict = isChannelStateJsonRecord(payload)
-    ? ownChannelStateValue(payload, 'conflict')
-    : undefined;
-  if (
-    id !== input.row.rowId
-    || recordKind !== CHANNEL_STATE_RECORD_KIND.ingressCensus
-    || connectionId !== input.connectionId
-    || (bindingId !== undefined && bindingId !== null)
-    || attention !== true
-    || !isChannelStateJsonRecord(conflict)
-    || conflict.kind !== 'occurrenceEvidenceMismatch'
-    || Object.keys(conflict).length !== 1
-    || !Number.isSafeInteger(input.row.revision)
-    || input.row.revision < 1
-  ) {
-    throw policyError(
-      'channels_connection_management_ingress_conflict_invalid',
-      'The Channels connection conflict index returned a non-canonical ingress census conflict.',
-    );
-  }
-  return { kind: 'occurrenceEvidenceMismatch' };
-}
-
-async function readConversationConnectionIngressConflictAttention(input: Readonly<{
-  collection: Pick<ChannelStateBindingCollection, 'query'>;
-  connectionId: string;
-  signal?: AbortSignal;
-  assertCurrent?: () => void;
-}>): Promise<ConversationIngressConflictAttention> {
-  assertCurrent(input, 'channels_connection_update');
-  const page = await input.collection.query({
-    index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-    prefix: [
-      input.connectionId,
-      null,
-      CHANNEL_STATE_RECORD_KIND.ingressCensus,
-      true,
-    ],
-    order: 'asc',
-    limit: 1,
-  }, input.signal === undefined ? undefined : { signal: input.signal });
-  assertCurrent(input, 'channels_connection_update');
-  if (page.rows.length === 0) return null;
-  return projectConversationIngressConflictAttention({
-    row: page.rows[0],
-    connectionId: input.connectionId,
-  });
-}
 
 /**
  * The sole direct-Account connection-index reader. Its bounded projection is
@@ -802,6 +759,7 @@ export async function readConversationConnectionManagementRows(input: Readonly<{
 /** Paged access to the same privacy-safe connection projection. */
 export async function readConversationConnectionManagementPage(input: Readonly<{
   collection: Pick<ChannelStateBindingCollection, 'query'>;
+  connectionId?: string;
   cursor?: string;
   limit?: number;
   signal?: AbortSignal;
@@ -809,38 +767,24 @@ export async function readConversationConnectionManagementPage(input: Readonly<{
 }>): Promise<Readonly<{ connections: readonly ConversationConnectionManagementRow[]; nextCursor?: string }>> {
     assertCurrent(input, 'channels_connection_update');
     const page = await input.collection.query({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.connection],
+      ...(input.connectionId === undefined
+        ? { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.connection] }
+        : { index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+          prefix: [input.connectionId, null, CHANNEL_STATE_RECORD_KIND.connection] }),
       order: 'asc',
       limit: input.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
     }, input.signal === undefined ? undefined : { signal: input.signal });
     assertCurrent(input, 'channels_connection_update');
-    const projected = await Promise.all(page.rows.map(async (row) => {
-      const connection = projectConversationConnectionManagementRow(row);
-      const ingressConflict = await readConversationConnectionIngressConflictAttention({
-        collection: input.collection,
-        connectionId: connection.connectionId,
-        signal: input.signal,
-        assertCurrent: input.assertCurrent,
-      });
-      const result: ConversationConnectionManagementRow = {
-        ...connection,
-        attention: {
-          ...connection.attention,
-          ingressConflict,
-        },
-      };
-      const recommendedRecovery = recommendConversationConnectionRecovery(result);
-      return { ...result, ...(recommendedRecovery === null ? {} : { recommendedRecovery }) };
-    }));
+    const projected = page.rows.map(projectConversationConnectionManagementRow);
     return { connections: projected, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
 }
 
 /**
  * Collections admit only a complete strict binding record. This selects its
  * canonical relation fields and delegates every persisted binding field to the
- * public Channels executable schema before the pure transition can reuse it.
+ * public Channels stored reader. Retained recipes are opaque data, not a new
+ * authoring request; routing relations still use the policy owner's validator.
  */
 export function readConversationBindingUpdateRow(input: Readonly<{
   row: ChannelStateRow;
@@ -862,6 +806,11 @@ export function readConversationBindingUpdateRow(input: Readonly<{
     || !ConversationConnectionIdV1Schema.safeParse(connectionId).success
     || !isChannelStateJsonRecord(payload)) {
     throw policyError('channels_binding_set_enabled_corrupt', 'Binding enablement target is not a canonical retained binding row.');
+  }
+  const target = ownChannelStateValue(payload, 'target');
+  const targetKind = isChannelStateJsonRecord(target) ? ownChannelStateValue(target, 'kind') : undefined;
+  if (typeof targetKind === 'string' && targetKind.length > 0 && !isConversationBindingTargetKindKnownV1(targetKind)) {
+    throw policyError('channels_binding_target_unavailable', 'This binding target is unavailable in this Channels version.');
   }
   try {
     const binding = storedBindingSchema.parse({
@@ -887,7 +836,7 @@ export function readConversationBindingUpdateRow(input: Readonly<{
         ? { ...binding, allowedPrincipalIds: conversationThreadRouterAllowedPrincipalIdsV1(binding.target) }
         : binding;
     if (normalized.target.kind === 'threadRouter'
-      && transitionConversationBinding({ current: normalized, requested: normalized }).kind === 'rejected') {
+      && conversationThreadRouterPolicyError({ target: normalized.target, allowedPrincipalIds: normalized.allowedPrincipalIds }) !== null) {
       throw policyError('channels_binding_set_enabled_corrupt', 'The persisted binding violates its authority relation.');
     }
     return { payload, binding: normalized };
@@ -1050,6 +999,7 @@ function readConversationBindingManagementCurrentRow(
   try {
     return readConversationBindingUpdateRow({ row, bindingId: row.rowId });
   } catch (cause) {
+    if (isPluginError(cause) && cause.code === 'channels_binding_target_unavailable') throw cause;
     throw new PluginError({
       code: 'channels_binding_management_row_invalid',
       message: 'The Channels binding index received an invalid binding row.',
@@ -1066,8 +1016,9 @@ function projectConversationBindingManagementRow(
   const endpointLabel = current.binding.endpoint.label ?? current.binding.endpoint.parentLabel;
   const targetSummary = current.binding.target.kind === 'session'
     ? boundedSummary(current.binding.target.sessionId)
-    : current.binding.target.kind === 'automation' ? boundedSummary(current.binding.target.automationId) : 'threadRouter';
-  const deliveryMode = current.binding.target.kind === 'session'
+    : current.binding.target.kind === 'discussion' ? boundedSummary(current.binding.target.discussionId)
+      : current.binding.target.kind === 'automation' ? boundedSummary(current.binding.target.automationId) : 'threadRouter';
+  const deliveryMode = current.binding.target.kind === 'session' || current.binding.target.kind === 'discussion'
     ? current.binding.target.policy.deliveryMode
     : current.binding.target.kind === 'automation' ? current.binding.target.policy.resultDelivery : 'none';
   const approval: ConversationBindingManagementRow['approval'] = current.binding.target.kind !== 'session'
@@ -1091,6 +1042,7 @@ function projectConversationBindingManagementRow(
       kind: current.binding.target.kind,
       summary: targetSummary,
       ...(current.binding.target.kind === 'session' ? { sessionId: current.binding.target.sessionId } : {}),
+      ...(current.binding.target.kind === 'discussion' ? { discussionId: current.binding.target.discussionId } : {}),
     },
     inputMode: current.binding.inputMode,
     deliveryMode,
@@ -1252,7 +1204,9 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
     limit,
   }, input.signal === undefined ? undefined : { signal: input.signal });
   assertCurrent(input);
-  const obligations = page.rows.map((row): ConversationIngressAttentionRow => {
+  // Old persisted census latches remain readable but are no longer actionable.
+  const obligations = page.rows.filter(row => row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.ingressCensus)
+    .map((row): ConversationIngressAttentionRow => {
     const value = row.value;
     const payload = isChannelStateJsonRecord(value) ? ownChannelStateValue(value, 'payload') : undefined;
     const lifecycle = isChannelStateJsonRecord(payload) ? ownChannelStateValue(payload, 'lifecycle') : undefined;
@@ -1282,34 +1236,6 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
     const attemptCount = isChannelStateJsonRecord(lifecycle)
       ? ownChannelStateValue(lifecycle, 'attemptCount')
       : undefined;
-    const conflict = isChannelStateJsonRecord(payload) ? ownChannelStateValue(payload, 'conflict') : undefined;
-    const isOccurrenceConflict = recordKind === CHANNEL_STATE_RECORD_KIND.ingressCensus
-      && attention === true
-      && (bindingId === undefined || bindingId === null)
-      && isChannelStateJsonRecord(conflict)
-      && conflict.kind === 'occurrenceEvidenceMismatch'
-      && Object.keys(conflict).length === 1;
-    if (recordKind === CHANNEL_STATE_RECORD_KIND.ingressCensus) {
-      if (
-        typeof id !== 'string'
-        || id !== row.rowId
-        || typeof connectionId !== 'string'
-        || !isOccurrenceConflict
-        || !Number.isSafeInteger(row.revision)
-        || row.revision < 1
-      ) {
-        throw policyError(
-          'channels_ingress_attention_row_invalid',
-          'The Channels ingress attention index returned a non-canonical occurrence conflict.',
-        );
-      }
-      return {
-        kind: 'occurrenceConflict',
-        censusId: id,
-        revision: row.revision,
-        connectionId,
-      };
-    }
     const isBlocked = terminal === false
       && dueAt === undefined
       && phase === 'blocked'
@@ -1334,8 +1260,8 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
     // shape in the same attention union; a second Resource would create a
     // competing projection owner.
     const connectionOwned = bindingId === undefined
-      && sourceBindingRevision === null
-      && sourceBindingAuthorityEpoch === null
+      && (sourceBindingRevision === undefined || sourceBindingRevision === null)
+      && (sourceBindingAuthorityEpoch === undefined || sourceBindingAuthorityEpoch === null)
       && (target === null || (isChannelStateJsonRecord(target) && ownChannelStateValue(target, 'kind') === 'event'));
     const readTerminalAttentionPresentation = (): Pick<ConversationIngressTerminalAttentionRow, 'category' | 'reason'> => {
       // terminalIngressObligationValue pairs attention with a frozen
@@ -1463,13 +1389,6 @@ export async function mutateConversationConnectionLifecycleInAccountCollection(i
     if (transition.code === 'deleteInProgress') {
       throw policyError(`${input.operation}_delete_in_progress`, 'Connection lifecycle cannot change while deletion is in progress.');
     }
-    if (transition.code === 'oldTransportStopPending') {
-      throw policyError(
-        `${input.operation}_old_transport_stop_pending`,
-        'Connection lifecycle cannot change while its frozen old-stop custody is unresolved.',
-        true,
-      );
-    }
     if (transition.code === 'authorityEpochExhausted') {
       throw policyError(`${input.operation}_authority_epoch_exhausted`, 'Connection authority cannot advance further.');
     }
@@ -1596,7 +1515,7 @@ export async function commitConversationBindingMutation(input: Readonly<{
   signal?: AbortSignal;
   assertCurrent?: () => void;
 }>): Promise<
-  | Readonly<{ kind: 'updated'; revision: number }>
+  | Readonly<{ kind: 'updated'; revision: number; connectionRevision: number }>
   | Readonly<{ kind: 'conflict' }>
   | Readonly<{ kind: 'invalidResult' }>
 > {
@@ -1633,9 +1552,12 @@ export async function commitConversationBindingMutation(input: Readonly<{
   const persisted = result.results.find((entry) => (
     entry.rowId === input.row.rowId && entry.deleted === false
   ));
-  return persisted === undefined
+  const connectionRevision = demandChanged
+    ? result.results.find(entry => entry.rowId === input.connectionRow.rowId && !entry.deleted)?.revision
+    : input.connectionRow.revision;
+  return persisted === undefined || connectionRevision === undefined
     ? { kind: 'invalidResult' }
-    : { kind: 'updated', revision: persisted.revision };
+    : { kind: 'updated', revision: persisted.revision, connectionRevision };
 }
 
 /**
@@ -1657,7 +1579,7 @@ function readAccountResolvableConversationBindingTarget(input: Readonly<{
   if (requested.kind !== 'session') {
     throw policyError(
       `${input.operation}_target_not_account_resolvable`,
-      'An Automation binding target can only be changed while its Automation owner is reachable.',
+      'A Workflow binding target can only be changed while its Workflow owner is reachable.',
     );
   }
   return requested;
@@ -1737,7 +1659,7 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
   ) {
     throw policyError(
       `${input.operation}_target_verification_required`,
-      'An Automation binding can be enabled only while its target owner is reachable for current verification.',
+      'A Workflow binding can be enabled only while its target owner is reachable for current verification.',
     );
   }
   const connectionRow = await input.collection.get(
@@ -1784,20 +1706,7 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
       enabled: input.enabled ?? current.binding.enabled,
     },
   });
-  if (transition.kind === 'rejected') {
-    if (transition.code === 'authorityEpochExhausted') {
-      throw policyError(`${input.operation}_authority_epoch_exhausted`, 'Binding authority cannot advance further.');
-    }
-    throw policyError(`${input.operation}_corrupt`, 'Binding mutation could not preserve the canonical binding relation.');
-  }
-  if (transition.binding.enabled) {
-    assertConversationBindingInputModeIsDeliverable({
-      audience: transition.binding.endpoint.audience,
-      inputMode: transition.binding.inputMode,
-      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connection.payload),
-      operation: input.operation,
-    });
-  }
+  assertConversationBindingMutationCanPersist(transition, connection.payload, input.operation);
   if (transition.kind === 'unchanged') {
     return {
       kind: 'unchanged',

@@ -36,6 +36,8 @@ export function readConversationAttachmentIdV1(value: string, providerId: string
  * codec without changing native identity. Retained censuses (including keyed
  * replay digests) and pending inputs can contain either representation.
  * Keep the part sequence exact; never alias arbitrary provider-native refs.
+ * Remove this translator once no retained input or census replay digest uses
+ * the pre-dd247000f8 representation (through retirement or migration).
  */
 export function getConversationAttachmentIdRepresentationsV1(value: string): readonly [string, ...string[]] {
     const decoded = readConversationAttachmentIdV1(value, 'email');

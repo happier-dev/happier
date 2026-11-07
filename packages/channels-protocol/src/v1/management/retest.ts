@@ -29,8 +29,6 @@ const collectionRowRevision = ConversationCollectionRowRevisionV1ProtocolSchema;
 
 const conversationConnectionRetestInputV1 = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedRevision: collectionRowRevision,
-    authorityEpoch: authorityEpochV1,
 }, { policy: 'closed' });
 
 const conversationConnectionRetestReadyV1 = defineProtocolObject({

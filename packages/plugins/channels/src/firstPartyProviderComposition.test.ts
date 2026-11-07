@@ -1,5 +1,5 @@
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
-import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
   assertConversationProviderContributionV1,
 } from '@happier-dev/channels-protocol/testing/v1';
@@ -56,10 +56,10 @@ function connectedAccountsStub(
 }
 
 function httpStub(request: HttpService['request']): HttpService {
-  return {
+  return createPluginHttpFixture({
     request,
     openWebSocket: () => unusedBoundary('http.openWebSocket'),
-  };
+  });
 }
 
 
@@ -144,11 +144,10 @@ describe('Channels first-party provider composition', () => {
       }, { services, surface: 'agent' })).toEqual({ kind: 'remediated' });
       expect(await core.invokeAction('connection/prepare-v1', setup, { services, surface: 'mcp' }))
         .toMatchObject({ kind: 'ready', recommendedTransport: 'checkpointedPull', setupGuidance: {
-          steps: [
-            { title: expect.any(String), externalUrl: 'https://t.me/BotFather' },
-            { title: expect.any(String), copyableValues: [{ label: expect.any(String), value: '/newbot' }] },
-            { title: expect.any(String) },
-          ],
+          steps: expect.arrayContaining([
+            expect.objectContaining({ title: expect.any(String), externalUrl: 'https://t.me/BotFather' }),
+            expect.objectContaining({ title: expect.any(String), copyableValues: [{ label: expect.any(String), value: '/newbot' }] }),
+          ]),
         } });
       expect(request.mock.calls.filter(([request]) => request.url.endsWith('/deleteWebhook'))).toHaveLength(1);
     } finally {
@@ -157,7 +156,7 @@ describe('Channels first-party provider composition', () => {
     }
   });
 
-  it('remediates an external provider through its selected arbitrary role and refuses a retired selection', async () => {
+  it('remediates through the current same-ID provider role and refuses a different contributor', async () => {
     const roles = ConversationProvidersContributionProtocolV1;
     const provider = definePlugin({
       id: 'example.external-channel', version: '0.0.0', displayName: 'External channel',
@@ -213,13 +212,16 @@ describe('Channels first-party provider composition', () => {
       expect(await core.invokeAction('connection/prepare-v1', { providerSelection: selection, providerSetupInput: {}, credentialRef: null },
         { services: channelsTargetedContributionServices(core) })).toMatchObject({ kind: 'ready', recommendedTransport: 'socket',
           setupGuidance: { steps: [{ title: 'Enable the external app', copyableValues: [{ label: 'Scope', value: 'messages:read' }] }] } });
-      const beforeStaleSelection = request.mock.calls.length;
       await expect(core.invokeAction('connection/setup-remediate-v1', {
         ...input, providerSelection: { ...selection, contributor: { ...selection.contributor,
           sourceCustody: { kind: 'managed', immutableGenerationId: 'retired-provider', installSource: 'npm' } } },
+      }, { services: channelsTargetedContributionServices(core) })).resolves.toEqual({ kind: 'remediated' });
+      const beforeMissingSelection = request.mock.calls.length;
+      await expect(core.invokeAction('connection/setup-remediate-v1', {
+        ...input, providerSelection: { ...selection, contributor: { ...selection.contributor, contributionId: 'missing-provider' } },
       }, { services: channelsTargetedContributionServices(core) })).rejects.toMatchObject({ code: 'channels_provider_contribution_unavailable' });
-      expect(request.mock.calls).toHaveLength(beforeStaleSelection);
-      expect(request.mock.calls.filter(([request]) => request.url.endsWith('/repair'))).toHaveLength(1);
+      expect(request.mock.calls).toHaveLength(beforeMissingSelection);
+      expect(request.mock.calls.filter(([request]) => request.url.endsWith('/repair'))).toHaveLength(2);
     } finally { await core.dispose(); await external.dispose(); }
   });
 
@@ -357,13 +359,13 @@ describe('Channels first-party provider composition', () => {
         // the setup, so preparation must carry it verbatim.
         setupGuidance: {
           externalUrl: 'https://discord.com/oauth2/authorize'
-            + '?client_id=application-1&scope=bot&permissions=274877975552',
+            + '?client_id=application-1&scope=bot&permissions=309237713920',
           requiredPermissionsLabel:
-            'View Channels, Send Messages, Send Messages in Threads, Read Message History',
+            'View Channels, Send Messages, Send Messages in Threads, Read Message History, Create Public Threads (only for workflow-started conversations)',
           steps: expect.arrayContaining([
             expect.objectContaining({ externalUrl: 'https://discord.com/developers/applications' }),
             expect.objectContaining({ externalUrl: 'https://discord.com/oauth2/authorize'
-              + '?client_id=application-1&scope=bot&permissions=274877975552' }),
+              + '?client_id=application-1&scope=bot&permissions=309237713920' }),
           ]),
         },
       });

@@ -1,7 +1,6 @@
 import {
   isPluginError,
   PluginError,
-  arePluginMachineExecutionOriginsEqual,
   getPluginMachineExecutionOriginRef,
   type JsonValue,
   type PluginMachineMaterializationRefV1,
@@ -10,11 +9,15 @@ import {
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { SessionAcceptedWorkspaceV1Schema, SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
-import { persistConversationBindingCreation } from './bindingCreation.js';
-import { readSessionPullRequestBindingRows, sessionPullRequestBindingSelection } from './sessionPullRequestBindings.js';
-import { parseSessionPullRequestUrl, sessionPullRequestUrl, type SessionPullRequestProvider } from './sessionPullRequestProvider.js';
-import type { PluginAccountStorageScope, PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
+import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
+import { readSessionPullRequestBindingRows } from './sessionPullRequestBindings.js';
+import { persistConversationBindingCreation } from './bindingCreation.js';
+import { selectSessionPullRequestRelations } from './sessionPullRequestRelations.js';
+export { observeSessionPullRequestBindingAction } from './sessionPullRequestRelations.js';
+import { parseSessionPullRequestUrl, sessionPullRequestUrl, type SessionPullRequestProvider } from './sessionPullRequestProvider.js';
+import { archiveSessionPullRequestWatchAfterMerge } from './sessionPullRequestWatchLifecycle.js';
+import { resolveSessionPullRequestFixResolutionProgress } from './sessionPullRequestWatchProgress.js';
 import { arePluginMachineExecutionRoutingsEqual, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type {
   AdmittedTargetedOperationExecutionHandle,
@@ -24,16 +27,16 @@ import type {
 } from '@happier-dev/plugin-sdk/actions';
 import {
   ConversationBindingReadResultV1Schema,
+  type ConversationPairingReadInputV1,
+  type ConversationPairingReadResultV1,
   DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
-  ConversationSessionProjectionBaselineAcceptResultV1Schema,
+  ConversationSessionProjectionNoticeDismissResultV1Schema,
   isConversationConnectionCreateSelectableTransportV1,
   conversationConnectionWebhookSourceInstanceIdV1,
   ConversationConnectionTestInputV1Schema,
   ConversationConnectionTestResultV1Schema,
   ConversationEndpointResolveInputV1Schema,
   ConversationEndpointResolveResultV1Schema,
-  ConversationProviderConnectionStopInputV1Schema,
-  ConversationProviderConnectionStopResultV1Schema,
   ConversationProviderSetupOutcomeV1Schema,
   ConversationProviderSetupRemediationResultV1Schema,
   ConversationPrincipalResolveInputV1Schema,
@@ -42,7 +45,6 @@ import {
   SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_REF_V1,
   SessionPullRequestLinkCompletionResultV1Schema,
   type SessionPullRequestLinkCompletionInputV1,
-  type SessionPullRequestBindingInputV1,
   resolveSessionPullRequestLinksV1,
   type SessionPullRequestBindingResultV1,
   areConversationEndpointIdentitiesEqual,
@@ -70,13 +72,12 @@ import {
   type ConversationConnectionTestInputV1,
   type ConversationConnectionTransferInputV1,
   type ConversationConnectionTransferResultV1,
-  type ConversationProviderConnectionStopInputV1,
   type ConversationConnectionPrepareInputV1,
   type ConversationConnectionPrepareResultV1,
   type ConversationConnectionSetupRemediateInputV1,
   type ConversationProviderSetupRemediationResultV1,
-  type ConversationSessionProjectionBaselineAcceptInputV1,
-  type ConversationSessionProjectionBaselineAcceptResultV1,
+  type ConversationSessionProjectionNoticeDismissInputV1,
+  type ConversationSessionProjectionNoticeDismissResultV1,
   type ConversationConnectionUpdateInputV1,
   type ConversationTransportFactReportInputV1,
   type ConversationDeliveryResolveInputV1,
@@ -115,33 +116,20 @@ import {
   convergeConversationConnectionWebhookEndpointTarget,
 } from './connectionWebhookEndpoint.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import { createConversationDiscussionProjectionFrontierRow } from './discussionProjection.js';
 import {
-  abandonConversationConnectionStop,
-  confirmConversationConnectionStop,
-  finalizeConversationConnectionDeleteWithoutProviderStop,
-  finalizeConversationConnectionTransferWithoutProviderStop,
-  freezeConversationConnectionTransportOrigin,
   getConversationConnectionTransportOrigin,
   getConversationConnectionExecutionRouting,
   getSelfStampedPluginCallerExecutionOrigin,
   areConversationConnectionTransportOriginsEqual,
-  isConversationPendingEndpointRetarget,
-  type ConversationPendingProviderStopV1,
-  type ConversationPendingEndpointRetargetIntentV1,
-  hasAcceptedConversationTransferLoss,
   recordConversationConnectionHistoryGap,
   recordConversationConnectionProviderReadiness,
   startConversationConnectionDelete,
   startConversationConnectionTransfer,
   transitionConversationConnection,
-  type ConversationConnectionAbandonResultV1,
-  type ConversationCheckpointedPollInvocationBasisV1,
   type ConversationConnectionEnabledResultV1,
   type ConversationConnectionLifecycleStateV1,
   type ConversationConnectionTransportOriginV1,
-  type ConversationConnectionStopConfirmationResultV1,
-  type ConversationDeleteStopRequestV1,
-  type ConversationTransferStopRequestV1,
 } from './connectionLifecycle.js';
 import {
   hasCurrentConversationTransportCaller,
@@ -152,7 +140,6 @@ import {
 import {
   transitionConversationBinding,
   revokeConversationBindingPrincipals,
-  type ConversationBindingStateV1,
 } from './bindingTransition.js';
 import {
   isChannelStateJsonRecord as isJsonRecord,
@@ -161,9 +148,11 @@ import {
   readConversationBindingManagementRows,
   readConversationIngressAttentionPage,
   readConversationBindingUpdateRow,
+  withConversationBindingPolicy,
   readConversationConnectionSharedEndpointInputModes,
   readConversationConnectionUpdateRow,
   assertConversationBindingInputModeIsDeliverable,
+  assertConversationBindingMutationCanPersist,
   commitConversationBindingMutation,
   mutateConversationConnectionLifecycleInAccountCollection,
   setConversationBindingEnabledInAccountCollection,
@@ -175,6 +164,7 @@ import {
   type ConversationBindingUpdateRow,
   type ConversationConnectionUpdateRow,
 } from './accountLocalBindingPolicy.js';
+import { withChannelStateDeleteFinalizationDueAt, withChannelStateSessionIdentity } from './collectionMigrations.js';
 import {
   createConversationPairingManager,
   type ConversationPairingCancelResult,
@@ -189,7 +179,7 @@ import {
   tryDecodeBase64Url,
 } from './privateRowIdentity.js';
 import {
-  acceptConversationSessionProjectionBaseline,
+  dismissConversationSessionProjectionNotice,
   createConversationSessionProjectionFrontierRow,
   createConversationSessionProjectionFrontierRowId,
   readConversationSessionProjectionNoHistoryBaseline,
@@ -201,7 +191,7 @@ import {
   prepareConversationCheckpointTransferFence,
   prepareConversationIngressObligationForConnectionDeletion,
   isConversationSenderConfiguredForEndpoint,
-  revalidateConversationIngressConflictForInvocation,
+  recordConversationConnectionReceiveFailureForInvocation,
 } from './ingress.js';
 import {
   resolveConversationOutwardDeliveryCustodyInAccountCollection,
@@ -253,7 +243,6 @@ type CurrentProvider = Readonly<{
   observationsPoll: AdmittedTargetedOperationExecutionHandle | undefined;
   endpointResolve: AdmittedTargetedOperationExecutionHandle | undefined;
   principalResolve: AdmittedTargetedOperationExecutionHandle | undefined;
-  connectionStop: AdmittedTargetedOperationExecutionHandle | undefined;
 }>;
 type PersistedConversationConnection = Readonly<{
   kind: 'created' | 'rejoined';
@@ -282,11 +271,11 @@ type ConversationDeliveryResolveResult = Readonly<{
   resolution: ConversationDeliveryResolutionDecision;
 }>;
 type ConversationConnectionDeleteResult = Readonly<{
-  kind: 'deletePending' | 'deleteFinalizing' | 'rejoined';
+  kind: 'deleteFinalizing' | 'rejoined';
   connectionId: string;
   revision: number;
   authorityEpoch: number;
-  acceptedPossibleLoss: boolean;
+  acceptedPossibleLoss: false;
 }>;
 type ConversationBindingUpdateResult = ConversationBindingUpdateResultV1;
 type ConversationBindingCreateResult = ConversationBindingCreateResultV1;
@@ -436,6 +425,7 @@ function admitBindingResolutionConnection(input: Readonly<{
   return { kind: 'current', connection, row: input.row };
 }
 
+/** The provider is sourced only from the current admission snapshot, never a stored Action handle. */
 async function readCurrentBindingResolutionProvider(input: Readonly<{
   context: PluginInvocationContext;
   connection: ConversationConnectionUpdateRow;
@@ -462,21 +452,6 @@ function readBindingResolutionAction(
   return role === 'endpointResolve'
     ? provider.operations.endpointResolve
     : provider.operations.principalResolve;
-}
-
-function areAdmittedTargetedOperationIdentitiesEqual(
-  left: AdmittedTargetedOperationExecutionHandle | undefined,
-  right: AdmittedTargetedOperationExecutionHandle | undefined,
-): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  return left.identity.target.pluginId === right.identity.target.pluginId
-    && left.identity.point.pointId === right.identity.point.pointId
-    && left.identity.point.protocol.id === right.identity.point.protocol.id
-    && left.identity.point.protocol.version === right.identity.point.protocol.version
-    && left.identity.contributor.pluginId === right.identity.contributor.pluginId
-    && left.identity.contributor.contributionId === right.identity.contributor.contributionId
-    && left.identity.contributor.occurrenceId === right.identity.contributor.occurrenceId
-    && left.identity.role === right.identity.role;
 }
 
 function readEndpointResolveRequest(input: Readonly<{
@@ -562,8 +537,8 @@ function readPrincipalResolveResult(value: unknown): ReturnType<typeof Conversat
 }
 
 /**
- * Re-read the connection after a provider effect. Any relation change is
- * stale; a provider disappearance remains an explicitly bounded unavailability.
+ * Re-read connection authority and the admitted provider after an observation.
+ * The contribution owner follows the same stable provider identity across reloads.
  */
 async function rereadBindingResolutionAfterProviderEffect(input: Readonly<{
   collection: ChannelStateCollection;
@@ -622,7 +597,7 @@ async function resolveBindingEndpointCandidates(input: Readonly<{
   return reread.kind === 'current' ? resolution : reread;
 }
 
-/** Resolves principals only after the caller's endpoint selection is freshly re-proven. */
+/** Endpoint acquisition consumes a request-local admitted connection/provider. */
 async function resolveBindingEndpointCandidatesForConnection(input: Readonly<{
   connectionId: string;
   connection: ConversationConnectionUpdateRow;
@@ -659,6 +634,7 @@ async function resolveBindingEndpointCandidatesForConnection(input: Readonly<{
   };
 }
 
+/** Resolves principals only after the caller's endpoint selection is freshly re-proven. */
 async function resolveBindingPrincipalCandidates(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
@@ -718,15 +694,7 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
   return reread.kind === 'current' ? resolution : reread;
 }
 
-/**
- * One persisted audience must be selected from the exact current provider
- * candidates. The selection is never treated as a durable provider identity.
- *
- * Every caller that needs the caller's chosen endpoint — binding create,
- * binding update, principal resolution, and pairing create — reaches it
- * through this one resolver; the operation only names which error domain a
- * rejected selection belongs to.
- */
+/** Principal acquisition consumes the endpoint and connection already admitted. */
 async function resolveBindingPrincipalCandidatesForConnection(input: Readonly<{
   connectionId: string;
   connection: ConversationConnectionUpdateRow;
@@ -757,6 +725,15 @@ async function resolveBindingPrincipalCandidatesForConnection(input: Readonly<{
     : { kind: 'principalCandidates', candidates: result.candidates };
 }
 
+/**
+ * One persisted audience must be selected from the exact current provider
+ * candidates. The selection is never treated as a durable provider identity.
+ *
+ * Every caller that needs the caller's chosen endpoint — binding create,
+ * binding update, principal resolution, and pairing create — reaches it
+ * through this one resolver; the operation only names which error domain a
+ * rejected selection belongs to.
+ */
 async function resolveBindingEndpointSelection(input: Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
@@ -897,6 +874,7 @@ export async function readConversationBindingForInvocation(
       binding: current.binding,
     });
   } catch (cause) {
+    if (isPluginError(cause) && cause.code === 'channels_binding_target_unavailable') throw cause;
     throw new PluginError({
       code: 'channels_binding_read_corrupt',
       message: 'Binding read target is not a complete valid retained binding.',
@@ -904,61 +882,7 @@ export async function readConversationBindingForInvocation(
   }
 }
 
-function createDeleteStopRequest(input: Readonly<{
-  connectionId: string;
-  payload: JsonRecord;
-  authorityEpoch: number;
-}>): ConversationDeleteStopRequestV1 {
-  try {
-    const parsed = ConversationProviderConnectionStopInputV1Schema.parse({
-      v: 1,
-      connectionId: input.connectionId,
-      providerConnectionKey: own(input.payload, 'providerConnectionKey'),
-      providerConfigVersion: own(input.payload, 'providerConfigVersion'),
-      providerConfig: own(input.payload, 'providerConfig'),
-      credentialRef: own(input.payload, 'credentialRef'),
-      authorityEpoch: input.authorityEpoch,
-      reason: 'delete',
-    });
-    if (parsed.reason !== 'delete') {
-      throw new Error('Delete stop request was not admitted as a delete.');
-    }
-    return { ...parsed, reason: 'delete' };
-  } catch (cause) {
-    throw new PluginError({
-      code: 'channels_connection_delete_corrupt',
-      message: 'Connection deletion cannot produce its canonical frozen stop request.',
-    }, { cause });
-  }
-}
 
-function createTransferStopRequest(input: Readonly<{
-  connectionId: string;
-  payload: JsonRecord;
-  authorityEpoch: number;
-}>): ConversationTransferStopRequestV1 {
-  try {
-    const parsed = ConversationProviderConnectionStopInputV1Schema.parse({
-      v: 1,
-      connectionId: input.connectionId,
-      providerConnectionKey: own(input.payload, 'providerConnectionKey'),
-      providerConfigVersion: own(input.payload, 'providerConfigVersion'),
-      providerConfig: own(input.payload, 'providerConfig'),
-      credentialRef: own(input.payload, 'credentialRef'),
-      authorityEpoch: input.authorityEpoch,
-      reason: 'transfer',
-    });
-    if (parsed.reason !== 'transfer') {
-      throw new Error('Transfer stop request was not admitted as a transfer.');
-    }
-    return { ...parsed, reason: 'transfer' };
-  } catch (cause) {
-    throw new PluginError({
-      code: 'channels_connection_transfer_corrupt',
-      message: 'Connection transfer cannot produce its canonical frozen old-stop request.',
-    }, { cause });
-  }
-}
 
 function hasSamePersistedProviderContributionSelection(input: Readonly<{
   persisted: ConversationConnectionUpdateRow['providerContributionSelection'];
@@ -1095,174 +1019,17 @@ function isRequestedTransferAlreadyCurrent(input: Readonly<{
     );
 }
 
-/**
- * How a retained row that has moved past this request's basis can still relate
- * to the transfer that request asked for.
- *
- * `marked` retains the frozen custody a transfer commits, fenced at the
- * replacement epoch. Only a transfer taking that exact `E→E+1` step can create
- * it, so the placement such a row names was necessarily written by a transfer.
- *
- * `settled` retains no marker. An unrelated authority change — an enabled
- * toggle, plus any later revision-only edit — leaves every requested provider
- * fact current and is otherwise indistinguishable from this caller's own
- * committed transfer, while still naming the incumbent placement the caller
- * asked to leave. The placement this request resolves is therefore the only
- * evidence left, and a settled row may not be decided without it.
- */
-type CommittedTransferReplacementState = 'marked' | 'settled' | 'none';
-
-/**
- * A lost transfer response may rejoin only the writes this exact request
- * produced: the committed replacement CAS, and the settlement that same
- * journey performs for its own frozen custody.
- *
- * The replacement epoch is the fence. It advances exactly once per authority
- * change, so requiring `E+1` plus requested-state equality bounds the candidate
- * to this caller's basis; the settlement write that follows it moves only the
- * row revision. Anything further from that basis — a second authority change, a
- * different replacement — is not this journey and stays a conflict the caller
- * resolves by rereading.
- */
-function readCommittedTransferReplacementState(input: Readonly<{
-  row: StateRow;
-  current: ConversationConnectionUpdateRow;
-  transferInput: ConversationConnectionTransferInputV1;
-}>): CommittedTransferReplacementState {
-  const pending = input.current.lifecycle.pendingOldTransportStop;
-  const transport = own(input.current.payload, 'transport');
-  if (input.transferInput.expectedRevision >= Number.MAX_SAFE_INTEGER
-    || input.transferInput.expectedAuthorityEpoch >= Number.MAX_SAFE_INTEGER
-    || input.current.lifecycle.authorityEpoch !== input.transferInput.expectedAuthorityEpoch + 1
-    || !isRequestedTransferAlreadyCurrent({
-      current: input.current,
-      transferInput: input.transferInput,
-    })) {
-    return 'none';
-  }
-  if (input.current.configurationRevision === input.transferInput.expectedRevision + 1
-    && pending !== null
-    && (isConversationPendingEndpointRetarget(pending)
-      ? pending.transferAuthorityEpoch === input.current.lifecycle.authorityEpoch
-      : pending.stopRequest.reason === 'transfer'
-        && pending.stopRequest.connectionId === input.transferInput.connectionId
-        && pending.stopRequest.authorityEpoch === input.current.lifecycle.authorityEpoch)) {
-    return 'marked';
-  }
-  // A transfer whose predecessor needs no provider stop commits in one retained
-  // revision with no pending slot, and a journey that also settled its own
-  // custody — the endpoint retarget or the frozen provider stop — wrote a
-  // second revision before its response was lost.
-  return pending === null
-    && isJsonRecord(transport)
-    && (input.current.configurationRevision === input.transferInput.expectedRevision + 1
-      || input.current.configurationRevision === input.transferInput.expectedRevision + 2)
-    ? 'settled'
-    : 'none';
-}
-
-function isLostResponseCommittedTransfer(input: Readonly<{
-  row: StateRow;
-  current: ConversationConnectionUpdateRow;
-  transferInput: ConversationConnectionTransferInputV1;
-  /** The placement this request's selected provider setup actually resolved. */
-  requestedTransportOrigin: PluginMachineExecutionOriginV1;
-}>): boolean {
-  const state = readCommittedTransferReplacementState(input);
-  return state === 'marked'
-    || (state === 'settled' && areConversationConnectionTransportOriginsEqual(
-      input.current.transportOrigin,
-      getConversationConnectionTransportOrigin(input.requestedTransportOrigin),
-    ));
-}
-
-/**
- * Resumes only the unresolved durable endpoint move already frozen by a
- * committed transfer. The caller must hold the current row revision and
- * authority epoch, while the retained slot must still prove the complete
- * predecessor → replacement E+1 transition. This is deliberately distinct
- * from stale lost-response rejoin: settled transfers remain immediate-only.
- */
-function isCurrentUnacceptedTransferResume(input: Readonly<{
-  row: StateRow;
-  current: ConversationConnectionUpdateRow;
-  transferInput: ConversationConnectionTransferInputV1;
-}>): boolean {
-  const pending = input.current.lifecycle.pendingOldTransportStop;
-  const transport = own(input.current.payload, 'transport');
-  return isConversationPendingEndpointRetarget(pending)
-    && input.current.configurationRevision === input.transferInput.expectedRevision
-    && input.current.lifecycle.authorityEpoch === input.transferInput.expectedAuthorityEpoch
-    && input.current.lifecycle.deletionState === 'none'
-    && pending.transferAuthorityEpoch === input.current.lifecycle.authorityEpoch
-    && input.transferInput.selectedTransport === 'durablePush'
-    && input.transferInput.endpointContinuation === undefined
-    && isRequestedTransferAlreadyCurrent({ current: input.current, transferInput: input.transferInput })
-    && isJsonRecord(transport) && transport.kind === 'durablePush'
-    && transport.webhookEndpointId === pending.webhookEndpointId
-    && transport.webhookSourceInstanceId === pending.webhookSourceInstanceId
-    && pluginJsonValuesEqual(transport.webhookContributionRef, pending.webhookContributionRef);
-}
-
 function assertTransferStartAccepted(input: ReturnType<typeof startConversationConnectionTransfer>): Extract<
-  ReturnType<typeof startConversationConnectionTransfer>,
-  Readonly<{ kind: 'transferPendingOldStop' }>
+  ReturnType<typeof startConversationConnectionTransfer>, Readonly<{ kind: 'transferred' }>
 > {
-  if (input.kind === 'transferPendingOldStop') return input;
-  switch (input.code) {
-    case 'deleteInProgress':
-      throw pluginError(
-        'channels_connection_transfer_delete_in_progress',
-        'Connection transfer cannot replace a connection while deletion is in progress.',
-        true,
-      );
-    case 'oldTransportStopPending':
-      throw pluginError(
-        'channels_connection_transfer_old_transport_stop_pending',
-        'Connection transfer is blocked by unresolved old-transport stop custody.',
-        true,
-      );
-    case 'endpointRetargetRepairRequired':
-      throw pluginError(
-        'channels_connection_transfer_endpoint_retarget_repair_required',
-        'The retained durable-push endpoint must be repaired before transferring this connection away from it.',
-        true,
-      );
-    case 'authorityEpochExhausted':
-      throw pluginError(
-        'channels_connection_transfer_authority_epoch_exhausted',
-        'Connection transfer cannot advance this connection authority further.',
-      );
-    case 'stopRequestInvalid':
-      throw pluginError(
-        'channels_connection_transfer_stop_request_invalid',
-        'Connection transfer could not freeze its exact old-stop request.',
-      );
-  }
-}
-
-/** Verifies the current retained facts still reproduce the one frozen stop request. */
-function hasExactCurrentStopRequest(input: Readonly<{
-  connectionId: string;
-  payload: JsonRecord;
-  authorityEpoch: number;
-  pendingOldTransportStop: ConversationPendingProviderStopV1;
-}>): boolean {
-  const { stopRequest } = input.pendingOldTransportStop;
-  if (stopRequest.reason !== 'delete') return false;
-  const current = createDeleteStopRequest({
-    connectionId: input.connectionId,
-    payload: input.payload,
-    authorityEpoch: input.authorityEpoch,
-  });
-  return current.v === stopRequest.v
-    && current.connectionId === stopRequest.connectionId
-    && current.providerConnectionKey === stopRequest.providerConnectionKey
-    && current.providerConfigVersion === stopRequest.providerConfigVersion
-    && pluginJsonValuesEqual(current.providerConfig, stopRequest.providerConfig)
-    && pluginJsonValuesEqual(current.credentialRef, stopRequest.credentialRef)
-    && current.authorityEpoch === stopRequest.authorityEpoch
-    && current.reason === stopRequest.reason;
+  if (input.kind === 'transferred') return input;
+  throw pluginError(
+    input.code === 'deleteInProgress' ? 'channels_connection_transfer_delete_in_progress' : 'channels_connection_transfer_authority_epoch_exhausted',
+    input.code === 'deleteInProgress'
+      ? 'Connection transfer cannot replace a connection while deletion is in progress.'
+      : 'Connection transfer cannot advance this connection authority further.',
+    input.code === 'deleteInProgress',
+  );
 }
 
 function sameStringSequence(left: readonly string[], right: readonly string[]): boolean {
@@ -1275,6 +1042,7 @@ function sameConversationBindingTarget(
 ): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'threadRouter' && right.kind === 'threadRouter') return pluginJsonValuesEqual(left, right);
+  if (left.kind === 'discussion' && right.kind === 'discussion') return left.discussionId === right.discussionId;
   if (left.kind === 'automation' && right.kind === 'automation') {
     return left.automationId === right.automationId
       && pluginJsonValuesEqual(left.scopedTrigger ?? null, right.scopedTrigger ?? null)
@@ -1385,8 +1153,7 @@ async function assertPairingCheckpointedPullBaseline(input: Readonly<{
   }
   if (transportKind !== 'checkpointedPull' || replayContinuity !== 'checkpointed') return;
   if (
-    input.connection.lifecycle.historyGap !== null
-    || !(await hasConversationCheckpointedPullBaseline({
+    !(await hasConversationCheckpointedPullBaseline({
       context: input.context,
       connectionId: input.connectionId,
       routingIdentityKey: input.connection.routingIdentityKey,
@@ -1429,7 +1196,7 @@ async function verifyAutomationBindingTarget(
   if (isPluginActionApprovalRequestCreated(verification)) {
     throw pluginError(
       'channels_automation_target_verification_unavailable',
-      'The Automation target could not be verified for this conversation binding.',
+      'The Workflow target could not be verified for this conversation binding.',
       true,
     );
   }
@@ -1469,7 +1236,7 @@ async function verifyPairingTargetForFeedback(
   target: ConversationBindingTargetV1,
   context: PluginInvocationContext,
 ): Promise<ConversationAutomationTargetNotVerifiedResult | null> {
-  if (target.kind === 'session') return null;
+  if (target.kind === 'session' || target.kind === 'discussion') return null;
   if (target.kind === 'threadRouter') {
     assertPairingRouterBootstrapTarget(target);
     return null;
@@ -1532,7 +1299,7 @@ function createConversationBindingRow(input: ConversationBindingRowCreateInput):
   };
   return {
     binding,
-    row: {
+    row: withChannelStateSessionIdentity({
       [CHANNEL_STATE_FIELD.id]: binding.id,
       [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.binding,
       [CHANNEL_STATE_FIELD.version]: binding.v,
@@ -1554,7 +1321,7 @@ function createConversationBindingRow(input: ConversationBindingRowCreateInput):
         enabled: binding.enabled,
         deletionState: binding.deletionState,
       },
-    },
+    }, binding.target),
   };
 }
 
@@ -1597,6 +1364,15 @@ async function createSessionProjectionFrontierForBinding(input: Readonly<{
   target: ConversationBindingTargetV1;
   context: PluginInvocationContext;
 }>): Promise<JsonRecord | null> {
+  if (input.target.kind === 'discussion') {
+    const baseline = await input.context.services.actions.execute('discussion.read', {
+      discussionId: input.target.discussionId, limit: 1,
+    }, { signal: input.context.signal });
+    if (isPluginActionApprovalRequestCreated(baseline)) throw pluginError(
+      'channels_binding_discussion_projection_baseline_unavailable', 'The Discussion read is awaiting approval.', true);
+    return createConversationDiscussionProjectionFrontierRow({ bindingId: input.bindingId,
+      targetDiscussionId: input.target.discussionId, lastScannedSeq: baseline.messageSeq, now: Date.now() });
+  }
   if (input.target.kind !== 'session') return null;
   const baseline = await readConversationSessionProjectionNoHistoryBaseline({
     actions: input.context.services.actions,
@@ -1627,6 +1403,7 @@ function didSessionProjectionTargetChange(
   previous: ConversationBindingTargetV1,
   next: ConversationBindingTargetV1,
 ): boolean {
+  if (next.kind === 'discussion') return previous.kind !== 'discussion' || previous.discussionId !== next.discussionId;
   return next.kind === 'session'
     && (previous.kind !== 'session' || previous.sessionId !== next.sessionId);
 }
@@ -1658,7 +1435,7 @@ async function writeConversationPairingBinding(
     return { kind: 'staleConnectionRevision' };
   }
   const connection = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: input.connectionId });
-  if (connection.configurationRevision !== input.expectedConnectionRevision) return { kind: 'staleConnectionRevision' };
+  if (connection.lifecycle.authorityEpoch !== input.expectedConnectionAuthorityEpoch) return { kind: 'staleConnectionRevision' };
   if (connection.lifecycle.deletionState !== 'none') return { kind: 'staleConnectionRevision' };
   if (!arePluginMachineExecutionRoutingsEqual(
     getConversationConnectionExecutionRouting(connection.transportOrigin, connection.providerPluginId),
@@ -1707,15 +1484,18 @@ async function writeConversationPairingBinding(
     target: candidate.binding.target,
     context,
   });
-  const finalCurrent = await readCurrentBindingResolutionConnection({
-    collection,
-    connectionId: input.connectionId,
-    expectedConnectionRevision: input.expectedConnectionRevision,
-    signal: context.signal,
-  });
-  if (finalCurrent.kind !== 'current') return { kind: 'staleConnectionRevision' };
+  const finalRow = await collection.get(input.connectionId, { signal: context.signal });
+  assertNotAborted(context.signal);
+  if (finalRow === null) return { kind: 'staleConnectionRevision' };
+  const finalCurrent = readConversationConnectionUpdateRow({ row: finalRow, connectionId: input.connectionId });
+  if (finalCurrent.lifecycle.authorityEpoch !== input.expectedConnectionAuthorityEpoch
+    || finalCurrent.lifecycle.deletionState !== 'none') return { kind: 'staleConnectionRevision' };
+  if (!arePluginMachineExecutionRoutingsEqual(
+    getConversationConnectionExecutionRouting(finalCurrent.transportOrigin, finalCurrent.providerPluginId),
+    input.executionOrigin,
+  )) return { kind: 'wrongMaterialization' };
   const result = await collection.batch([
-    { kind: 'assert', rowId: input.connectionId, expectedRevision: finalCurrent.row.revision },
+    { kind: 'assert', rowId: input.connectionId, expectedRevision: finalRow.revision },
     { kind: 'put', value: candidate.row, expectedRevision: 'absent' },
     ...(projectionFrontier === null
       ? []
@@ -1735,6 +1515,22 @@ async function writeConversationPairingBinding(
 
 export function createConversationPairingManagementHandlers(pairing: ConversationPairingManager) {
   return {
+    async read(input: JsonValue, context: PluginInvocationContext): Promise<ConversationPairingReadResultV1> {
+      const request = admittedActionInput<ConversationPairingReadInputV1>(input);
+      const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+      assertNotAborted(context.signal);
+      const row = await collection.get(request.connectionId, { signal: context.signal });
+      assertNotAborted(context.signal);
+      if (row === null) return { kind: 'unavailable' };
+      readConversationConnectionUpdateRow({ row, connectionId: request.connectionId });
+      // The manager projects both Resource and Action reads. Exact Account
+      // membership is proven by one row read, without enumerating connections.
+      const projection = pairing.readManagementProjection(new Set([request.connectionId]), request.challengeId);
+      if (projection.generationId !== request.generationId) return { kind: 'restarted' };
+      if (projection.challenges.length === 0 && projection.proposals.length === 0) return { kind: 'unavailable' };
+      return { kind: 'ready', pairing: projection };
+    },
+
     async create(input: JsonValue, context: PluginInvocationContext) {
       const createInput = admittedActionInput<ConversationPairingCreateInputV1>(input);
       // This is only early user feedback. The frozen mutation deliberately
@@ -1805,9 +1601,10 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
         }
         proofEndpoint = proof.endpoint;
       }
-      return pairing.createChallenge({
+      const result = pairing.createChallenge({
         connectionId: createInput.connectionId,
-        expectedConnectionRevision: createInput.expectedConnectionRevision,
+
+        expectedConnectionAuthorityEpoch: connection.lifecycle.authorityEpoch,
         pairingRequestId: createInput.pairingRequestId,
         executionOrigin: facts.executionOrigin,
         destinationLabel: facts.destinationLabel,
@@ -1818,6 +1615,14 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
         ...(proofEndpoint === undefined ? {} : { proofEndpoint }),
         target: createInput.target,
       });
+      context.services.logger.info('[Channels] Pairing challenge created', {
+        phase: 'pairingCreated', connectionId: createInput.connectionId, resultKind: result.kind,
+        requiresFullSharedMessageContent: pairing.requiresFullSharedMessageContent(createInput.connectionId),
+        ...(result.kind === 'created' ? {
+          generationId: result.generationId, challengeId: result.challengeId, expiresAt: result.expiresAt,
+        } : {}),
+      });
+      return result;
     },
 
     async finalize(input: JsonValue, context: PluginInvocationContext) {
@@ -2162,7 +1967,10 @@ function connectionRows(input: Readonly<{
       enabled: true,
       deletionState: 'none',
       pendingOldTransportStop: null,
-      historyGap: null,
+      // Live transports start at the authenticated connection's native horizon.
+      // Pull transports publish this fact atomically with their first cursor.
+      historyGap: input.createInput.selectedTransport === 'checkpointedPull' ? null
+        : { reason: 'providerHistoryUnavailable', reportedAt: input.now },
       providerReadiness: null,
       pollFailure: null,
       maximumObservationAgeMs: input.createInput.maximumObservationAgeMs,
@@ -2338,7 +2146,6 @@ function providerFromSelectedContribution(input: Awaited<
     observationsPoll: input.operations.observationsPoll,
     endpointResolve: input.operations.endpointResolve,
     principalResolve: input.operations.principalResolve,
-    connectionStop: input.operations.connectionStop,
   };
 }
 
@@ -2444,29 +2251,21 @@ async function runProviderSetup(input: Readonly<{
 }
 
 /**
- * A selected non-durable transport must retain its matching lifecycle role
- * before setup can create external state. The selected current contribution is
- * the only role-map authority; setup output cannot manufacture a missing role.
- * A selected durable-push transport needs no poll or stop role: the provider's
- * declared webhook contribution is the setup fact the endpoint continuation
- * proves, and the generic webhook owner owns dispatch.
+ * Checkpointed pull requires its receive role before setup can create external
+ * state. Socket workers observe desired lifecycle naturally; durable push uses
+ * the generic webhook owner. Neither requires a provider stop operation.
  */
 function assertSelectedTransportRoleAvailable(input: Readonly<{
   provider: CurrentProvider;
   selectedTransport: ConversationConnectionCreateInputV1['selectedTransport'];
 }>): void {
-  if (input.selectedTransport === 'durablePush') return;
-  const requiredOperation = input.selectedTransport === 'socket' ? 'connectionStop' : 'observationsPoll';
-  const operation = input.selectedTransport === 'socket'
-    ? input.provider.connectionStop
-    : input.provider.observationsPoll;
-  if (operation !== undefined) return;
+  if (input.selectedTransport !== 'checkpointedPull' || input.provider.observationsPoll !== undefined) return;
   throw new PluginError({
     code: 'channels_connection_transport_role_unavailable',
-    message: `The selected ${input.selectedTransport} transport requires the current provider ${requiredOperation} role.`,
+    message: 'The selected checkpointedPull transport requires the current provider observationsPoll role.',
     details: {
       selectedTransport: input.selectedTransport,
-      requiredOperation,
+      requiredOperation: 'observationsPoll',
     },
   });
 }
@@ -2500,6 +2299,7 @@ async function runProviderSetupAndTest(input: Readonly<{
   return await runProviderConnectionTest({ ...input, provider: currentProvider, prepared });
 }
 
+/** The same admitted setup feeds the test, including native PR attachment. */
 async function runProviderConnectionTest(input: Readonly<{
   context: PluginInvocationContext;
   setupInput: ConversationConnectionSetupAndTestInput;
@@ -2651,74 +2451,6 @@ async function mutateConversationConnectionLifecycle(input: Readonly<{
 }
 
 /**
- * The one disable-time provider effect for every mounted lifecycle Action that
- * can turn a connection off. Direct Account-local callers end at the shared
- * CAS; a mounted Action additionally issues this best-effort transport stop,
- * and only after rereading the exact persisted revision that the lifecycle
- * owner just committed. Both mounted enable-bit owners route through here so a
- * disable cannot silently leave the provider socket running.
- */
-async function stopDisabledConversationConnectionTransport(
-  input: Readonly<{ connectionId: string; result: ConversationConnectionUpdateResult }>,
-  context: PluginInvocationContext,
-): Promise<ConversationConnectionUpdateResult> {
-  const { connectionId, result } = input;
-  if (result.kind !== 'updated') return result;
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const row = await collection.get(connectionId, { signal: context.signal });
-  assertNotAborted(context.signal);
-  if (row === null) return result;
-  const current = readConversationConnectionUpdateRow({ row, connectionId });
-  if (current.configurationRevision !== result.revision) return result;
-  const transport = own(current.payload, 'transport');
-  if (!isJsonRecord(transport) || transport.kind !== 'socket'
-    || current.lifecycle.enabled
-    || current.lifecycle.deletionState !== 'none'
-    || current.lifecycle.pendingOldTransportStop !== null
-    || current.lifecycle.authorityEpoch !== result.authorityEpoch) {
-    return result;
-  }
-  const provider = await readCurrentProviderContributionForPersistedSelection({
-    context: {
-      targetedContributions: context.services.targetedContributions,
-      signal: context.signal,
-    },
-    providerPluginId: current.providerPluginId,
-    providerContributionSelection: current.providerContributionSelection,
-  }).catch((cause) => {
-    if (context.signal.aborted) throw cause;
-    return undefined;
-  });
-  const stop = provider?.operations.connectionStop;
-  if (stop === undefined) return result;
-  let stopRequest: ConversationProviderConnectionStopInputV1;
-  try {
-    stopRequest = ConversationProviderConnectionStopInputV1Schema.parse({
-      v: 1,
-      connectionId,
-      providerConnectionKey: own(current.payload, 'providerConnectionKey'),
-      providerConfigVersion: own(current.payload, 'providerConfigVersion'),
-      providerConfig: own(current.payload, 'providerConfig'),
-      credentialRef: own(current.payload, 'credentialRef'),
-      authorityEpoch: current.lifecycle.authorityEpoch,
-      reason: 'disable',
-    });
-  } catch {
-    return result;
-  }
-  try {
-    await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(stop, stopRequest, {
-      signal: context.signal,
-      expectedExecutionRouting: getConversationConnectionExecutionRouting(current.transportOrigin, current.providerPluginId),
-    });
-    assertNotAborted(context.signal);
-  } catch (cause) {
-    if (context.signal.aborted) throw cause;
-  }
-  return result;
-}
-
-/**
  * C2's in-place connection policy owner. It changes only Account-local
  * lifecycle fields in the retained row and never re-runs setup, pairing, or
  * transport materialization for ordinary policy edits.
@@ -2728,7 +2460,7 @@ export async function updateConversationConnectionForInvocation(
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionUpdateResult> {
   const updateInput = admittedActionInput<ConversationConnectionUpdateInputV1>(input);
-  const result = await mutateConversationConnectionLifecycle({
+  return await mutateConversationConnectionLifecycle({
     connectionId: updateInput.connectionId,
     expectedRevision: updateInput.expectedRevision,
     operation: 'channels_connection_update',
@@ -2741,18 +2473,11 @@ export async function updateConversationConnectionForInvocation(
       now,
     }),
   }, context);
-  if (updateInput.enabled) return result;
-  return await stopDisabledConversationConnectionTransport({
-    connectionId: updateInput.connectionId,
-    result,
-  }, context);
 }
 
 /**
- * A failed provider poll can be retried only by the user holding the exact
- * current connection revision and authority epoch. This clears no other
- * lifecycle field. A retained occurrence conflict is re-observed through the
- * same poll owner and clears only when immutable evidence matches. Automatic
+ * A failed provider poll is retried against the current saved connection.
+ * This clears no other lifecycle field. Automatic
  * backoff may replace a blocked failure while its human approval is pending;
  * that bookkeeping does not invalidate consent for the same connection.
  */
@@ -2773,19 +2498,8 @@ export async function retryConversationConnectionPollForInvocation(
     );
   }
   const current = readConversationConnectionUpdateRow({ row, connectionId: request.connectionId });
-  if (
-    current.configurationRevision !== request.expectedRevision
-    || current.lifecycle.authorityEpoch !== request.authorityEpoch
-  ) {
-    throw pluginError(
-      'channels_connection_poll_retry_conflict',
-      'The connection poll state changed before retry.',
-      true,
-    );
-  }
   if (current.lifecycle.pollFailure === null) {
-    await revalidateConversationIngressConflictForInvocation(request, context);
-    return { kind: 'retryScheduled', connectionId: request.connectionId, revision: current.configurationRevision, authorityEpoch: request.authorityEpoch };
+    return { kind: 'retryScheduled', connectionId: request.connectionId, revision: current.configurationRevision, authorityEpoch: current.lifecycle.authorityEpoch };
   }
   const value = withConversationConnectionLifecycle({
     row,
@@ -2816,12 +2530,11 @@ export async function retryConversationConnectionPollForInvocation(
     if (isPluginError(cause)) throw cause;
   }
   if (persistedRevision !== undefined) {
-    await revalidateConversationIngressConflictForInvocation(request, context);
     return {
       kind: 'retryScheduled',
       connectionId: request.connectionId,
       revision: current.configurationRevision,
-      authorityEpoch: request.authorityEpoch,
+      authorityEpoch: current.lifecycle.authorityEpoch,
     };
   }
   const reread = await collection.get(request.connectionId, { signal: context.signal });
@@ -2829,16 +2542,14 @@ export async function retryConversationConnectionPollForInvocation(
   if (reread !== null) {
     const settled = readConversationConnectionUpdateRow({ row: reread, connectionId: request.connectionId });
     if (
-      settled.configurationRevision === request.expectedRevision
-      && settled.lifecycle.authorityEpoch === request.authorityEpoch
+      settled.lifecycle.authorityEpoch === current.lifecycle.authorityEpoch
       && settled.lifecycle.pollFailure === null
     ) {
-      await revalidateConversationIngressConflictForInvocation(request, context);
       return {
         kind: 'retryScheduled',
         connectionId: request.connectionId,
         revision: settled.configurationRevision,
-        authorityEpoch: request.authorityEpoch,
+        authorityEpoch: settled.lifecycle.authorityEpoch,
       };
     }
   }
@@ -2866,21 +2577,21 @@ export async function retestConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionRetestResultV1> {
-  const request = admittedActionInput<ConversationConnectionRetestInputV1>(input);
+  const requestedConnection = admittedActionInput<ConversationConnectionRetestInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
-  const row = await collection.get(request.connectionId, { signal: context.signal });
+  const row = await collection.get(requestedConnection.connectionId, { signal: context.signal });
   assertNotAborted(context.signal);
   if (row === null) {
     throw conversationConnectionRetestConflict();
   }
-  const current = readConversationConnectionUpdateRow({ row, connectionId: request.connectionId });
-  // Deleting, disabled, and mid-transfer connections have no current transport
-  // to re-observe, and the readiness owner would refuse the result anyway.
-  if (current.configurationRevision !== request.expectedRevision
-    || current.lifecycle.authorityEpoch !== request.authorityEpoch
-    || current.lifecycle.deletionState !== 'none'
-    || current.lifecycle.pendingOldTransportStop !== null
+  const current = readConversationConnectionUpdateRow({ row, connectionId: requestedConnection.connectionId });
+  // The current saved connection supplies the worker generation; no list
+  // version supplied by the caller can make this observation stale.
+  const request = { connectionId: requestedConnection.connectionId, authorityEpoch: current.lifecycle.authorityEpoch };
+  // Deleting and disabled connections have no current transport to re-observe.
+  // Retained predecessor stop slots are inert, not transport eligibility.
+  if (current.lifecycle.deletionState !== 'none'
     || !current.lifecycle.enabled) {
     throw conversationConnectionRetestConflict();
   }
@@ -3058,7 +2769,7 @@ export async function retestConversationConnectionForInvocation(
 
 async function rereadConversationConnectionRetestAuthority(input: Readonly<{
   collection: ChannelStateCollection;
-  request: ConversationConnectionRetestInputV1;
+  request: Readonly<{ connectionId: string; authorityEpoch: number }>;
   context: PluginInvocationContext;
 }>): Promise<Readonly<{
   row: StateRow;
@@ -3076,10 +2787,8 @@ async function rereadConversationConnectionRetestAuthority(input: Readonly<{
     row,
     connectionId: input.request.connectionId,
   });
-  if (current.configurationRevision !== input.request.expectedRevision
-    || current.lifecycle.authorityEpoch !== input.request.authorityEpoch
+  if (current.lifecycle.authorityEpoch !== input.request.authorityEpoch
     || current.lifecycle.deletionState !== 'none'
-    || current.lifecycle.pendingOldTransportStop !== null
     || !current.lifecycle.enabled) {
     throw conversationConnectionRetestConflict();
   }
@@ -3108,7 +2817,7 @@ function conversationConnectionRetestConflict(): PluginError {
   );
 }
 
-async function persistConversationConnectionLifecycle(input: Readonly<{
+export async function persistConversationConnectionLifecycle(input: Readonly<{
   collection: ChannelStateCollection;
   row: StateRow;
   current: ConversationConnectionUpdateRow;
@@ -3127,7 +2836,7 @@ async function persistConversationConnectionLifecycle(input: Readonly<{
   if (result.status === 'conflict') {
     throw pluginError(
       `${input.operation}_conflict`,
-      'Connection stop custody lost its retained-row compare-and-swap.',
+      'Connection lifecycle lost its retained-row compare-and-swap.',
       true,
     );
   }
@@ -3137,7 +2846,7 @@ async function persistConversationConnectionLifecycle(input: Readonly<{
   if (persisted === undefined) {
     throw pluginError(
       `${input.operation}_result_invalid`,
-      'Connection stop custody did not return its retained row result.',
+      'Connection lifecycle did not return its retained row result.',
       true,
     );
   }
@@ -3149,241 +2858,19 @@ function deleteResult(input: Readonly<{
   connectionId: string;
   revision: number;
   lifecycle: ConversationConnectionLifecycleStateV1;
-  acceptedPossibleLoss?: boolean;
 }>): ConversationConnectionDeleteResult {
   return {
     kind: input.kind,
     connectionId: input.connectionId,
     revision: input.revision,
     authorityEpoch: input.lifecycle.authorityEpoch,
-    acceptedPossibleLoss: input.acceptedPossibleLoss
-      ?? (input.lifecycle.pendingOldTransportStop !== null && !isConversationPendingEndpointRetarget(input.lifecycle.pendingOldTransportStop) && input.lifecycle.pendingOldTransportStop.acceptedPossibleLoss),
+    acceptedPossibleLoss: false,
   };
 }
 
 /**
- * A frozen stop can only reach the exact contribution its custody names. An
- * absent stop operation is reported rather than thrown so each lifecycle owner
- * keeps its own result vocabulary.
- */
-type FrozenOldTransportStopResult =
-  | ReturnType<typeof ConversationProviderConnectionStopResultV1Schema.parse>
-  | Readonly<{ kind: 'stopUnavailable' }>;
-
-/**
- * The generic Actions owner enforces the frozen origin before target-handler
- * admission and again after it settles. This consumer never selects or
- * compares a replacement target locally.
- */
-async function executeFrozenOldTransportStop(input: Readonly<{
-  context: PluginInvocationContext;
-  providerPluginId: string;
-  pendingOldTransportStop: ConversationPendingProviderStopV1;
-}>): Promise<FrozenOldTransportStopResult> {
-  const provider = await readCurrentProviderContributionForPersistedSelection({
-    context: {
-      targetedContributions: input.context.services.targetedContributions,
-      signal: input.context.signal,
-    },
-    // A retained connection can already point at a replacement contribution.
-    // Deferred stop custody is instead exactly the frozen old origin and
-    // contributor/generation selection.
-    providerPluginId: input.providerPluginId,
-    providerContributionSelection: input.pendingOldTransportStop.providerContributionSelection,
-  });
-  const stop = provider.operations.connectionStop;
-  if (stop === undefined) return { kind: 'stopUnavailable' };
-  const execution = await input.context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
-    stop,
-    input.pendingOldTransportStop.stopRequest,
-    {
-      signal: input.context.signal,
-      expectedExecutionRouting: getConversationConnectionExecutionRouting(input.pendingOldTransportStop.transportOrigin, input.providerPluginId),
-    },
-  );
-  assertNotAborted(input.context.signal);
-  try {
-    return ConversationProviderConnectionStopResultV1Schema.parse(execution.result);
-  } catch (cause) {
-    throw new PluginError({
-      code: 'channels_connection_stop_result_invalid',
-      message: 'Provider stop did not return its strict connection-stop result.',
-    }, { cause });
-  }
-}
-
-/**
- * The old-stop slot fences the effect only while it remains the exact current
- * Account authority. Re-read it immediately before generic Action admission;
- * the generic owner then validates the frozen execution origin at invocation.
- */
-async function readCurrentFrozenOldTransportStopForEffect(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-  reason: 'delete' | 'transfer';
-}>, context: PluginInvocationContext): Promise<Readonly<{
-  pendingOldTransportStop: ConversationPendingProviderStopV1;
-  providerPluginId: string;
-  lifecycle: ConversationConnectionLifecycleStateV1;
-}>> {
-  const conflictCode = `channels_connection_${input.reason}_stop_currentness_conflict`;
-  const row = await input.collection.get(input.connectionId, { signal: context.signal });
-  assertNotAborted(context.signal);
-  if (row === null || row.revision !== input.pendingRevision) {
-    throw pluginError(
-      conflictCode,
-      'Connection old-stop authority changed before the provider effect could start.',
-      true,
-    );
-  }
-  const current = readConversationConnectionUpdateRow({ row, connectionId: input.connectionId });
-  const pendingOldTransportStop = current.lifecycle.pendingOldTransportStop;
-  if (
-    pendingOldTransportStop === null
-    || isConversationPendingEndpointRetarget(pendingOldTransportStop)
-    || pendingOldTransportStop.acceptedPossibleLoss
-    || pendingOldTransportStop.stopRequest.reason !== input.reason
-    || pendingOldTransportStop.stopRequest.authorityEpoch !== current.lifecycle.authorityEpoch
-  ) {
-    throw pluginError(
-      conflictCode,
-      'Connection old-stop authority is no longer current for a provider effect.',
-      true,
-    );
-  }
-  return {
-    pendingOldTransportStop,
-    providerPluginId: current.providerPluginId,
-    lifecycle: current.lifecycle,
-  };
-}
-
-/**
- * A successful old-provider result proves nothing once the pending row has
- * changed. Re-read that exact row revision before advancing the lifecycle.
- */
-async function settleCurrentConnectionStopProof(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-  reason: 'delete' | 'transfer';
-  frozenStopRequest: ConversationPendingProviderStopV1['stopRequest'];
-}>, context: PluginInvocationContext): Promise<Readonly<{
-  kind: 'deleteFinalizing' | 'transportStopConfirmed';
-  revision: number;
-  configurationRevision: number;
-  lifecycle: ConversationConnectionLifecycleStateV1;
-}>> {
-  const expectedKind = input.reason === 'delete' ? 'deleteFinalizing' : 'transportStopConfirmed';
-  const row = await input.collection.get(input.connectionId, { signal: context.signal });
-  assertNotAborted(context.signal);
-  if (row === null || row.revision !== input.pendingRevision) {
-    throw pluginError(
-      `channels_connection_${input.reason}_stop_settlement_conflict`,
-      'Connection stop proof no longer matches the current retained pending row.',
-      true,
-    );
-  }
-  const current = readConversationConnectionUpdateRow({ row, connectionId: input.connectionId });
-  const transition = confirmConversationConnectionStop({
-    current: current.lifecycle,
-    reportedAuthorityEpoch: input.frozenStopRequest.authorityEpoch,
-  });
-  if (transition.kind !== expectedKind) {
-    throw pluginError(
-      `channels_connection_${input.reason}_stop_settlement_stale`,
-      'Connection stop proof no longer matches its current lifecycle custody.',
-      true,
-    );
-  }
-  const persisted = await persistConversationConnectionLifecycle({
-    collection: input.collection,
-    row,
-    current,
-    lifecycle: transition.connection,
-    operation: `channels_connection_${input.reason}_stop_settlement`,
-  }, context);
-  return {
-    kind: transition.kind,
-    ...persisted,
-    lifecycle: transition.connection,
-  };
-}
-
-/**
- * The one physical old-transport stop path. Delete and transfer both commit
- * their frozen custody first, reach the same generic expected-origin Action
- * owner here, and settle that same durable slot; neither owns a private stop
- * subsystem, and each maps this outcome into its own result vocabulary.
- */
-type FrozenOldTransportStopOutcome =
-  | Readonly<{
-    kind: 'settled';
-    revision: number;
-    configurationRevision: number;
-    lifecycle: ConversationConnectionLifecycleStateV1;
-  }>
-  | Readonly<{
-    kind: 'pending';
-    lifecycle: ConversationConnectionLifecycleStateV1;
-  }>
-  | Readonly<{
-    kind: 'stopUnavailable';
-    lifecycle: ConversationConnectionLifecycleStateV1;
-  }>
-  | Readonly<{
-    kind: 'notReady';
-    retryable: boolean;
-    lifecycle: ConversationConnectionLifecycleStateV1;
-  }>;
-
-async function runFrozenOldTransportStopForCommittedCustody(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-  reason: 'delete' | 'transfer';
-}>, context: PluginInvocationContext): Promise<FrozenOldTransportStopOutcome> {
-  const currentStop = await readCurrentFrozenOldTransportStopForEffect({
-    collection: input.collection,
-    connectionId: input.connectionId,
-    pendingRevision: input.pendingRevision,
-    reason: input.reason,
-  }, context);
-  const stopResult = await executeFrozenOldTransportStop({
-    context,
-    pendingOldTransportStop: currentStop.pendingOldTransportStop,
-    providerPluginId: currentStop.providerPluginId,
-  });
-  if (stopResult.kind === 'stopUnavailable' || stopResult.kind === 'pending') {
-    return { kind: stopResult.kind, lifecycle: currentStop.lifecycle };
-  }
-  if (stopResult.kind === 'notReady') {
-    return {
-      kind: 'notReady',
-      retryable: stopResult.retryAfterMs !== undefined,
-      lifecycle: currentStop.lifecycle,
-    };
-  }
-  const settled = await settleCurrentConnectionStopProof({
-    collection: input.collection,
-    connectionId: input.connectionId,
-    pendingRevision: input.pendingRevision,
-    reason: input.reason,
-    frozenStopRequest: currentStop.pendingOldTransportStop.stopRequest,
-  }, context);
-  return {
-    kind: 'settled',
-    revision: settled.revision,
-    configurationRevision: settled.configurationRevision,
-    lifecycle: settled.lifecycle,
-  };
-}
-
-/**
- * Delete first durably fences admission and freezes the old stop request. The
- * subsequent physical stop can only run through the generic expected-origin
- * precondition; without that owner this Action leaves reconciliation pending.
+ * Delete withdraws admission once. The existing finalizer owns dependent
+ * cleanup; unreachable workers owe no proof before that cleanup can proceed.
  */
 export async function deleteConversationConnectionForInvocation(
   input: JsonValue,
@@ -3399,321 +2886,26 @@ export async function deleteConversationConnectionForInvocation(
   }
   const current = readConversationConnectionUpdateRow({ row, connectionId: deleteInput.connectionId });
   if (current.configurationRevision !== deleteInput.expectedRevision) {
-    throw pluginError(
-      'channels_connection_delete_conflict',
-      'Connection deletion requires the current retained row revision.',
-      true,
-    );
+    throw pluginError('channels_connection_delete_conflict', 'Connection deletion requires the current retained row revision.', true);
   }
-  if (current.lifecycle.deletionState === 'finalizingDelete') {
-    return deleteResult({
-      kind: 'rejoined',
-      connectionId: deleteInput.connectionId,
-      revision: current.configurationRevision,
-      lifecycle: current.lifecycle,
-    });
-  }
-  if (current.lifecycle.deletionState === 'pendingStopReconciliation') {
-    const frozen = current.lifecycle.pendingOldTransportStop;
-    if (frozen === null || isConversationPendingEndpointRetarget(frozen) || frozen.stopRequest.reason !== 'delete') {
-      throw pluginError('channels_connection_delete_corrupt', 'Pending connection deletion lost its exact old-stop custody.');
-    }
-    return deleteResult({
-      kind: 'rejoined',
-      connectionId: deleteInput.connectionId,
-      revision: current.configurationRevision,
-      lifecycle: current.lifecycle,
-    });
-  }
-
-  let pending = current.lifecycle;
-  let pendingRevision = row.revision;
-  let pendingConfigurationRevision = current.configurationRevision;
-  if (current.lifecycle.deletionState === 'none') {
-    const start = startConversationConnectionDelete({
-      current: current.lifecycle,
-      pendingOldTransportStop: {
-        predecessorCheckpointedPollInvocation: {
-          connectionRevision: row.revision,
-          authorityEpoch: current.lifecycle.authorityEpoch,
-          transportOrigin: current.transportOrigin,
-        },
-        transportOrigin: current.transportOrigin,
-        providerContributionSelection: current.providerContributionSelection,
-        stopRequest: createDeleteStopRequest({
-          connectionId: deleteInput.connectionId,
-          payload: current.payload,
-          authorityEpoch: current.lifecycle.authorityEpoch + 1,
-        }),
-        predecessorTransportKind: readConnectionTransportKind(current, {
-          code: 'channels_connection_delete_transport_unsupported',
-          message: 'Connection deletion found an unsupported retained transport.',
-        }),
-      },
-    });
-    if (start.kind === 'rejected') {
-      if (start.code === 'authorityEpochExhausted') {
-        throw pluginError('channels_connection_delete_authority_epoch_exhausted', 'Connection authority cannot advance further.');
-      }
-      if (start.code === 'oldTransportStopPending') {
-        throw pluginError('channels_connection_delete_old_transport_stop_pending', 'Connection replacement already retains unresolved old-stop custody.', true);
-      }
-      if (start.code === 'endpointRetargetRepairRequired') {
-        throw pluginError(
-          'channels_connection_delete_endpoint_retarget_repair_required',
-          'The retained durable-push endpoint must be repaired before deleting this connection.',
-          true,
-        );
-      }
-      throw pluginError('channels_connection_delete_stop_request_invalid', 'Connection deletion could not freeze its exact stop request.');
-    }
-    if (start.kind === 'rejoined') {
-      return deleteResult({
-        kind: 'rejoined',
-        connectionId: deleteInput.connectionId,
-        revision: current.configurationRevision,
-        lifecycle: start.connection,
-      });
-    }
-    pending = start.connection;
-    const persisted = await persistConversationConnectionLifecycle({
-      collection,
-      row,
-      current,
-      lifecycle: pending,
-      operation: 'channels_connection_delete',
-    }, context);
-    pendingRevision = persisted.revision;
-    pendingConfigurationRevision = persisted.configurationRevision;
-  }
-
-  const frozen = pending.pendingOldTransportStop;
-  if (frozen === null || isConversationPendingEndpointRetarget(frozen) || frozen.stopRequest.reason !== 'delete') {
-    throw pluginError('channels_connection_delete_corrupt', 'Pending connection deletion lost its exact old-stop custody.');
-  }
-  if (frozen.predecessorTransportKind === 'checkpointedPull') {
-    // Checkpointed pulls have no provider-local consumer to stop. The one core
-    // poll supervisor observes the fenced row become ineligible after any
-    // in-flight poll returns, then settles this exact durable custody itself.
-    return deleteResult({
-      kind: 'deletePending',
-      connectionId: deleteInput.connectionId,
-      revision: pendingConfigurationRevision,
-      lifecycle: pending,
-    });
-  }
-  if (frozen.predecessorTransportKind === 'durablePush') {
-    // Generic webhook dispatch has no provider-local connection worker. The
-    // delete fence already makes this Channels reference ineligible; finalize
-    // that reference without claiming a provider stop or revoking the generic
-    // endpoint, whose lifecycle remains independently owned.
-    const pendingRow = await collection.get(deleteInput.connectionId, { signal: context.signal });
-    assertNotAborted(context.signal);
-    if (pendingRow === null || pendingRow.revision !== pendingRevision) {
-      throw pluginError(
-        'channels_connection_delete_detach_conflict',
-        'Connection deletion lost its current durable-push detachment custody.',
-        true,
-      );
-    }
-    const pendingCurrent = readConversationConnectionUpdateRow({
-      row: pendingRow,
-      connectionId: deleteInput.connectionId,
-    });
-    const detachment = finalizeConversationConnectionDeleteWithoutProviderStop({
-      current: pendingCurrent.lifecycle,
-    });
-    if (detachment.kind !== 'deleteFinalizing') {
-      throw pluginError(
-        'channels_connection_delete_detach_conflict',
-        'Connection deletion no longer retains durable-push detachment custody.',
-        true,
-      );
-    }
-    const persisted = await persistConversationConnectionLifecycle({
-      collection,
-      row: pendingRow,
-      current: pendingCurrent,
-      lifecycle: detachment.connection,
-      operation: 'channels_connection_delete_detach',
-    }, context);
-    return deleteResult({
-      kind: 'deleteFinalizing',
-      connectionId: deleteInput.connectionId,
-      revision: persisted.configurationRevision,
-      lifecycle: detachment.connection,
-    });
-  }
-  const outcome = await runFrozenOldTransportStopForCommittedCustody({
-    collection,
-    connectionId: deleteInput.connectionId,
-    pendingRevision,
-    reason: 'delete',
-  }, context);
-  if (outcome.kind === 'stopUnavailable') {
-    throw pluginError(
-      'channels_connection_stop_unavailable',
-      'The current provider contribution does not support stopping this connection transport.',
-      true,
-    );
-  }
-  if (outcome.kind === 'pending') {
-    return deleteResult({
-      kind: 'deletePending',
-      connectionId: deleteInput.connectionId,
-      revision: pendingConfigurationRevision,
-      lifecycle: outcome.lifecycle,
-    });
-  }
-  if (outcome.kind === 'notReady') {
-    throw pluginError(
-      'channels_connection_stop_not_ready',
-      'Provider stop did not confirm the old transport has stopped.',
-      outcome.retryable,
-    );
-  }
-  return deleteResult({
-    kind: 'deleteFinalizing',
-    connectionId: deleteInput.connectionId,
-    revision: outcome.configurationRevision,
-    lifecycle: outcome.lifecycle,
-  });
-}
-
-/**
- * The custody-resolution answer for an owed durable-endpoint move.
- *
- * That obligation is a target change on an endpoint this Account already owns,
- * so the honest resolution is to repair it through the same committed-intent
- * owner a transfer resume uses. A loss marker here would settle nothing and
- * freeze the endpoint on the retired target, so an endpoint owner that is
- * still unavailable is reported as exactly that.
- */
-async function repairOwedTransferEndpointRetarget(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-}>, context: PluginInvocationContext): Promise<ConversationConnectionDeleteResult> {
-  let repaired: Awaited<ReturnType<typeof runCommittedTransferEndpointRetarget>>;
-  try {
-    repaired = await runCommittedTransferEndpointRetarget(input, context);
-  } catch (cause) {
-    assertNotAborted(context.signal);
-    throw new PluginError({
-      code: 'channels_connection_abandon_endpoint_retarget_unrepaired',
-      message: 'The durable-push endpoint has not reached the current connection target yet; repairing it again is the only settlement.',
-      retryable: true,
-    }, { cause });
-  }
-  return deleteResult({
-    kind: 'rejoined',
-    connectionId: input.connectionId,
-    revision: repaired.configurationRevision,
-    lifecycle: repaired.lifecycle,
-  });
-}
-
-/**
- * Explicit present-user resolution of unsettled old-stop custody. Delete
- * advances to finalization; a retired provider transport retains its frozen
- * slot as accepted-loss disclosure; an owed durable-endpoint move is repaired
- * instead, because Happier owns that endpoint and can still move it. No path
- * writes physical-stop proof or a history-gap fact.
- */
-export async function abandonConversationConnectionForInvocation(
-  input: JsonValue,
-  context: PluginInvocationContext,
-): Promise<ConversationConnectionDeleteResult> {
-  const abandonInput = admittedActionInput<ConversationConnectionDeleteInputV1>(input);
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  assertNotAborted(context.signal);
-  const row = await collection.get(abandonInput.connectionId, { signal: context.signal });
-  assertNotAborted(context.signal);
-  if (row === null) {
-    throw pluginError('channels_connection_abandon_not_found', 'Connection abandon target does not exist.');
-  }
-  const current = readConversationConnectionUpdateRow({ row, connectionId: abandonInput.connectionId });
-  if (current.configurationRevision !== abandonInput.expectedRevision) {
-    const pending = current.lifecycle.pendingOldTransportStop;
-    const isImmediateAcceptedTransferRetry = abandonInput.expectedRevision < Number.MAX_SAFE_INTEGER
-      && current.configurationRevision === abandonInput.expectedRevision + 1
-      && hasAcceptedConversationTransferLoss(current.lifecycle)
-      && pending !== null
-      && !isConversationPendingEndpointRetarget(pending)
-      && pending.stopRequest.connectionId === abandonInput.connectionId
-      && pending.stopRequest.authorityEpoch < Number.MAX_SAFE_INTEGER
-      && current.lifecycle.authorityEpoch === pending.stopRequest.authorityEpoch + 1;
-    if (isImmediateAcceptedTransferRetry) {
-      return deleteResult({
-        kind: 'rejoined',
-        connectionId: abandonInput.connectionId,
-        revision: current.configurationRevision,
-        lifecycle: current.lifecycle,
-      });
-    }
-    throw pluginError(
-      'channels_connection_abandon_conflict',
-      'Connection abandon requires the current retained row revision.',
-      true,
-    );
-  }
-  const pending = current.lifecycle.pendingOldTransportStop;
-  if (!isConversationPendingEndpointRetarget(pending) && pending?.stopRequest.connectionId !== abandonInput.connectionId) {
-    throw pluginError(
-      'channels_connection_abandon_not_pending',
-      'Connection abandon requires an exact pending old-transport stop request.',
-    );
-  }
-  const transition: ConversationConnectionAbandonResultV1 = abandonConversationConnectionStop({
-    current: current.lifecycle,
-  });
-  if (transition.kind === 'staleAuthority') {
-    if (pending !== null && !isConversationPendingEndpointRetarget(pending) && pending.stopRequest.reason === 'transfer' && pending.acceptedPossibleLoss) {
-      throw pluginError(
-        'channels_connection_abandon_conflict',
-        'Connection abandon retained an incoherent accepted transfer marker.',
-        true,
-      );
-    }
-    throw pluginError('channels_connection_abandon_not_pending', 'Connection abandon requires an exact pending old-transport stop request.');
-  }
+  const transition = startConversationConnectionDelete({ current: current.lifecycle });
   if (transition.kind === 'rejected') {
-    if (transition.code === 'endpointRetargetRepairRequired') {
-      return await repairOwedTransferEndpointRetarget({
-        collection,
-        connectionId: abandonInput.connectionId,
-        pendingRevision: row.revision,
-      }, context);
-    }
-    throw pluginError('channels_connection_abandon_authority_epoch_exhausted', 'Connection authority cannot advance further.');
+    throw pluginError('channels_connection_delete_authority_epoch_exhausted', 'Connection authority cannot advance further.');
   }
   if (transition.kind === 'rejoined') {
-    return deleteResult({
-      kind: 'rejoined',
-      connectionId: abandonInput.connectionId,
-      revision: current.configurationRevision,
-      lifecycle: transition.connection,
-    });
+    return deleteResult({ kind: 'rejoined', connectionId: deleteInput.connectionId,
+      revision: current.configurationRevision, lifecycle: transition.connection });
   }
   const persisted = await persistConversationConnectionLifecycle({
-    collection,
-    row,
-    current,
-    lifecycle: transition.connection,
-    operation: 'channels_connection_abandon',
+    collection, row, current, lifecycle: transition.connection, operation: 'channels_connection_delete',
   }, context);
-  return deleteResult({
-    kind: transition.kind === 'transferAbandoned' ? 'rejoined' : 'deleteFinalizing',
-    connectionId: abandonInput.connectionId,
-    revision: persisted.configurationRevision,
-    lifecycle: transition.connection,
-    acceptedPossibleLoss: transition.kind === 'transferAbandoned' ? true : undefined,
-  });
+  return deleteResult({ kind: 'deleteFinalizing', connectionId: deleteInput.connectionId,
+    revision: persisted.configurationRevision, lifecycle: transition.connection });
 }
 
 /**
- * Provider transport facts are caller-proven by the shared reconciliation
- * predicate and can settle only the still-current frozen delete request.
+ * Provider readiness and history facts use the current connection generation.
+ * Retained stopped facts are readable but no longer settle lifecycle state.
  */
 export async function reportConversationTransportFactForInvocation(
   input: JsonValue,
@@ -3784,39 +2976,8 @@ export async function reportConversationTransportFactForInvocation(
     return { kind: 'recorded' };
   }
 
-  const pending = current.lifecycle.pendingOldTransportStop;
-  if (pending === null
-    || isConversationPendingEndpointRetarget(pending)
-    || !hasCurrentConversationTransportCaller({
-      caller: context.caller,
-      providerPluginId: current.providerPluginId,
-      transportOrigin: pending.transportOrigin,
-    })
-    || (pending.stopRequest.reason === 'delete' && !hasExactCurrentStopRequest({
-      connectionId: report.connectionId,
-      payload: current.payload,
-      authorityEpoch: current.lifecycle.authorityEpoch,
-      pendingOldTransportStop: pending,
-    }))
-    || (pending.stopRequest.reason === 'transfer'
-      && pending.stopRequest.connectionId !== report.connectionId)) {
-    return { kind: 'staleAuthority' };
-  }
-  const transition: ConversationConnectionStopConfirmationResultV1 = confirmConversationConnectionStop({
-    current: current.lifecycle,
-    reportedAuthorityEpoch: report.authorityEpoch,
-  });
-  if (transition.kind === 'staleAuthority') return { kind: 'staleAuthority' };
-  await persistConversationConnectionLifecycle({
-    collection,
-    row,
-    current,
-    lifecycle: transition.connection,
-    operation: 'channels_transport_fact',
-  }, context);
-  return transition.kind === 'deleteFinalizing'
-    ? { kind: 'deleteFinalizing' }
-    : { kind: 'recorded' };
+// A retained stopped fact grants no cleanup or transfer authority.
+  return { kind: 'staleAuthority' };
 }
 
 /**
@@ -3868,157 +3029,6 @@ export async function recordConversationCheckpointedPollHistoryGapForInvocation(
 }
 
 /**
- * The core checkpointed-poll supervisor owns quiescence for poll transports:
- * once it has observed the row ineligible, no provider socket-stop Action is
- * needed or permitted. A captured old poll matches the immutable predecessor
- * facts frozen in its custody slot, while the final CAS still targets the
- * row reread at settlement; unrelated retained-row writes are not proof loss.
- * The same retained delete custody still has to match exactly before the
- * lifecycle may advance to finalization.
- */
-export async function confirmConversationCheckpointedPollStopForInvocation(input: Readonly<{
-  connectionId: string;
-  capturedInvocation?: ConversationCheckpointedPollInvocationBasisV1;
-  frozenStopRequest?: ConversationPendingProviderStopV1['stopRequest'];
-}>, context: PluginInvocationContext): Promise<'deleteFinalizing' | 'transportStopConfirmed' | 'ineligible'> {
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  assertNotAborted(context.signal);
-  const row = await collection.get(input.connectionId, { signal: context.signal });
-  assertNotAborted(context.signal);
-  if (row === null) return 'ineligible';
-
-  const current = readConversationConnectionUpdateRow({ row, connectionId: input.connectionId });
-  const transport = own(current.payload, 'transport');
-  const pending = current.lifecycle.pendingOldTransportStop;
-  const captured = input.capturedInvocation;
-  const predecessor = pending !== null && !isConversationPendingEndpointRetarget(pending) ? pending.predecessorCheckpointedPollInvocation : undefined;
-  const hasCapturedProof = captured !== undefined
-    && input.frozenStopRequest !== undefined
-    && Number.isSafeInteger(captured.connectionRevision)
-    && captured.connectionRevision >= 1
-    && Number.isSafeInteger(captured.authorityEpoch)
-    && captured.authorityEpoch >= 1
-    && pending !== null
-    && !isConversationPendingEndpointRetarget(pending)
-    && predecessor !== undefined
-    && captured.connectionRevision === predecessor.connectionRevision
-    && captured.authorityEpoch === predecessor.authorityEpoch
-    && areConversationConnectionTransportOriginsEqual(captured.transportOrigin, predecessor.transportOrigin)
-    && pending.stopRequest.authorityEpoch === predecessor.authorityEpoch + 1
-    && areConversationConnectionTransportOriginsEqual(pending.transportOrigin, predecessor.transportOrigin)
-    && pluginJsonValuesEqual(pending.stopRequest, input.frozenStopRequest);
-  const hasFreshDeleteProof = captured === undefined
-    && input.frozenStopRequest === undefined
-    && isJsonRecord(transport)
-    && transport.kind === 'checkpointedPull'
-    && pending !== null
-    && !isConversationPendingEndpointRetarget(pending)
-    && pending.stopRequest.reason === 'delete'
-    && pending.overlapSafety === current.lifecycle.overlapSafety
-    && areConversationConnectionTransportOriginsEqual(current.transportOrigin, pending.transportOrigin)
-    && hasExactCurrentStopRequest({
-      connectionId: input.connectionId,
-      payload: current.payload,
-      authorityEpoch: current.lifecycle.authorityEpoch,
-      pendingOldTransportStop: pending,
-    });
-  if (
-    pending === null
-    || isConversationPendingEndpointRetarget(pending)
-    || pending.acceptedPossibleLoss
-    || (!hasCapturedProof && !hasFreshDeleteProof)
-  ) return 'ineligible';
-
-  const transition = confirmConversationConnectionStop({
-    current: current.lifecycle,
-    reportedAuthorityEpoch: pending.stopRequest.authorityEpoch,
-  });
-  if (transition.kind !== 'deleteFinalizing' && transition.kind !== 'transportStopConfirmed') {
-    return 'ineligible';
-  }
-  await persistConversationConnectionLifecycle({
-    collection,
-    row,
-    current,
-    lifecycle: transition.connection,
-    operation: 'channels_checkpointed_poll_stop_settlement',
-  }, context);
-  return transition.kind;
-}
-
-/**
- * A provider-exclusive checkpointed replacement has one additional, narrow
- * proof path: a successful replacement poll means the provider has admitted
- * the replacement as its exclusive observer. The caller supplies that success
- * only for a strict batch/checkpoint result; this lifecycle owner still
- * requires the exact current replacement row and clears only the existing
- * transfer custody slot in its one guarded write.
- */
-export async function settleConversationProviderExclusiveCheckpointedPollReplacementForInvocation(input: Readonly<{
-  connectionId: string;
-  expectedRevision: number;
-  authorityEpoch: number;
-  executionOrigin: PluginMachineExecutionOriginV1;
-}>, context: PluginInvocationContext): Promise<
-  | Readonly<{ kind: 'settled'; revision: number }>
-  | Readonly<{ kind: 'notApplicable' }>
-  | Readonly<{ kind: 'staleAuthority' }>
-> {
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  assertNotAborted(context.signal);
-  const row = await collection.get(input.connectionId, { signal: context.signal });
-  assertNotAborted(context.signal);
-  if (row === null || row.revision !== input.expectedRevision) return { kind: 'staleAuthority' };
-
-  const current = readConversationConnectionUpdateRow({ row, connectionId: input.connectionId });
-  const transport = own(current.payload, 'transport');
-  const replayContinuity = own(current.payload, 'replayContinuity');
-  if (
-    current.lifecycle.authorityEpoch !== input.authorityEpoch
-    || !current.lifecycle.enabled
-    || current.lifecycle.deletionState !== 'none'
-    || !isJsonRecord(transport)
-    || transport.kind !== 'checkpointedPull'
-    || replayContinuity !== 'checkpointed'
-    || current.providerPluginId !== getPluginMachineExecutionOriginRef(input.executionOrigin).pluginId
-    || !areConversationConnectionTransportOriginsEqual(current.transportOrigin, getConversationConnectionTransportOrigin(input.executionOrigin))
-  ) return { kind: 'staleAuthority' };
-
-  const pending = current.lifecycle.pendingOldTransportStop;
-  if (
-    pending === null
-    || isConversationPendingEndpointRetarget(pending)
-    || pending.acceptedPossibleLoss
-    || pending.stopRequest.reason !== 'transfer'
-    || pending.overlapSafety !== 'providerExclusive'
-    || pending.stopRequest.authorityEpoch !== current.lifecycle.authorityEpoch
-  ) return { kind: 'notApplicable' };
-
-  const transition = confirmConversationConnectionStop({
-    current: current.lifecycle,
-    reportedAuthorityEpoch: pending.stopRequest.authorityEpoch,
-  });
-  if (transition.kind !== 'transportStopConfirmed') return { kind: 'notApplicable' };
-
-  try {
-    const persisted = await persistConversationConnectionLifecycle({
-      collection,
-      row,
-      current,
-      lifecycle: transition.connection,
-      operation: 'channels_provider_exclusive_checkpointed_poll_replacement_settlement',
-    }, context);
-    return { kind: 'settled', revision: persisted.revision };
-  } catch (cause) {
-    if (
-      isPluginError(cause)
-      && cause.code === 'channels_provider_exclusive_checkpointed_poll_replacement_settlement_conflict'
-    ) return { kind: 'staleAuthority' };
-    throw cause;
-  }
-}
-
-/**
  * How many relation rows one delete-finalization page inspects.
  *
  * It is derived from the atomic mutation batch that page produces, not chosen:
@@ -4045,14 +3055,8 @@ function hasExactStateRowIdentity(input: Readonly<{
 }
 
 function finalizingDeleteIsAuthorized(current: ConversationConnectionUpdateRow): boolean {
-  const pending = current.lifecycle.pendingOldTransportStop;
   return current.lifecycle.deletionState === 'finalizingDelete'
-    && !current.lifecycle.enabled
-    && (pending === null || (
-      !isConversationPendingEndpointRetarget(pending)
-      && pending.acceptedPossibleLoss
-      && pending.stopRequest.reason === 'delete'
-    ));
+    && !current.lifecycle.enabled;
 }
 
 function readFinalizingReservationIdentity(current: ConversationConnectionUpdateRow): Readonly<{
@@ -4429,15 +3433,16 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     let connectionPage: Awaited<ReturnType<ChannelStateCollection['query']>> | undefined;
     try {
       connectionPage = await collection.query({
-        index: CHANNEL_STATE_INDEX_ID.byKind,
+        index: CHANNEL_STATE_INDEX_ID.byIngressDue,
         prefix: [CHANNEL_STATE_RECORD_KIND.connection],
+        range: { lower: 0 },
         order: 'asc',
         limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
         ...(connectionCursor === undefined ? {} : { cursor: connectionCursor }),
       }, { signal: context.signal });
     } catch (error) {
-      // Binding finalization is independently enumerable from the same existing
-      // bounded census, so an unavailable connection page must not manufacture
+      // Binding finalization is independently selectable from the same existing
+      // due-work index, so an unavailable connection page must not manufacture
       // a second recovery mechanism or starve already-finalizing bindings.
       recordFinalizationFailure(error);
     }
@@ -4466,9 +3471,8 @@ export async function finalizeConversationConnectionDeletesForInvocation(
   } while (connectionCursor !== undefined);
   if (context.signal.aborted) return;
 
-  // The census is read as consecutive request-bounded pages of
-  // the same existing index. The keyset cursor is loop-local: finalization
-  // still owns no persisted cursor, scanner, or cleanup scheduler, and a crash
+  // Only finalizing bindings have a numeric due key. The keyset cursor is
+  // loop-local: finalization owns no persisted cursor or cleanup scheduler. A crash
   // or conflict simply resumes from current rows on the next wake.
   let bindingCursor: string | undefined;
   for (;;) {
@@ -4476,8 +3480,9 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     let bindingPage: Awaited<ReturnType<ChannelStateCollection['query']>> | undefined;
     try {
       bindingPage = await collection.query({
-        index: CHANNEL_STATE_INDEX_ID.byKind,
+        index: CHANNEL_STATE_INDEX_ID.byIngressDue,
         prefix: [CHANNEL_STATE_RECORD_KIND.binding],
+        range: { lower: 0 },
         order: 'asc',
         limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
         ...(bindingCursor === undefined ? {} : { cursor: bindingCursor }),
@@ -4580,7 +3585,7 @@ export async function createConversationThreadBindingForInvocation(input: Readon
     inboundDebounceMs: router.inboundDebounceMs,
     linkPreviewPolicy: router.linkPreviewPolicy,
     senderFeedback: router.senderFeedback,
-    inputMode: 'allAllowedMessages', enabled: true,
+    inputMode: router.inputMode, enabled: true,
   });
   let candidateRow = candidate.row;
   if (input.inboundBirthMessageId !== undefined) {
@@ -4634,6 +3639,7 @@ export async function createConversationBindingForInvocation(
   return await createConversationBindingWithAudience(createInput, audience, context);
 }
 
+/** Private continuation: the invoking journey already admitted this audience. */
 async function createConversationBindingWithAudience(
   createInput: Omit<ConversationBindingCreateInputV1, 'endpointSelection' | 'principalSelection'>,
   audience: Extract<BindingAudienceResolution, { kind: 'ready' }>,
@@ -4792,7 +3798,7 @@ async function createConversationBindingWithAudience(
   return { kind: 'created', binding: candidate.binding };
 }
 
-async function readSessionPullRequestBindings(sessionId: string | undefined, context: PluginInvocationContext): Promise<Array<{ row: StateRow; binding: ConversationBindingV1 }>> {
+async function readSessionPullRequestBindings(sessionId: string, context: PluginInvocationContext): Promise<Array<{ row: StateRow; binding: ConversationBindingV1 }>> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   return readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal });
 }
@@ -4801,22 +3807,74 @@ async function readSessionPullRequestBindings(sessionId: string | undefined, con
 export async function refreshSessionPullRequestBindingsForInvocation(input: Readonly<{
   provider: SessionPullRequestProvider;
   connectionRow: StateRow;
+  bindingRows: readonly StateRow[];
+  checkpointRow?: StateRow;
   endpoints: readonly ConversationResolvedEndpointV1[];
-}>, context: PluginInvocationContext): Promise<void> {
-  const current = await readSessionPullRequestBindings(undefined, context);
-  const next = current.map(entry => {
-    if (entry.binding.connectionId !== input.connectionRow.rowId || entry.binding.endpoint.kind !== 'githubPullRequest') return entry;
-    const pr = entry.binding.target.kind === 'session' ? entry.binding.target.pullRequestLink : entry.binding.target.kind === 'automation' ? entry.binding.target.scopedTrigger?.pullRequest : undefined;
-    let endpoint = entry.binding.endpoint;
+}>, context: PluginInvocationContext): Promise<Readonly<{ connectionRow: StateRow; bindingRows: readonly StateRow[] }>> {
+  const changes = input.bindingRows.flatMap(row => {
+    const current = readConversationBindingUpdateRow({ row, bindingId: row.rowId });
+    const binding = current.binding;
+    if (binding.connectionId !== input.connectionRow.rowId || binding.deletionState !== 'none'
+      || binding.endpoint.kind !== 'githubPullRequest') return [];
+    const sessionId = binding.target.kind === 'session' ? binding.target.sessionId
+      : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.sessionId : undefined;
+    const pr = binding.target.kind === 'session' ? binding.target.pullRequestLink
+      : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.pullRequest : undefined;
+    if (sessionId === undefined || pr === undefined) return [];
+    let latest = binding.endpoint;
+    let currentObservation = false;
     for (const observed of input.endpoints) {
       if (observed.kind !== 'githubPullRequest' || observed.pullRequestState === undefined
-        || !areConversationEndpointIdentitiesEqual(endpoint, observed)
+        || !areConversationEndpointIdentitiesEqual(binding.endpoint, observed)
         || observed.pullRequest?.repository !== pr?.repository || observed.pullRequest?.number !== pr?.number
-        || observed.pullRequestState.observedAt <= (endpoint.pullRequestState?.observedAt ?? -1)) continue;
-      endpoint = { ...endpoint, pullRequest: observed.pullRequest, pullRequestState: observed.pullRequestState };
+        || observed.pullRequestState.observedAt < (latest.pullRequestState?.observedAt ?? -1)) continue;
+      latest = observed;
+      currentObservation = true;
     }
-    return endpoint === entry.binding.endpoint ? entry : { ...entry, binding: { ...entry.binding, endpoint } };
+    if (latest.pullRequestState === undefined) return [];
+    const pullRequest = binding.endpoint.pullRequest?.repository === pr.repository && binding.endpoint.pullRequest.number === pr.number
+      ? binding.endpoint.pullRequest : latest.pullRequest;
+    const stopDirectWatch = binding.target.kind === 'session' && binding.enabled
+      && (latest.pullRequestState.state === 'merged' || latest.pullRequestState.state === 'closed');
+    let target = binding.target;
+    if (currentObservation && target.kind === 'session' && target.pullRequestWatch?.progress !== undefined && latest.pullRequestState.state === 'open') {
+      const progress = resolveSessionPullRequestFixResolutionProgress(target.pullRequestWatch.progress, latest.pullRequestState.fixResolution);
+      if (progress !== target.pullRequestWatch.progress) target = { ...target,
+        pullRequestWatch: { ...target.pullRequestWatch, progress } };
+    }
+    if (target.kind === 'session' && target.pullRequestWatch?.progress?.activeRound !== undefined
+      && (latest.pullRequestState.state === 'merged' || latest.pullRequestState.state === 'closed')) {
+      const { activeRound: _endedRound, pendingSequenceEnd: _endedSequence, ...progress } = target.pullRequestWatch.progress;
+      target = { ...target, pullRequestWatch: { ...target.pullRequestWatch, progress } };
+    }
+    const previousResolution = binding.endpoint.pullRequestState?.fixResolution;
+    const resolution = latest.pullRequestState.fixResolution;
+    const pullRequestState = latest.pullRequestState.state === binding.endpoint.pullRequestState?.state
+      && resolution?.headRevision === previousResolution?.headRevision && resolution?.resolved === previousResolution?.resolved
+      && resolution?.incomplete === previousResolution?.incomplete
+      ? binding.endpoint.pullRequestState : latest.pullRequestState;
+    if (pullRequestState === binding.endpoint.pullRequestState && pullRequest === binding.endpoint.pullRequest && !stopDirectWatch
+      && target === binding.target) return [];
+    const endpoint = pullRequestState === binding.endpoint.pullRequestState && pullRequest === binding.endpoint.pullRequest
+      ? binding.endpoint : { ...binding.endpoint, pullRequest, pullRequestState };
+    return [{ row, current, sessionId, binding: { ...binding, endpoint, target, enabled: stopDirectWatch ? false : binding.enabled } }];
   });
+  if (changes.length === 0) return { connectionRow: input.connectionRow, bindingRows: input.bindingRows };
+  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  // A captured provider result must not settle private Session state after a
+  // newer binding mutation won while that provider read was in flight.
+  for (const change of changes) {
+    const retained = await collection.get(change.row.rowId, { signal: context.signal });
+    if (retained === null || retained.revision !== change.row.revision) {
+      throw pluginError('channels_pr_observation_conflict', 'PR observation lost its retained binding revision.', true);
+    }
+  }
+  // Settlement belongs to the whole Session, including retained links whose
+  // native observations are owned by another connection.
+  const current = (await Promise.all([...new Set(changes.map(change => change.sessionId))]
+    .map(sessionId => readSessionPullRequestBindings(sessionId, context)))).flat();
+  const changesById = new Map(changes.map(change => [change.binding.id, change]));
+  const next = current.map(entry => changesById.get(entry.binding.id) ?? entry);
   const before = new Map(resolveSessionPullRequestLinksV1(current.map(entry => entry.binding), input.provider).map(row => [row.sessionId, row.pullRequestLinks]));
   for (const { sessionId, pullRequestLinks } of resolveSessionPullRequestLinksV1(next.map(entry => entry.binding), input.provider)) {
     const terminal = (link: typeof pullRequestLinks[number]) => link.state === 'merged' || link.state === 'closed';
@@ -4830,17 +3888,44 @@ export async function refreshSessionPullRequestBindingsForInvocation(input: Read
       if (isPluginActionApprovalRequestCreated(result)) throw pluginError('channels_pr_settlement_not_applied', 'PR settlement requires an Account Action decision.', true);
     }
   }
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  for (let index = 0; index < next.length; index += 1) {
-    const previous = current[index]!;
-    const updated = next[index]!;
-    if (previous === updated) continue;
-    const result = await commitConversationBindingMutation({ collection, row: previous.row,
-      current: readConversationBindingUpdateRow({ row: previous.row, bindingId: previous.binding.id }),
-      connectionRow: input.connectionRow, binding: updated.binding,
-      updatedAt: Date.now(), signal: context.signal });
+  let connectionRow = input.connectionRow;
+  const refreshedBindings = new Map<string, StateRow>();
+  for (const change of changes) {
+    const updatedAt = Date.now();
+    const result = await commitConversationBindingMutation({ collection, row: change.row,
+      current: change.current,
+      connectionRow, binding: change.binding,
+      ...(input.checkpointRow === undefined ? {} : { additionalMutations: [{ kind: 'assert' as const, rowId: input.checkpointRow.rowId, expectedRevision: input.checkpointRow.revision }] }),
+      updatedAt, signal: context.signal });
     if (result.kind !== 'updated') throw pluginError('channels_pr_observation_conflict', 'PR observation lost its retained binding revision.', true);
+    connectionRow = { ...connectionRow, revision: result.connectionRevision };
+    refreshedBindings.set(change.row.rowId, { ...change.row, revision: result.revision,
+      value: withConversationBindingPolicy({ row: change.row, current: change.current,
+        binding: change.binding, updatedAt }) });
   }
+  const archiveCandidates = new Map<string, string>();
+  for (const change of changes) {
+    const target = change.binding.target;
+    if (target.kind !== 'session' || target.pullRequestWatch?.policy.archiveAfterMerge !== true
+      || target.pullRequestWatch.policy.mode === 'off' || change.binding.endpoint.kind !== 'githubPullRequest'
+      || change.binding.endpoint.pullRequestState?.state !== 'merged'
+      || (change.current.binding.endpoint.kind === 'githubPullRequest'
+        && change.current.binding.endpoint.pullRequestState?.state === 'merged')) continue;
+    archiveCandidates.set(change.sessionId, change.binding.id);
+  }
+  for (const [sessionId, bindingId] of archiveCandidates) {
+    try {
+      await archiveSessionPullRequestWatchAfterMerge({ sessionId, bindingId, provider: input.provider }, context);
+    } catch (error) {
+      // This optional one-shot consequence cannot retry an uncertain archive
+      // or suppress the provider's terminal status/checkpoint. Explicit Archive
+      // remains available through the existing Session lifecycle owner.
+      context.services.logger.warn('[Channels] optional PR merge archive could not complete', {
+        sessionId, ...(isPluginError(error) ? { code: error.code } : {}),
+      });
+    }
+  }
+  return { connectionRow, bindingRows: input.bindingRows.map(row => refreshedBindings.get(row.rowId) ?? row) };
 }
 
 async function disableSessionPullRequestTriggerBindings(input: Readonly<{ sessionId: string; triggerId: string; triggerRevision?: number; exceptBindingId?: string }>, context: PluginInvocationContext): Promise<void> {
@@ -4851,148 +3936,7 @@ async function disableSessionPullRequestTriggerBindings(input: Readonly<{ sessio
   }
 }
 
-/** Exact source relationship reads use only the canonical retained connection/binding rows. */
-type SessionPullRequestRelationContext = PluginAccountStorageConsumerContext & Pick<PluginInvocationContext, 'signal' | 'caller'>
-  & { services: Pick<PluginInvocationContext['services'], 'targetedContributions'> };
-async function selectSessionPullRequestRelations(
-  input: Extract<SessionPullRequestBindingInputV1, { kind: 'readRelations' }>, context: SessionPullRequestRelationContext,
-) {
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
-  const native = contribution.descriptor.pullRequests!;
-  const origin = input.credentialRef === null ? getSelfStampedPluginCallerExecutionOrigin(context.caller) : undefined;
-  if (input.credentialRef === null && (origin === undefined || context.caller?.kind !== 'plugin'
-    || context.caller.pluginId !== contribution.contributor.pluginId)) {
-    throw pluginError('channels_pr_link_native_origin_unavailable', 'Native PR relations require the admitted provider source placement.');
-  }
-  const repositoryIds = new Map<string, string>();
-  const connectionIds = new Set<string>();
-  const matches = (row: StateRow) => {
-    const current = readConversationConnectionUpdateRow({ row, connectionId: row.rowId });
-    const matching = current.providerPluginId === contribution.contributor.pluginId
-      && pluginJsonValuesEqual(current.payload.credentialRef, input.credentialRef)
-      && (input.pullRequest === undefined || current.payload.providerConnectionKey === `${native.repositoryConnectionKeyPrefix}${input.pullRequest.repositoryId}`);
-    if (matching) {
-      const key = current.payload.providerConnectionKey;
-      const suffix = typeof key === 'string' && key.startsWith(native.repositoryConnectionKeyPrefix) ? key.slice(native.repositoryConnectionKeyPrefix.length) : undefined;
-      const repositoryId = suffix !== undefined && /^[1-9][0-9]*$/u.test(suffix) ? suffix : undefined;
-      if (repositoryId === undefined) throw pluginError('channels_pr_link_identity_unavailable', 'The native connection has no exact repository identity.');
-      repositoryIds.set(row.rowId, repositoryId);
-    }
-    return matching;
-  };
-  const entries: Awaited<ReturnType<typeof readSessionPullRequestBindingRows>> = [];
-  if (input.sessionId !== undefined) {
-    const sessionId = SessionIdSchema.parse(input.sessionId);
-    const connections = new Map<string, boolean>();
-    for (const entry of await readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal })) {
-      connectionIds.add(entry.binding.connectionId);
-      let matching = connections.get(entry.binding.connectionId);
-      if (matching === undefined) {
-        const row = await collection.get(entry.binding.connectionId, { signal: context.signal });
-        if (row === null) throw pluginError('channels_pr_link_connection_missing', 'A retained PR link has no verifiable connection.', true);
-        matching = matches(row);
-        connections.set(entry.binding.connectionId, matching);
-      }
-      if (matching) entries.push(entry);
-    }
-  } else {
-    let cursor: string | undefined;
-    do {
-      const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byKind,
-        prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-        ...(cursor === undefined ? {} : { cursor }) }, { signal: context.signal });
-      for (const row of page.rows) if (matches(row)) {
-        connectionIds.add(row.rowId);
-        entries.push(...await readSessionPullRequestBindingRows({ collection, connectionId: row.rowId, signal: context.signal }));
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
-  }
-  const links: Array<Extract<SessionPullRequestBindingResultV1, { kind: 'relations' }>['links'][number]> = [];
-  for (const { row, binding } of entries) {
-    const sessionId = binding.target.kind === 'session' ? binding.target.sessionId : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.sessionId : undefined;
-    const pullRequest = binding.target.kind === 'session' ? binding.target.pullRequestLink : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.pullRequest : undefined;
-    if (binding.endpoint.kind !== 'githubPullRequest' || sessionId === undefined || pullRequest === undefined
-      || binding.endpoint.parentId === undefined || !/^[1-9][0-9]*$/u.test(binding.endpoint.parentId)
-      || repositoryIds.get(binding.connectionId) !== binding.endpoint.parentId
-      || binding.endpoint.pullRequest?.number !== pullRequest.number
-      || binding.endpoint.pullRequest.repository.toLowerCase() !== pullRequest.repository.toLowerCase()) {
-      throw pluginError('channels_pr_link_identity_unavailable', 'The retained PR relationship has no exact authenticated identity.');
-    }
-    if (input.pullRequest !== undefined && (input.pullRequest.repositoryId !== binding.endpoint.parentId || input.pullRequest.number !== pullRequest.number)) continue;
-    links.push({ sessionId, bindingId: binding.id, revision: row.revision, pullRequest,
-      repositoryId: binding.endpoint.parentId, linkedAtMs: binding.createdAt });
-  }
-  return { result: { kind: 'relations' as const, links }, connectionIds };
-}
-
-/** Observe the same selected native rows as the read; no provider read or repair. */
-export async function observeSessionPullRequestBindingAction(input: JsonValue, invalidate: () => void, context: SessionPullRequestRelationContext) {
-  const request = SessionPullRequestBindingInputV1Schema.parse(input);
-  if (request.kind !== 'list' && request.kind !== 'readRelations') {
-    throw pluginError('plugin_action_read_observation_read_only_required', 'Only relationship reads can be observed.');
-  }
-  context.signal.throwIfAborted();
-  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const sessionId = request.sessionId === undefined ? undefined : SessionIdSchema.parse(request.sessionId);
-  const dependencies = new Map<string, { dispose(): void }>();
-  let disposed = false;
-  let pending = false;
-  let refreshing: Promise<void> | undefined;
-  const notify = () => { if (!disposed && !context.signal.aborted) invalidate(); };
-  function refresh(): Promise<void> {
-    pending = true;
-    return refreshing ??= (async () => {
-      try {
-        while (pending && !disposed && !context.signal.aborted && request.kind === 'readRelations') {
-          pending = false;
-          const selected = await selectSessionPullRequestRelations(request, context);
-          if (disposed || context.signal.aborted) return;
-          for (const [id, observation] of dependencies) if (!selected.connectionIds.has(id)) {
-            observation.dispose(); dependencies.delete(id);
-          }
-          let added = false;
-          for (const id of selected.connectionIds) if (!dependencies.has(id)) {
-            dependencies.set(id, collection.watch(sessionId === undefined
-              ? sessionPullRequestBindingSelection({ connectionId: id })
-              : { index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-                prefix: [id, null, CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, notify));
-            added = true;
-          }
-          // Cover the asynchronous dependency acquisition gap with one read invalidation.
-          if (added) notify();
-        }
-      } finally { refreshing = undefined; }
-    })();
-  }
-  const membership = collection.watch(request.kind === 'readRelations' && sessionId === undefined
-    ? { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }
-    : sessionPullRequestBindingSelection({ sessionId }), () => {
-      notify();
-      if (request.kind === 'readRelations') void refresh().catch(() => {
-        // The next read reports the typed storage/identity failure, not stale membership.
-        for (const observation of dependencies.values()) observation.dispose();
-        dependencies.clear();
-        notify();
-      });
-    });
-  function dispose() {
-    if (disposed) return;
-    disposed = true;
-    membership.dispose();
-    for (const observation of dependencies.values()) observation.dispose();
-    dependencies.clear();
-    context.signal.removeEventListener('abort', dispose);
-  }
-  context.signal.addEventListener('abort', dispose, { once: true });
-  try {
-    if (request.kind === 'readRelations') await refresh();
-    if (context.signal.aborted) { dispose(); context.signal.throwIfAborted(); }
-    return { dispose };
-  } catch (error) { dispose(); throw error; }
-}
-
+/** Optional one-shot presentation after an explicit link has already committed. */
 async function completeSessionPullRequestLink(
   input: SessionPullRequestLinkCompletionInputV1,
   context: PluginInvocationContext,
@@ -5039,6 +3983,7 @@ async function completeSessionPullRequestLink(
   }
 }
 
+/** Session/PR links are projections of the incumbent binding rows, never a second store. */
 export async function manageSessionPullRequestBindingForInvocation(input: JsonValue, context: PluginInvocationContext): Promise<SessionPullRequestBindingResultV1> {
   const parsed = SessionPullRequestBindingInputV1Schema.parse(input);
   if (parsed.kind === 'readRelations') return (await selectSessionPullRequestRelations(parsed, context)).result;
@@ -5329,7 +4274,7 @@ async function mutateConversationBinding(
       if (operation === 'channels_binding_set_enabled') {
         throw pluginError(
           `${operation}_target_not_verified`,
-          'The retained Automation target is not currently eligible for this binding.',
+          'The retained Workflow target is not currently eligible for this binding.',
         );
       }
       return verifiedTarget;
@@ -5351,20 +4296,7 @@ async function mutateConversationBinding(
       enabled: updateInput.enabled ?? current.binding.enabled,
     },
   });
-  if (transition.kind === 'rejected') {
-    if (transition.code === 'authorityEpochExhausted') {
-      throw pluginError(`${operation}_authority_epoch_exhausted`, 'Binding authority cannot advance further.');
-    }
-    throw pluginError(`${operation}_corrupt`, 'Binding mutation could not preserve the canonical binding relation.');
-  }
-  if (transition.binding.enabled) {
-    assertConversationBindingInputModeIsDeliverable({
-      audience: transition.binding.endpoint.audience,
-      inputMode: transition.binding.inputMode,
-      sharedEndpointInputModes: readConversationConnectionSharedEndpointInputModes(connection.payload),
-      operation,
-    });
-  }
+  assertConversationBindingMutationCanPersist(transition, connection.payload, operation);
   if (transition.kind === 'unchanged') {
     return {
       kind: 'unchanged',
@@ -5478,20 +4410,19 @@ export async function setConversationBindingEnabledForInvocation(
   if (result.kind === 'notVerified') {
     throw pluginError(
       'channels_binding_set_enabled_target_not_verified',
-      'The retained Automation target is not currently eligible for this binding.',
+      'The retained Workflow target is not currently eligible for this binding.',
     );
   }
   return result;
 }
 
-/** Accepts one exact paused Session transcript frontier without replaying history. */
-export async function acceptConversationSessionProjectionBaselineForInvocation(
+/** Dismisses one exact recovered Session transcript notice without moving its cursor. */
+export async function dismissConversationSessionProjectionNoticeForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
-): Promise<ConversationSessionProjectionBaselineAcceptResultV1> {
-  const request = admittedActionInput<ConversationSessionProjectionBaselineAcceptInputV1>(input);
-  const accepted = await acceptConversationSessionProjectionBaseline({
-    actions: context.services.actions,
+): Promise<ConversationSessionProjectionNoticeDismissResultV1> {
+  const request = admittedActionInput<ConversationSessionProjectionNoticeDismissInputV1>(input);
+  const dismissed = await dismissConversationSessionProjectionNotice({
     stateCollection: requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION),
     bindingId: request.bindingId,
     expectedBindingRevision: request.expectedBindingRevision,
@@ -5499,18 +4430,18 @@ export async function acceptConversationSessionProjectionBaselineForInvocation(
     signal: context.signal,
     now: Date.now(),
   });
-  return ConversationSessionProjectionBaselineAcceptResultV1Schema.parse({
-    kind: 'baselineAccepted',
+  return ConversationSessionProjectionNoticeDismissResultV1Schema.parse({
+    kind: 'noticeDismissed',
     bindingId: request.bindingId,
-    bindingRevision: accepted.bindingRevision,
-    frontierRevision: accepted.frontierRevision,
+    bindingRevision: dismissed.bindingRevision,
+    frontierRevision: dismissed.frontierRevision,
   });
 }
 
 /**
  * The one binding-delete owner first revokes all future binding authority in
- * the retained row. Cleanup remains with the incumbent bounded wake so a
- * response-loss retry can rejoin without inventing a second finalizer path.
+ * the retained row. The incumbent bounded wake and explicit reattachment
+ * consume the same cleanup owner without reviving retained work.
  */
 export async function deleteConversationBindingForInvocation(
   input: JsonValue,
@@ -5577,7 +4508,7 @@ export async function deleteConversationBindingForInvocation(
       }]),
     {
       kind: 'put',
-      value: {
+      value: withChannelStateDeleteFinalizationDueAt(withChannelStateSessionIdentity({
         ...row.value,
         [CHANNEL_STATE_FIELD.updatedAt]: Date.now(),
         payload: {
@@ -5586,7 +4517,7 @@ export async function deleteConversationBindingForInvocation(
           authorityEpoch: current.binding.authorityEpoch + 1,
           deletionState: 'finalizingDelete',
         },
-      },
+      }, current.binding.target)),
       expectedRevision: row.revision,
     },
   ], { signal: context.signal });
@@ -5676,7 +4607,7 @@ export async function createConversationConnectionForInvocation(
   return 'connectionRow' in result ? { kind: result.kind, connectionId: result.connectionId } : result;
 }
 
-/** The declared webhook contribution a durable-push setup must carry. */
+/** One persistence owner for public creation and the admitted PR journey. */
 async function persistPreparedConversationConnection(
   createInput: ConversationConnectionCreateInputV1,
   provider: CurrentProvider,
@@ -5737,6 +4668,7 @@ async function persistPreparedConversationConnection(
   });
 }
 
+/** The declared webhook contribution a durable-push setup must carry. */
 function readDurablePushWebhookContribution(
   setup: ConversationProviderSetupResultV1,
 ): Readonly<{ pluginId: string; localId: string }> {
@@ -5990,7 +4922,6 @@ function isCheckpointCompatibleTransfer(input: Readonly<{
 }>): boolean {
   return input.oldTransport === 'checkpointedPull'
     && input.transferInput.selectedTransport === 'checkpointedPull'
-    && input.current.lifecycle.historyGap === null
     && input.current.providerPluginId === input.provider.pluginId
     && hasSamePersistedProviderContributionSelection({
       persisted: input.current.providerContributionSelection,
@@ -6075,215 +5006,60 @@ function transferConnectionValue(input: Readonly<{
   });
 }
 
-/**
- * Runs the already-committed transfer custody through the shared frozen-stop
- * owner and speaks only the transfer result vocabulary.
- *
- * The replacement authority is durable before this runs, so an unknown,
- * deferred, unsupported, or failed stop is disclosed as retained custody
- * instead of failing an Action whose durable outcome already succeeded. Only a
- * provider-proven stop settles the slot.
- */
-async function settleTransferOldTransportStop(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-  configurationRevision: number;
-  authorityEpoch: number;
-}>, context: PluginInvocationContext): Promise<ConversationConnectionTransferResult> {
-  const pendingResult: ConversationConnectionTransferResult = {
-    kind: 'transferPendingOldStop',
-    connectionId: input.connectionId,
-    revision: input.configurationRevision,
-    authorityEpoch: input.authorityEpoch,
-  };
-  let outcome: FrozenOldTransportStopOutcome;
-  try {
-    outcome = await runFrozenOldTransportStopForCommittedCustody({
-      collection: input.collection,
-      connectionId: input.connectionId,
-      pendingRevision: input.pendingRevision,
-      reason: 'transfer',
-    }, context);
-  } catch {
-    assertNotAborted(context.signal);
-    return pendingResult;
-  }
-  return outcome.kind === 'settled'
-    ? {
-      kind: 'transferred',
-      connectionId: input.connectionId,
-      revision: outcome.configurationRevision,
-      authorityEpoch: input.authorityEpoch,
-    }
-    : pendingResult;
-}
-
-/**
- * Runs the one committed durable-push endpoint convergence and settles its
- * custody through the connection lifecycle owner.
- *
- * The retained row already names the replacement target and still carries the
- * `pending` retarget intent, so the generic endpoint move is idempotent and
- * resumable: a retry, a response-loss rejoin, and the first attempt all reach
- * the endpoint through this single path instead of leaving the endpoint and
- * the row pointed at different targets with nothing recording why.
- *
- * Every input the move needs is reread from that retained row: the endpoint
- * identity it kept, the target it currently desires, and the frozen
- * replacement epoch that orders this intent against any later one. A repair
- * that arrives after the desire moved on therefore converges the endpoint on
- * the desire the row names now, not on a target only this attempt remembers.
- */
-async function runCommittedTransferEndpointRetarget(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-}>, context: PluginInvocationContext): Promise<Readonly<{
-  revision: number;
-  configurationRevision: number;
-  lifecycle: ConversationConnectionLifecycleStateV1;
-}>> {
-  const row = await input.collection.get(input.connectionId, { signal: context.signal });
+/** Converges the endpoint from the connection's current desired placement. */
+export async function convergeConversationConnectionEndpointForInvocation(
+  input: Readonly<{ connectionId: string }>,
+  context: PluginInvocationContext,
+): Promise<boolean> {
+  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  const row = await collection.get(input.connectionId, { signal: context.signal });
   assertNotAborted(context.signal);
-  if (row === null || row.revision !== input.pendingRevision) {
-    throw pluginError(
-      'channels_connection_transfer_endpoint_retarget_conflict',
-      'Connection transfer lost its committed endpoint-retarget custody.',
-      true,
-    );
-  }
+  if (row === null) return false;
   const current = readConversationConnectionUpdateRow({ row, connectionId: input.connectionId });
-  const pending = current.lifecycle.pendingOldTransportStop;
-  if (!isConversationPendingEndpointRetarget(pending)
-    || pending.transferAuthorityEpoch !== current.lifecycle.authorityEpoch) {
-    throw pluginError(
-      'channels_connection_transfer_endpoint_retarget_conflict',
-      'Connection transfer no longer retains a committed endpoint-retarget intent.',
-      true,
-    );
-  }
+  if (current.lifecycle.deletionState !== 'none' || readTransferTransportKind(current) !== 'durablePush') return false;
+  // A policy refusal belongs to the existing visible recovery fact. Only its
+  // owner Retry or a changed connection can re-admit this work.
+  if (current.lifecycle.pollFailure?.phase === 'blocked') return true;
   const endpoint = readDurablePushTransferEndpoint({ current, connectionId: input.connectionId });
-  if (endpoint.webhookEndpointId !== pending.webhookEndpointId
-    || endpoint.webhookSourceInstanceId !== pending.webhookSourceInstanceId
-    || !pluginJsonValuesEqual(endpoint.webhookContributionRef, pending.webhookContributionRef)) {
-    throw pluginError('channels_connection_transfer_endpoint_retarget_conflict', 'Connection endpoint differs from its retained retarget intent.', true);
-  }
-  await convergeConversationConnectionWebhookEndpointTarget({
-    context,
-    // The frozen replacement authority epoch is the one identity of this
-    // transfer attempt, so every resume carries the same intent ordering and
-    // an older attempt can never move the endpoint back.
-    transferAuthorityEpoch: pending.transferAuthorityEpoch,
-    webhookEndpointId: readCanonicalConversationWebhookEndpointId(endpoint.webhookEndpointId),
-    webhookContribution: endpoint.webhookContributionRef,
-    sourceInstanceId: endpoint.webhookSourceInstanceId,
-    nextTargetMaterialization: pending.targetMaterialization,
-  });
-  assertNotAborted(context.signal);
-  const settled = finalizeConversationConnectionTransferWithoutProviderStop({
-    current: current.lifecycle,
-    provenEndpointRetarget: true,
-  });
-  if (settled.kind !== 'transportStopConfirmed') {
-    throw pluginError(
-      'channels_connection_transfer_lifecycle_stale',
-      'Connection transfer lost its durable-push lifecycle currentness.',
-      true,
-    );
-  }
-  const persisted = await persistConversationConnectionLifecycle({
-    collection: input.collection,
-    row,
-    current,
-    lifecycle: settled.connection,
-    operation: 'channels_connection_transfer_endpoint_retarget',
-  }, context);
-  return { ...persisted, lifecycle: settled.connection };
-}
-
-/**
- * Speaks the transfer result vocabulary for the committed retarget intent.
- * The replacement authority is already durable, so an endpoint move that
- * cannot complete now is disclosed as retained custody the next attempt
- * resumes — never as a failure of an Action whose write already succeeded.
- */
-async function settleTransferPendingEndpointRetarget(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  pendingRevision: number;
-  configurationRevision: number;
-  authorityEpoch: number;
-}>, context: PluginInvocationContext): Promise<ConversationConnectionTransferResult> {
-  let repaired: Awaited<ReturnType<typeof runCommittedTransferEndpointRetarget>>;
   try {
-    repaired = await runCommittedTransferEndpointRetarget({
-      collection: input.collection,
-      connectionId: input.connectionId,
-      pendingRevision: input.pendingRevision,
-    }, context);
-  } catch {
+    await convergeConversationConnectionWebhookEndpointTarget({
+      context,
+      transferAuthorityEpoch: current.lifecycle.authorityEpoch,
+      webhookEndpointId: readCanonicalConversationWebhookEndpointId(endpoint.webhookEndpointId),
+      webhookContribution: endpoint.webhookContributionRef,
+      sourceInstanceId: endpoint.webhookSourceInstanceId,
+      nextTargetRouting: current.transportOrigin,
+    });
+  } catch (cause) {
     assertNotAborted(context.signal);
-    return {
-      kind: 'transferPendingOldStop',
-      connectionId: input.connectionId,
-      revision: input.configurationRevision,
-      authorityEpoch: input.authorityEpoch,
-    };
+    await recordConversationConnectionReceiveFailureForInvocation({ row, cause }, context);
+    throw cause;
   }
-  return {
-    kind: 'transferred',
-    connectionId: input.connectionId,
-    revision: repaired.configurationRevision,
-    authorityEpoch: input.authorityEpoch,
-  };
+  assertNotAborted(context.signal);
+  if (current.lifecycle.pollFailure !== null) {
+    await persistConversationConnectionLifecycle({
+      collection, row, current,
+      lifecycle: { ...current.lifecycle, pollFailure: null },
+      operation: 'channels_connection_transfer_endpoint_retarget',
+    }, context);
+  }
+  return true;
 }
 
-/** Rejoins a response-lost transfer without replaying setup, test, or endpoint work. */
-async function rejoinCommittedConversationConnectionTransfer(input: Readonly<{
-  collection: ChannelStateCollection;
-  connectionId: string;
-  row: StateRow;
-  current: ConversationConnectionUpdateRow;
-}>, context: PluginInvocationContext): Promise<ConversationConnectionTransferResult> {
-  const pending = input.current.lifecycle.pendingOldTransportStop;
-  if (pending === null) {
-    return {
-      kind: 'transferred',
-      connectionId: input.connectionId,
-      revision: input.current.configurationRevision,
-      authorityEpoch: input.current.lifecycle.authorityEpoch,
-    };
+async function convergeCommittedConversationConnectionEndpoint(
+  connectionId: string,
+  context: PluginInvocationContext,
+): Promise<void> {
+  try {
+    await convergeConversationConnectionEndpointForInvocation({ connectionId }, context);
+  } catch (cause) {
+    assertNotAborted(context.signal);
+    // Desired placement already committed. Its existing receive-recovery
+    // fact remains visible, and the supervisor owns the next eligible retry.
+    context.services.logger.warn('[Channels] endpoint convergence deferred', {
+      connectionId, ...(isPluginError(cause) ? { code: cause.code } : {}),
+    });
   }
-  // The committed row already names the replacement transport, so only the
-  // frozen slot can say what was retired and what that predecessor still owes.
-  if (isConversationPendingEndpointRetarget(pending)) {
-    return await settleTransferPendingEndpointRetarget({
-      collection: input.collection,
-      connectionId: input.connectionId,
-      pendingRevision: input.row.revision,
-      configurationRevision: input.current.configurationRevision,
-      authorityEpoch: input.current.lifecycle.authorityEpoch,
-    }, context);
-  }
-  if (pending.predecessorTransportKind !== 'socket') {
-    // A retired checkpointed pull is settled by the one core poll supervisor
-    // and a detached durable push has no provider worker at all; neither may
-    // be handed to the frozen provider-stop path.
-    return {
-      kind: 'transferPendingOldStop',
-      connectionId: input.connectionId,
-      revision: input.current.configurationRevision,
-      authorityEpoch: input.current.lifecycle.authorityEpoch,
-    };
-  }
-  return await settleTransferOldTransportStop({
-    collection: input.collection,
-    connectionId: input.connectionId,
-    pendingRevision: input.row.revision,
-    configurationRevision: input.current.configurationRevision,
-    authorityEpoch: input.current.lifecycle.authorityEpoch,
-  }, context);
 }
 
 /**
@@ -6344,442 +5120,79 @@ async function prepareTransferProviderAndRereadRetainedRow(input: Readonly<{
   };
 }
 
-/**
- * Decides a retained row that has settled past this request's basis without
- * keeping any marker of the transfer that would have moved it.
- *
- * Such a row is reached only by resolving the placement this request asks for,
- * because that placement is the single requested fact a settled row can still
- * contradict. The journey deliberately stops there: the row is already past the
- * caller's basis, so its only outcomes are rejoining an outcome this request
- * already produced or the ordinary conflict a fresh exact-row transfer
- * resolves. No Account authority, frozen stop, or endpoint effect is replayed.
- */
-async function rejoinSettledConversationConnectionTransfer(input: Readonly<{
-  collection: ChannelStateCollection;
-  transferInput: ConversationConnectionTransferInputV1;
-  basis: ConversationConnectionUpdateRow;
-}>, context: PluginInvocationContext): Promise<ConversationConnectionTransferResult> {
-  const preparation = await prepareTransferProviderAndRereadRetainedRow(input, context);
-  if (preparation.kind === 'notReady') return preparation.result;
-  if (!isLostResponseCommittedTransfer({
-    row: preparation.row,
-    current: preparation.current,
-    transferInput: input.transferInput,
-    requestedTransportOrigin: preparation.prepared.transportOrigin,
-  })) {
-    throw pluginError(
-      'channels_connection_transfer_conflict',
-      'Connection transfer requires the current retained row revision.',
-      true,
-    );
-  }
-  assertTransferImmutableConnectionIdentity({
-    current: preparation.current,
-    setup: preparation.prepared.setup,
-  });
-  return await rejoinCommittedConversationConnectionTransfer({
-    collection: input.collection,
-    connectionId: input.transferInput.connectionId,
-    row: preparation.row,
-    current: preparation.current,
-  }, context);
-}
-
-/**
- * Replaces one exact retained connection authority without assigning a second
- * owner to provider setup, checkpoint progress, or old-transport stop custody.
- */
+/** Replaces desired placement/credential and advances the one worker generation. */
 export async function transferConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionTransferResult> {
   const transferInput = admittedActionInput<ConversationConnectionTransferInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  assertNotAborted(context.signal);
   const row = await collection.get(transferInput.connectionId, { signal: context.signal });
   assertNotAborted(context.signal);
-  if (row === null) {
-    throw pluginError('channels_connection_transfer_not_found', 'Connection transfer target does not exist.');
-  }
+  if (row === null) throw pluginError('channels_connection_transfer_not_found', 'Connection transfer target does not exist.');
   const current = readConversationConnectionUpdateRow({ row, connectionId: transferInput.connectionId });
-  if (
-    current.configurationRevision !== transferInput.expectedRevision
-    || current.lifecycle.authorityEpoch !== transferInput.expectedAuthorityEpoch
-  ) {
-    const committed = readCommittedTransferReplacementState({ row, current, transferInput });
-    // A marked row still holds this transfer's own frozen custody, so it needs
-    // no setup or test to be identified. The frozen stop is idempotent and
-    // addressed to the exact retired origin, so its replay is the one
-    // settlement this Action still owns for that committed custody.
-    if (committed === 'marked') {
-      return await rejoinCommittedConversationConnectionTransfer({
-        collection,
-        connectionId: transferInput.connectionId,
-        row,
-        current,
-      }, context);
-    }
-    if (committed === 'none') {
-      throw pluginError(
-        'channels_connection_transfer_conflict',
-        'Connection transfer requires the current retained row revision.',
-        true,
-      );
-    }
-    return await rejoinSettledConversationConnectionTransfer({
-      collection,
-      transferInput,
-      basis: current,
-    }, context);
-  }
-  // A row that still owes its committed endpoint move is only *possibly* this
-  // request's resume. Nothing is decided here: the retained row names a
-  // desired physical origin, and only running this request's selected provider
-  // setup can say whether the same input still resolves to it. Deciding before
-  // that would converge the endpoint onto a placement the selected provider no
-  // longer occupies.
-  const endpointResumeCandidate = isCurrentUnacceptedTransferResume({ row, current, transferInput });
-  const oldTransport = readTransferTransportKind(current);
-  // A durable-push→durable-push transfer keeps the same Account endpoint and
-  // only moves its target. That move is the one old-transport obligation this
-  // transfer commits before touching the generic endpoint owner.
-  const requiresEndpointRetarget = oldTransport === 'durablePush'
-    && transferInput.selectedTransport === 'durablePush';
-  if (
-    transferInput.endpointContinuation !== undefined
-    && (oldTransport === 'durablePush' || transferInput.selectedTransport !== 'durablePush')
-  ) {
-    throw pluginError(
-      'channels_connection_transfer_endpoint_mismatch',
-      'Only a transfer from a non-webhook transport onto durable push accepts an endpoint continuation.',
-    );
-  }
-  const initialFrozenOldStopRequest = createTransferStopRequest({
-    connectionId: transferInput.connectionId,
-    payload: current.payload,
-    authorityEpoch: current.lifecycle.authorityEpoch + 1,
-  });
-  // This pure preflight rejects delete/pending custody before selected setup or
-  // test can touch the provider. Final lifecycle facts are recomputed after
-  // provider setup is admitted below. A candidate resume of this connection's
-  // own owed endpoint move is the one row that legitimately still holds
-  // pending custody, so it is preflighted after setup instead — where the
-  // resolved physical origin can decide whether it really is that resume.
-  if (!endpointResumeCandidate) {
-    assertTransferStartAccepted(startConversationConnectionTransfer({
-      current: current.lifecycle,
-      pendingOldTransportStop: requiresEndpointRetarget && isConversationPendingEndpointRetarget(current.lifecycle.pendingOldTransportStop)
-        ? { ...current.lifecycle.pendingOldTransportStop, transferAuthorityEpoch: current.lifecycle.authorityEpoch + 1 }
-        : {
-        predecessorCheckpointedPollInvocation: {
-          connectionRevision: row.revision,
-          authorityEpoch: current.lifecycle.authorityEpoch,
-          transportOrigin: current.transportOrigin,
-        },
-        transportOrigin: current.transportOrigin,
-        providerContributionSelection: current.providerContributionSelection,
-        stopRequest: initialFrozenOldStopRequest,
-        predecessorTransportKind: oldTransport,
-        endpointRetarget: 'notRequired',
-      },
-      replacement: {
-        enabled: current.lifecycle.enabled,
-        overlapSafety: current.lifecycle.overlapSafety,
-        historyGap: current.lifecycle.historyGap,
-      },
-    }));
-  }
-
-  // Setup/test are external effects. Every result path, including changed-origin
-  // transfer, must re-read the exact incumbent before a later checkpoint or
-  // retained-row CAS can act on the pre-effect authority.
-  const preparation = await prepareTransferProviderAndRereadRetainedRow({
-    collection,
-    transferInput,
-    basis: current,
-  }, context);
+  const startsAtRequestedRevision = current.configurationRevision === transferInput.expectedRevision;
+  const preparation = await prepareTransferProviderAndRereadRetainedRow({ collection, transferInput, basis: current }, context);
   if (preparation.kind === 'notReady') return preparation.result;
-  const { provider, prepared } = preparation;
-  const postSetupRow = preparation.row;
-  const postSetupCurrent = preparation.current;
-  if (
-    postSetupCurrent.configurationRevision !== transferInput.expectedRevision
-    || postSetupCurrent.lifecycle.authorityEpoch !== transferInput.expectedAuthorityEpoch
-  ) {
-    if (isLostResponseCommittedTransfer({
-      row: postSetupRow,
-      current: postSetupCurrent,
-      transferInput,
-      requestedTransportOrigin: prepared.transportOrigin,
-    })) {
-      return await rejoinCommittedConversationConnectionTransfer({
-        collection,
-        connectionId: transferInput.connectionId,
-        row: postSetupRow,
-        current: postSetupCurrent,
-      }, context);
-    }
-    throw pluginError(
-      'channels_connection_transfer_conflict',
-      'Connection transfer lost its retained-row currentness during provider setup.',
-      true,
-    );
+  const { provider, prepared, row: incumbentRow, current: incumbent } = preparation;
+  assertTransferImmutableConnectionIdentity({ current: incumbent, setup: prepared.setup });
+  const authorityChangedDuringSetup = incumbent.lifecycle.authorityEpoch !== current.lifecycle.authorityEpoch;
+  if (!authorityChangedDuringSetup && isRequestedTransferAlreadyCurrent({ current: incumbent, transferInput })
+    && areConversationConnectionTransportOriginsEqual(incumbent.transportOrigin, getConversationConnectionTransportOrigin(prepared.transportOrigin))) {
+    if (transferInput.selectedTransport === 'durablePush') await convergeCommittedConversationConnectionEndpoint(transferInput.connectionId, context);
+    return { kind: startsAtRequestedRevision ? 'rejoined' : 'transferred', connectionId: transferInput.connectionId,
+      revision: incumbent.configurationRevision, authorityEpoch: incumbent.lifecycle.authorityEpoch };
   }
-  assertTransferImmutableConnectionIdentity({ current: postSetupCurrent, setup: prepared.setup });
-  // The owed endpoint move is resumed only when this request's selected setup
-  // still resolves the exact physical origin the committed intent desires.
-  // Equal Action input is not equal placement: a provider that now materializes
-  // somewhere else is a different transfer, and resuming it would converge the
-  // endpoint onto a machine the replacement no longer runs on. Such a request
-  // falls through to the ordinary path, where the retained pending custody is
-  // reported as the blocker it is until the owed move settles.
-  if (endpointResumeCandidate
-    && isCurrentUnacceptedTransferResume({
-      row: postSetupRow,
-      current: postSetupCurrent,
-      transferInput,
-    })
-    && areConversationConnectionTransportOriginsEqual(postSetupCurrent.transportOrigin, getConversationConnectionTransportOrigin(prepared.transportOrigin))) {
-    return await rejoinCommittedConversationConnectionTransfer({
-      collection,
-      connectionId: transferInput.connectionId,
-      row: postSetupRow,
-      current: postSetupCurrent,
-    }, context);
+  if (!startsAtRequestedRevision || incumbent.configurationRevision !== transferInput.expectedRevision || authorityChangedDuringSetup) {
+    throw pluginError('channels_connection_transfer_conflict', 'Connection transfer requires the current retained row revision.', true);
   }
-  if (isRequestedTransferAlreadyCurrent({ current: postSetupCurrent, transferInput })
-    && areConversationConnectionTransportOriginsEqual(postSetupCurrent.transportOrigin, getConversationConnectionTransportOrigin(prepared.transportOrigin))) {
-    return {
-      kind: 'rejoined',
-      connectionId: transferInput.connectionId,
-      revision: postSetupCurrent.configurationRevision,
-      authorityEpoch: postSetupCurrent.lifecycle.authorityEpoch,
-    };
+  const oldTransport = readTransferTransportKind(incumbent);
+  if (transferInput.endpointContinuation !== undefined
+    && (oldTransport === 'durablePush' || transferInput.selectedTransport !== 'durablePush')) {
+    throw pluginError('channels_connection_transfer_endpoint_mismatch', 'Only a transfer from a non-webhook transport onto durable push accepts an endpoint continuation.');
   }
-
-  // A replacement credential re-authenticates its own shared-endpoint delivery
-  // truth, and the committed row adopts it verbatim. If that truth is narrower
-  // than a promise an enabled binding already made, committing here would leave
-  // the binding intact, enabled, and permanently unable to observe anything.
-  // The transfer is refused before any authority moves, so the incumbent
-  // connection and its bindings survive untouched.
-  const unsatisfiableAfterTransfer = await readConversationBindingInputModesNoLongerDeliverable({
-    context,
-    connectionId: transferInput.connectionId,
-    sharedEndpointInputModes: prepared.setup.sharedEndpointInputModes,
-  });
+  const unsatisfiable = await readConversationBindingInputModesNoLongerDeliverable({ context,
+    connectionId: transferInput.connectionId, sharedEndpointInputModes: prepared.setup.sharedEndpointInputModes });
   assertNotAborted(context.signal);
-  if (unsatisfiableAfterTransfer.length > 0) {
-    return {
-      kind: 'notReady',
-      reason: 'permissionMissing',
-      diagnostic: `The replacement integration cannot deliver ${unsatisfiableAfterTransfer.join(', ')} for shared conversations, which saved bindings on this connection require.`,
-    };
-  }
-
-  if (transferInput.selectedTransport === 'durablePush'
-    && oldTransport !== 'durablePush'
-    && transferInput.endpointContinuation === undefined) {
-    return await prepareEndpointRequiredConnectionJourney({
-      connectionId: transferInput.connectionId,
-      setup: prepared.setup,
-      transportOrigin: prepared.transportOrigin,
-    });
-  }
-
-  const incumbentRow = postSetupRow;
-  const incumbent = postSetupCurrent;
-  const frozenOldStopRequest = createTransferStopRequest({
-    connectionId: transferInput.connectionId,
-    payload: incumbent.payload,
-    authorityEpoch: incumbent.lifecycle.authorityEpoch + 1,
-  });
-
-  const checkpointCompatible = isCheckpointCompatibleTransfer({
-    current: incumbent,
-    oldTransport,
-    transferInput,
-    provider,
-    setup: prepared.setup,
-  });
+  if (unsatisfiable.length > 0) return { kind: 'notReady', reason: 'permissionMissing',
+    diagnostic: `The replacement integration cannot deliver ${unsatisfiable.join(', ')} for shared conversations, which saved bindings on this connection require.` };
   const now = Date.now();
-  const checkpointFence = checkpointCompatible
-    ? await prepareConversationCheckpointTransferFence({
-      context,
-      connectionId: transferInput.connectionId,
-      routingIdentityKey: incumbent.routingIdentityKey,
-      currentAuthorityEpoch: incumbent.lifecycle.authorityEpoch,
-      nextAuthorityEpoch: incumbent.lifecycle.authorityEpoch + 1,
-      now,
-    })
-    : undefined;
-  const historyGap = checkpointFence === undefined
-    ? incumbent.lifecycle.historyGap ?? { reportedAt: now, reason: 'providerHistoryUnavailable' as const }
-    : null;
-  const retainedEndpoint = requiresEndpointRetarget
-    ? readDurablePushTransferEndpoint({ current: incumbent, connectionId: transferInput.connectionId })
-    : undefined;
-  const endpointIntent: ConversationPendingEndpointRetargetIntentV1 | undefined = retainedEndpoint === undefined ? undefined : {
-    kind: 'endpointRetarget',
-    ...retainedEndpoint,
-    targetMaterialization: readWebhookTargetMaterialization(prepared.transportOrigin),
-    transferAuthorityEpoch: incumbent.lifecycle.authorityEpoch + 1,
-  };
-  const lifecycleStart = assertTransferStartAccepted(startConversationConnectionTransfer({
-    current: incumbent.lifecycle,
-    pendingOldTransportStop: endpointIntent ?? {
-      predecessorCheckpointedPollInvocation: {
-        connectionRevision: incumbentRow.revision,
-        authorityEpoch: incumbent.lifecycle.authorityEpoch,
-        transportOrigin: incumbent.transportOrigin,
-      },
-      transportOrigin: incumbent.transportOrigin,
-      providerContributionSelection: incumbent.providerContributionSelection,
-      stopRequest: frozenOldStopRequest,
-      predecessorTransportKind: oldTransport,
-      endpointRetarget: 'notRequired',
-    },
-    replacement: {
-      enabled: incumbent.lifecycle.enabled,
-      overlapSafety: prepared.setup.overlapSafety,
-      historyGap,
-    },
-  }));
-
-  let durablePushEndpoint: ConversationConnectionWebhookEndpoint | undefined;
-  if (requiresEndpointRetarget) {
-    // Only the retained endpoint identity is read here. Moving its target is
-    // deferred until the row CAS below has committed the recoverable intent,
-    // so a lost or conflicting write can never leave the generic endpoint
-    // delivering to a target the retained connection does not name.
-    durablePushEndpoint = retainedEndpoint;
-  } else if (transferInput.selectedTransport === 'durablePush') {
-    if (transferInput.endpointContinuation === undefined || oldTransport === 'durablePush') {
-      throw pluginError(
-        'channels_connection_transfer_endpoint_required',
-        'Connection transfer onto durable push requires its exact endpoint continuation.',
-      );
-    }
-    durablePushEndpoint = await admitDurablePushTransferEndpointContinuation({
-      context,
-      connectionId: transferInput.connectionId,
-      setup: prepared.setup,
-      transportOrigin: prepared.transportOrigin,
-      continuation: transferInput.endpointContinuation,
-    });
+  const checkpointFence = isCheckpointCompatibleTransfer({ current: incumbent, oldTransport, transferInput,
+    provider, setup: prepared.setup }) ? await prepareConversationCheckpointTransferFence({ context,
+      connectionId: transferInput.connectionId, routingIdentityKey: incumbent.routingIdentityKey,
+      currentAuthorityEpoch: incumbent.lifecycle.authorityEpoch, nextAuthorityEpoch: incumbent.lifecycle.authorityEpoch + 1, now }) : undefined;
+  const historyGap = incumbent.lifecycle.historyGap ?? (checkpointFence === undefined
+    ? { reportedAt: now, reason: 'providerHistoryUnavailable' as const } : null);
+  const lifecycle = assertTransferStartAccepted(startConversationConnectionTransfer({ current: incumbent.lifecycle,
+    replacement: { enabled: incumbent.lifecycle.enabled, overlapSafety: prepared.setup.overlapSafety, historyGap } })).connection;
+  if (transferInput.selectedTransport === 'durablePush' && oldTransport !== 'durablePush' && transferInput.endpointContinuation === undefined) {
+    return await prepareEndpointRequiredConnectionJourney({ connectionId: transferInput.connectionId,
+      setup: prepared.setup, transportOrigin: prepared.transportOrigin });
   }
-
-  // A prior durable-push transport has no provider worker to stop. Moving
-  // away detaches only the Channels reference, while the generic webhook
-  // owner retains endpoint lifecycle independently.
-  const settledLifecycle = oldTransport === 'durablePush' && !requiresEndpointRetarget
-    ? (() => {
-      const finalized = finalizeConversationConnectionTransferWithoutProviderStop({
-        current: lifecycleStart.connection,
-        provenEndpointRetarget: false,
-      });
-      if (finalized.kind !== 'transportStopConfirmed') {
-        throw pluginError(
-          'channels_connection_transfer_lifecycle_stale',
-          'Connection transfer lost its durable-push lifecycle currentness.',
-          true,
-        );
-      }
-      return finalized.connection;
-    })()
-    : lifecycleStart.connection;
-
-  // The selected immutable contributor is re-read after every external or
-  // storage boundary; only that exact current generation may receive a write.
-  const providerForPersistence = await readCurrentSelectedProvider({
-    context,
-    selection: transferInput.providerSelection,
-  });
+  let webhookEndpoint: ConversationConnectionWebhookEndpoint | undefined;
+  if (transferInput.selectedTransport === 'durablePush') {
+    webhookEndpoint = oldTransport === 'durablePush'
+      ? readDurablePushTransferEndpoint({ current: incumbent, connectionId: transferInput.connectionId })
+      : await admitDurablePushTransferEndpointContinuation({ context, connectionId: transferInput.connectionId,
+        setup: prepared.setup, transportOrigin: prepared.transportOrigin, continuation: transferInput.endpointContinuation! });
+  }
+  const providerForPersistence = await readCurrentSelectedProvider({ context, selection: transferInput.providerSelection });
   if (providerForPersistence.pluginId !== provider.pluginId) {
-    throw pluginError(
-      'channels_connection_transfer_provider_currentness_changed',
-      'The selected provider changed before connection transfer persistence.',
-      true,
-    );
+    throw pluginError('channels_connection_transfer_provider_currentness_changed', 'The selected provider changed before connection transfer persistence.', true);
   }
   assertTransferProviderPluginIdentity({ current: incumbent, providerPluginId: providerForPersistence.pluginId });
-  assertTransferImmutableConnectionIdentity({ current: incumbent, setup: prepared.setup });
-
-  const value = transferConnectionValue({
-      row: incumbentRow,
-      current: incumbent,
-      transferInput,
-      providerPluginId: providerForPersistence.pluginId,
-      prepared,
-      webhookEndpoint: durablePushEndpoint,
-      lifecycle: settledLifecycle,
-      now,
-    });
-  const mutations: ChannelStateBatchMutation[] = [{
-    kind: 'put',
-    value,
-    expectedRevision: incumbentRow.revision,
-  }];
-  if (checkpointFence !== undefined) {
-    mutations.push({
-      kind: 'put',
-      value: checkpointFence.value,
-      expectedRevision: checkpointFence.expectedRevision,
-    });
-  }
+  const value = transferConnectionValue({ row: incumbentRow, current: incumbent, transferInput,
+    providerPluginId: providerForPersistence.pluginId, prepared, webhookEndpoint, lifecycle, now });
+  const mutations: ChannelStateBatchMutation[] = [{ kind: 'put', value, expectedRevision: incumbentRow.revision }];
+  if (checkpointFence !== undefined) mutations.push({ kind: 'put', value: checkpointFence.value,
+    expectedRevision: checkpointFence.expectedRevision });
   const result = await collection.batch(mutations, { signal: context.signal });
   assertNotAborted(context.signal);
-  if (result.status === 'conflict') {
-    throw pluginError(
-      'channels_connection_transfer_conflict',
-      'Connection transfer lost its retained-row compare-and-swap.',
-      true,
-    );
+  if (result.status === 'conflict') throw pluginError('channels_connection_transfer_conflict', 'Connection transfer lost its retained-row compare-and-swap.', true);
+  if (!result.results.some(entry => entry.rowId === transferInput.connectionId && entry.deleted === false)) {
+    throw pluginError('channels_connection_transfer_result_invalid', 'Connection transfer did not return its retained connection result.', true);
   }
-  const persisted = result.results.find((entry) => (
-    entry.rowId === transferInput.connectionId && entry.deleted === false
-  ));
-  if (persisted === undefined) {
-    throw pluginError(
-      'channels_connection_transfer_result_invalid',
-      'Connection transfer did not return its retained connection result.',
-      true,
-    );
-  }
-  if (requiresEndpointRetarget) {
-    return await settleTransferPendingEndpointRetarget({
-      collection,
-      connectionId: transferInput.connectionId,
-      pendingRevision: persisted.revision,
-      configurationRevision: value.payload.configurationRevision,
-      authorityEpoch: lifecycleStart.connection.authorityEpoch,
-    }, context);
-  }
-  if (oldTransport === 'checkpointedPull') {
-    // A checkpointed pull has no provider-local consumer to stop. The one core
-    // poll supervisor observes the fenced predecessor become ineligible and
-    // settles this exact durable custody itself.
-    return {
-      kind: 'transferPendingOldStop',
-      connectionId: transferInput.connectionId,
-      revision: value.payload.configurationRevision,
-      authorityEpoch: lifecycleStart.connection.authorityEpoch,
-    };
-  }
-  if (oldTransport === 'durablePush') {
-    return {
-      kind: 'transferred',
-      connectionId: transferInput.connectionId,
-      revision: value.payload.configurationRevision,
-      authorityEpoch: settledLifecycle.authorityEpoch,
-    };
-  }
-  return await settleTransferOldTransportStop({
-    collection,
-    connectionId: transferInput.connectionId,
-    pendingRevision: persisted.revision,
-    configurationRevision: value.payload.configurationRevision,
-    authorityEpoch: lifecycleStart.connection.authorityEpoch,
-  }, context);
+  if (transferInput.selectedTransport === 'durablePush') await convergeCommittedConversationConnectionEndpoint(transferInput.connectionId, context);
+  return { kind: 'transferred', connectionId: transferInput.connectionId,
+    revision: value.payload.configurationRevision, authorityEpoch: lifecycle.authorityEpoch };
 }

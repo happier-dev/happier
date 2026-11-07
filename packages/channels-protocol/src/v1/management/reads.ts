@@ -82,7 +82,8 @@ export const ConversationBindingManagementRowV1Schema = defineProtocolObject({
     bindingId: ConversationBindingIdV1Schema, parentBindingId: ConversationBindingIdV1Schema.optional(), revision,
     connectionId: ConversationConnectionIdV1Schema,
     endpoint: defineProtocolObject({ audience: values(['direct', 'shared']), label: defineProtocolString().optional() }, closed),
-    target: defineProtocolObject({ kind: values(['session', 'automation', 'threadRouter']), summary: text, sessionId: text.optional() }, closed),
+    target: defineProtocolObject({ kind: values(['session', 'automation', 'threadRouter', 'discussion']), summary: text,
+        sessionId: text.optional(), discussionId: text.optional() }, closed),
     inputMode: values(['directMentionsOnly', 'addressedMessages', 'allAllowedMessages']),
     deliveryMode: values(['repliesOnly', 'mirrorSession', 'finalResult', 'none']),
     approval: defineProtocolUnion([
@@ -108,12 +109,19 @@ export const ConversationDeliveryAttentionResultV1Schema = defineProtocolObject(
 export const CONVERSATION_DELIVERY_CUSTODY_STATES_V1 = [
     'ready', 'retryDue', 'attempting', 'delivered', 'notDelivered', 'suppressed', 'partial', 'outcomeUnknown',
     'resolvedAccepted', 'resolvedDiscarded', 'connectionDeleted',
+    'notSent', 'resolved',
 ] as const;
+export const CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1 = [
+    'providerRefused', 'policySuppressed', 'connectionDeleted', 'ownerMustUnarchiveOrRebind',
+] as const;
+export const CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1 = ['accepted', 'discarded'] as const;
 export const ConversationDeliveryReadResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('notFound') }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('ready'), delivery: defineProtocolObject({
         custodyId, revision, connectionId: ConversationConnectionIdV1Schema, bindingId: ConversationBindingIdV1Schema.optional(),
         state: values(CONVERSATION_DELIVERY_CUSTODY_STATES_V1),
+        reason: values(CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1).optional(),
+        outcome: values(CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1).optional(),
         projection: defineProtocolObject({ terminal: boolean, attention: boolean, retryNotBefore: integer.optional() }, closed),
         lastOutcome: ConversationSessionLastDeliveryOutcomeV1Schema, createdThreadEndpointRequired, recommendedRecovery,
     }, closed) }, closed),

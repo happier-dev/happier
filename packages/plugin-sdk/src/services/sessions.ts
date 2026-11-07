@@ -448,6 +448,8 @@ export type SessionSystemRecordDeleteRequest = Readonly<{
 
 export type SessionSummary = Readonly<{
     id: string;
+    /** Exact captured Home destination; absent when the host cannot route it. */
+    address?: Readonly<{ sessionId: string; serverId: string; serverUrl: string }>;
     title?: string;
     machineId?: string;
     projectId?: string;

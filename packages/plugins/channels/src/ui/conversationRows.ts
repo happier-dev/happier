@@ -366,7 +366,7 @@ export function isBindingEndpointAudience(value: unknown): value is BindingEndpo
 }
 
 export function isBindingTargetKind(value: unknown): value is BindingTargetKind {
-  return value === 'session' || value === 'automation' || value === 'threadRouter';
+  return value === 'session' || value === 'automation' || value === 'threadRouter' || value === 'discussion';
 }
 
 export function isBindingInputMode(value: unknown): value is BindingInputMode {
@@ -389,6 +389,7 @@ export function deliveryModeMatchesTarget(
   deliveryMode: BindingDeliveryMode,
 ): boolean {
   if (targetKind === 'threadRouter') return deliveryMode === 'none';
+  if (targetKind === 'discussion') return deliveryMode === 'repliesOnly';
   return targetKind === 'session'
     ? deliveryMode === 'repliesOnly' || deliveryMode === 'mirrorSession'
     : deliveryMode === 'finalResult' || deliveryMode === 'none';
@@ -423,6 +424,7 @@ export function parseBinding(value: unknown): ChannelsBinding | undefined {
   const targetKind = value.target.kind;
   const targetSummary = value.target.summary;
   const sessionId = value.target.sessionId;
+  const discussionId = value.target.discussionId;
   const inputMode = value.inputMode;
   const deliveryMode = value.deliveryMode;
   const deletionState = value.deletionState;
@@ -435,6 +437,7 @@ export function parseBinding(value: unknown): ChannelsBinding | undefined {
     || !isBindingTargetKind(targetKind)
     || !isNonEmptyString(targetSummary)
     || (sessionId !== undefined && (targetKind !== 'session' || !isNonEmptyString(sessionId)))
+    || (discussionId !== undefined && (targetKind !== 'discussion' || !isNonEmptyString(discussionId)))
     || !isBindingInputMode(inputMode)
     || !isBindingDeliveryMode(deliveryMode)
     || !isBindingDeletionState(deletionState)
@@ -454,7 +457,8 @@ export function parseBinding(value: unknown): ChannelsBinding | undefined {
       audience,
       ...(endpointLabel === undefined ? {} : { label: endpointLabel }),
     },
-    target: { kind: targetKind, summary: targetSummary, ...(sessionId === undefined ? {} : { sessionId }) },
+    target: { kind: targetKind, summary: targetSummary, ...(sessionId === undefined ? {} : { sessionId }),
+      ...(discussionId === undefined ? {} : { discussionId }) },
     inputMode,
     deliveryMode,
     approval,

@@ -20,7 +20,7 @@ import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationPullRequestTriggerSchema } from './automationTriggerDefinition.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
-import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { asProtocolZod, projectZodProtocolSchema } from "../plugins/actions/internalProtocolZodAdapter.js";
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { defineProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
 
@@ -123,10 +123,25 @@ export const AutomationConversationScopedTriggerRefV1Schema = lazyZodSchema(() =
   triggerKind: z.enum(['prComment', 'ciFailed']),
   pullRequest: AutomationPullRequestTriggerSchema.shape.pullRequest,
 }));
+const conversationScopedActorV1Schema = lazyZodSchema(() => z.strictObject({
+  principalId: z.string().check(z.minLength(1)), repositoryWriteAccess: z.nullable(z.boolean()),
+}));
+const conversationEventActorsV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+  occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
+  // This correspondence is also visible beside E2EE ciphertext. Display
+  // labels and other private sender content stay in the sealed input only.
+  sender: z.strictObject({ principalId: z.string().check(z.minLength(1)) }),
+  observationActorPrincipalId: z.string().check(z.minLength(1)),
+  actor: conversationScopedActorV1Schema,
+})));
+/** One parser supplies native input and the retaining association's declaration. */
+export const AutomationConversationEventActorsV1Schema = projectZodProtocolSchema(conversationEventActorsV1Schema);
 export const AutomationConversationScopedTriggerEvidenceV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationConversationScopedTriggerRefV1Schema, {
   bindingId: asProtocolZod(AutomationIdV1Schema),
   observationActorPrincipalId: z.string().check(z.minLength(1)),
-  actor: z.strictObject({ principalId: z.string().check(z.minLength(1)), repositoryWriteAccess: z.nullable(z.boolean()) }),
+  actor: conversationScopedActorV1Schema,
+  /** Ordered original senders of one composite admission; omission retains the single-event contract. */
+  eventActors: z.optional(asProtocolZod(AutomationConversationEventActorsV1Schema)),
 })));
 export type AutomationConversationScopedTriggerEvidenceV1 = z.infer<typeof AutomationConversationScopedTriggerEvidenceV1Schema>;
 export type AutomationConversationScopedTriggerRefV1 = z.infer<typeof AutomationConversationScopedTriggerRefV1Schema>;
@@ -151,18 +166,52 @@ export const AutomationConversationAdmitInputV1Schema = lazyZodSchema(() => z.st
 }));
 export type AutomationConversationAdmitInputV1 = z.infer<typeof AutomationConversationAdmitInputV1Schema>;
 
-/** Binds scoped permission evidence to the same semantic sender and binding. */
+/** Shared identity correspondence for plain input and the host's sealed projection. */
+export function isAutomationConversationScopedActorCorrespondenceV1(
+  evidence: Pick<AutomationConversationScopedTriggerEvidenceV1, 'actor' | 'observationActorPrincipalId' | 'eventActors'>,
+): boolean {
+  if (evidence.actor.principalId !== evidence.observationActorPrincipalId) return false;
+  const actors = evidence.eventActors;
+  if (actors === undefined) return true;
+  if (actors.length === 0 || actors[0]!.actor.principalId !== evidence.actor.principalId
+    || actors[0]!.actor.repositoryWriteAccess !== evidence.actor.repositoryWriteAccess) return false;
+  const occurrences = new Set<string>();
+  for (const entry of actors) {
+    if (occurrences.has(entry.occurrenceId) || entry.actor.principalId !== entry.observationActorPrincipalId
+      || !senderMatchesPrincipal(entry.sender, entry.actor.principalId)) return false;
+    occurrences.add(entry.occurrenceId);
+  }
+  return true;
+}
+
+function senderMatchesPrincipal(sender: JsonValue, principalId: string): boolean {
+  return typeof sender === 'object' && sender !== null && !Array.isArray(sender)
+    && 'principalId' in sender && sender.principalId === principalId;
+}
+
+/** Binds scoped permission evidence to the same semantic senders, events and binding. */
 export function isAutomationConversationAdmitScopedCorrespondenceV1(
   input: AutomationConversationAdmitInputV1,
 ): boolean {
   const evidence = input.hostEvidence;
   if (evidence === undefined) return true;
-  const sender = input.sender;
-  return evidence.bindingId === input.bindingId
-    && typeof sender === 'object' && sender !== null && !Array.isArray(sender)
-    && 'principalId' in sender
-    && sender.principalId === evidence.actor.principalId
-    && sender.principalId === evidence.observationActorPrincipalId;
+  if (evidence.bindingId !== input.bindingId || !isAutomationConversationScopedActorCorrespondenceV1(evidence)
+    || !senderMatchesPrincipal(input.sender, evidence.actor.principalId)) return false;
+  const actors = evidence.eventActors;
+  if (actors === undefined) return true;
+  const update = input.prUpdate;
+  if (actors[0]!.occurrenceId !== input.occurrenceId || typeof update !== 'object' || update === null
+    || Array.isArray(update) || !('events' in update) || !Array.isArray(update.events) || update.events.length !== actors.length) return false;
+  return update.events.every((event: unknown, index: number) => {
+    if (typeof event !== 'object' || event === null || Array.isArray(event) || !('author' in event)) return false;
+    const author = event.author;
+    // A native CI check is authored by a process, not the integration person
+    // whose measured repository permission admits that observation.
+    if ('kind' in event && event.kind === 'check' && typeof author === 'object' && author !== null
+      && 'kind' in author && author.kind === 'process' && 'principalId' in author && author.principalId === null) return true;
+    return typeof author === 'object' && author !== null && !Array.isArray(author)
+      && 'principalId' in author && author.principalId === actors[index]!.actor.principalId;
+  });
 }
 
 export const AutomationConversationAdmitResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [

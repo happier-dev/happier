@@ -88,7 +88,6 @@ export const ConversationProviderSetupGuidanceV1ProtocolSchema = defineProtocolO
 export const ConversationConnectionOverlapSafetyV1ProtocolSchema = defineProtocolUnion([
     defineProtocolLiteral('safe'),
     defineProtocolLiteral('providerExclusive'),
-    defineProtocolLiteral('destructive'),
 ]);
 
 /** @internal Replay guarantee the provider's transport can offer after a gap. */

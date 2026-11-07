@@ -19,6 +19,9 @@ export type PluginWebhooksActionInputById = {
             kind: 'accountEndpointV1';
             credential: 'serverGenerated';
         } | {
+            kind: 'capabilityUrlV1';
+            checkId: string;
+        } | {
             kind: 'githubSharedInstallationV1';
             installationId: string;
             installationAuthorizationRef: string;
@@ -59,12 +62,20 @@ export type PluginWebhooksActionInputById = {
             kind: 'accountEndpointV1';
             credential: 'serverGenerated';
         } | {
+            kind: 'capabilityUrlV1';
+            checkId: string;
+        } | {
             kind: 'githubSharedInstallationV1';
             installationId: string;
             installationAuthorizationRef: string;
         };
     };
     readonly "plugin.webhook.endpoint.convergeTarget": {
+        desiredTargetMaterialization: {
+            machineId: string;
+            materializationId: string;
+            pluginId: string;
+        };
         webhookEndpointId: string;
         webhookContribution: {
             pluginId: string;
@@ -75,14 +86,35 @@ export type PluginWebhooksActionInputById = {
             kind: 'accountEndpointV1';
             credential: 'serverGenerated';
         } | {
+            kind: 'capabilityUrlV1';
+            checkId: string;
+        } | {
             kind: 'githubSharedInstallationV1';
             installationId: string;
             installationAuthorizationRef: string;
         };
-        desiredTargetMaterialization: {
+        targetIntentEpoch: number;
+    } | {
+        desiredTargetRouting: {
+            serverIdentityId: string;
             machineId: string;
-            materializationId: string;
+        };
+        webhookEndpointId: string;
+        webhookContribution: {
             pluginId: string;
+            localId: string;
+        };
+        sourceInstanceId: string;
+        setup: {
+            kind: 'accountEndpointV1';
+            credential: 'serverGenerated';
+        } | {
+            kind: 'capabilityUrlV1';
+            checkId: string;
+        } | {
+            kind: 'githubSharedInstallationV1';
+            installationId: string;
+            installationAuthorizationRef: string;
         };
         targetIntentEpoch: number;
     };
@@ -113,7 +145,7 @@ export type PluginWebhooksActionResultById = {
         webhookEndpointId: string;
         revision: number;
         publicUrl: string;
-        readiness: 'ready' | 'providerConfirmationRequired' | 'credentialDisclosureLost' | 'targetUnavailable' | 'routeUnavailable';
+        readiness: 'credentialDisclosureLost' | 'providerConfirmationRequired' | 'ready' | 'routeUnavailable' | 'targetUnavailable';
         oneTimeGeneratedSecret?: string | undefined;
     };
     readonly "plugin.webhook.endpoint.read": {
@@ -130,18 +162,18 @@ export type PluginWebhooksActionResultById = {
         };
         sourceInstanceId: string;
         routing: 'accountEndpoint' | 'providerInstallation';
-        readiness: 'ready' | 'providerConfirmationRequired' | 'credentialDisclosureLost' | 'targetUnavailable' | 'routeUnavailable';
+        readiness: 'credentialDisclosureLost' | 'providerConfirmationRequired' | 'ready' | 'routeUnavailable' | 'targetUnavailable';
         publicUrl: string;
         createdAt: number;
         revokedAt?: number | undefined;
     };
     readonly "plugin.webhook.endpoint.revoke": {
-        kind: 'revoked' | 'alreadyRevoked';
+        kind: 'alreadyRevoked' | 'revoked';
         webhookEndpointId: string;
         revision: number;
     };
     readonly "plugin.webhook.endpoint.retarget": {
-        kind: 'retargeted' | 'alreadyRetargeted';
+        kind: 'alreadyRetargeted' | 'retargeted';
         webhookEndpointId: string;
         revision: number;
         previousTargetMaterialization: {
@@ -155,13 +187,25 @@ export type PluginWebhooksActionResultById = {
             pluginId: string;
         };
     } | {
-        kind: 'targetUnavailable' | 'revisionConflict' | 'incompatible';
+        kind: 'incompatible' | 'revisionConflict' | 'targetUnavailable';
         currentRevision?: number | undefined;
     };
     readonly "plugin.webhook.endpoint.checkCorrespondence": {
         kind: 'ready';
         webhookEndpointId: string;
         revision: number;
+        readiness?: 'credentialDisclosureLost' | 'providerConfirmationRequired' | 'ready' | 'routeUnavailable' | 'targetUnavailable' | undefined;
+        contribution?: undefined | {
+            pluginId: string;
+            localId: string;
+        };
+        targetMaterialization?: undefined | {
+            machineId: string;
+            materializationId: string;
+            pluginId: string;
+        };
+        sourceInstanceId?: string | undefined;
+        revokedAt?: number | undefined;
     } | {
         kind: 'unavailable';
         code: string;
@@ -185,10 +229,10 @@ export type PluginWebhooksActionResultById = {
         code: string;
     };
     readonly "plugin.webhook.delivery.replay": {
+        kind: 'replayLimit' | 'revisionConflict' | 'unavailable';
+    } | {
         kind: 'requeued';
         revision: number;
-    } | {
-        kind: 'revisionConflict' | 'unavailable' | 'replayLimit';
     };
     readonly "plugin.webhook.delivery.discard": {
         kind: 'discarded';
@@ -197,14 +241,14 @@ export type PluginWebhooksActionResultById = {
         kind: 'revisionConflict' | 'unavailable';
     };
     readonly "plugin.webhook.endpoint.credential.configure": {
-        kind: 'configured' | 'alreadyConfigured';
+        kind: 'alreadyConfigured' | 'configured';
         webhookEndpointId: string;
         revision: number;
         credentialVersionId: string;
         oneTimeGeneratedSecret?: string | undefined;
     };
     readonly "plugin.webhook.endpoint.credential.rotate": {
-        kind: 'rotated' | 'alreadyRotated';
+        kind: 'alreadyRotated' | 'rotated';
         webhookEndpointId: string;
         revision: number;
         credentialVersionId: string;
@@ -213,11 +257,11 @@ export type PluginWebhooksActionResultById = {
         oneTimeGeneratedSecret?: string | undefined;
     };
     readonly "plugin.webhook.endpoint.credential.finishRotation": {
-        kind: 'retired' | 'alreadyRetired';
+        kind: 'alreadyRetired' | 'retired';
         webhookEndpointId: string;
         revision: number;
     } | {
-        kind: 'revisionConflict' | 'unavailable' | 'credentialChanged';
+        kind: 'credentialChanged' | 'revisionConflict' | 'unavailable';
         currentRevision?: number | undefined;
     };
 };

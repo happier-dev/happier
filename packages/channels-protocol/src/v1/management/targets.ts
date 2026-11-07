@@ -117,6 +117,13 @@ const conversationSessionBindingTargetV1 = defineProtocolObject({
     policy: conversationSessionBindingPolicyV1,
 }, { policy: 'closed' });
 
+const conversationDiscussionBindingTargetV1 = defineProtocolObject({
+    kind: defineProtocolLiteral('discussion'),
+    // Discussion and Session ids use the same canonical indexed-resource grammar.
+    discussionId: SessionIdSchema,
+    policy: defineProtocolObject({ deliveryMode: defineProtocolLiteral('repliesOnly') }, { policy: 'closed' }),
+}, { policy: 'closed' });
+
 const conversationThreadRouterBindingTargetV1 = defineProtocolObject({
     kind: defineProtocolLiteral('threadRouter'),
     principalGroups: defineProtocolUniqueArray(defineProtocolObject({
@@ -147,11 +154,18 @@ const conversationAutomationBindingTargetV1 = defineProtocolObject({
 }, { policy: 'closed' });
 
 /** @internal Relative-only binding target shared by persistence and present-user mutations. */
-export const ConversationBindingTargetV1ProtocolSchema = defineProtocolUnion([
+const conversationBindingTargetMembersV1 = [
     conversationSessionBindingTargetV1,
     conversationAutomationBindingTargetV1,
     conversationThreadRouterBindingTargetV1,
-]);
+    conversationDiscussionBindingTargetV1,
+] as const;
+export const ConversationBindingTargetV1ProtocolSchema = defineProtocolUnion(conversationBindingTargetMembersV1);
+
+/** Decode version skew separately from a malformed supported target. The union remains the only kind catalog. */
+export function isConversationBindingTargetKindKnownV1(kind: string): boolean {
+    return conversationBindingTargetMembersV1.some(member => member.jsonSchema.properties?.kind?.const === kind);
+}
 
 /** The persisted Channels target keeps stable Automation identity, never a mutable recipe generation. */
 export const ConversationBindingTargetV1Schema = ConversationBindingTargetV1ProtocolSchema;

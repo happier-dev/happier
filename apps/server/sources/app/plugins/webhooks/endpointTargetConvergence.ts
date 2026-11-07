@@ -4,7 +4,7 @@ import type { Tx } from "@/storage/inTx";
 
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 import { resolveCurrentPluginWebhookContributionTxV1 } from "./currentContribution";
-import { resolveCurrentPluginWebhookTargetTxV1 } from "./currentTarget";
+import { resolveCurrentPluginWebhookRoutingTargetTxV1, resolveCurrentPluginWebhookTargetTxV1 } from "./currentTarget";
 import { pluginWebhookEndpointControllerCorrespondenceWhereV1 } from "./endpointCorrespondence";
 import { projectPluginWebhookEndpointBindingAvailabilityV1 } from "./endpointReadiness";
 
@@ -57,14 +57,21 @@ export async function convergeCurrentPluginWebhookEndpointTargetTxV1(params: Rea
     input: PluginWebhookEndpointConvergeTargetInputV1;
 }>): Promise<PluginWebhookEndpointConvergeTargetResultV1> {
     const { tx, accountId, input } = params;
-    const target = await resolveCurrentPluginWebhookTargetTxV1({
+    const routingTarget = "desiredTargetRouting" in input ? await resolveCurrentPluginWebhookRoutingTargetTxV1({
+        tx,
+        serverIdentityId: params.serverIdentityId,
+        accountId,
+        routing: input.desiredTargetRouting,
+        contribution: input.webhookContribution,
+    }) : null;
+    const target = "desiredTargetMaterialization" in input ? await resolveCurrentPluginWebhookTargetTxV1({
         tx,
         serverIdentityId: params.serverIdentityId,
         accountId,
         target: input.desiredTargetMaterialization,
-    });
+    }) : routingTarget?.target;
     if (!target) return UNAVAILABLE;
-    const contribution = await resolveCurrentPluginWebhookContributionTxV1({
+    const contribution = routingTarget?.contribution ?? await resolveCurrentPluginWebhookContributionTxV1({
         tx,
         accountId,
         contribution: input.webhookContribution,
@@ -134,10 +141,12 @@ export async function convergeCurrentPluginWebhookEndpointTargetTxV1(params: Rea
             targetIntentEpoch: input.targetIntentEpoch,
         });
     }
-    if (currentIntentEpoch === input.targetIntentEpoch) {
+    if (currentIntentEpoch === input.targetIntentEpoch
+        && !("desiredTargetRouting" in input && endpoint.targetMachineId === target.materialization.machineId)) {
         // One controller epoch names exactly one desired target. Reusing that
-        // epoch for different target bytes is neither a retry nor a newer
-        // intent, so it must not silently rewrite the endpoint.
+        // epoch for another Machine or exact materialization is not a retry.
+        // Routing intent owns the Machine, so a new current installation on
+        // that same Machine is a refresh of the same desired placement.
         return UNAVAILABLE;
     }
 

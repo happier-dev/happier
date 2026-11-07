@@ -330,10 +330,10 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
         expect(submitted).toHaveLength(0);
         expect(nativeSubmissions).toHaveLength(1);
         expect([...journey.deliveries.rows.values()].map(row => row.value.payload))
-          .toContainEqual(expect.objectContaining({ state: 'notDelivered', attemptCount: 1 }));
+          .toContainEqual(expect.objectContaining({ state: 'notSent', reason: 'providerRefused', attemptCount: 1 }));
         const records = [...logger.info.mock.calls, ...logger.warn.mock.calls].map(call => call[1]);
         expect(records).toContainEqual(expect.objectContaining({ providerResultKind: 'notDelivered',
-          providerRetry: 'never', providerResultCode: 'submissionRejected' }));
+          providerRetry: 'never' }));
         await journey.outward();
         expect(nativeSubmissions).toHaveLength(1);
         return;
@@ -345,7 +345,7 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
         const pending = [...journey.deliveries.rows.values()].find(row => row.value[CHANNEL_DELIVERIES_FIELD.bindingId] === binding.id);
         expect(pending?.value.payload).toMatchObject({ state: 'retryDue', attemptCount: 1 });
         expect([...logger.info.mock.calls, ...logger.warn.mock.calls].map(call => call[1]))
-          .toContainEqual(expect.objectContaining({ providerResultCode: 'submissionNotStarted' }));
+          .toContainEqual(expect.objectContaining({ providerResultKind: 'notDelivered', providerRetry: 'safe' }));
         const retryAt = pending?.value[CHANNEL_DELIVERIES_FIELD.retryNotBefore];
         if (!pending || typeof retryAt !== 'number') throw new Error('Expected the custody owner retry deadline');
         refuseSubmission = false;
@@ -358,7 +358,7 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
       expect(submitted).toHaveLength(1);
       if (scenario === 'submit-result-lost') {
         expect([...logger.info.mock.calls, ...logger.warn.mock.calls].map(call => call[1]))
-          .toContainEqual(expect.objectContaining({ providerResultCode: 'submissionOutcomeUnknown' }));
+          .toContainEqual(expect.objectContaining({ providerResultKind: 'outcomeUnknown' }));
       }
       expect(nativeSubmissions[0]?.envelope).toEqual({ from: mailbox, to: ['sales@example.com'] });
       const reply = await simpleParser(submitted[0]!);
@@ -735,7 +735,7 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
   it.each([[451, 'safe'], [550, 'never']] as const)('maps SMTP %i to %s without a Sent copy', async (code, retry) => {
     rejection = code;
     expect(await transport.submitRaw(raw('refused'), { from: mailbox, to: ['sales@example.com'] }, '<refused@example.com>'))
-      .toEqual({ kind: 'notDelivered', retry, code: code < 500 ? 'submissionTemporarilyRejected' : 'submissionRejected' });
+      .toEqual({ kind: 'notDelivered', retry });
     expect(imap.control.listMessages('Sent')).toHaveLength(0);
   });
 

@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { ActionsService, PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
+import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import { ConversationEndpointResolveInputV1Schema, ConversationProviderSetupResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,25 +20,25 @@ import {
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { convergeConversationConnectionWebhookEndpointTarget } from './connectionWebhookEndpoint.js';
+import { createIngressSupervisor } from './checkpointedPollSupervisor.js';
 import {
-  abandonConversationConnectionForInvocation,
   createConversationConnectionForInvocation,
   manageSessionPullRequestBindingForInvocation,
   deleteConversationConnectionForInvocation,
   prepareConversationConnectionForInvocation,
   recordConversationCheckpointedPollHistoryGapForInvocation,
   retestConversationConnectionForInvocation,
+  retryConversationConnectionPollForInvocation,
   setConversationBindingEnabledForInvocation,
-  settleConversationProviderExclusiveCheckpointedPollReplacementForInvocation,
   updateConversationConnectionForInvocation,
   transferConversationConnectionForInvocation,
 } from './management.js';
 import {
   createCurrentConversationConnectionFixture,
-  createCurrentConversationPendingOldTransportStopFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
-import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
+import { MemoryCollection } from './testkit/memoryCollection.js';
+import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
 
 const providerSelection = {
   target: {
@@ -145,6 +146,7 @@ function targetedContributionsFixture(input: TargetedProviderFixtureSnapshot & R
                 sourceCustody: { kind: 'managed', immutableGenerationId: contribution.contributorImmutableGenerationId, installSource: 'npm' },
               },
               protocol: providerSelection.point.protocol,
+              descriptor: { v: 1, displayName: 'Provider fixture', pullRequests: GITHUB_CHANNEL_PULL_REQUESTS },
               operations: contribution.operations ?? {
                 setup: setupAction,
                 connectionTest: connectionTestAction,
@@ -172,6 +174,7 @@ function invocationContext(input: Readonly<{
     services: {
       actions: input.actions,
       targetedContributions: input.targetedContributions,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
       ...(input.stateCollection === undefined ? {} : {
         storage: {
           account: { collection: () => input.stateCollection },
@@ -182,11 +185,6 @@ function invocationContext(input: Readonly<{
 }
 
 type MutableStateValue = Readonly<Record<string, unknown>> & Readonly<{ id: string }>;
-type MutableStateRow = Readonly<{
-  rowId: string;
-  revision: number;
-  value: MutableStateValue;
-}>;
 type MutableStateMutation =
   | Readonly<{ kind: 'assert'; rowId: string; expectedRevision: number }>
   | Readonly<{
@@ -197,7 +195,8 @@ type MutableStateMutation =
 
 /** The Account Collection is the one external boundary for this owner test. */
 function createMutableConnectionStateCollection() {
-  const rows = new Map<string, MutableStateRow>();
+  const queryCollection = new MemoryCollection<MutableStateValue>();
+  const rows = queryCollection.rows;
   let loseNextUpdatedBatchResponse = false;
   const batch = vi.fn(async (operations: readonly MutableStateMutation[]) => {
     const conflicts = operations.flatMap((operation) => {
@@ -242,21 +241,7 @@ function createMutableConnectionStateCollection() {
       rows.set(value.id, row);
       return row;
     },
-    async query(request: Readonly<{ index: string; prefix?: readonly unknown[]; limit?: number }>) {
-      assertChannelsTestCollectionQueryLimit(request.limit);
-      if (request.index !== CHANNEL_STATE_INDEX_ID.byKind && request.index !== CHANNEL_STATE_INDEX_ID.byConnectionBindingV2) {
-        throw new Error(`Unexpected owner query index: ${request.index}`);
-      }
-      const field = request.index === CHANNEL_STATE_INDEX_ID.byKind
-        ? CHANNEL_STATE_FIELD.recordKind : CHANNEL_STATE_FIELD.connectionId;
-      return {
-        rows: [...rows.values()].filter((row) => (
-          (row.value as Readonly<Record<string, unknown>>)[field] === request.prefix?.[0]
-        )),
-        changeCursor: 1,
-        nextCursor: undefined,
-      };
-    },
+    query: queryCollection.query.bind(queryCollection),
     batch,
     loseNextUpdatedBatchResponse() {
       loseNextUpdatedBatchResponse = true;
@@ -431,6 +416,76 @@ describe('connection Create acknowledgement recovery', () => {
 });
 
 describe('native SCM session PR binding owner', () => {
+  it('refuses another person’s Session at the canonical reader before status, credentials or writes', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const execute = vi.fn(async () => ({ projection: 'externalShareableV1', sessionId: 'another-persons-session' }));
+    const providerEffect = vi.fn();
+    const context = invocationContext({ stateCollection: collection,
+      actions: { execute, executeAdmittedTargetedOperationWithExecutionOrigin: providerEffect } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({ contributorImmutableGenerationId: 'provider-generation-a' }),
+    });
+    const request = { kind: 'attach', sessionId: 'session-1', pullRequest: { repository: 'acme/widgets', number: 12 } };
+    await expect(manageSessionPullRequestBindingForInvocation(request, context))
+      .rejects.toMatchObject({ code: 'channels_pr_link_session_not_verified' });
+    const denied = new PluginError({ code: 'session_access_denied', message: 'Session reader denied access' });
+    execute.mockRejectedValueOnce(denied);
+    await expect(manageSessionPullRequestBindingForInvocation(request, context)).rejects.toBe(denied);
+    expect(execute.mock.calls).toEqual([
+      ['session.transcript.get', { sessionId: 'session-1', projection: 'externalShareableV1', limit: 1 }, { signal: context.signal }],
+      ['session.transcript.get', { sessionId: 'session-1', projection: 'externalShareableV1', limit: 1 }, { signal: context.signal }],
+    ]);
+    expect(providerEffect).not.toHaveBeenCalled();
+    expect(collection.rows.size).toBe(0);
+  });
+
+  it.each([
+    { label: 'no accepted checkout', status: { session: { id: 'session-1' } } },
+    { label: 'repository without an admitted checkout', status: { session: { id: 'session-1' }, acceptedWorkspace: {
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
+    } } },
+    { label: 'another Session', status: { session: { id: 'session-2' }, acceptedWorkspace: {
+      checkout: { serverId: 'srv_example', workspaceId: 'workspace-1', machineId: 'machine-example', rootPath: '/repo' },
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
+    } } },
+    { label: 'another repository', status: { session: { id: 'session-1' }, acceptedWorkspace: {
+      checkout: { serverId: 'srv_example', workspaceId: 'workspace-1', machineId: 'machine-example', rootPath: '/repo' },
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/other' },
+    } } },
+  ])('refuses URL and structured attach with $label before provider effects or binding writes', async ({ status }) => {
+    const collection = createMutableConnectionStateCollection();
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'session.transcript.get') return { projection: 'externalShareableV1', sessionId: 'session-1' };
+      if (actionId === 'session.status.get') return status;
+      throw new Error(`Unexpected Action ${actionId}`);
+    });
+    const context = invocationContext({ stateCollection: collection,
+      actions: { execute, executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({ contributorImmutableGenerationId: 'provider-generation-a' }),
+    });
+    const targets: readonly Readonly<Record<string, JsonValue>>[] = [{ pullRequestUrl: 'https://github.com/acme/widgets/pull/12' },
+      { pullRequest: { repository: 'acme/widgets', number: 12 } }];
+    for (const target of targets) {
+      await expect(manageSessionPullRequestBindingForInvocation({ kind: 'attach', sessionId: 'session-1', ...target }, context))
+        .rejects.toMatchObject({ code: 'channels_pr_link_checkout_not_verified' });
+    }
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+    expect(collection.rows.size).toBe(0);
+    expect(execute).toHaveBeenCalledWith('session.status.get', {
+      sessionId: 'session-1', includeAcceptedWorkspace: true,
+    }, expect.objectContaining({ signal: context.signal }));
+  });
+
+  it.each(['https://github.com/acme/widgets/issues/12', 'https://example.test/acme/widgets/pull/12'])('refuses a URL that cannot identify a supported PR: %s', async (pullRequestUrl) => {
+    const execute = vi.fn();
+    const context = invocationContext({ actions: { execute } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({ contributorImmutableGenerationId: 'provider-generation-a' }),
+    });
+    await expect(manageSessionPullRequestBindingForInvocation({ kind: 'attach', sessionId: 'session-1', pullRequestUrl }, context))
+      .rejects.toMatchObject({ code: 'channels_pr_link_url_invalid' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('attaches without an existing connection and rejoins both link and scoped binding after response loss', async () => {
     const collection = createMutableConnectionStateCollection();
     seedConnectionIdentityKey(collection);
@@ -444,9 +499,13 @@ describe('native SCM session PR binding owner', () => {
       execute: async (actionId: string, input: JsonValue) => {
         if (actionId === 'automation.conversation.target.verify') return { kind: 'verified' };
         if (actionId === 'session.transcript.get') return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', items: [], scannedThroughSeq: 0, hasMore: false };
+        if (actionId === 'session.status.get') return { session: { id: 'session-1' }, acceptedWorkspace: {
+          checkout: { serverId: 'srv_example', workspaceId: 'workspace-1', machineId: 'machine-example', rootPath: '/repo' },
+          repository: { kind: 'github', deployment: 'https://github.com/', repository: 'Acme/Widgets' },
+        } };
         throw new Error(`Unexpected action ${actionId}: ${JSON.stringify(input)}`);
       },
-      executeAdmittedTargetedOperationWithExecutionOrigin: async (action: unknown, input: unknown) => {
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(async (action: unknown, input: unknown) => {
         const number = action === operations.endpointResolve && ConversationEndpointResolveInputV1Schema.parse(input).query.endsWith('/13') ? 13 : 12;
         const result = action === operations.setup ? setup
           : action === operations.connectionTest ? { kind: 'ready', integrationPrincipal: setup.integrationPrincipal, providerConnectionKey: setup.providerConnectionKey }
@@ -455,20 +514,66 @@ describe('native SCM session PR binding owner', () => {
           : undefined;
         if (result === undefined) throw new Error('Unexpected provider effect');
         return { result, executionOrigin: origin };
-      },
+      }),
     };
-    const context = invocationContext({ stateCollection: collection, actions: actions as unknown as ActionsService, targetedContributions: targetedContributionsFixture({ contributorPluginId: contributor.pluginId, contributorId: contributor.contributionId, contributorImmutableGenerationId: 'provider-generation-a', operations }) });
+    const providerReads: string[] = [];
+    const targeted = targetedContributionsFixture({ contributorPluginId: contributor.pluginId, contributorId: contributor.contributionId, contributorImmutableGenerationId: 'provider-generation-a', operations });
+    const context = invocationContext({ stateCollection: collection, actions: actions as unknown as ActionsService,
+      targetedContributions: { ...targeted, observeForSelf(point, options) {
+        providerReads.push(point.id);
+        return targeted.observeForSelf(point, options);
+      } },
+    });
     const link = { kind: 'attach', sessionId: 'session-1', pullRequest: { repository: 'acme/widgets', number: 12 } };
+    actions.executeAdmittedTargetedOperationWithExecutionOrigin.mockImplementationOnce(async () => ({
+      result: { ...setup, credentialRef: { ...credentialRef, accountId: 'another-account' } }, executionOrigin: origin,
+    }));
+    await expect(manageSessionPullRequestBindingForInvocation({ ...link, credentialRef }, context))
+      .rejects.toMatchObject({ code: 'channels_pr_link_credential_mismatch' });
+    expect([...collection.rows.values()].filter(row => row.value['record-kind'] === 'connection')).toHaveLength(0);
     await expect(manageSessionPullRequestBindingForInvocation({ ...link, pullRequest: { ...link.pullRequest, number: 14 } }, context))
       .rejects.toMatchObject({ code: 'channels_pr_link_endpoint_identity_mismatch' });
-    const first = await manageSessionPullRequestBindingForInvocation(link, context);
+    actions.executeAdmittedTargetedOperationWithExecutionOrigin.mockClear();
+    const connectionReads = vi.spyOn(collection, 'get');
+    providerReads.length = 0;
+    const expectOneAdmission = () => {
+      const calls = actions.executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls;
+      expect(Object.fromEntries(['setup', 'connectionTest', 'endpointResolve', 'principalResolve'].map(role =>
+        [role, calls.filter(([action]) => action === operations[role]).length]))).toEqual({
+        setup: 1, connectionTest: 1, endpointResolve: 1, principalResolve: 1,
+      });
+      actions.executeAdmittedTargetedOperationWithExecutionOrigin.mockClear();
+    };
+    const first = await manageSessionPullRequestBindingForInvocation({ kind: 'attach', sessionId: 'session-1',
+      pullRequestUrl: 'https://github.com/Acme/widgets/pull/12' }, context);
+    expectOneAdmission();
+    if (first.kind !== 'attached') throw new Error('Expected the retained PR link.');
+    const linkedBinding = collection.rows.get(first.bindingId);
+    expect(linkedBinding?.value.payload).toMatchObject({ enabled: false, target: { kind: 'session', sessionId: 'session-1' } });
+    const linkConnection = collection.rows.get(String(linkedBinding?.value[CHANNEL_STATE_FIELD.connectionId]));
+    expect(linkConnection?.value.payload).toMatchObject({ enabled: true, transport: { kind: 'checkpointedPull' } });
+    // The prior identity-mismatch request already created this connection.
+    // Rejoin reads it once; the binding writer reads once for its final CAS.
+    expect(connectionReads.mock.calls.filter(([id]) => id === linkConnection?.rowId)).toHaveLength(2);
+    // PR selection carries its admitted contribution into setup; no second
+    // selection read is needed. Connection test retains its own role lookup.
+    expect(providerReads.filter(point => point === 'providers')).toHaveLength(2);
+    connectionReads.mockClear();
+    providerReads.length = 0;
     await expect(manageSessionPullRequestBindingForInvocation(link, context)).resolves.toEqual(first);
+    expectOneAdmission();
+    expect(connectionReads.mock.calls.filter(([id]) => id === linkConnection?.rowId)).toHaveLength(2);
+    expect(providerReads.filter(point => point === 'providers')).toHaveLength(2);
     const scoped = { ...link, target: { automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind: 'ciFailed' } };
     collection.loseNextUpdatedBatchResponse();
     await expect(manageSessionPullRequestBindingForInvocation(scoped, context)).rejects.toThrow('simulated response loss after Account write commit');
+    expectOneAdmission();
     const second = await manageSessionPullRequestBindingForInvocation(scoped, context);
+    expectOneAdmission();
     await expect(manageSessionPullRequestBindingForInvocation(scoped, context)).resolves.toEqual(second);
+    expectOneAdmission();
     await expect(manageSessionPullRequestBindingForInvocation({ ...scoped, target: { ...scoped.target, triggerRevision: 1 } }, context)).resolves.toEqual(second);
+    expectOneAdmission();
     const active = [...collection.rows.values()].filter((row) => row.value['record-kind'] === 'binding' && typeof row.value.payload === 'object' && row.value.payload !== null && !Array.isArray(row.value.payload) && Reflect.get(row.value.payload, 'enabled') === true);
     expect(active).toHaveLength(1);
     expect(active[0]?.value.payload).toMatchObject({ target: { scopedTrigger: { triggerRevision: 1 } } });
@@ -478,7 +583,13 @@ describe('native SCM session PR binding owner', () => {
     const observers = [...collection.rows.values()].filter((row) => row.value['record-kind'] === 'binding' && typeof row.value.payload === 'object' && row.value.payload !== null && !Array.isArray(row.value.payload) && Reflect.get(row.value.payload, 'enabled') === true);
     expect(observers).toHaveLength(1);
     expect(observers[0]?.value.payload).toMatchObject({ target: { scopedTrigger: { pullRequest: { number: 13 } } } });
-    await expect(manageSessionPullRequestBindingForInvocation({ kind: 'list', sessionId: 'session-1' }, context)).resolves.toMatchObject({ pullRequestLinks: [{ number: 12 }, { number: 13 }] });
+    const links = await manageSessionPullRequestBindingForInvocation({ kind: 'list', sessionId: 'session-1' }, context);
+    if (links.kind !== 'links') throw new Error('Expected the retained Session PR links.');
+    expect(links).toEqual({ kind: 'links', sessionId: 'session-1', pullRequestLinks: expect.arrayContaining([
+      { provider: 'github', repository: 'acme/widgets', number: 12, url: 'https://github.com/acme/widgets/pull/12' },
+      { provider: 'github', repository: 'acme/widgets', number: 13, url: 'https://github.com/acme/widgets/pull/13' },
+    ]) });
+    expect(links.pullRequestLinks).toHaveLength(2);
   });
 });
 
@@ -865,12 +976,22 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
   });
 
-  it('rejects a contributor replaced after the caller selected its prior immutable generation', async () => {
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+  it.each(['contributor', 'target'] as const)('re-resolves setup after the selected %s is replaced', async replaced => {
+    const replacementSetup = admittedProviderOperation({ role: 'setup', contributor: {
+      ...providerSelection.contributor,
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-generation-b', installSource: 'npm' },
+    } });
+    const setup = readyConnectionCreateActionExecutor();
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (operation: unknown) => {
+      expect(operation).toBe(replacementSetup);
+      return setup(setupAction);
+    });
     const context = invocationContext({
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
       targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: 'provider-generation-b',
+        contributorImmutableGenerationId: replaced === 'contributor' ? 'provider-generation-b' : providerSelection.contributor.sourceCustody.immutableGenerationId,
+        ...(replaced === 'target' ? { targetSourceCustody: { kind: 'development' as const, registeredRootId: 'channels-root-b' } } : {}),
+        operations: { setup: replacementSetup, connectionTest: connectionTestAction, messageDeliver: messageDeliverAction },
       }),
     });
 
@@ -878,26 +999,8 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
       providerSelection,
       providerSetupInput: { source: 'test' },
       credentialRef: null,
-    }, context)).rejects.toBeInstanceOf(Error);
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
-  });
-
-  it('rejects a target replacement before executing the formerly selected setup handle', async () => {
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
-    const context = invocationContext({
-      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
-      targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-        targetSourceCustody: { kind: 'development', registeredRootId: 'channels-root-b' },
-      }),
-    });
-
-    await expect(prepareConversationConnectionForInvocation({
-      providerSelection,
-      providerSetupInput: { source: 'test' },
-      credentialRef: null,
-    }, context)).rejects.toMatchObject({ code: 'channels_provider_contribution_unavailable' });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+    }, context)).resolves.toMatchObject({ kind: 'ready', supportedTransports: ['socket'] });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
   });
 
   it('does not fall back to another admitted contributor when the selected contributor is absent', async () => {
@@ -941,7 +1044,7 @@ describe('checkpointed poll source custody', () => {
     authorityEpoch: 4,
   } as const satisfies ConversationConnectionFixtureAuthority;
 
-  it.each(['historyGap', 'replacement'] as const)('accepts current-route source custody for %s settlement and refuses another Machine', async (settlement) => {
+  it('accepts current-route source custody for history-gap settlement and refuses another Machine', async () => {
     const connectionId = 'connection-source-poll';
     const collection = createMutableConnectionStateCollection();
     collection.rows.set(connectionId, {
@@ -974,7 +1077,6 @@ describe('checkpointed poll source custody', () => {
       } } as unknown as ActionsService,
       targetedContributions: targetedContributionsFixture({ contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId }),
     });
-    if (settlement === 'historyGap') {
       await expect(recordConversationCheckpointedPollHistoryGapForInvocation({ ...input,
         executionOrigin: { ...input.executionOrigin, sourceRef: { ...input.executionOrigin.sourceRef, machineId: 'another-machine' } },
         fact: { reason: 'providerHistoryUnavailable' },
@@ -985,14 +1087,6 @@ describe('checkpointed poll source custody', () => {
         fact: { reason: 'providerHistoryUnavailable' },
       }, context)).resolves.toBe('recorded');
       expect(collection.batch).toHaveBeenCalled();
-    } else {
-      await expect(settleConversationProviderExclusiveCheckpointedPollReplacementForInvocation({ ...input,
-        executionOrigin: { ...input.executionOrigin, sourceRef: { ...input.executionOrigin.sourceRef, machineId: 'another-machine' } },
-      }, context)).resolves.toEqual({ kind: 'staleAuthority' });
-      await expect(settleConversationProviderExclusiveCheckpointedPollReplacementForInvocation(input, context))
-        .resolves.toEqual({ kind: 'notApplicable' });
-      expect(collection.batch).not.toHaveBeenCalled();
-    }
   });
 });
 
@@ -1049,13 +1143,13 @@ describe('deleteConversationConnectionForInvocation transport ownership', () => 
     }, context)).resolves.toEqual({
       kind: 'deleteFinalizing',
       connectionId,
-      revision: 6,
+      revision: 5,
       authorityEpoch: 5,
       acceptedPossibleLoss: false,
     });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
     expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
+      revision: 5,
       value: {
         payload: {
           transport: {
@@ -1191,6 +1285,7 @@ describe('createConversationConnectionForInvocation targeted provider selection'
           transport: { kind: 'socket' },
           providerConnectionKey: 'example:connection',
           providerConfig: { opaque: true },
+          historyGap: { reason: 'providerHistoryUnavailable', reportedAt: expect.any(Number) },
         },
       },
     });
@@ -1403,7 +1498,7 @@ describe('createConversationConnectionForInvocation targeted provider selection'
     expect(collection.batch).not.toHaveBeenCalled();
   });
 
-  it.each(['setup', 'connectionTest'] as const)('rejects mixed source/materialized custody from %s before persistence', async (sourceOperation) => {
+  it.each(['setup', 'connectionTest'] as const)('accepts same-route source/materialized replacement from %s during setup', async (sourceOperation) => {
     const collection = createMutableConnectionStateCollection();
     seedConnectionIdentityKey(collection);
     const materializedOrigin = {
@@ -1422,8 +1517,18 @@ describe('createConversationConnectionForInvocation targeted provider selection'
         sourceCustody: providerSelection.contributor.sourceCustody,
       },
     };
+    const replacementContributor = {
+      ...providerSelection.contributor,
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-generation-b', installSource: 'npm' },
+    } as const;
+    const replacementOperations = {
+      setup: admittedProviderOperation({ contributor: replacementContributor, role: 'setup' }),
+      connectionTest: admittedProviderOperation({ contributor: replacementContributor, role: 'connectionTest' }),
+      messageDeliver: admittedProviderOperation({ contributor: replacementContributor, role: 'messageDeliver' }),
+      connectionStop: admittedProviderOperation({ contributor: replacementContributor, role: 'connectionStop' }),
+    };
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => ({
-      result: action === setupAction
+      result: Reflect.get(action as object, 'identity').role === 'setup'
         ? {
           v: 1,
           credentialRef: null,
@@ -1442,7 +1547,7 @@ describe('createConversationConnectionForInvocation targeted provider selection'
           integrationPrincipal: { id: 'example-bot' },
           providerConnectionKey: 'example:connection',
         },
-      executionOrigin: (action === setupAction) === (sourceOperation === 'setup')
+      executionOrigin: (Reflect.get(action as object, 'identity').role === 'setup') === (sourceOperation === 'setup')
         ? sourceOrigin
         : materializedOrigin,
     }));
@@ -1456,6 +1561,10 @@ describe('createConversationConnectionForInvocation targeted provider selection'
           messageDeliver: messageDeliverAction,
           connectionStop: connectionStopAction,
         },
+        snapshots: [
+          { contributorImmutableGenerationId: 'provider-generation-a', operations: { setup: setupAction, connectionTest: connectionTestAction, messageDeliver: messageDeliverAction, connectionStop: connectionStopAction } },
+          { contributorImmutableGenerationId: 'provider-generation-b', operations: replacementOperations },
+        ],
       }),
       stateCollection: collection,
     });
@@ -1466,12 +1575,11 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       credentialRef: null,
       selectedTransport: 'socket',
       maximumObservationAgeMs: 60_000,
-    }, context)).rejects.toMatchObject({ code: 'channels_connection_execution_origin_mismatch' });
-    expect(collection.rows.size).toBe(1);
-    expect(collection.batch).not.toHaveBeenCalled();
+    }, context)).resolves.toMatchObject({ kind: 'created' });
+    expect(collection.rows.size).toBe(3);
     if (sourceOperation === 'setup') {
       expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls.map(([action]) => action))
-        .toEqual([setupAction, connectionTestAction]);
+        .toEqual([setupAction, replacementOperations.connectionTest]);
       await expect(prepareConversationConnectionForInvocation({
         providerSelection,
         providerSetupInput: { source: 'prepare' },
@@ -1480,7 +1588,7 @@ describe('createConversationConnectionForInvocation targeted provider selection'
     }
   });
 
-  it('rejects mismatched setup and test execution origins before persistence', async () => {
+  it('lets the host refuse a test on another Machine after one setup and test admission', async () => {
     const collection = createMutableConnectionStateCollection();
     seedConnectionIdentityKey(collection);
     const setupExecutionOrigin = {
@@ -1491,16 +1599,17 @@ describe('createConversationConnectionForInvocation targeted provider selection'
         materializationId: 'materialization-a',
       },
     };
-    const testExecutionOrigin = {
-      ...setupExecutionOrigin,
-      materializationRef: {
-        ...setupExecutionOrigin.materializationRef,
-        materializationId: 'materialization-b',
-      },
-    };
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => ({
-      result: action === setupAction
-        ? {
+    const hostRoutingDenial = new PluginError({ code: 'plugin_action_execution_origin_mismatch', message: 'Host routing admission refused' });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, _input: unknown, options?: Readonly<{ expectedExecutionRouting?: unknown }>) => {
+      if (action !== setupAction) {
+        expect(options?.expectedExecutionRouting).toEqual(getConversationConnectionExecutionRouting(
+          getConversationConnectionTransportOrigin(setupExecutionOrigin), providerSelection.contributor.pluginId,
+        ));
+        // Routing refusal belongs to the genuine host execution boundary.
+        throw hostRoutingDenial;
+      }
+      return {
+        result: {
           v: 1,
           credentialRef: null,
           providerConnectionKey: 'example:connection',
@@ -1512,14 +1621,10 @@ describe('createConversationConnectionForInvocation targeted provider selection'
           overlapSafety: 'safe',
           replayContinuity: 'none',
           outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-        }
-        : {
-          kind: 'ready',
-          integrationPrincipal: { id: 'example-bot' },
-          providerConnectionKey: 'example:connection',
         },
-      executionOrigin: action === setupAction ? setupExecutionOrigin : testExecutionOrigin,
-    }));
+        executionOrigin: setupExecutionOrigin,
+      };
+    });
     const context = invocationContext({
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
       targetedContributions: targetedContributionsFixture({
@@ -1540,16 +1645,16 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       credentialRef: null,
       selectedTransport: 'socket',
       maximumObservationAgeMs: 60_000,
-    }, context)).rejects.toMatchObject({ code: 'channels_connection_execution_origin_mismatch' });
+    }, context)).rejects.toBe(hostRoutingDenial);
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(collection.rows.size).toBe(1);
     expect(collection.batch).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['socket', 'connectionStop'],
+    ['socket', null],
     ['checkpointedPull', 'observationsPoll'],
-  ] as const)('rejects %s creation before provider execution when its required %s role is absent', async (
+  ] as const)('requires only the selected transport receive role (%s)', async (
     selectedTransport,
     requiredOperation,
   ) => {
@@ -1594,13 +1699,20 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       stateCollection: collection,
     });
 
-    await expect(createConversationConnectionForInvocation({
+    const creating = createConversationConnectionForInvocation({
       providerSelection,
       providerSetupInput: { source: 'create' },
       credentialRef: null,
       selectedTransport,
       maximumObservationAgeMs: 60_000,
-    }, context)).rejects.toMatchObject({
+    }, context);
+    if (selectedTransport === 'socket') {
+      await expect(creating).resolves.toMatchObject({ kind: 'created' });
+      expect([...collection.rows.values()].find(row => row.value['record-kind'] === 'connection')?.value.payload)
+        .toMatchObject({ enabled: true, pendingOldTransportStop: null });
+      return;
+    }
+    await expect(creating).rejects.toMatchObject({
       code: 'channels_connection_transport_role_unavailable',
       details: { selectedTransport, requiredOperation },
     });
@@ -1609,7 +1721,7 @@ describe('createConversationConnectionForInvocation targeted provider selection'
     expect(collection.batch).not.toHaveBeenCalled();
   });
 
-  it('does not persist a setup/test result once the selected contributor is retired before the persistence reread', async () => {
+  it('persists a proved setup/test result across same-ID contributor replacement before the persistence reread', async () => {
     const collection = createMutableConnectionStateCollection();
     seedConnectionIdentityKey(collection);
     const executionOrigin = {
@@ -1676,10 +1788,9 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       credentialRef: null,
       selectedTransport: 'socket',
       maximumObservationAgeMs: 60_000,
-    }, context)).rejects.toMatchObject({ code: 'channels_provider_contribution_unavailable' });
+    }, context)).resolves.toMatchObject({ kind: 'created' });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
-    expect(collection.rows.size).toBe(1);
-    expect(collection.batch).not.toHaveBeenCalled();
+    expect(collection.batch).toHaveBeenCalledOnce();
   });
 
 });
@@ -1818,8 +1929,8 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     let enabled = false;
     collection.query = async (request) => {
       const scanned = await queryBeforeConcurrentEnable(request);
-      if (!enabled && request.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
-        && request.prefix?.[0] === connectionId) {
+      if (!enabled && request.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
+        && request.prefix?.[0] === connectionId && request.prefix[1] === CHANNEL_STATE_RECORD_KIND.binding) {
         enabled = true;
         await setConversationBindingEnabledForInvocation({
           bindingId,
@@ -1985,7 +2096,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     });
   });
 
-  it.each(['materialized', 'source'] as const)('moves a %s provider to another Machine through frozen predecessor custody', async (originKind) => {
+  it.each(['materialized', 'source'] as const)('moves a %s provider to another Machine without predecessor stop custody', async (originKind) => {
     const hasNativeLimit = originKind === 'materialized';
     const connectionId = 'connection-transfer-same-config-new-origin';
     const oldExecutionOrigin: PluginMachineExecutionOriginV1 = originKind === 'source' ? {
@@ -2076,7 +2187,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
       }
       if (action === connectionStopAction) {
         stopInvocations.push({ operationInput, options });
-        return { result: { kind: 'stopped' }, executionOrigin: oldExecutionOrigin };
+        return { result: { kind: 'pending' }, executionOrigin: oldExecutionOrigin };
       }
       throw new Error('Expected only the selected setup/test/stop Actions.');
     });
@@ -2105,28 +2216,16 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     }, context)).resolves.toEqual({
       kind: 'transferred',
       connectionId,
-      revision: 6,
+      revision: 5,
       authorityEpoch: 5,
     });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(3);
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     const transferredPayload = collection.rows.get(connectionId)?.value.payload;
     if (hasNativeLimit) expect(transferredPayload).toHaveProperty('outboundTextLimit', { maximum: 4_000, unit: 'unicodeCodePoints' });
     else expect(transferredPayload).not.toHaveProperty('outboundTextLimit');
-    expect(stopInvocations).toEqual([{
-      operationInput: {
-        v: 1,
-        connectionId,
-        providerConnectionKey: 'example:connection',
-        providerConfigVersion: 1,
-        providerConfig: { source: 'same' },
-        credentialRef: null,
-        authorityEpoch: 5,
-        reason: 'transfer',
-      },
-      options: expect.objectContaining({ expectedExecutionRouting: getConversationConnectionExecutionRouting(getConversationConnectionTransportOrigin(oldExecutionOrigin), providerSelection.contributor.pluginId) }),
-    }]);
+    expect(stopInvocations).toEqual([]);
     expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
+      revision: 5,
       value: {
         payload: {
           transportOrigin: getConversationConnectionTransportOrigin(replacementExecutionOrigin),
@@ -2137,143 +2236,8 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     });
   });
 
-  it.each(['materialized', 'source'] as const)('keeps %s replacement pending when the exact retired origin cannot prove stop', async (originKind) => {
-    const connectionId = 'connection-transfer-unproven-old-stop';
-    const oldExecutionOrigin: PluginMachineExecutionOriginV1 = originKind === 'source' ? {
-      serverIdentityId: 'srv_example',
-      sourceRef: { pluginId: providerSelection.contributor.pluginId, machineId: 'machine-old',
-        sourceCustody: { kind: 'development', registeredRootId: '/runtime/source-old/provider' } },
-    } : {
-      serverIdentityId: 'srv_example',
-      materializationRef: {
-        pluginId: providerSelection.contributor.pluginId,
-        machineId: 'machine-old',
-        materializationId: 'materialization-old',
-      },
-    };
-    const replacementExecutionOrigin: PluginMachineExecutionOriginV1 = originKind === 'source' ? {
-      serverIdentityId: 'srv_example',
-      sourceRef: { pluginId: providerSelection.contributor.pluginId, machineId: 'machine-replacement',
-        sourceCustody: { kind: 'development', registeredRootId: '/runtime/source-new/provider' } },
-    } : {
-      serverIdentityId: 'srv_example',
-      materializationRef: {
-        pluginId: providerSelection.contributor.pluginId,
-        machineId: 'machine-replacement',
-        materializationId: 'materialization-replacement',
-      },
-    };
-    const collection = createMutableConnectionStateCollection();
-    const authority = {
-      providerPluginId: providerSelection.contributor.pluginId,
-      providerContributionSelection: {
-        contributionId: providerSelection.contributor.contributionId,
-      },
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      transportOrigin: getConversationConnectionTransportOrigin(oldExecutionOrigin),
-      providerConnectionKey: 'example:connection',
-      providerConfig: { source: 'same' },
-      routingIdentityKey: 'r'.repeat(43),
-      integrationPrincipal: { id: 'example-bot' },
-      authorityEpoch: 4,
-    } as const satisfies ConversationConnectionFixtureAuthority;
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority,
-        transport: { kind: 'socket' },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
-    });
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
-      if (action === setupAction) {
-        return {
-          result: {
-            v: 1,
-            credentialRef: null,
-            providerConnectionKey: 'example:connection',
-            providerConfigVersion: 1,
-            providerConfig: { source: 'same' },
-            integrationPrincipal: { id: 'example-bot' },
-            supportedTransports: ['socket'],
-            recommendedTransport: 'socket',
-            overlapSafety: 'safe',
-            replayContinuity: 'none',
-            outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-          },
-          executionOrigin: replacementExecutionOrigin,
-        };
-      }
-      if (action === connectionTestAction) {
-        return {
-          result: {
-            kind: 'ready',
-            integrationPrincipal: { id: 'example-bot' },
-            providerConnectionKey: 'example:connection',
-          },
-          executionOrigin: replacementExecutionOrigin,
-        };
-      }
-      if (action === connectionStopAction) {
-        return { result: { kind: 'pending' }, executionOrigin: oldExecutionOrigin };
-      }
-      throw new Error('Expected only the selected setup/test/stop Actions.');
-    });
-    const context = invocationContext({
-      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
-      targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-        operations: {
-          setup: setupAction,
-          connectionTest: connectionTestAction,
-          messageDeliver: messageDeliverAction,
-          connectionStop: connectionStopAction,
-        },
-      }),
-      stateCollection: collection,
-    });
 
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'socket',
-    }, context)).resolves.toEqual({
-      kind: 'transferPendingOldStop',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(3);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: {
-        payload: {
-          pendingOldTransportStop: {
-            transportOrigin: getConversationConnectionTransportOrigin(oldExecutionOrigin),
-            providerContributionSelection: authority.providerContributionSelection,
-            stopRequest: {
-              connectionId,
-              authorityEpoch: 5,
-              reason: 'transfer',
-            },
-          },
-        },
-      },
-    });
-
-  });
-
-  it('rejoins a lost committed transfer by replaying only the idempotent frozen old stop', async () => {
+  it('rejoins a lost committed socket transfer from desired placement with the predecessor unavailable', async () => {
     const connectionId = 'connection-transfer-targeted';
     const oldExecutionOrigin = {
       serverIdentityId: 'srv_example',
@@ -2299,7 +2263,6 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
       contributor: replacementProviderSelection.contributor,
       role: 'connectionTest',
     });
-    const oldConnectionStopAction = admittedProviderOperation({ role: 'connectionStop' });
     const collection = createMutableConnectionStateCollection();
     const oldAuthority = {
       providerPluginId: providerSelection.contributor.pluginId,
@@ -2367,26 +2330,13 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
           executionOrigin: replacementExecutionOrigin,
         };
       }
-      if (action === oldConnectionStopAction) {
-        return { result: { kind: 'notRunning' }, executionOrigin: oldExecutionOrigin };
-      }
-      throw new Error('Expected only the selected replacement setup/test/stop Actions.');
+      throw new Error('Expected only the selected replacement setup/test Actions.');
     });
     const context = invocationContext({
       actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
       targetedContributions: targetedContributionsFixture({
         contributorImmutableGenerationId: replacementProviderSelection.contributor.sourceCustody.immutableGenerationId,
         contributions: [
-          {
-            contributorId: providerSelection.contributor.contributionId,
-            contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-            operations: {
-              setup: setupAction,
-              connectionTest: connectionTestAction,
-              messageDeliver: messageDeliverAction,
-              connectionStop: oldConnectionStopAction,
-            },
-          },
           {
             contributorId: replacementProviderSelection.contributor.contributionId,
             contributorImmutableGenerationId: replacementProviderSelection.contributor.sourceCustody.immutableGenerationId,
@@ -2396,10 +2346,6 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
               messageDeliver: admittedProviderOperation({
                 contributor: replacementProviderSelection.contributor,
                 role: 'messageDeliver',
-              }),
-              connectionStop: admittedProviderOperation({
-                contributor: replacementProviderSelection.contributor,
-                role: 'connectionStop',
               }),
             },
           },
@@ -2436,29 +2382,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
           providerConnectionKey: 'example:connection',
           providerConfig: { source: 'replacement' },
           authorityEpoch: 5,
-          pendingOldTransportStop: {
-            predecessorCheckpointedPollInvocation: {
-              connectionRevision: 4,
-              authorityEpoch: 4,
-              transportOrigin: getConversationConnectionTransportOrigin(oldExecutionOrigin),
-            },
-            transportOrigin: getConversationConnectionTransportOrigin(oldExecutionOrigin),
-            providerContributionSelection: {
-              contributionId: providerSelection.contributor.contributionId,
-            },
-            stopRequest: {
-              v: 1,
-              connectionId,
-              providerConnectionKey: 'example:connection',
-              providerConfigVersion: 1,
-              providerConfig: { source: 'old' },
-              credentialRef: null,
-              authorityEpoch: 5,
-              reason: 'transfer',
-            },
-            overlapSafety: 'safe',
-            acceptedPossibleLoss: false,
-          },
+          pendingOldTransportStop: null,
           historyGap: { reason: 'providerHistoryUnavailable' },
         },
       },
@@ -2468,19 +2392,20 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     await expect(transferConversationConnectionForInvocation(transferInput, context)).resolves.toEqual({
       kind: 'transferred',
       connectionId,
-      revision: 6,
+      revision: 5,
       authorityEpoch: 5,
     });
-    // Setup and test are never replayed; only the exact frozen old stop runs.
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(3);
-    expect(collection.batch).toHaveBeenCalledTimes(2);
+    // The current replacement is prepared again; desired-state equality
+    // rejoins without a second write or reaching the offline predecessor.
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(4);
+    expect(collection.batch).toHaveBeenCalledTimes(1);
     expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
+      revision: 5,
       value: { payload: { authorityEpoch: 5, pendingOldTransportStop: null } },
     });
   });
 
-  it('rejects an exact-revision equal-origin rejoin when Account authority changes during provider setup/test', async () => {
+  it('rejoins equal-origin desired placement without overwriting a concurrent Account policy change', async () => {
     const connectionId = 'connection-transfer-equal-origin-stale-after-test';
     const executionOrigin = {
       serverIdentityId: 'srv_example',
@@ -2580,9 +2505,12 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
       providerSetupInput: { source: 'same' },
       credentialRef: null,
       selectedTransport: 'socket',
-    }, context)).rejects.toMatchObject({ code: 'channels_connection_transfer_conflict' });
+    }, context)).resolves.toMatchObject({ kind: 'rejoined', connectionId, revision: 5, authorityEpoch: 4 });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(collection.batch).not.toHaveBeenCalled();
+    expect(collection.rows.get(connectionId)?.value.payload).toMatchObject({
+      configurationRevision: 5, maximumObservationAgeMs: 120_000, authorityEpoch: 4,
+    });
   });
 
   it('rejects a changed-origin transfer before a stale CAS when Account policy changes during provider setup/test', async () => {
@@ -2773,7 +2701,22 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     expect(collection.rows.get(connectionId)?.revision).toBe(4);
     expect(first.correspondenceInputs).toHaveLength(0);
 
-    const second = durablePushCreateContext({ stateCollection: collection });
+    const correspondenceInputs: unknown[] = [];
+    const endpointActions = vi.fn(async (actionId: string, actionInput: unknown) => {
+      if (actionId === 'plugin.webhook.endpoint.checkCorrespondence') {
+        correspondenceInputs.push(actionInput);
+        return { kind: 'ready', webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID, revision: 4 };
+      }
+      expect(actionId).toBe('plugin.webhook.endpoint.convergeTarget');
+      expect(actionInput).toMatchObject({ targetIntentEpoch: 5,
+        desiredTargetRouting: { serverIdentityId: 'srv_example', machineId: 'machine-example' } });
+      return { kind: 'converged', webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+        revision: 5, targetIntentEpoch: 5, targetMaterialization: {
+          pluginId: providerSelection.contributor.pluginId,
+          machineId: 'machine-example', materializationId: 'materialization-example',
+        } };
+    });
+    const second = durablePushCreateContext({ stateCollection: collection, correspondence: endpointActions });
     const transferred = await transferConversationConnectionForInvocation({
       ...transferInput,
       endpointContinuation: {
@@ -2783,11 +2726,11 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     }, second.context);
 
     expect(transferred).toMatchObject({
-      kind: 'transferPendingOldStop',
+      kind: 'transferred',
       connectionId,
       authorityEpoch: 5,
     });
-    expect(second.correspondenceInputs).toHaveLength(1);
+    expect(correspondenceInputs).toHaveLength(1);
     expect(collection.rows.get(connectionId)).toMatchObject({
       revision: 5,
       value: {
@@ -2798,7 +2741,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
             webhookSourceInstanceId: `channels.connection.${connectionId}`,
           },
           authorityEpoch: 5,
-          pendingOldTransportStop: expect.any(Object),
+          pendingOldTransportStop: null,
           historyGap: { reason: 'providerHistoryUnavailable' },
         },
       },
@@ -2815,207 +2758,6 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     });
   });
 
-  it('resumes unresolved durable-push retarget custody from the current policy-edited row', async () => {
-    const connectionId = 'connection-transfer-push-retarget-policy-edit';
-    const oldExecutionOrigin = {
-      serverIdentityId: 'srv_example',
-      materializationRef: {
-        pluginId: providerSelection.contributor.pluginId,
-        machineId: 'machine-old',
-        materializationId: 'materialization-old',
-      },
-    } as const;
-    const replacementExecutionOrigin = {
-      serverIdentityId: 'srv_example',
-      materializationRef: {
-        pluginId: providerSelection.contributor.pluginId,
-        machineId: 'machine-example',
-        materializationId: 'materialization-example',
-      },
-    } as const;
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority: {
-          providerPluginId: providerSelection.contributor.pluginId,
-          providerContributionSelection: {
-            contributionId: providerSelection.contributor.contributionId,
-          },
-          providerSetupInput: { source: 'same' },
-          credentialRef: null,
-          transportOrigin: getConversationConnectionTransportOrigin(oldExecutionOrigin),
-          providerConnectionKey: 'example:connection',
-          providerConfig: { opaque: true },
-          routingIdentityKey: 'r'.repeat(43),
-          integrationPrincipal: { id: 'example-bot' },
-          authorityEpoch: 4,
-        },
-        transport: {
-          kind: 'durablePush',
-          webhookContributionRef: {
-            pluginId: providerSelection.contributor.pluginId,
-            localId: 'webhook',
-          },
-          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          webhookSourceInstanceId: `channels.connection.${connectionId}`,
-        },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
-    });
-
-    let endpointTarget: Readonly<{
-      pluginId: string;
-      machineId: string;
-      materializationId: string;
-    }> = oldExecutionOrigin.materializationRef;
-    let endpointIntentEpoch: number | null = null;
-    let endpointRevision = 4;
-    let failNextConverge = true;
-    const convergeInputs: unknown[] = [];
-    const endpointActions = vi.fn(async (actionId: string, actionInput: unknown) => {
-      if (actionId === 'plugin.webhook.endpoint.convergeTarget') {
-        convergeInputs.push(actionInput);
-        if (failNextConverge) {
-          failNextConverge = false;
-          throw new Error('simulated endpoint convergence interruption');
-        }
-        const request = actionInput as Readonly<{
-          desiredTargetMaterialization: typeof replacementExecutionOrigin.materializationRef;
-          targetIntentEpoch: number;
-        }>;
-        if (endpointIntentEpoch !== null && endpointIntentEpoch > request.targetIntentEpoch) {
-          return {
-            kind: 'superseded',
-            webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-            currentTargetIntentEpoch: endpointIntentEpoch,
-          };
-        }
-        endpointTarget = request.desiredTargetMaterialization;
-        endpointIntentEpoch = request.targetIntentEpoch;
-        endpointRevision += 1;
-        return {
-          kind: 'converged',
-          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          revision: endpointRevision,
-          targetMaterialization: endpointTarget,
-          targetIntentEpoch: request.targetIntentEpoch,
-        };
-      }
-      if (actionId === 'plugin.webhook.endpoint.checkCorrespondence') {
-        return {
-          kind: 'ready',
-          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          revision: endpointRevision,
-        };
-      }
-      throw new Error(`Unexpected endpoint Action: ${actionId}`);
-    });
-    const providerActions = durablePushCreateActionExecutor({});
-    const context = invocationContext({
-      actions: {
-        execute: endpointActions,
-        executeAdmittedTargetedOperationWithExecutionOrigin:
-          providerActions.executeAdmittedTargetedOperationWithExecutionOrigin,
-      } as unknown as ActionsService,
-      targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-        operations: {
-          setup: setupAction,
-          connectionTest: connectionTestAction,
-          messageDeliver: messageDeliverAction,
-          connectionStop: connectionStopAction,
-          observationsPoll: observationsPollAction,
-        },
-      }),
-      stateCollection: collection,
-    });
-    const initialTransferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    } as const;
-
-    await expect(transferConversationConnectionForInvocation(initialTransferInput, context)).resolves.toEqual({
-      kind: 'transferPendingOldStop',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    expect(providerActions.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
-    expect(convergeInputs).toEqual([expect.objectContaining({
-      webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-      desiredTargetMaterialization: replacementExecutionOrigin.materializationRef,
-      targetIntentEpoch: 5,
-    })]);
-
-    await expect(updateConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 5,
-      enabled: true,
-      maximumObservationAgeMs: 120_000,
-    }, context)).resolves.toMatchObject({
-      kind: 'updated',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-    });
-
-    // Once another allowed write advances the row, the original stale
-    // R/E request is no longer the immediate committed successor. Recovery
-    // requires the caller to reread and present the current R+2/E+1 facts.
-    await expect(transferConversationConnectionForInvocation(initialTransferInput, context))
-      .rejects.toMatchObject({ code: 'channels_connection_transfer_conflict' });
-    expect(providerActions.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
-    expect(convergeInputs).toHaveLength(1);
-
-    await expect(transferConversationConnectionForInvocation({
-      ...initialTransferInput,
-      expectedRevision: 6,
-      expectedAuthorityEpoch: 5,
-    }, context)).resolves.toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 7,
-      authorityEpoch: 5,
-    });
-    // Resuming the owed endpoint move runs this request's selected setup/test
-    // pair first: equal Action input does not prove equal placement, and only
-    // the resolved physical origin can say that this really is the same
-    // transfer rather than one that would converge the endpoint elsewhere.
-    expect(providerActions.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(4);
-    expect(convergeInputs).toEqual([
-      expect.objectContaining({
-        webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-        targetIntentEpoch: 5,
-      }),
-      expect.objectContaining({
-        webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-        targetIntentEpoch: 5,
-      }),
-    ]);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 7,
-      value: {
-        payload: {
-          maximumObservationAgeMs: 120_000,
-          authorityEpoch: 5,
-          pendingOldTransportStop: null,
-          transportOrigin: getConversationConnectionTransportOrigin(replacementExecutionOrigin),
-          transport: { webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID },
-        },
-      },
-    });
-  });
 
   it('converts durable push to checkpointed pull without a provider stop or webhook mutation', async () => {
     const connectionId = 'connection-transfer-push-to-pull';
@@ -3103,109 +2845,9 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
   });
 });
 
-describe('updateConversationConnectionForInvocation targeted provider stop', () => {
-  it('uses the exact persisted contribution when one provider plugin contributes multiple channels providers', async () => {
-    const connectionId = 'connection-disable-selected-contribution';
-    const selectedConnectionStop = admittedProviderOperation({ role: 'connectionStop' });
-    const otherConnectionStop = admittedProviderOperation({
-      contributor: {
-        pluginId: providerSelection.contributor.pluginId,
-        contributionId: 'other-socket',
-        sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-generation-other', installSource: 'npm' },
-      },
-      role: 'connectionStop',
-    });
-    const persistedAuthority = {
-      providerPluginId: providerSelection.contributor.pluginId,
-      providerContributionSelection: {
-        contributionId: providerSelection.contributor.contributionId,
-      },
-      providerSetupInput: { source: 'persisted' },
-      credentialRef: null,
-      transportOrigin: {
-        serverIdentityId: 'srv_example',
-        materializationRef: {
-          pluginId: providerSelection.contributor.pluginId,
-          machineId: 'machine-example',
-          materializationId: 'materialization-example',
-        },
-      },
-      providerConnectionKey: 'example:connection',
-      providerConfig: { opaque: true },
-      routingIdentityKey: 'r'.repeat(43),
-      integrationPrincipal: { id: 'example-bot' },
-      authorityEpoch: 4,
-    } as const satisfies ConversationConnectionFixtureAuthority;
-    let row = {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority: persistedAuthority,
-        transport: { kind: 'socket' },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
-    };
-    const stateCollection = {
-      async get() { return row; },
-      async batch(operations: readonly Readonly<{
-        kind: string;
-        value?: typeof row.value;
-        expectedRevision?: number | 'absent';
-      }>[]) {
-        const mutation = operations[0];
-        if (mutation?.kind !== 'put' || mutation.expectedRevision !== row.revision || mutation.value === undefined) {
-          return { status: 'conflict' as const, conflicts: [] };
-        }
-        row = { rowId: connectionId, revision: row.revision + 1, value: mutation.value };
-        return {
-          status: 'updated' as const,
-          results: [{ rowId: connectionId, revision: row.revision, deleted: false }],
-        };
-      },
-    };
-    // The disable owner swallows a rejected best-effort stop by design, so an
-    // assertion inside this mock can never fail the test.
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (_action: unknown) => {
-      return {
-        result: { kind: 'stopped' },
-        executionOrigin: row.value.payload.transportOrigin,
-      };
-    });
-    const context = invocationContext({
-      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
-      targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-        contributions: [
-          {
-            contributorId: 'other-socket',
-            contributorImmutableGenerationId: 'provider-generation-other',
-            operations: { connectionStop: otherConnectionStop },
-          },
-          {
-            contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-            operations: { connectionStop: selectedConnectionStop },
-          },
-        ],
-      }),
-      stateCollection,
-    });
+describe('updateConversationConnectionForInvocation desired lifecycle', () => {
 
-    await expect(updateConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      enabled: false,
-      maximumObservationAgeMs: 60_000,
-    }, context)).resolves.toMatchObject({ kind: 'updated', revision: 5 });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[0])
-      .toBe(selectedConnectionStop);
-  });
-
-  it('stops the socket transport when the ordinary connection policy Action is the one that disables it', async () => {
+it('disables with one generation advance and no provider stop effect', async () => {
     const connectionId = 'connection-policy-disable-targeted';
     const connectionStop = admittedProviderOperation({ role: 'connectionStop' });
     const persistedAuthority = {
@@ -3297,131 +2939,9 @@ describe('updateConversationConnectionForInvocation targeted provider stop', () 
       authorityEpoch: 5,
     });
     expect(row.value.payload.enabled).toBe(false);
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[0])
-      .toBe(connectionStop);
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[1])
-      .toMatchObject({ connectionId, authorityEpoch: 5, reason: 'disable' });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
-  it('persists an online disable before best-effort stopping through the exact current contribution', async () => {
-    const connectionId = 'connection-disable-targeted';
-    const connectionStop = admittedProviderOperation({ role: 'connectionStop' });
-    const persistedAuthority = {
-      providerPluginId: providerSelection.contributor.pluginId,
-      providerContributionSelection: {
-        contributionId: providerSelection.contributor.contributionId,
-      },
-      providerSetupInput: { source: 'persisted' },
-      credentialRef: null,
-      transportOrigin: {
-        serverIdentityId: 'srv_example',
-        materializationRef: {
-          pluginId: providerSelection.contributor.pluginId,
-          machineId: 'machine-example',
-          materializationId: 'materialization-example',
-        },
-      },
-      providerConnectionKey: 'example:connection',
-      providerConfig: { opaque: true },
-      routingIdentityKey: 'r'.repeat(43),
-      integrationPrincipal: { id: 'example-bot' },
-      authorityEpoch: 4,
-    } as const satisfies ConversationConnectionFixtureAuthority;
-    let row = {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority: persistedAuthority,
-        transport: { kind: 'socket' },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
-    };
-    const stateCollection = {
-      async get() { return row; },
-      async batch(operations: readonly Readonly<{
-        kind: string;
-        value?: typeof row.value;
-        expectedRevision?: number | 'absent';
-      }>[]) {
-        const mutation = operations[0];
-        if (mutation?.kind !== 'put' || mutation.expectedRevision !== row.revision || mutation.value === undefined) {
-          return { status: 'conflict' as const, conflicts: [] };
-        }
-        row = { rowId: connectionId, revision: row.revision + 1, value: mutation.value };
-        return {
-          status: 'updated' as const,
-          results: [{ rowId: connectionId, revision: row.revision, deleted: false }],
-        };
-      },
-    };
-    // The disable owner swallows a rejected best-effort stop by design, so an
-    // assertion inside this mock can never fail the test. Record the row the
-    // stop observed and assert both it and the recorded call afterwards.
-    const rowsObservedAtStop: (typeof row)[] = [];
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
-      _action: unknown,
-      _actionInput: unknown,
-      _options: unknown,
-    ) => {
-      rowsObservedAtStop.push(row);
-      return {
-        result: { kind: 'stopped' },
-        executionOrigin: row.value.payload.transportOrigin,
-      };
-    });
-    const context = invocationContext({
-      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
-      targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
-        operations: {
-          setup: setupAction,
-          connectionTest: connectionTestAction,
-          messageDeliver: messageDeliverAction,
-          connectionStop,
-        },
-      }),
-      stateCollection,
-    });
-
-    await expect(updateConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      enabled: false,
-      maximumObservationAgeMs: 60_000,
-    }, context)).resolves.toEqual({
-      kind: 'updated',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    expect(row.value.payload.enabled).toBe(false);
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
-    expect(rowsObservedAtStop[0]).toMatchObject({
-      revision: 5,
-      value: { payload: { authorityEpoch: 5, enabled: false } },
-    });
-    const [stopAction, stopInput, stopOptions]
-      = executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0] ?? [];
-    expect(stopAction).toBe(connectionStop);
-    expect(stopInput).toEqual({
-      v: 1,
-      connectionId,
-      providerConnectionKey: 'example:connection',
-      providerConfigVersion: 1,
-      providerConfig: { opaque: true },
-      credentialRef: null,
-      authorityEpoch: 5,
-      reason: 'disable',
-    });
-    expect(stopOptions).toMatchObject({
-      expectedExecutionRouting: getConversationConnectionExecutionRouting(row.value.payload.transportOrigin, providerSelection.contributor.pluginId),
-    });
-  });
 });
 
 describe('retestConversationConnectionForInvocation', () => {
@@ -3582,19 +3102,21 @@ describe('retestConversationConnectionForInvocation', () => {
         },
       },
     }));
+    const queryCollection = new MemoryCollection();
     const batches: unknown[][] = [];
     const stateCollection = {
       async get() { return row; },
-      async query(request: Readonly<{ index: string; prefix?: readonly unknown[]; limit?: number }>) {
-        assertChannelsTestCollectionQueryLimit(request.limit);
+      async query(request: Parameters<MemoryCollection['query']>[0]) {
         if (
-          request.index !== CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
+          (request.index !== CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
+            && request.index !== CHANNEL_STATE_INDEX_ID.byConnectionKindV1)
           || request.prefix?.[0] !== connectionId
         ) {
           throw new Error(`Unexpected retest query: ${JSON.stringify(request)}`);
         }
-        return { rows: [row, ...bindingRows].filter(current => current.value['connection-id'] === connectionId),
-          changeCursor: 7, nextCursor: undefined };
+        queryCollection.rows.set(row.rowId, row);
+        for (const binding of bindingRows) queryCollection.rows.set(binding.rowId, binding);
+        return queryCollection.query(request);
       },
       async batch(operations: readonly Readonly<{
         kind: string;
@@ -3621,7 +3143,7 @@ describe('retestConversationConnectionForInvocation', () => {
     };
   }
 
-  it('re-probes the saved connection through the persisted provider test and clears its retained readiness attention', async () => {
+  it('re-probes the current saved connection without a stale list version and clears its retained readiness attention', async () => {
     const fixture = retestFixture();
     const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
@@ -3670,8 +3192,6 @@ describe('retestConversationConnectionForInvocation', () => {
 
     await expect(retestConversationConnectionForInvocation({
       connectionId: fixture.connectionId,
-      expectedRevision: 4,
-      authorityEpoch: 4,
     }, context)).resolves.toEqual({
       kind: 'ready',
       connectionId: fixture.connectionId,
@@ -3739,7 +3259,7 @@ describe('retestConversationConnectionForInvocation', () => {
         diagnostic: 'The saved bot token was rejected.',
       },
     },
-  ])('refuses to publish a $name verdict after the tested connection revision changes', async ({ result }) => {
+  ])('refuses to publish a $name verdict after the tested connection generation changes', async ({ result }) => {
     const fixture = retestFixture();
     let readCount = 0;
     const stateCollection = {
@@ -3752,8 +3272,7 @@ describe('retestConversationConnectionForInvocation', () => {
           revision: current.revision + 1,
           value: { ...current.value, payload: {
             ...current.value.payload,
-            configurationRevision: current.value.payload.configurationRevision + 1,
-            maximumObservationAgeMs: 120_000,
+            authorityEpoch: current.value.payload.authorityEpoch + 1,
           } },
         };
       },
@@ -3785,19 +3304,22 @@ describe('retestConversationConnectionForInvocation', () => {
     expect(fixture.batches).toHaveLength(0);
   });
 
-  it('refuses to publish a provider verdict after the tested contribution generation changes', async () => {
+  it('retains a native readiness observation across same-ID contribution replacement', async () => {
     const fixture = retestFixture();
     const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
+    const replacementConnectionTest = admittedProviderOperation({
+      role: 'connectionTest',
+      contributor: { ...providerSelection.contributor, sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-generation-b', installSource: 'npm' } },
+    });
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (operation: unknown) => ({
+      result: operation === connectionTest
+        ? { kind: 'notReady', reason: 'credentialInvalid' }
+        : { kind: 'notReady', reason: 'network' },
+      executionOrigin: retestPersistedAuthority.transportOrigin,
+    }));
     const context = invocationContext({
       actions: {
-        executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(async () => ({
-          result: {
-            kind: 'notReady',
-            reason: 'credentialInvalid',
-            diagnostic: 'The saved bot token was rejected.',
-          },
-          executionOrigin: retestPersistedAuthority.transportOrigin,
-        })),
+        executeAdmittedTargetedOperationWithExecutionOrigin,
       } as unknown as ActionsService,
       targetedContributions: targetedContributionsFixture({
         contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
@@ -3808,9 +3330,9 @@ describe('retestConversationConnectionForInvocation', () => {
             operations: { setup: setupAction, connectionTest },
           },
           {
-            contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
+            contributorImmutableGenerationId: 'provider-generation-b',
             targetImmutableGenerationId: 'channels-target-generation-replaced',
-            operations: { setup: setupAction, connectionTest },
+            operations: { setup: setupAction, connectionTest: replacementConnectionTest },
           },
         ],
       }),
@@ -3821,10 +3343,9 @@ describe('retestConversationConnectionForInvocation', () => {
       connectionId: fixture.connectionId,
       expectedRevision: 4,
       authorityEpoch: 4,
-    }, context)).rejects.toMatchObject({
-      code: 'channels_connection_retest_conflict',
-      retryable: true,
-    });
+    }, context)).resolves.toMatchObject({ kind: 'notReady', reason: 'credentialInvalid' });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls.map(([operation]) => operation))
+      .toEqual([connectionTest]);
     expect(fixture.batches).toHaveLength(0);
   });
 
@@ -3967,7 +3488,7 @@ describe('retestConversationConnectionForInvocation', () => {
     });
   });
 
-  it('refuses to touch the provider at all once the caller no longer holds current connection authority', async () => {
+  it('refuses to touch the provider when the current saved connection is disabled', async () => {
     const fixture = retestFixture();
     const connectionTest = admittedProviderOperation({ role: 'connectionTest' });
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => {
@@ -3979,21 +3500,17 @@ describe('retestConversationConnectionForInvocation', () => {
         contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
         operations: { setup: setupAction, connectionTest },
       }),
-      stateCollection: fixture.stateCollection,
+      stateCollection: {
+        ...fixture.stateCollection,
+        async get() {
+          const current = fixture.readRow();
+          return { ...current, value: { ...current.value, payload: { ...current.value.payload, enabled: false } } };
+        },
+      },
     });
 
     await expect(retestConversationConnectionForInvocation({
       connectionId: fixture.connectionId,
-      expectedRevision: 4,
-      authorityEpoch: 3,
-    }, context)).rejects.toMatchObject({
-      code: 'channels_connection_retest_conflict',
-      retryable: true,
-    });
-    await expect(retestConversationConnectionForInvocation({
-      connectionId: fixture.connectionId,
-      expectedRevision: 3,
-      authorityEpoch: 4,
     }, context)).rejects.toMatchObject({
       code: 'channels_connection_retest_conflict',
       retryable: true,
@@ -4424,12 +3941,11 @@ describe('durablePush connection create endpoint continuation', () => {
 });
 
 /**
- * The connection-transfer recovery vertical. Every case here settles from the
- * frozen predecessor custody rather than from the row's replaced transport,
- * and proves the durable-push endpoint move is committed as recoverable intent
- * before the generic endpoint owner is touched at all.
+ * Transfer recovery consumes the connection's desired placement and generation.
+ * The generic webhook owner resolves the current installation on that Machine;
+ * no second persisted endpoint target or old-worker stop is needed.
  */
-describe('transferConversationConnectionForInvocation predecessor custody recovery', () => {
+describe('transferConversationConnectionForInvocation desired target recovery', () => {
   const OLD_ORIGIN = {
     serverIdentityId: 'srv_example',
     materializationRef: {
@@ -4476,44 +3992,44 @@ describe('transferConversationConnectionForInvocation predecessor custody recove
     connectionId: string;
     collection: ReturnType<typeof createMutableConnectionStateCollection>;
   }>) {
-    let blockedConverge: Readonly<{
-      entered: () => void;
-      released: Promise<void>;
-    }> | undefined;
+    const currentTargets = new Map<string, Readonly<Record<string, string>>>([
+      [REPLACEMENT_MATERIALIZATION.machineId, REPLACEMENT_MATERIALIZATION],
+      ['machine-next', { ...REPLACEMENT_MATERIALIZATION, machineId: 'machine-next', materializationId: 'materialization-next' }],
+    ]);
     const state = {
       target: { ...OLD_ORIGIN.materializationRef } as Readonly<Record<string, string>>,
       targetIntentEpoch: null as number | null,
       revision: 4,
       failNextConverge: false,
-      loseNextConvergeResponse: false,
-      abortNextConverge: undefined as AbortController | undefined,
+      unavailableNextConverge: false,
+      requireApproval: false,
+      beforeConvergeResult: undefined as (() => Promise<void>) | undefined,
       /** Retained row revision observed at each endpoint call, in order. */
       observedRevisions: [] as Array<number | undefined>,
       convergeInputs: [] as unknown[],
-      correspondenceInputs: [] as unknown[],
     };
     const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
       state.observedRevisions.push(input.collection.rows.get(input.connectionId)?.revision);
       if (actionId === 'plugin.webhook.endpoint.convergeTarget') {
-        if (blockedConverge !== undefined) {
-          const blocked = blockedConverge;
-          blockedConverge = undefined;
-          blocked.entered();
-          await blocked.released;
-        }
-        if (state.abortNextConverge !== undefined) {
-          const controller = state.abortNextConverge;
-          state.abortNextConverge = undefined;
-          controller.abort();
-          throw new Error('aborted while converging the durable-push endpoint');
-        }
+        const beforeResult = state.beforeConvergeResult;
+        state.beforeConvergeResult = undefined;
+        await beforeResult?.();
+        if (state.requireApproval) return {
+          kind: 'approval_request_created', artifactId: 'webhook-target-approval',
+          actionId: 'plugin.webhook.endpoint.convergeTarget',
+        };
         if (state.failNextConverge) {
           state.failNextConverge = false;
           throw new Error('endpoint owner unavailable');
         }
+        if (state.unavailableNextConverge) {
+          state.unavailableNextConverge = false;
+          return { kind: 'unavailable', code: 'endpoint_unavailable' };
+        }
         state.convergeInputs.push(actionInput);
         const request = actionInput as Readonly<{
-          desiredTargetMaterialization: Readonly<Record<string, string>>;
+          desiredTargetMaterialization?: Readonly<Record<string, string>>;
+          desiredTargetRouting?: Readonly<{ serverIdentityId: string; machineId: string }>;
           targetIntentEpoch: number;
         }>;
         if (state.targetIntentEpoch !== null && state.targetIntentEpoch > request.targetIntentEpoch) {
@@ -4523,16 +4039,16 @@ describe('transferConversationConnectionForInvocation predecessor custody recove
             currentTargetIntentEpoch: state.targetIntentEpoch,
           };
         }
-        const atDesiredTarget = JSON.stringify(state.target)
-          === JSON.stringify(request.desiredTargetMaterialization);
+        // The external webhook owner resolves the current installation for a
+        // routing target; Channels never fabricates or persists that identity.
+        const desiredTarget = request.desiredTargetMaterialization
+          ?? currentTargets.get(request.desiredTargetRouting?.machineId ?? '');
+        if (desiredTarget === undefined) return { kind: 'unavailable', code: 'endpoint_unavailable' };
+        const atDesiredTarget = JSON.stringify(state.target) === JSON.stringify(desiredTarget);
         if (!(state.targetIntentEpoch === request.targetIntentEpoch && atDesiredTarget)) {
-          state.target = { ...request.desiredTargetMaterialization };
+          state.target = { ...desiredTarget };
           state.targetIntentEpoch = request.targetIntentEpoch;
           state.revision += 1;
-        }
-        if (state.loseNextConvergeResponse) {
-          state.loseNextConvergeResponse = false;
-          throw new Error('endpoint target committed before its response was lost');
         }
         return {
           kind: 'converged',
@@ -4542,25 +4058,9 @@ describe('transferConversationConnectionForInvocation predecessor custody recove
           targetIntentEpoch: request.targetIntentEpoch,
         };
       }
-      if (actionId === 'plugin.webhook.endpoint.checkCorrespondence') {
-        state.correspondenceInputs.push(actionInput);
-        return {
-          kind: 'ready',
-          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          revision: state.revision,
-        };
-      }
       throw new Error(`Unexpected generic Action: ${actionId}`);
     });
-    const pauseNextConverge = () => {
-      let markEntered!: () => void;
-      let release!: () => void;
-      const entered = new Promise<void>((resolve) => { markEntered = resolve; });
-      const released = new Promise<void>((resolve) => { release = resolve; });
-      blockedConverge = { entered: markEntered, released };
-      return { entered, release };
-    };
-    return { state, execute, pauseNextConverge };
+    return { state, execute };
   }
 
   /**
@@ -4666,1103 +4166,174 @@ describe('transferConversationConnectionForInvocation predecessor custody recove
     });
   }
 
-  it('commits a durable-push endpoint retarget as recoverable intent that a cancelled attempt can resume', async () => {
-    const connectionId = 'connection-transfer-push-to-push';
+  function pushTransferFixture(connectionId: string) {
     const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority: transferAuthority(),
-        transport: {
-          kind: 'durablePush',
-          webhookContributionRef: {
-            pluginId: providerSelection.contributor.pluginId,
-            localId: 'webhook',
-          },
+    collection.rows.set(connectionId, { rowId: connectionId, revision: 4,
+      value: createCurrentConversationConnectionFixture({ configurationRevision: 4, connectionId,
+        authority: transferAuthority(), transport: { kind: 'durablePush',
+          webhookContributionRef: { pluginId: providerSelection.contributor.pluginId, localId: 'webhook' },
           webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          webhookSourceInstanceId: `channels.connection.${connectionId}`,
-        },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
+          webhookSourceInstanceId: `channels.connection.${connectionId}` },
+        overlapSafety: 'safe', replayContinuity: 'none',
+        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' } }),
     });
     const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
+    const provider = transferProviderExecutor({ supportedTransports: ['checkpointedPull', 'socket', 'durablePush'],
+      recommendedTransport: 'durablePush', replayContinuity: 'none', stopInputs, stopOrigins: [] });
     const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['checkpointedPull', 'socket', 'durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-    const transferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    } as const;
-
-    // The endpoint owner is unreachable for this attempt. The replacement
-    // authority still commits, and the retarget stays owed rather than being
-    // performed against a row write that had not happened yet.
-    endpoint.state.failNextConverge = true;
-    const pending = await transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    );
-    expect(pending).toEqual({
-      kind: 'transferPendingOldStop',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    // Every endpoint call happened after the retained row already carried the
-    // committed intent; nothing touched the endpoint at the pre-CAS revision.
-    expect(endpoint.state.observedRevisions).toEqual([5]);
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: {
-        payload: {
-          authorityEpoch: 5,
-          transportOrigin: { machineId: REPLACEMENT_MATERIALIZATION.machineId },
-          transport: {
-            kind: 'durablePush',
-            webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          },
-          pendingOldTransportStop: {
-            kind: 'endpointRetarget',
-            webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-            targetMaterialization: REPLACEMENT_MATERIALIZATION,
-            transferAuthorityEpoch: 5,
-          },
-        },
-      },
-    });
-
-    // A cancelled resume keeps the intent exactly where it was.
-    const cancelled = new AbortController();
-    endpoint.state.abortNextConverge = cancelled;
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({
-        stateCollection: collection,
-        provider,
-        execute: endpoint.execute,
-        signal: cancelled.signal,
-      }),
-    )).rejects.toThrow();
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-    expect(collection.rows.get(connectionId)?.revision).toBe(5);
-
-    // A stale request that is not the immediate committed successor is still a
-    // conflict; recovery never widens into an unbounded retry window.
-    await expect(transferConversationConnectionForInvocation(
-      { ...transferInput, expectedRevision: 3, expectedAuthorityEpoch: 3 },
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).rejects.toMatchObject({ code: 'channels_connection_transfer_conflict' });
-
-    // The response-loss rejoin resumes the exact committed intent: no replayed
-    // setup or test, the endpoint moves once, and custody settles.
-    const providerCallsBeforeRejoin = provider.mock.calls.length;
-    const settled = await transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    );
-    expect(settled).toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-    });
-    expect(provider.mock.calls.length).toBe(providerCallsBeforeRejoin);
-    expect(stopInputs).toEqual([]);
-    expect(endpoint.state.target).toEqual(REPLACEMENT_MATERIALIZATION);
-    expect(endpoint.state.convergeInputs).toHaveLength(1);
-    expect(endpoint.state.convergeInputs[0]).toMatchObject({
-      webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-      sourceInstanceId: `channels.connection.${connectionId}`,
-      desiredTargetMaterialization: REPLACEMENT_MATERIALIZATION,
-      targetIntentEpoch: 5,
-    });
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { authorityEpoch: 5, pendingOldTransportStop: null } },
-    });
-  });
-
-  it('keeps endpoint-retarget custody across concurrent delete and durable-to-non-durable requests', async () => {
-    const connectionId = 'connection-transfer-push-retarget-serialized';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const durableProvider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-
-    const convergeGate = endpoint.pauseNextConverge();
-    const retarget = transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider: durableProvider, execute: endpoint.execute }));
-    await convergeGate.entered;
-
-    const endpointCallsAfterPendingRetarget = endpoint.execute.mock.calls.length;
-    try {
-      await expect(deleteConversationConnectionForInvocation({
-        connectionId,
-        expectedRevision: 5,
-      }, transferContext({ stateCollection: collection, provider: durableProvider, execute: endpoint.execute })))
-        .rejects.toMatchObject({
-          code: 'channels_connection_delete_endpoint_retarget_repair_required',
-          retryable: true,
-        });
-
-      const pullProvider = transferProviderExecutor({
-        supportedTransports: ['checkpointedPull'],
-        recommendedTransport: 'checkpointedPull',
-        replayContinuity: 'checkpointed',
-        stopInputs,
-        stopOrigins,
-      });
-      await expect(transferConversationConnectionForInvocation({
-        connectionId,
-        expectedRevision: 5,
-        expectedAuthorityEpoch: 5,
-        providerSelection,
-        providerSetupInput: { source: 'pull' },
-        credentialRef: null,
-        selectedTransport: 'checkpointedPull',
-      }, transferContext({ stateCollection: collection, provider: pullProvider, execute: endpoint.execute })))
-        .rejects.toMatchObject({
-          code: 'channels_connection_transfer_endpoint_retarget_repair_required',
-          retryable: true,
-        });
-
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            transport: {
-              kind: 'durablePush',
-              webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-            },
-            pendingOldTransportStop: {
-              kind: 'endpointRetarget',
-              transferAuthorityEpoch: 5,
-            },
-          },
-        },
-      });
-    } finally {
-      convergeGate.release();
-    }
-
-    await expect(retarget).resolves.toMatchObject({
-      kind: 'transferred',
-      revision: 6,
-      authorityEpoch: 5,
-    });
-
-    expect(stopInputs).toEqual([]);
-    expect(endpoint.execute.mock.calls).toHaveLength(endpointCallsAfterPendingRetarget);
-    expect(endpoint.execute.mock.calls.every(([actionId]) => (
-      actionId === 'plugin.webhook.endpoint.convergeTarget'
-    ))).toBe(true);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { pendingOldTransportStop: null } },
-    });
-  });
-
-  it('rejoins after the endpoint commits its target and loses the convergence response', async () => {
-    const connectionId = 'connection-transfer-push-endpoint-response-lost';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-    const transferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    } as const;
-
-    endpoint.state.loseNextConvergeResponse = true;
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toEqual({
-      kind: 'transferPendingOldStop',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    expect(endpoint.state.target).toEqual(REPLACEMENT_MATERIALIZATION);
-    expect(endpoint.state.revision).toBe(5);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: { payload: { pendingOldTransportStop: { kind: 'endpointRetarget', transferAuthorityEpoch: 5 } } },
-    });
-
-    const providerCallsBeforeRetry = provider.mock.calls.length;
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-    });
-    expect(provider.mock.calls.length).toBe(providerCallsBeforeRetry);
-    expect(endpoint.state.revision).toBe(5);
-    expect(stopInputs).toEqual([]);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { pendingOldTransportStop: null } },
-    });
-  });
-
-  const SECOND_REPLACEMENT_MATERIALIZATION = {
-    pluginId: providerSelection.contributor.pluginId,
-    machineId: 'machine-second',
-    materializationId: 'materialization-second',
-  } as const;
-
-  function durablePushConnectionRow(input: Readonly<{
-    connectionId: string;
-    revision: number;
-    authority: ConversationConnectionFixtureAuthority;
-    pendingOldTransportStop?: ReturnType<typeof createCurrentConversationPendingOldTransportStopFixture>;
-  }>) {
-    return {
-      rowId: input.connectionId,
-      revision: input.revision,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: input.revision,
-        connectionId: input.connectionId,
-        authority: input.authority,
-        transport: {
-          kind: 'durablePush',
-          webhookContributionRef: {
-            pluginId: providerSelection.contributor.pluginId,
-            localId: 'webhook',
-          },
-          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-          webhookSourceInstanceId: `channels.connection.${input.connectionId}`,
-        },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-        ...(input.pendingOldTransportStop === undefined
-          ? {}
-          : { pendingOldTransportStop: input.pendingOldTransportStop }),
-      }),
-    };
+    const context = transferContext({ stateCollection: collection, provider, execute: endpoint.execute });
+    const input = { connectionId, expectedRevision: 4, expectedAuthorityEpoch: 4, providerSelection,
+      providerSetupInput: { source: 'same' }, credentialRef: null, selectedTransport: 'durablePush' } as const;
+    return { collection, provider, endpoint, context, input, stopInputs };
   }
 
-  it('converges a stranded endpoint on the target the next transfer desires', async () => {
-    const connectionId = 'connection-transfer-push-stranded-endpoint';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
+  it('commits a durable-push desired target without retaining endpoint-retarget custody', async () => {
+    const fixture = pushTransferFixture('connection-transfer-desired-target');
+    fixture.endpoint.state.unavailableNextConverge = true;
+    await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).resolves.toMatchObject({
+      kind: 'transferred', connectionId: fixture.input.connectionId, authorityEpoch: 5,
     });
-
-    // The endpoint owner is unreachable, so the committed O→A move stays owed
-    // and the endpoint keeps delivering to the retired origin.
-    endpoint.state.failNextConverge = true;
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider, execute: endpoint.execute })))
-      .resolves.toEqual({
-        kind: 'transferPendingOldStop',
-        connectionId,
-        revision: 5,
-        authorityEpoch: 5,
-      });
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-
-    // The owner moves on to a third origin instead of accepting a loss the
-    // Account endpoint cannot suffer. The replacement desire supersedes the
-    // owed move, and the same repair converges the endpoint on B even though
-    // it never reached A.
-    const secondProvider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-      replacementMaterialization: SECOND_REPLACEMENT_MATERIALIZATION,
+    expect(fixture.endpoint.state.observedRevisions).toEqual([5]);
+    expect(fixture.endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
+    expect(fixture.collection.rows.get(fixture.input.connectionId)).toMatchObject({ revision: 6,
+      value: { payload: { authorityEpoch: 5, pendingOldTransportStop: null,
+        pollFailure: { phase: 'retryDue', evidence: { kind: 'action', code: 'endpoint_unavailable' } },
+        transportOrigin: { machineId: REPLACEMENT_MATERIALIZATION.machineId },
+        transport: { kind: 'durablePush', webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID } } },
     });
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 5,
-      expectedAuthorityEpoch: 5,
-      providerSelection,
-      // A different requested setup is a new transfer rather than a resume of
-      // the identical committed one.
-      providerSetupInput: { source: 'second' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider: secondProvider, execute: endpoint.execute })))
-      .resolves.toEqual({
-        kind: 'transferred',
-        connectionId,
-        revision: 7,
-        authorityEpoch: 6,
-      });
-    expect(stopInputs).toEqual([]);
-    expect(endpoint.state.target).toEqual(SECOND_REPLACEMENT_MATERIALIZATION);
-    expect(endpoint.state.convergeInputs).toEqual([expect.objectContaining({
-      webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-      desiredTargetMaterialization: SECOND_REPLACEMENT_MATERIALIZATION,
-      targetIntentEpoch: 6,
-    })]);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 7,
-      value: {
-        payload: {
-          authorityEpoch: 6,
-          transportOrigin: { machineId: SECOND_REPLACEMENT_MATERIALIZATION.machineId },
-          pendingOldTransportStop: null,
-        },
-      },
+    expect(fixture.stopInputs).toEqual([]);
+    await expect(retryConversationConnectionPollForInvocation({
+      connectionId: fixture.input.connectionId, expectedRevision: 5, authorityEpoch: 5,
+    }, fixture.context)).resolves.toMatchObject({ kind: 'retryScheduled', authorityEpoch: 5 });
+    expect(fixture.collection.rows.get(fixture.input.connectionId)?.value).toMatchObject({
+      payload: { pollFailure: null, authorityEpoch: 5,
+        transportOrigin: { machineId: REPLACEMENT_MATERIALIZATION.machineId } },
     });
   });
 
-  /**
-   * The race the intent epoch exists for. An older transfer attempt that was
-   * still in flight when a later transfer replaced it must never drag the
-   * endpoint back to the target only it remembers, and it must learn that
-   * from the canonical owner rather than from a local comparison it could
-   * make against stale bytes.
-   */
-  it('refuses an older in-flight endpoint move once a later transfer owns the endpoint', async () => {
-    const connectionId = 'connection-transfer-push-superseded-intent';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
+  it('recovers the desired durable-push target after a crash through the real supervisor and stays quiet on unrelated writes', async () => {
+    const fixture = pushTransferFixture('connection-transfer-supervisor-crash');
+    fixture.collection.loseNextUpdatedBatchResponse();
+    await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).rejects.toThrow('simulated response loss');
+    expect(fixture.endpoint.execute).not.toHaveBeenCalled();
+    fixture.endpoint.state.unavailableNextConverge = true;
+    vi.useFakeTimers();
+    const generation = new AbortController();
+    const watchers: Array<{ kind?: string; notify(): void }> = [];
+    const collection = { ...fixture.collection, watch: (request: Readonly<{ prefix?: readonly string[] }>, notify: () => void) => {
+      watchers.push({ kind: request.prefix?.[0], notify }); return { dispose() {} };
+    } };
+    const supervisor = createIngressSupervisor();
+    const running = supervisor.run({ ...fixture.context, signal: generation.signal,
+      services: { ...fixture.context.services, storage: { account: { collection: () => collection } },
+        logger: { info: vi.fn(), warn: vi.fn() }, events: { plugin: { emit: async () => ({ subscriberCount: 0 }) } } },
+    } as unknown as BackgroundServiceContext);
+    const publish = (kind: string) => { for (const watcher of watchers) if (watcher.kind === undefined || watcher.kind === kind) watcher.notify(); };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
+      expect(fixture.collection.rows.get(fixture.input.connectionId)?.value).toMatchObject({
+        payload: { pollFailure: { phase: 'retryDue', evidence: { code: 'endpoint_unavailable' } } },
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fixture.endpoint.state.target).toEqual(REPLACEMENT_MATERIALIZATION);
+      expect(fixture.endpoint.state.revision).toBe(5);
+      const settledConvergeCalls = fixture.endpoint.state.convergeInputs.length;
+      expect(fixture.collection.rows.get(fixture.input.connectionId)?.value).toMatchObject({ payload: { pollFailure: null } });
+      for (let index = 0; index < 10; index += 1) {
+        publish('checkpoint'); publish('pairing-request'); publish('binding'); publish('connection');
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(fixture.endpoint.state.convergeInputs).toHaveLength(settledConvergeCalls);
+      const row = fixture.collection.rows.get(fixture.input.connectionId)!;
+      const payload = row.value.payload as Readonly<Record<string, unknown>>;
+      fixture.collection.rows.set(row.rowId, { ...row, revision: row.revision + 1,
+        value: { ...row.value, payload: { ...payload, authorityEpoch: 6,
+          transportOrigin: { serverIdentityId: 'srv_example', machineId: 'machine-next' } } } });
+      publish('connection');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.endpoint.state.target).toEqual({ ...REPLACEMENT_MATERIALIZATION,
+        machineId: 'machine-next', materializationId: 'materialization-next' });
+      expect(fixture.endpoint.state.convergeInputs).toHaveLength(settledConvergeCalls + 1);
+      expect(fixture.collection.rows.get(row.rowId)?.revision).toBe(row.revision + 1);
+      const connectionWrites = fixture.collection.batch.mock.calls.length;
+      const endpointRevision = fixture.endpoint.state.revision;
+      publish('connection');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.collection.batch.mock.calls.length).toBe(connectionWrites);
+      expect(fixture.endpoint.state.revision).toBe(endpointRevision);
+    } finally {
+      generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+  });
+
+  it('rejoins a response-lost transfer by its current desired facts without another connection write', async () => {
+    const fixture = pushTransferFixture('connection-transfer-idempotent-desire');
+    fixture.collection.loseNextUpdatedBatchResponse();
+    await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).rejects.toThrow('simulated response loss');
+    await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).resolves.toMatchObject({
+      kind: 'transferred', revision: 5, authorityEpoch: 5,
     });
+    expect(fixture.collection.rows.get(fixture.input.connectionId)?.revision).toBe(5);
+    expect(fixture.endpoint.state.target).toEqual(REPLACEMENT_MATERIALIZATION);
+    expect(fixture.stopInputs).toEqual([]);
+  });
 
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider, execute: endpoint.execute })))
-      .resolves.toMatchObject({ kind: 'transferred', authorityEpoch: 5 });
-    expect(endpoint.state.target).toEqual(REPLACEMENT_MATERIALIZATION);
-
-    const secondProvider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-      replacementMaterialization: SECOND_REPLACEMENT_MATERIALIZATION,
+  it('shows a policy-deferred endpoint move as blocked and never creates automatic duplicate approvals', async () => {
+    const fixture = pushTransferFixture('connection-transfer-approval-deferred');
+    fixture.endpoint.state.requireApproval = true;
+    let concurrentEditApplied = false;
+    fixture.endpoint.state.beforeConvergeResult = async () => {
+      const edited = await updateConversationConnectionForInvocation({
+        connectionId: fixture.input.connectionId, expectedRevision: 5,
+        enabled: true, maximumObservationAgeMs: 120_000,
+      }, fixture.context);
+      concurrentEditApplied = edited.kind === 'updated';
+    };
+    await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).resolves.toMatchObject({
+      kind: 'transferred', authorityEpoch: 5,
     });
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 6,
-      expectedAuthorityEpoch: 5,
-      providerSelection,
-      providerSetupInput: { source: 'second' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider: secondProvider, execute: endpoint.execute })))
-      .resolves.toMatchObject({ kind: 'transferred', authorityEpoch: 6 });
-    expect(endpoint.state.target).toEqual(SECOND_REPLACEMENT_MATERIALIZATION);
-    expect(endpoint.state.targetIntentEpoch).toBe(6);
+    expect(concurrentEditApplied).toBe(true);
+    vi.useFakeTimers();
+    const generation = new AbortController();
+    const collection = { ...fixture.collection, watch: () => ({ dispose() {} }) };
+    const supervisor = createIngressSupervisor();
+    const running = supervisor.run({ ...fixture.context, signal: generation.signal,
+      services: { ...fixture.context.services, storage: { account: { collection: () => collection } },
+        logger: { info: vi.fn(), warn: vi.fn() }, events: { plugin: { emit: async () => ({ subscriberCount: 0 }) } } },
+    } as unknown as BackgroundServiceContext);
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fixture.endpoint.execute).toHaveBeenCalledTimes(1);
+      expect(fixture.collection.rows.get(fixture.input.connectionId)?.value).toMatchObject({
+        payload: { pollFailure: { phase: 'blocked', evidence: {
+          kind: 'action', code: 'channels_connection_transfer_endpoint_unavailable',
+        } } },
+      });
+      expect(fixture.endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
+    } finally {
+      generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+  });
 
-    // The predecessor attempt finally reaches the endpoint. It carries its own
-    // frozen epoch 5 and the placement that transfer desired, and is refused.
-    const endpointRevisionBeforeStaleRetry = endpoint.state.revision;
-    await expect(convergeConversationConnectionWebhookEndpointTarget({
-      context: transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-      transferAuthorityEpoch: 5,
+  it('allows a later transfer while a previous desired endpoint move is unavailable and refuses a late older move', async () => {
+    const fixture = pushTransferFixture('connection-transfer-newer-desire');
+    fixture.endpoint.state.failNextConverge = true;
+    await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).resolves.toMatchObject({ kind: 'transferred', authorityEpoch: 5 });
+    const nextMaterialization = { ...REPLACEMENT_MATERIALIZATION, machineId: 'machine-next', materializationId: 'materialization-next' };
+    const nextProvider = transferProviderExecutor({ supportedTransports: ['durablePush'], recommendedTransport: 'durablePush',
+      replayContinuity: 'none', stopInputs: fixture.stopInputs, stopOrigins: [], replacementMaterialization: nextMaterialization });
+    await expect(transferConversationConnectionForInvocation({ ...fixture.input, expectedRevision: 5, expectedAuthorityEpoch: 5,
+      providerSetupInput: { source: 'next' } }, transferContext({ stateCollection: fixture.collection,
+        provider: nextProvider, execute: fixture.endpoint.execute }))).resolves.toMatchObject({ kind: 'transferred', authorityEpoch: 6 });
+    await expect(convergeConversationConnectionWebhookEndpointTarget({ context: fixture.context, transferAuthorityEpoch: 5,
       webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
       webhookContribution: { pluginId: providerSelection.contributor.pluginId, localId: 'webhook' },
-      sourceInstanceId: `channels.connection.${connectionId}`,
-      nextTargetMaterialization: REPLACEMENT_MATERIALIZATION,
+      sourceInstanceId: `channels.connection.${fixture.input.connectionId}`, nextTargetMaterialization: REPLACEMENT_MATERIALIZATION,
     })).rejects.toMatchObject({ code: 'channels_connection_transfer_endpoint_superseded' });
-    expect(endpoint.state.target).toEqual(SECOND_REPLACEMENT_MATERIALIZATION);
-    expect(endpoint.state.targetIntentEpoch).toBe(6);
-    expect(endpoint.state.revision).toBe(endpointRevisionBeforeStaleRetry);
-    // No rollback custody, no compensating write: the row that the later
-    // transfer settled is untouched by the refused predecessor.
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      value: {
-        payload: {
-          authorityEpoch: 6,
-          transportOrigin: { machineId: SECOND_REPLACEMENT_MATERIALIZATION.machineId },
-          pendingOldTransportStop: null,
-        },
-      },
-    });
-  });
-
-  /**
-   * Equal Action input is not equal placement. A request that would otherwise
-   * look like a resume of the owed endpoint move must run its selected
-   * provider setup first and compare the physical origin that setup actually
-   * resolved. When that origin moved, this is not the committed intent being
-   * replayed: it is a later transfer, and it must converge the endpoint on the
-   * origin it resolved now rather than on the one only the stale intent
-   * remembers.
-   */
-  it('treats a moved physical origin as a later transfer instead of resuming the owed endpoint move', async () => {
-    const connectionId = 'connection-transfer-push-origin-moved';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-
-    endpoint.state.failNextConverge = true;
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider, execute: endpoint.execute })))
-      .resolves.toEqual({
-        kind: 'transferPendingOldStop',
-        connectionId,
-        revision: 5,
-        authorityEpoch: 5,
-      });
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-
-    // The caller rereads and presents the current R+1/E+1 facts with the exact
-    // same setup input, but the selected provider now materializes elsewhere.
-    const movedProvider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-      replacementMaterialization: SECOND_REPLACEMENT_MATERIALIZATION,
-    });
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 5,
-      expectedAuthorityEpoch: 5,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider: movedProvider, execute: endpoint.execute })))
-      .resolves.toMatchObject({ kind: 'transferred', authorityEpoch: 6 });
-    // The endpoint converged on the origin this request actually resolved,
-    // under a new intent epoch — never on the stale desired origin, and with
-    // no rollback of the superseded pending intent.
-    expect(endpoint.state.target).toEqual(SECOND_REPLACEMENT_MATERIALIZATION);
-    expect(endpoint.state.targetIntentEpoch).toBe(6);
-    expect(endpoint.state.convergeInputs.at(-1)).toMatchObject({
-      desiredTargetMaterialization: SECOND_REPLACEMENT_MATERIALIZATION,
-      targetIntentEpoch: 6,
-    });
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      value: {
-        payload: {
-          authorityEpoch: 6,
-          transportOrigin: { machineId: SECOND_REPLACEMENT_MATERIALIZATION.machineId },
-          pendingOldTransportStop: null,
-        },
-      },
-    });
-  });
-
-  it('converges an endpoint stranded under a retained accepted-loss marker', async () => {
-    const connectionId = 'connection-transfer-push-accepted-loss';
-    const collection = createMutableConnectionStateCollection();
-    const acceptedAuthority = {
-      ...transferAuthority(),
-      transportOrigin: {
-        serverIdentityId: 'srv_example',
-        materializationRef: REPLACEMENT_MATERIALIZATION,
-      },
-      authorityEpoch: 5,
-    } satisfies ConversationConnectionFixtureAuthority;
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: acceptedAuthority,
-      // Durable custody written before endpoint moves were repairable: the row
-      // already names A while the endpoint never left O.
-      pendingOldTransportStop: createCurrentConversationPendingOldTransportStopFixture({
-        connectionId,
-        authority: transferAuthority(),
-        predecessorCheckpointedPollInvocation: {
-          connectionRevision: 2,
-          authorityEpoch: 3,
-          transportOrigin: getConversationConnectionTransportOrigin(OLD_ORIGIN),
-        },
-        authorityEpoch: 4,
-        reason: 'transfer',
-        predecessorTransportKind: 'durablePush',
-        endpointRetarget: 'pending',
-        overlapSafety: 'safe',
-        acceptedPossibleLoss: true,
-      }),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-      replacementMaterialization: SECOND_REPLACEMENT_MATERIALIZATION,
-    });
-
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 5,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider, execute: endpoint.execute })))
-      .resolves.toEqual({
-        kind: 'transferred',
-        connectionId,
-        revision: 6,
-        authorityEpoch: 6,
-      });
-    expect(endpoint.state.target).toEqual(SECOND_REPLACEMENT_MATERIALIZATION);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { authorityEpoch: 6, pendingOldTransportStop: null } },
-    });
-  });
-
-  it('rejoins a settled durable-push transfer whose success response was lost', async () => {
-    const connectionId = 'connection-transfer-push-settled-response-loss';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-    const transferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    } as const;
-
-    // The transfer commits its replacement authority and then settles its own
-    // endpoint move, so the successful journey ends two revisions on.
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-    });
-    const providerCalls = provider.mock.calls.length;
-    const endpointCalls = endpoint.execute.mock.calls.length;
-
-    // The caller never saw that result. Its retry must rejoin the outcome it
-    // already produced instead of failing a journey that fully succeeded.
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-    });
-    // A fully settled row keeps no marker of its own transfer, so the rejoin
-    // resolves this request's placement through the selected setup/test seam
-    // before agreeing that the retained state is the one it committed. No
-    // committed effect is replayed: the endpoint owner is never called again
-    // and the retained row does not move.
-    expect(provider.mock.calls.length).toBe(providerCalls + 2);
-    expect(endpoint.execute.mock.calls.length).toBe(endpointCalls);
-    expect(collection.rows.get(connectionId)?.revision).toBe(6);
-  });
-
-  it('repairs an owed endpoint retarget instead of accepting its loss', async () => {
-    const connectionId = 'connection-transfer-push-repair-abandon';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-
-    endpoint.state.failNextConverge = true;
-    await expect(transferConversationConnectionForInvocation({
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    }, transferContext({ stateCollection: collection, provider, execute: endpoint.execute })))
-      .resolves.toMatchObject({ kind: 'transferPendingOldStop', revision: 5 });
-
-    // The custody-resolution Action repairs this obligation. While the endpoint
-    // owner stays unavailable it must say so rather than mark an accepted loss
-    // that would freeze the endpoint on the retired origin forever.
-    endpoint.state.failNextConverge = true;
-    await expect(abandonConversationConnectionForInvocation(
-      { connectionId, expectedRevision: 5 },
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).rejects.toMatchObject({
-      code: 'channels_connection_abandon_endpoint_retarget_unrepaired',
-      retryable: true,
-    });
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: {
-        payload: {
-          pendingOldTransportStop: {
-            kind: 'endpointRetarget',
-            transferAuthorityEpoch: 5,
-          },
-        },
-      },
-    });
-
-    await expect(abandonConversationConnectionForInvocation(
-      { connectionId, expectedRevision: 5 },
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toEqual({
-      kind: 'rejoined',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-      acceptedPossibleLoss: false,
-    });
-    expect(endpoint.state.target).toEqual(REPLACEMENT_MATERIALIZATION);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { authorityEpoch: 5, pendingOldTransportStop: null } },
-    });
-  });
-
-  it('settles a response-lost socket-to-durable-push transfer through the frozen socket predecessor', async () => {
-    const connectionId = 'connection-transfer-socket-to-push';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority: transferAuthority(),
-        transport: { kind: 'socket' },
-        overlapSafety: 'safe',
-        replayContinuity: 'none',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
-    });
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['socket', 'durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-    const transferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-      endpointContinuation: {
-        connectionId,
-        webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
-      },
-    } as const;
-
-    collection.loseNextUpdatedBatchResponse();
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).rejects.toThrow('simulated response loss after Account write commit');
-    expect(stopInputs).toEqual([]);
-
-    // The committed row already names durable push. Only the frozen slot still
-    // knows a socket consumer is running and must be stopped.
-    const rejoined = await transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    );
-    expect(rejoined).toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 6,
-      authorityEpoch: 5,
-    });
-    expect(stopInputs).toEqual([expect.objectContaining({
-      connectionId,
-      reason: 'transfer',
-      authorityEpoch: 5,
-    })]);
-    expect(stopOrigins).toEqual([getConversationConnectionExecutionRouting(getConversationConnectionTransportOrigin(OLD_ORIGIN), providerSelection.contributor.pluginId)]);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { authorityEpoch: 5, pendingOldTransportStop: null } },
-    });
-  });
-
-  it('leaves a response-lost checkpointed-pull-to-socket transfer to the poll supervisor without a provider stop', async () => {
-    const connectionId = 'connection-transfer-pull-to-socket';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 4,
-      value: createCurrentConversationConnectionFixture({
-        configurationRevision: 4,
-        connectionId,
-        authority: transferAuthority(),
-        transport: { kind: 'checkpointedPull' },
-        overlapSafety: 'safe',
-        replayContinuity: 'checkpointed',
-        outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
-      }),
-    });
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const provider = transferProviderExecutor({
-      supportedTransports: ['checkpointedPull', 'socket'],
-      recommendedTransport: 'socket',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-    const transferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'socket',
-    } as const;
-
-    collection.loseNextUpdatedBatchResponse();
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider }),
-    )).rejects.toThrow('simulated response loss after Account write commit');
-
-    const rejoined = await transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider }),
-    );
-    expect(rejoined).toEqual({
-      kind: 'transferPendingOldStop',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    // A retired checkpointed pull has no provider-local consumer; inventing a
-    // stop Action for it would claim proof the core cannot have.
-    expect(stopInputs).toEqual([]);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: {
-        payload: {
-          transport: { kind: 'socket' },
-          pendingOldTransportStop: {
-            predecessorTransportKind: 'checkpointedPull',
-            endpointRetarget: 'notRequired',
-          },
-        },
-      },
-    });
-  });
-
-  /**
-   * A placement-only transfer: every persisted provider fact the retained row
-   * already holds matches the request, so only the placement the selected setup
-   * resolves says the caller asked to move execution at all.
-   */
-  function placementMoveTransferInput(connectionId: string) {
-    return {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-    } as const;
-  }
-
-  it('refuses a settled placement move that an unrelated enable toggle made stale', async () => {
-    const connectionId = 'connection-transfer-placement-move-toggle';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs: [],
-      stopOrigins: [],
-    });
-
-    // A concurrent policy edit advances the retained row to R+1/E+1 while
-    // performing no transfer at all. Every requested provider fact still
-    // matches, so this row is byte-indistinguishable from a committed transfer.
-    await expect(updateConversationConnectionForInvocation(
-      { connectionId, expectedRevision: 4, enabled: false, maximumObservationAgeMs: 60_000 },
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toMatchObject({ kind: 'updated', revision: 5, authorityEpoch: 5 });
-
-    // This caller's transfer never ran. Its requested placement is not the
-    // retained one, so reporting `transferred` would claim a move no row holds.
-    await expect(transferConversationConnectionForInvocation(
-      placementMoveTransferInput(connectionId),
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).rejects.toMatchObject({
-      code: 'channels_connection_transfer_conflict',
-      retryable: true,
-    });
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: { payload: { authorityEpoch: 5, transportOrigin: getConversationConnectionTransportOrigin(OLD_ORIGIN) } },
-    });
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-  });
-
-  it('refuses that same settled placement collision once a revision-only edit reaches R+2', async () => {
-    const connectionId = 'connection-transfer-placement-move-toggle-r2';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush'],
-      recommendedTransport: 'durablePush',
-      replayContinuity: 'none',
-      stopInputs: [],
-      stopOrigins: [],
-    });
-
-    await expect(updateConversationConnectionForInvocation(
-      { connectionId, expectedRevision: 4, enabled: false, maximumObservationAgeMs: 60_000 },
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toMatchObject({ kind: 'updated', revision: 5, authorityEpoch: 5 });
-    // A configuration-only edit moves the revision without touching authority,
-    // reproducing the exact `R+2/E+1` shape a fully settled transfer leaves.
-    await expect(updateConversationConnectionForInvocation(
-      { connectionId, expectedRevision: 5, enabled: false, maximumObservationAgeMs: 120_000 },
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toMatchObject({ kind: 'updated', revision: 6, authorityEpoch: 5 });
-
-    await expect(transferConversationConnectionForInvocation(
-      placementMoveTransferInput(connectionId),
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).rejects.toMatchObject({
-      code: 'channels_connection_transfer_conflict',
-      retryable: true,
-    });
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 6,
-      value: { payload: { authorityEpoch: 5, transportOrigin: getConversationConnectionTransportOrigin(OLD_ORIGIN) } },
-    });
-    expect(endpoint.state.target).toEqual(OLD_ORIGIN.materializationRef);
-  });
-
-  it('rejoins a settled durable-push detachment once its selected setup proves the same placement', async () => {
-    const connectionId = 'connection-transfer-push-detach-response-loss';
-    const collection = createMutableConnectionStateCollection();
-    collection.rows.set(connectionId, durablePushConnectionRow({
-      connectionId,
-      revision: 4,
-      authority: transferAuthority(),
-    }));
-    const stopInputs: unknown[] = [];
-    const stopOrigins: unknown[] = [];
-    const endpoint = webhookEndpointBoundary({ connectionId, collection });
-    const provider = transferProviderExecutor({
-      supportedTransports: ['durablePush', 'checkpointedPull'],
-      recommendedTransport: 'checkpointedPull',
-      replayContinuity: 'none',
-      stopInputs,
-      stopOrigins,
-    });
-    const transferInput = {
-      connectionId,
-      expectedRevision: 4,
-      expectedAuthorityEpoch: 4,
-      providerSelection,
-      providerSetupInput: { source: 'same' },
-      credentialRef: null,
-      selectedTransport: 'checkpointedPull',
-    } as const;
-
-    // Detaching a durable push settles in one revision and keeps no frozen
-    // custody, so the committed row carries no marker of its own transfer.
-    collection.loseNextUpdatedBatchResponse();
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).rejects.toThrow('simulated response loss after Account write commit');
-    const providerCallsBeforeRejoin = provider.mock.calls.length;
-
-    await expect(transferConversationConnectionForInvocation(
-      transferInput,
-      transferContext({ stateCollection: collection, provider, execute: endpoint.execute }),
-    )).resolves.toEqual({
-      kind: 'transferred',
-      connectionId,
-      revision: 5,
-      authorityEpoch: 5,
-    });
-    // Placement is the only evidence a settled row still holds, so the rejoin
-    // resolves it through the same selected setup/test seam. No committed
-    // effect — Account authority, frozen stop, or endpoint — is replayed.
-    expect(provider.mock.calls.length).toBe(providerCallsBeforeRejoin + 2);
-    expect(stopInputs).toEqual([]);
-    expect(endpoint.execute.mock.calls).toEqual([]);
-    expect(collection.rows.get(connectionId)).toMatchObject({
-      revision: 5,
-      value: {
-        payload: {
-          authorityEpoch: 5,
-          transport: { kind: 'checkpointedPull' },
-          transportOrigin: { machineId: REPLACEMENT_MATERIALIZATION.machineId },
-          pendingOldTransportStop: null,
-        },
-      },
+    expect(fixture.endpoint.state.target).toEqual(nextMaterialization);
+    expect(fixture.collection.rows.get(fixture.input.connectionId)).toMatchObject({ revision: 7,
+      value: { payload: { authorityEpoch: 6, pendingOldTransportStop: null, pollFailure: null } },
     });
   });
 });

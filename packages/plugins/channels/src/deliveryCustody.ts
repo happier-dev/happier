@@ -4,17 +4,15 @@ import type {
   ConversationDeliveryResultV1,
   ConversationResolvedEndpointV1,
   ConversationSessionLastDeliveryOutcomeV1,
+  CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1,
+  CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1,
 } from '@happier-dev/channels-protocol/v1';
 
 import { conversationRetryDelayMs } from './retryBackoff.js';
 
 export const CONVERSATION_DELIVERY_CUSTODY_STATES = CONVERSATION_DELIVERY_CUSTODY_STATES_V1;
 
-/**
- * The one custody-state vocabulary whose content may be replaced by the
- * keyed replay fingerprint. Archive-recoverable `notDelivered` custody is a
- * narrower runtime exception because retry still needs the original body.
- */
+/** Terminal evidence settles replay identity without retaining delivery content. */
 export const CONVERSATION_DELIVERY_CONTENT_FREE_STATES = [
   'delivered',
   'notDelivered',
@@ -24,6 +22,8 @@ export const CONVERSATION_DELIVERY_CONTENT_FREE_STATES = [
   'resolvedAccepted',
   'resolvedDiscarded',
   'connectionDeleted',
+  'notSent',
+  'resolved',
 ] as const satisfies readonly ConversationDeliveryCustodyState[];
 
 const CONVERSATION_DELIVERY_RETENTION_ELIGIBLE_STATES = [
@@ -33,6 +33,8 @@ const CONVERSATION_DELIVERY_RETENTION_ELIGIBLE_STATES = [
   'resolvedAccepted',
   'resolvedDiscarded',
   'connectionDeleted',
+  'notSent',
+  'resolved',
 ] as const satisfies readonly ConversationDeliveryCustodyState[];
 
 export type ConversationDeliveryCustodyState =
@@ -40,9 +42,10 @@ export type ConversationDeliveryCustodyState =
 
 export type ConversationDeliveryCustody = Readonly<{
   state: ConversationDeliveryCustodyState;
+  reason?: (typeof CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1)[number];
+  outcome?: (typeof CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1)[number];
   attemptCount: number;
   attemptId?: string;
-  startedAt?: number;
   providerMessageIds: readonly string[];
   failedChunk?: number;
   retryNotBefore?: number;
@@ -55,18 +58,12 @@ export type ConversationDeliveryCustody = Readonly<{
 type StartResult =
   | Readonly<{ kind: 'started'; custody: ConversationDeliveryCustody }>
   | Readonly<{ kind: 'notStartable'; reason: 'attemptInProgress' | 'notDue' }>;
-type StaleAttemptRecoveryClaimResult =
-  | Readonly<{ kind: 'reclaimed'; custody: ConversationDeliveryCustody }>
-  | Readonly<{ kind: 'notRecoverable'; reason: 'notAttempting' | 'attemptStillCurrent' }>;
 type SettleResult =
   | Readonly<{ kind: 'settled'; custody: ConversationDeliveryCustody }>
   | Readonly<{ kind: 'staleAttempt' }>;
 type ResolveResult =
   | Readonly<{ kind: 'resolved'; custody: ConversationDeliveryCustody }>
   | Readonly<{ kind: 'notResolvable' }>;
-type ArchiveRetryResult =
-  | Readonly<{ kind: 'retryReady'; custody: ConversationDeliveryCustody }>
-  | Readonly<{ kind: 'notRetryable' }>;
 type ConnectionDeletionResult =
   | Readonly<{ kind: 'connectionDeleted'; custody: ConversationDeliveryCustody }>
   | Readonly<{ kind: 'retained'; custody: ConversationDeliveryCustody }>
@@ -102,49 +99,11 @@ export function startConversationDeliveryAttempt(input: Readonly<{
       state: 'attempting',
       attemptCount: Math.min(Number.MAX_SAFE_INTEGER, input.custody.attemptCount + 1),
       attemptId: input.attemptId,
-      startedAt: input.startedAt,
       providerMessageIds: input.custody.providerMessageIds,
       ...(input.custody.threadBindingPending === undefined ? {} : { threadBindingPending: input.custody.threadBindingPending }),
     },
   };
 }
-
-/**
- * A crashed/timed-out provider attempt is never resent. Its recovery owner first
- * replaces the persisted attempt identity under CAS, so a late old callback and
- * a concurrent restarted supervisor are both fenced before optional provider
- * reconciliation observes the delivery key.
- */
-export function claimStaleConversationDeliveryAttemptRecovery(input: Readonly<{
-  custody: ConversationDeliveryCustody;
-  recoveryAttemptId: string;
-  recoveredAt: number;
-  staleAfterMs: number;
-}>): StaleAttemptRecoveryClaimResult {
-  if (input.custody.state !== 'attempting'
-    || input.custody.startedAt === undefined
-    || !Number.isSafeInteger(input.custody.startedAt)) {
-    return { kind: 'notRecoverable', reason: 'notAttempting' };
-  }
-  if (!Number.isSafeInteger(input.recoveredAt)
-    || !Number.isSafeInteger(input.staleAfterMs)
-    || input.staleAfterMs < 0
-    || input.recoveredAt < input.custody.startedAt + input.staleAfterMs) {
-    return { kind: 'notRecoverable', reason: 'attemptStillCurrent' };
-  }
-  return {
-    kind: 'reclaimed',
-    custody: {
-      state: 'attempting',
-      attemptCount: input.custody.attemptCount,
-      attemptId: input.recoveryAttemptId,
-      startedAt: input.recoveredAt,
-      providerMessageIds: input.custody.providerMessageIds,
-      ...(input.custody.threadBindingPending === undefined ? {} : { threadBindingPending: input.custody.threadBindingPending }),
-    },
-  };
-}
-
 function attemptResultBase(custody: ConversationDeliveryCustody): Pick<
   ConversationDeliveryCustody,
   'attemptCount' | 'threadBindingPending'
@@ -160,7 +119,8 @@ export function settleConversationDeliveryAttempt(input: Readonly<{
   result: ConversationDeliveryResultV1;
   now: number;
 }>): SettleResult {
-  if (input.custody.state !== 'attempting' || input.custody.attemptId !== input.attemptId) {
+  if (input.custody.state !== 'attempting'
+    || input.custody.attemptId !== input.attemptId) {
     return { kind: 'staleAttempt' };
   }
 
@@ -219,7 +179,8 @@ export function settleConversationDeliveryAttempt(input: Readonly<{
         kind: 'settled',
         custody: {
           ...base,
-          state: 'notDelivered',
+          state: 'notSent',
+          reason: 'providerRefused',
           providerMessageIds: [],
         },
       };
@@ -229,9 +190,9 @@ export function settleConversationDeliveryAttempt(input: Readonly<{
         kind: 'settled',
         custody: {
           ...base,
-          state: 'notDelivered',
+          state: 'notSent',
+          reason: 'ownerMustUnarchiveOrRebind',
           providerMessageIds: [],
-          archiveRecovery: input.result.recovery,
         },
       };
     case 'outcomeUnknown':
@@ -247,18 +208,24 @@ export function settleConversationDeliveryAttempt(input: Readonly<{
   }
 }
 
-/** Settles a claimed attempt that was proven currentness-ineligible before provider I/O. */
-export function suppressConversationDeliveryAttempt(input: Readonly<{
+/** Releases a cancelled claim or settles a policy refusal before provider I/O. */
+export function settleConversationDeliveryBeforeProviderEffect(input: Readonly<{
   custody: ConversationDeliveryCustody;
   attemptId: string;
+  reason: 'cancelled' | 'policySuppressed';
 }>): SettleResult {
   if (input.custody.state !== 'attempting' || input.custody.attemptId !== input.attemptId) {
     return { kind: 'staleAttempt' };
   }
+  if (input.reason === 'cancelled') {
+    const { attemptId: _attemptId, ...custody } = input.custody;
+    return { kind: 'settled', custody: { ...custody, state: 'ready' } };
+  }
   return {
     kind: 'settled',
     custody: {
-      state: 'suppressed',
+      state: 'notSent',
+      reason: 'policySuppressed',
       attemptCount: input.custody.attemptCount,
       providerMessageIds: [],
     },
@@ -273,7 +240,9 @@ export function isConversationDeliveryAutomaticTerminal(custody: ConversationDel
     || custody.state === 'outcomeUnknown'
     || custody.state === 'resolvedAccepted'
     || custody.state === 'resolvedDiscarded'
-    || custody.state === 'connectionDeleted';
+    || custody.state === 'connectionDeleted'
+    || custody.state === 'notSent'
+    || custody.state === 'resolved';
 }
 
 /**
@@ -291,8 +260,10 @@ export function deriveConversationDeliveryAttention(
   custody: ConversationDeliveryCustody,
 ): ConversationDeliveryAttention {
   return {
-    retryDue: custody.state === 'retryDue',
-    notDelivered: custody.state === 'notDelivered',
+    // Retained wire field: scheduling does not require owner intervention.
+    retryDue: false,
+    notDelivered: custody.state === 'notDelivered'
+      || (custody.state === 'notSent' && (custody.reason === 'providerRefused' || custody.reason === 'ownerMustUnarchiveOrRebind')),
     partial: custody.state === 'partial',
     outcomeUnknown: custody.state === 'outcomeUnknown',
   };
@@ -312,11 +283,13 @@ export function deriveConversationDeliveryLastOutcome(
     case 'notDelivered':
     case 'suppressed':
     case 'connectionDeleted':
+    case 'notSent':
       return 'notDelivered';
     case 'partial':
     case 'outcomeUnknown':
     case 'resolvedAccepted':
     case 'resolvedDiscarded':
+    case 'resolved':
       return 'unknown';
   }
 }
@@ -329,7 +302,7 @@ export function deriveConversationDeliveryProjection(custody: ConversationDelive
   const attention = deriveConversationDeliveryAttention(custody);
   return {
     terminal: isConversationDeliveryAutomaticTerminal(custody) && !hasPendingConversationThreadBinding(custody),
-    attention: attention.retryDue || attention.notDelivered || attention.partial || attention.outcomeUnknown,
+    attention: attention.notDelivered || attention.partial || attention.outcomeUnknown,
     ...(custody.state === 'retryDue' && custody.retryNotBefore !== undefined
       ? { retryNotBefore: custody.retryNotBefore }
       : {}),
@@ -344,24 +317,16 @@ export function isConversationDeliveryRetentionEligible(custody: ConversationDel
 /** Successful external delivery must finish ordinary reply routing before retirement. */
 export function hasPendingConversationThreadBinding(custody: ConversationDeliveryCustody): boolean {
   return custody.threadBindingPending === true
-    && (custody.state === 'delivered' || custody.state === 'resolvedAccepted');
+    && (custody.state === 'delivered' || custody.state === 'resolvedAccepted'
+      || (custody.state === 'resolved' && custody.outcome === 'accepted'));
 }
 
 /**
- * The one canonical body-required/body-free predicate. A custody body may be
- * replaced by its keyed replay fingerprint exactly when its state is in the
- * content-free vocabulary and no owner-led archive retry can still consume
- * the original body — the `notDelivered` arm that an owner can unarchive and
- * resend keeps its bytes. The declared `channel-deliveries` Collection schema
- * encodes this same predicate on its body-free arm, so runtime compaction and
- * schema admission can never disagree about which terminal rows may lose
- * their content. Body need and row-retention lifetime are intentionally
- * independent: unresolved ambiguous rows remain retained for user resolution
- * while their unused plaintext body is compacted.
+ * Terminal custody never resends its body. Unresolved ambiguous rows retain
+ * effect evidence for owner resolution while their unused content is dropped.
  */
 export function isConversationDeliveryContentFree(custody: ConversationDeliveryCustody): boolean {
-  return (CONVERSATION_DELIVERY_CONTENT_FREE_STATES as readonly string[]).includes(custody.state)
-    && retryConversationDeliveryAfterArchiveRecovery({ custody }).kind !== 'retryReady';
+  return (CONVERSATION_DELIVERY_CONTENT_FREE_STATES as readonly string[]).includes(custody.state);
 }
 
 /**
@@ -372,23 +337,26 @@ export function isConversationDeliveryContentFree(custody: ConversationDeliveryC
 export function settleConversationDeliveryForConnectionDeletion(input: Readonly<{
   custody: ConversationDeliveryCustody;
 }>): ConnectionDeletionResult {
-  if (input.custody.state === 'connectionDeleted') {
+  if (input.custody.state === 'connectionDeleted'
+    || (input.custody.state === 'notSent' && input.custody.reason === 'connectionDeleted')) {
     return { kind: 'connectionDeleted', custody: input.custody };
   }
   if (input.custody.state === 'delivered' || input.custody.state === 'resolvedAccepted'
-    || input.custody.state === 'resolvedDiscarded') {
+    || input.custody.state === 'resolvedDiscarded' || input.custody.state === 'resolved') {
     return retainConversationDeliveryForRouteDeletion(input.custody);
   }
   if (input.custody.state !== 'ready'
     && input.custody.state !== 'retryDue'
     && input.custody.state !== 'notDelivered'
-    && input.custody.state !== 'suppressed') {
+    && input.custody.state !== 'suppressed'
+    && input.custody.state !== 'notSent') {
     return { kind: 'notDeletable', reason: 'externalEffectMayExist' };
   }
   return {
     kind: 'connectionDeleted',
     custody: {
-      state: 'connectionDeleted',
+      state: 'notSent',
+      reason: 'connectionDeleted',
       attemptCount: input.custody.attemptCount,
       providerMessageIds: [],
     },
@@ -414,7 +382,8 @@ export function settleConversationDeliveryForBindingDeletion(input: Readonly<{
     return {
       kind: 'suppressed',
       custody: {
-        state: 'suppressed',
+        state: 'notSent',
+        reason: 'policySuppressed',
         attemptCount: input.custody.attemptCount,
         providerMessageIds: [],
       },
@@ -425,7 +394,9 @@ export function settleConversationDeliveryForBindingDeletion(input: Readonly<{
     || input.custody.state === 'suppressed'
     || input.custody.state === 'resolvedAccepted'
     || input.custody.state === 'resolvedDiscarded'
-    || input.custody.state === 'connectionDeleted') {
+    || input.custody.state === 'connectionDeleted'
+    || input.custody.state === 'notSent'
+    || input.custody.state === 'resolved') {
     return retainConversationDeliveryForRouteDeletion(input.custody);
   }
   return { kind: 'notDeletable', reason: 'externalEffectMayExist' };
@@ -442,7 +413,8 @@ export function resolveConversationDeliveryCustody(input: Readonly<{
   return {
     kind: 'resolved',
     custody: {
-      state: input.resolution === 'accepted' ? 'resolvedAccepted' : 'resolvedDiscarded',
+      state: 'resolved',
+      outcome: input.resolution,
       attemptCount: input.custody.attemptCount,
       providerMessageIds: input.custody.providerMessageIds,
       ...(input.custody.threadBindingPending === undefined ? {} : {
@@ -450,27 +422,6 @@ export function resolveConversationDeliveryCustody(input: Readonly<{
       }),
       ...((input.endpoint ?? input.custody.endpoint) === undefined ? {} : { endpoint: input.endpoint ?? input.custody.endpoint }),
       ...(input.custody.failedChunk === undefined ? {} : { failedChunk: input.custody.failedChunk }),
-    },
-  };
-}
-
-/**
- * An archive-specific provider result is authoritatively known to have had no
- * effect. Only the recovery arm that permits an owner-led unarchive may reset
- * the existing obligation; generic refusal and ambiguous/partial effects do
- * not gain a blind retry path.
- */
-export function retryConversationDeliveryAfterArchiveRecovery(input: Readonly<{
-  custody: ConversationDeliveryCustody;
-}>): ArchiveRetryResult {
-  if (input.custody.state !== 'notDelivered'
-    || input.custody.archiveRecovery !== 'unarchiveAndRetry') {
-    return { kind: 'notRetryable' };
-  }
-  return {
-    kind: 'retryReady',
-    custody: { ...createReadyConversationDeliveryCustody(),
-      ...(input.custody.threadBindingPending === undefined ? {} : { threadBindingPending: input.custody.threadBindingPending }),
     },
   };
 }

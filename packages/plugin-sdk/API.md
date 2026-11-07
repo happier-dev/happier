@@ -1291,6 +1291,7 @@
 | `./automations` | `AutomationConversationAdmitInputV1Schema` | value | any |
 | `./automations` | `AutomationConversationAdmitResultV1` | type | any |
 | `./automations` | `AutomationConversationAdmitResultV1Schema` | value | any |
+| `./automations` | `AutomationConversationEventActorsV1Schema` | value | any |
 | `./automations` | `AutomationConversationResultDeliveryV1` | type | any |
 | `./automations` | `AutomationConversationResultDeliveryV1Schema` | value | any |
 | `./automations` | `AutomationIdV1` | type | any |
@@ -2015,6 +2016,8 @@
 | `./notifications` | `NotificationsService` | type | daemon |
 | `./notifications` | `PluginNotificationRegistrationApi` | type | daemon |
 | `./protocol` | `CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1` | value | any |
+| `./protocol` | `DiscussionMessageContentV1` | type | any |
+| `./protocol` | `DiscussionMessagePartV1` | type | any |
 | `./protocol` | `FileDownloadDestinationV1` | type | any |
 | `./protocol` | `FileDownloadDestinationV1ProtocolSchema` | value | any |
 | `./protocol` | `FileDownloadResultV1` | type | any |
@@ -2068,8 +2071,10 @@
 | `./protocol` | `defineProtocolUtf8String` | value | any |
 | `./protocol` | `defineTriageCompositeIdentifierStringV1` | value | any |
 | `./protocol` | `defineTriageSingleLineStringV1` | value | any |
+| `./protocol` | `embedProtocolJsonSchema` | value | any |
 | `./protocol` | `encodeBase64` | value | any |
 | `./protocol` | `pluginJsonValuesEqual` | value | any |
+| `./protocol` | `readDiscussionMessagePartsV1` | value | any |
 | `./providers` | `AgentProviderRequirementsV1` | type | any |
 | `./providers` | `BundledProviderCatalogParserId` | type | any |
 | `./providers` | `BundledProviderWireProtocol` | type | any |
@@ -2242,6 +2247,7 @@
 | `./reviews` | `defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema` | value | any |
 | `./reviews` | `defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema` | value | any |
 | `./reviews` | `formatReviewCommentPublicationMarkerV1` | value | any |
+| `./reviews` | `hasReviewCommentPublicationMarkerV1` | value | any |
 | `./reviews` | `matchReviewCommentPublicationMarkerV1` | value | any |
 | `./reviews` | `parseReviewCommentPublicationPlanV1` | value | any |
 | `./reviews` | `parseReviewFindingsV2` | value | daemon |

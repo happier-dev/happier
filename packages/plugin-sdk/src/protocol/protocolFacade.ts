@@ -5,6 +5,10 @@
  */
 import { createProtocolStoredReadSchema as canonicalCreateProtocolStoredReadSchema, defineProtocolArray as canonicalDefineProtocolArray, defineProtocolJsonValue as canonicalDefineProtocolJsonValue, defineProtocolLiteral as canonicalDefineProtocolLiteral, defineProtocolNumber as canonicalDefineProtocolNumber, defineProtocolObject as canonicalDefineProtocolObject, defineProtocolString as canonicalDefineProtocolString, defineProtocolUnion as canonicalDefineProtocolUnion, defineProtocolUniqueArray as canonicalDefineProtocolUniqueArray, defineProtocolUtf8String as canonicalDefineProtocolUtf8String, isProtocolComposableSchema as canonicalIsProtocolComposableSchema, ProtocolValidationError as canonicalProtocolValidationError } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { pluginJsonValuesEqual as canonicalPluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { embedProtocolJsonSchema as canonicalEmbedProtocolJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+
+/** Embed an existing schema without changing the meaning of its document-local references. */
+export const embedProtocolJsonSchema: (projection: PluginJsonSchema, path: readonly (string | number)[]) => PluginJsonSchema = canonicalEmbedProtocolJsonSchema;
 /**
  * Declaration-neutral SDK projection of Protocol's mutable structural JSON
  * (`PluginJsonValueV2`): data as authored into declarations and carried on
@@ -260,10 +264,10 @@ export type ProtocolObjectOptions<
 /** Canonical Protocol runtime values retain their exact identity. */
 export const pluginJsonValuesEqual: (left: unknown, right: unknown) => boolean =
     canonicalPluginJsonValuesEqual;
-export const ProtocolValidationError: Readonly<{
+export const ProtocolValidationError: {
     new (issues: readonly ProtocolValidationIssue[]): ProtocolValidationError;
     readonly prototype: ProtocolValidationError;
-}> = canonicalProtocolValidationError;
+} = canonicalProtocolValidationError;
 
 export const defineProtocolLiteral: <const TValue extends string | number | boolean | null>(
     value: TValue,

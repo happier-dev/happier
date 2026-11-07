@@ -102,8 +102,7 @@ export function getSelfStampedPluginCallerExecutionOrigin(
 
 export type ConversationConnectionOverlapSafetyV1 =
   | 'safe'
-  | 'providerExclusive'
-  | 'destructive';
+  | 'providerExclusive';
 
 export type ConversationConnectionDeletionStateV1 =
   | 'none'
@@ -125,7 +124,7 @@ export type ConversationConnectionProviderReadinessV1 = Readonly<{
 }> | null;
 
 /**
- * The sole durable poll-supervisor disposition. It records only provider
+ * The sole durable receive-supervisor disposition. It records only provider
  * facts or the reduced cross-boundary Action error that survives execution;
  * it never turns a thrown error into a retryability decision.
  */
@@ -156,11 +155,8 @@ export type ConversationConnectionPollFailureV1 =
   }>;
 
 /**
- * The immutable invocation facts from the connection row that created an
- * old-transport custody slot. A returning checkpointed poll may settle that
- * slot only when its capture matches this predecessor exactly; later policy
- * or failure writes may advance the live row revision without changing this
- * proof.
+ * Historical invocation facts retained only to decode predecessor rows.
+ * They no longer authorize stop proof or a lifecycle settlement.
  */
 export type ConversationCheckpointedPollInvocationBasisV1 = Readonly<{
   connectionRevision: number;
@@ -169,44 +165,32 @@ export type ConversationCheckpointedPollInvocationBasisV1 = Readonly<{
 }>;
 
 /**
- * Whether the retired transport still owes the one durable-endpoint retarget
- * that moves an already-owned Account webhook onto the replacement target.
- *
- * `pending` is recoverable intent: the connection CAS commits it before the
- * generic endpoint is touched, so a retry or a response-loss rejoin resumes
- * the exact same idempotent retarget instead of leaving the endpoint and the
- * retained row naming different targets. Every other transfer freezes
- * `notRequired`; settlement removes the whole slot rather than adding a
- * terminal phase nothing reads.
+ * Historical endpoint-retarget grammar. Current endpoint convergence reads
+ * desired placement directly and creates no retained retarget obligation.
  */
 export type ConversationPendingEndpointRetargetV1 = 'notRequired' | 'pending';
 
 /**
- * The one connection-owned durable custody slot for an old physical transport.
- * Its frozen request and exact admitted contribution selection are the only
- * authority for a later stop settlement. It is not a retry ledger, mutable
- * selector, or a carrier for replacement setup input.
+ * An inert predecessor payload, retained so actual stored rows remain readable.
+ * Current lifecycle admission and cleanup do not depend on this stop envelope.
  */
 export type ConversationPendingProviderStopV1 = Readonly<{
-  /** Exact predecessor facts that authorize a captured checkpointed poll. */
+  /** The predecessor's original invocation facts, not current authority. */
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
   transportOrigin: ConversationConnectionTransportOriginV1;
-  /** Exact incumbent contribution/generation used only for the deferred stop. */
+  /** The original contributor selection, retained without an invocation path. */
   providerContributionSelection: PersistedConversationProviderContributionSelection;
   stopRequest: Readonly<ConversationProviderConnectionStopInputV1>;
   /**
-   * The retired transport itself. A transfer replaces the row's transport in
-   * the same CAS that freezes this slot, so every later rejoin or settlement
-   * decision must read the predecessor from here rather than from the live
-   * row, which already names the replacement.
+   * The predecessor transport, not the current connection's receive mode.
    */
   predecessorTransportKind: ConversationTransportKindV1;
   endpointRetarget: ConversationPendingEndpointRetargetV1;
-  overlapSafety: ConversationConnectionOverlapSafetyV1;
+  overlapSafety: ConversationConnectionOverlapSafetyV1 | 'destructive';
   acceptedPossibleLoss: boolean;
 }>;
 
-/** Account endpoint convergence has no provider process or poll to stop. */
+/** Reader for the predecessor's persisted endpoint intent; new writes omit it. */
 export type ConversationPendingEndpointRetargetIntentV1 = Readonly<{
   kind: 'endpointRetarget';
   webhookEndpointId: string;
@@ -238,37 +222,6 @@ export function isConversationPendingEndpointRetarget(pending: unknown): pending
   return pending !== null && typeof pending === 'object' && 'kind' in pending && pending.kind === 'endpointRetarget';
 }
 
-/** A frozen delete request is the only delete transition input. */
-export type ConversationDeleteStopRequestV1 = Readonly<
-  Omit<ConversationProviderConnectionStopInputV1, 'reason'> & Readonly<{
-    reason: 'delete';
-  }>
->;
-
-/** A frozen transfer request is the only transfer transition input. */
-export type ConversationTransferStopRequestV1 = Readonly<
-  Omit<ConversationProviderConnectionStopInputV1, 'reason'> & Readonly<{
-    reason: 'transfer';
-  }>
->;
-
-export type ConversationPendingOldTransportStopDeleteStartV1 = Readonly<{
-  predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
-  transportOrigin: ConversationConnectionTransportOriginV1;
-  providerContributionSelection: PersistedConversationProviderContributionSelection;
-  stopRequest: ConversationDeleteStopRequestV1;
-  predecessorTransportKind: ConversationTransportKindV1;
-}>;
-
-export type ConversationPendingOldTransportStopTransferStartV1 = ConversationPendingEndpointRetargetIntentV1 | Readonly<{
-  predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
-  transportOrigin: ConversationConnectionTransportOriginV1;
-  providerContributionSelection: PersistedConversationProviderContributionSelection;
-  stopRequest: ConversationTransferStopRequestV1;
-  predecessorTransportKind: ConversationTransportKindV1;
-  endpointRetarget: ConversationPendingEndpointRetargetV1;
-}>;
-
 /**
  * The lifecycle-owned projection of a validated private connection payload.
  * It intentionally excludes provider configuration, credentials, and origin:
@@ -278,7 +231,8 @@ export type ConversationConnectionLifecycleStateV1 = Readonly<{
   authorityEpoch: number;
   enabled: boolean;
   deletionState: ConversationConnectionDeletionStateV1;
-  overlapSafety: ConversationConnectionOverlapSafetyV1;
+  /** The precursor value is readable only; no current provider produces it. */
+  overlapSafety: ConversationConnectionOverlapSafetyV1 | 'destructive';
   pendingOldTransportStop: ConversationPendingOldTransportStopV1 | null;
   historyGap: ConversationConnectionHistoryGapV1 | null;
   providerReadiness: ConversationConnectionProviderReadinessV1;
@@ -299,42 +253,17 @@ export type ConversationConnectionRequestedStateV1 = Readonly<{
 }>;
 
 export type ConversationConnectionDeleteStartResultV1 =
-  | Readonly<{ kind: 'deletePending'; connection: ConversationConnectionLifecycleStateV1 }>
+  | Readonly<{ kind: 'deleteFinalizing'; connection: ConversationConnectionLifecycleStateV1 }>
   | Readonly<{ kind: 'rejoined'; connection: ConversationConnectionLifecycleStateV1 }>
-  | Readonly<{
-    kind: 'rejected';
-    code:
-      | 'authorityEpochExhausted'
-      | 'oldTransportStopPending'
-      | 'endpointRetargetRepairRequired'
-      | 'stopRequestInvalid';
-  }>;
+  | Readonly<{ kind: 'rejected'; code: 'authorityEpochExhausted' }>;
 
 export type ConversationConnectionTransferStartResultV1 =
-  | Readonly<{ kind: 'transferPendingOldStop'; connection: ConversationConnectionLifecycleStateV1 }>
+  | Readonly<{ kind: 'transferred'; connection: ConversationConnectionLifecycleStateV1 }>
   | Readonly<{
     kind: 'rejected';
     code:
       | 'deleteInProgress'
-      | 'oldTransportStopPending'
-      | 'endpointRetargetRepairRequired'
-      | 'authorityEpochExhausted'
-      | 'stopRequestInvalid';
-  }>;
-
-export type ConversationConnectionStopConfirmationResultV1 =
-  | Readonly<{ kind: 'deleteFinalizing'; connection: ConversationConnectionLifecycleStateV1 }>
-  | Readonly<{ kind: 'transportStopConfirmed'; connection: ConversationConnectionLifecycleStateV1 }>
-  | Readonly<{ kind: 'staleAuthority' }>;
-
-export type ConversationConnectionAbandonResultV1 =
-  | Readonly<{ kind: 'deleteFinalizing'; connection: ConversationConnectionLifecycleStateV1 }>
-  | Readonly<{ kind: 'transferAbandoned'; connection: ConversationConnectionLifecycleStateV1 }>
-  | Readonly<{ kind: 'rejoined'; connection: ConversationConnectionLifecycleStateV1 }>
-  | Readonly<{ kind: 'staleAuthority' }>
-  | Readonly<{
-    kind: 'rejected';
-    code: 'authorityEpochExhausted' | 'endpointRetargetRepairRequired';
+      | 'authorityEpochExhausted';
   }>;
 
 export type ConversationConnectionEnabledResultV1 =
@@ -342,7 +271,7 @@ export type ConversationConnectionEnabledResultV1 =
   | Readonly<{ kind: 'unchanged'; connection: ConversationConnectionLifecycleStateV1 }>
   | Readonly<{
     kind: 'rejected';
-    code: 'deleteInProgress' | 'oldTransportStopPending' | 'authorityEpochExhausted' | 'maximumObservationAgeInvalid';
+    code: 'deleteInProgress' | 'authorityEpochExhausted' | 'maximumObservationAgeInvalid';
   }>;
 
 export type ConversationConnectionTransitionResultV1 = ConversationConnectionEnabledResultV1;
@@ -458,9 +387,8 @@ function areConversationProviderReadinessStatesEqual(
 }
 
 /**
- * Normalizes a retained old-stop slot. The delete and transfer transitions
- * are its only constructors; Account parsing uses the same owner for either
- * reason so later confirmation or explicit abandonment sees exact custody.
+ * Reads an immutable predecessor slot without granting it lifecycle authority.
+ * Current delete and transfer writes never construct this historical shape.
  */
 export function freezeConversationPendingOldTransportStop(input: Readonly<{
   predecessorCheckpointedPollInvocation: ConversationCheckpointedPollInvocationBasisV1;
@@ -469,7 +397,7 @@ export function freezeConversationPendingOldTransportStop(input: Readonly<{
   stopRequest: Readonly<ConversationProviderConnectionStopInputV1>;
   predecessorTransportKind: ConversationTransportKindV1;
   endpointRetarget: ConversationPendingEndpointRetargetV1;
-  overlapSafety: ConversationConnectionOverlapSafetyV1;
+  overlapSafety: ConversationConnectionOverlapSafetyV1 | 'destructive';
   acceptedPossibleLoss: boolean;
 }>): ConversationPendingProviderStopV1 {
   return Object.freeze({
@@ -486,128 +414,6 @@ export function freezeConversationPendingOldTransportStop(input: Readonly<{
     overlapSafety: input.overlapSafety,
     acceptedPossibleLoss: input.acceptedPossibleLoss,
   });
-}
-
-function hasCurrentCheckpointedPollInvocationBasis(input: Readonly<{
-  currentAuthorityEpoch: number;
-  pendingOldTransportOrigin: ConversationConnectionTransportOriginV1;
-  basis: ConversationCheckpointedPollInvocationBasisV1;
-}>): boolean {
-  return Number.isSafeInteger(input.basis.connectionRevision)
-    && input.basis.connectionRevision >= 1
-    && Number.isSafeInteger(input.basis.authorityEpoch)
-    && input.basis.authorityEpoch === input.currentAuthorityEpoch
-    && areConversationConnectionTransportOriginsEqual(
-      input.basis.transportOrigin,
-      input.pendingOldTransportOrigin,
-    );
-}
-
-/**
- * The one incumbent-overlap decision used by every replacement transport
- * entry point. Desired connection enablement remains independent policy;
- * only the old transport's frozen destructive class withholds replacement
- * effects until exact settlement or authorized acceptance settles custody.
- */
-export function hasUnsettledDestructiveOldTransportStop(input: Readonly<{
-  authorityEpoch: number;
-  deletionState: ConversationConnectionDeletionStateV1;
-  pendingOldTransportStop: ConversationPendingOldTransportStopV1 | null;
-}>): boolean {
-  return input.deletionState === 'none'
-    && input.pendingOldTransportStop !== null
-    && !isConversationPendingEndpointRetarget(input.pendingOldTransportStop)
-    && input.pendingOldTransportStop.overlapSafety === 'destructive'
-    && (!input.pendingOldTransportStop.acceptedPossibleLoss
-      || !hasAcceptedConversationTransferLoss(input));
-}
-
-/**
- * Whether the retained custody owes only the durable-endpoint move.
- *
- * That obligation is an idempotent target change on an Account endpoint
- * Happier itself owns — not a foreign consumer that may still be running and
- * observing. It is discharged by repairing it, by a later transfer that names a
- * newer desired target the same repair converges on. Delete waits for repair.
- * None of those is an accepted loss, so the
- * slot never becomes a permanent mistarget disclosure.
- */
-export function owesOnlyConversationEndpointRetarget(
-  pending: ConversationPendingOldTransportStopV1 | null,
-): pending is ConversationPendingEndpointRetargetIntentV1 {
-  return isConversationPendingEndpointRetarget(pending);
-}
-
-/**
- * A retained accepted transfer slot is settled owner disclosure, not live
- * stop custody. It may survive ordinary policy writes and be atomically
- * replaced by the next exact-current destructive operation.
- */
-export function hasAcceptedConversationTransferLoss(input: Readonly<{
-  authorityEpoch: number;
-  deletionState: ConversationConnectionDeletionStateV1;
-  pendingOldTransportStop: ConversationPendingOldTransportStopV1 | null;
-}>): boolean {
-  const pending = input.pendingOldTransportStop;
-  return input.deletionState === 'none'
-    && pending !== null
-    && !isConversationPendingEndpointRetarget(pending)
-    && pending.stopRequest.reason === 'transfer'
-    && pending.acceptedPossibleLoss
-    // The abandon CAS first establishes E+1 for the frozen E request. Later
-    // ordinary policy writes may advance the connection epoch again, but must
-    // not turn settled disclosure back into stranded live-stop custody.
-    // A schema-valid marker that is not past its frozen request remains
-    // unresolved custody rather than authorizing an update or replacement.
-    //
-    // The strict advance below is the whole rule: with both epochs proven safe
-    // integers and the frozen request at least 1, it already implies the
-    // connection epoch is above 1 and the frozen request below the safe-integer
-    // ceiling, so restating either as its own conjunct only looks like a bound.
-    && Number.isSafeInteger(input.authorityEpoch)
-    && Number.isSafeInteger(pending.stopRequest.authorityEpoch)
-    && pending.stopRequest.authorityEpoch >= 1
-    && input.authorityEpoch > pending.stopRequest.authorityEpoch;
-}
-
-/**
- * The one admission predicate for replacing retained old-transport custody.
- *
- * Settled accepted loss is disclosure rather than live custody and may be
- * replaced by either destructive transition. An owed endpoint retarget is
- * different: delete or a durable-to-non-durable transfer would erase the only
- * repair intent while the generic endpoint may already have moved. Only the
- * next authority epoch retaining this connection's same durable endpoint may
- * supersede it and converge that endpoint directly on the newer target.
- */
-function decideRetainedOldTransportCustodyReplacement(input: Readonly<{
-  current: ConversationConnectionLifecycleStateV1;
-  connectionId: string;
-  replacement:
-    | Readonly<{ kind: 'delete' }>
-    | Readonly<{
-      kind: 'transfer';
-      pendingOldTransportStop: ConversationPendingOldTransportStopTransferStartV1;
-    }>;
-}>): 'allowed' | 'oldTransportStopPending' | 'endpointRetargetRepairRequired' {
-  const pending = input.current.pendingOldTransportStop;
-  if (pending === null) return 'allowed';
-  if (!isConversationPendingEndpointRetarget(pending)
-    && pending.stopRequest.connectionId !== input.connectionId) return 'oldTransportStopPending';
-  if (hasAcceptedConversationTransferLoss(input.current)) return 'allowed';
-  if (!owesOnlyConversationEndpointRetarget(pending)) return 'oldTransportStopPending';
-
-  if (input.replacement.kind === 'transfer'
-    && pending.transferAuthorityEpoch === input.current.authorityEpoch
-    && isConversationPendingEndpointRetarget(input.replacement.pendingOldTransportStop)
-    && input.replacement.pendingOldTransportStop.webhookEndpointId === pending.webhookEndpointId
-    && input.replacement.pendingOldTransportStop.webhookSourceInstanceId === pending.webhookSourceInstanceId
-    && input.replacement.pendingOldTransportStop.webhookContributionRef.pluginId === pending.webhookContributionRef.pluginId
-    && input.replacement.pendingOldTransportStop.webhookContributionRef.localId === pending.webhookContributionRef.localId
-    && input.replacement.pendingOldTransportStop.transferAuthorityEpoch > pending.transferAuthorityEpoch) {
-    return 'allowed';
-  }
-  return 'endpointRetargetRepairRequired';
 }
 
 /**
@@ -632,15 +438,6 @@ export function transitionConversationConnection(input: Readonly<{
   const maximumObservationAgeChanged = current.maximumObservationAgeMs !== requested.maximumObservationAgeMs;
   if (!enabledChanged && !maximumObservationAgeChanged) {
     return { kind: 'unchanged', connection: current };
-  }
-  // Unsettled stop custody carries the current authority epoch, so an
-  // enabled-state change would make exact stop proof impossible. Accepted
-  // transfer loss is already-settled disclosure rather than live custody and
-  // remains admissible across ordinary policy epochs.
-  if (enabledChanged
-    && current.pendingOldTransportStop !== null
-    && !hasAcceptedConversationTransferLoss(current)) {
-    return { kind: 'rejected', code: 'oldTransportStopPending' };
   }
   if (enabledChanged && !hasAuthoritySteps(current.authorityEpoch, 1)) {
     return { kind: 'rejected', code: 'authorityEpochExhausted' };
@@ -671,10 +468,9 @@ export function transitionConversationConnection(input: Readonly<{
       ...current,
       enabled: requested.enabled,
       maximumObservationAgeMs: requested.maximumObservationAgeMs,
-      // Desired-state edits never settle frozen stop custody. An enabled
-      // change above admits only settled accepted loss; a configuration-only
-      // edit keeps an unresolved slot until its exact stop settlement.
-      pendingOldTransportStop: current.pendingOldTransportStop,
+      // A requested policy write drops retired stop metadata; reads and
+      // unchanged requests leave the historical stored row untouched.
+      pendingOldTransportStop: null,
       pollFailure: null,
       observationAgeExpansionFloorOccurredAt,
       ...(enabledChanged
@@ -693,58 +489,30 @@ export function transitionConversationConnection(input: Readonly<{
 }
 
 /**
- * Commits logical delete intent and the one exact old-stop request before any
- * provider stop attempt. Finalizing does not need a second authority advance:
- * the persisted stop request is already fenced at the new pending epoch.
+ * Withdraws connection admission in one generation change. The retained
+ * deletion marker is only a recovery anchor for bounded dependent cleanup.
  */
 export function startConversationConnectionDelete(input: Readonly<{
   current: ConversationConnectionLifecycleStateV1;
-  pendingOldTransportStop: ConversationPendingOldTransportStopDeleteStartV1;
 }>): ConversationConnectionDeleteStartResultV1 {
   const { current } = input;
-  if (current.deletionState !== 'none') {
+  if (current.deletionState === 'finalizingDelete' && current.pendingOldTransportStop === null) {
     return { kind: 'rejoined', connection: current };
   }
-  const custodyDecision = decideRetainedOldTransportCustodyReplacement({
-    current,
-    connectionId: input.pendingOldTransportStop.stopRequest.connectionId,
-    replacement: { kind: 'delete' },
-  });
-  if (custodyDecision !== 'allowed') {
-    return { kind: 'rejected', code: custodyDecision };
-  }
-  if (!hasAuthoritySteps(current.authorityEpoch, 1)) {
+  // A historical pending delete already withdrew this generation. Explicit
+  // Delete recovers cleanup without demanding an unreachable worker's proof.
+  const alreadyDeleting = current.deletionState !== 'none';
+  if (!alreadyDeleting && !hasAuthoritySteps(current.authorityEpoch, 1)) {
     return { kind: 'rejected', code: 'authorityEpochExhausted' };
   }
-  const pendingAuthorityEpoch = current.authorityEpoch + 1;
-  if (input.pendingOldTransportStop.stopRequest.reason !== 'delete'
-    || input.pendingOldTransportStop.stopRequest.authorityEpoch !== pendingAuthorityEpoch
-    || !hasCurrentCheckpointedPollInvocationBasis({
-      currentAuthorityEpoch: current.authorityEpoch,
-      pendingOldTransportOrigin: input.pendingOldTransportStop.transportOrigin,
-      basis: input.pendingOldTransportStop.predecessorCheckpointedPollInvocation,
-    })) {
-    return { kind: 'rejected', code: 'stopRequestInvalid' };
-  }
   return {
-    kind: 'deletePending',
+    kind: 'deleteFinalizing',
     connection: {
       ...current,
-      authorityEpoch: pendingAuthorityEpoch,
+      authorityEpoch: current.authorityEpoch + (alreadyDeleting ? 0 : 1),
       enabled: false,
-      deletionState: 'pendingStopReconciliation',
-      pendingOldTransportStop: freezeConversationPendingOldTransportStop({
-        ...input.pendingOldTransportStop,
-        // Delete keeps the incumbent endpoint exactly where it is; only a
-        // replacement transport can owe a retarget.
-        endpointRetarget: 'notRequired',
-        overlapSafety: current.overlapSafety,
-        acceptedPossibleLoss: false,
-      }),
-      // Final deletion owns physical row reclamation. Until then, preserve a
-      // staged-baseline fence so an interrupted delete cannot orphan retained
-      // uncovered censuses behind a durably advanced checkpoint.
-      historyGap: current.historyGap,
+      deletionState: 'finalizingDelete',
+      pendingOldTransportStop: null,
       providerReadiness: null,
       pollFailure: null,
     },
@@ -752,14 +520,13 @@ export function startConversationConnectionDelete(input: Readonly<{
 }
 
 /**
- * Replaces a non-durable connection's transport authority under the one
+ * Replaces a connection's transport authority under the one
  * connection epoch. The caller has already proved immutable provider identity
- * and replacement setup/test facts; this owner freezes only the old stop
- * request and replacement lifecycle fields before any old-transport effect.
+ * and replacement setup/test facts. Retired workers lose admission at their
+ * next observation; transfer does not retain a physical-stop obligation.
  */
 export function startConversationConnectionTransfer(input: Readonly<{
   current: ConversationConnectionLifecycleStateV1;
-  pendingOldTransportStop: ConversationPendingOldTransportStopTransferStartV1;
   replacement: Readonly<{
     enabled: boolean;
     overlapSafety: ConversationConnectionOverlapSafetyV1;
@@ -770,241 +537,23 @@ export function startConversationConnectionTransfer(input: Readonly<{
   if (current.deletionState !== 'none') {
     return { kind: 'rejected', code: 'deleteInProgress' };
   }
-  const custodyDecision = decideRetainedOldTransportCustodyReplacement({
-    current,
-    connectionId: isConversationPendingEndpointRetarget(input.pendingOldTransportStop) ? '' : input.pendingOldTransportStop.stopRequest.connectionId,
-    replacement: {
-      kind: 'transfer',
-      pendingOldTransportStop: input.pendingOldTransportStop,
-    },
-  });
-  if (custodyDecision !== 'allowed') {
-    return { kind: 'rejected', code: custodyDecision };
-  }
   if (!hasAuthoritySteps(current.authorityEpoch, 1)) {
     return { kind: 'rejected', code: 'authorityEpochExhausted' };
   }
   const replacementAuthorityEpoch = current.authorityEpoch + 1;
-  const pending = input.pendingOldTransportStop;
-  const endpointIntent = isConversationPendingEndpointRetarget(pending);
-  if (endpointIntent ? pending.transferAuthorityEpoch !== replacementAuthorityEpoch : (pending.stopRequest.reason !== 'transfer'
-    || pending.stopRequest.authorityEpoch !== replacementAuthorityEpoch
-    // Only a retired durable-push transport owns an Account endpoint whose
-    // target can still be moved; nothing else may commit that obligation.
-    || pending.endpointRetarget !== 'notRequired'
-    || !hasCurrentCheckpointedPollInvocationBasis({
-      currentAuthorityEpoch: current.authorityEpoch,
-      pendingOldTransportOrigin: pending.transportOrigin,
-      basis: pending.predecessorCheckpointedPollInvocation,
-    }))) {
-    return { kind: 'rejected', code: 'stopRequestInvalid' };
-  }
   return {
-    kind: 'transferPendingOldStop',
+    kind: 'transferred',
     connection: {
       ...current,
       authorityEpoch: replacementAuthorityEpoch,
       enabled: input.replacement.enabled,
       overlapSafety: input.replacement.overlapSafety,
-      pendingOldTransportStop: endpointIntent ? readConversationPendingEndpointRetargetIntent(pending) : freezeConversationPendingOldTransportStop({
-        ...pending,
-        overlapSafety: current.overlapSafety,
-        acceptedPossibleLoss: false,
-      }),
+      pendingOldTransportStop: null,
       // An existing gap may fence checkpoint-first baseline coverage. A
       // transfer changes authority but must not clear that fence mid-stage;
       // the replacement provider's baseline re-enters and replaces its
       // checkpoint under the new revision.
       historyGap: current.historyGap ?? input.replacement.historyGap,
-      providerReadiness: null,
-      pollFailure: null,
-    },
-  };
-}
-
-/** The one lifecycle projection after delete custody has been settled. */
-function finalizingConversationConnectionDelete(
-  current: ConversationConnectionLifecycleStateV1,
-): ConversationConnectionLifecycleStateV1 {
-  return {
-    ...current,
-    deletionState: 'finalizingDelete',
-    pendingOldTransportStop: null,
-    historyGap: current.historyGap,
-    providerReadiness: null,
-    pollFailure: null,
-  };
-}
-
-/**
- * Accepts stop evidence only for the exact authority epoch that was persisted
- * in the pending delete row. Provider/materialization/current-generation
- * verification remains at the Action invocation boundary.
- */
-export function confirmConversationConnectionStop(input: Readonly<{
-  current: ConversationConnectionLifecycleStateV1;
-  reportedAuthorityEpoch: number;
-}>): ConversationConnectionStopConfirmationResultV1 {
-  const { current, reportedAuthorityEpoch } = input;
-  const pending = current.pendingOldTransportStop;
-  if (pending === null
-    || isConversationPendingEndpointRetarget(pending)
-    || pending.acceptedPossibleLoss
-    || pending.stopRequest.authorityEpoch !== reportedAuthorityEpoch
-    || current.authorityEpoch !== reportedAuthorityEpoch) {
-    return { kind: 'staleAuthority' };
-  }
-  if (pending.stopRequest.reason === 'transfer') {
-    if (current.deletionState !== 'none') return { kind: 'staleAuthority' };
-    return {
-      kind: 'transportStopConfirmed',
-      connection: {
-        ...current,
-        pendingOldTransportStop: null,
-      },
-    };
-  }
-  if (
-    current.deletionState !== 'pendingStopReconciliation'
-    || current.enabled
-    || pending.stopRequest.reason !== 'delete'
-  ) {
-    return { kind: 'staleAuthority' };
-  }
-  return {
-    kind: 'deleteFinalizing',
-    connection: finalizingConversationConnectionDelete(current),
-  };
-}
-
-/**
- * Finalizes a delete whose selected transport has no provider-owned process
- * to stop. The caller establishes that transport fact before invoking this
- * lifecycle owner; this transition only removes the already-fenced Channels
- * reference and never represents an external endpoint revoke or stop proof.
- */
-export function finalizeConversationConnectionDeleteWithoutProviderStop(input: Readonly<{
-  current: ConversationConnectionLifecycleStateV1;
-}>): Extract<ConversationConnectionStopConfirmationResultV1, Readonly<{
-  kind: 'deleteFinalizing';
-}>> | Readonly<{ kind: 'staleAuthority' }> {
-  const { current } = input;
-  const pending = current.pendingOldTransportStop;
-  if (
-    current.deletionState !== 'pendingStopReconciliation'
-    || current.enabled
-    || pending === null
-    || isConversationPendingEndpointRetarget(pending)
-    || pending.acceptedPossibleLoss
-    || pending.stopRequest.reason !== 'delete'
-    || pending.predecessorTransportKind !== 'durablePush'
-  ) {
-    return { kind: 'staleAuthority' };
-  }
-  return {
-    kind: 'deleteFinalizing',
-    connection: finalizingConversationConnectionDelete(current),
-  };
-}
-
-/**
- * Settles transfer custody when the retired transport has no provider-owned
- * process. Only a frozen durable-push predecessor qualifies, and its committed
- * endpoint-retarget intent must be discharged by exact caller proof: this
- * transition neither invokes a provider stop, revokes the Account-managed
- * endpoint, nor decides for itself that correspondence moved.
- */
-export function finalizeConversationConnectionTransferWithoutProviderStop(input: Readonly<{
-  current: ConversationConnectionLifecycleStateV1;
-  /**
-   * Whether the caller proved the committed endpoint-retarget intent through
-   * the generic webhook owner. It must match the frozen obligation exactly, so
-   * neither an owed retarget nor an unowed one can be settled by assertion.
-   */
-  provenEndpointRetarget: boolean;
-}>): Extract<ConversationConnectionStopConfirmationResultV1, Readonly<{
-  kind: 'transportStopConfirmed';
-}>> | Readonly<{ kind: 'staleAuthority' }> {
-  const { current } = input;
-  const pending = current.pendingOldTransportStop;
-  if (current.deletionState !== 'none' || pending === null) return { kind: 'staleAuthority' };
-  if (isConversationPendingEndpointRetarget(pending)) {
-    if (!input.provenEndpointRetarget || pending.transferAuthorityEpoch !== current.authorityEpoch) return { kind: 'staleAuthority' };
-  } else if (pending.acceptedPossibleLoss || pending.stopRequest.reason !== 'transfer'
-    || pending.stopRequest.authorityEpoch !== current.authorityEpoch || pending.predecessorTransportKind !== 'durablePush'
-    || input.provenEndpointRetarget) return { kind: 'staleAuthority' };
-  return {
-    kind: 'transportStopConfirmed',
-    connection: {
-      ...current,
-      pendingOldTransportStop: null,
-    },
-  };
-}
-
-/**
- * Explicit owner-authorized escape from a permanently unavailable old
- * transport. It accepts possible loss and fences older work, but never claims
- * the physical consumer stopped or rewrites a history-gap fact.
- */
-export function abandonConversationConnectionStop(input: Readonly<{
-  current: ConversationConnectionLifecycleStateV1;
-}>): ConversationConnectionAbandonResultV1 {
-  const { current } = input;
-  if (current.deletionState === 'finalizingDelete') {
-    return { kind: 'rejoined', connection: current };
-  }
-  const pending = current.pendingOldTransportStop;
-  if (isConversationPendingEndpointRetarget(pending)) return { kind: 'rejected', code: 'endpointRetargetRepairRequired' };
-  if (pending?.stopRequest.reason === 'transfer'
-    && current.deletionState === 'none') {
-    if (pending.acceptedPossibleLoss) {
-      return hasAcceptedConversationTransferLoss(current)
-        ? { kind: 'rejoined', connection: current }
-        : { kind: 'staleAuthority' };
-    }
-    if (!hasAuthoritySteps(current.authorityEpoch, 1)) {
-      return { kind: 'rejected', code: 'authorityEpochExhausted' };
-    }
-    return {
-      kind: 'transferAbandoned',
-      connection: {
-        ...current,
-        authorityEpoch: current.authorityEpoch + 1,
-        // Explicit loss acceptance settles custody without fabricating stop
-        // proof. The exact frozen request remains as durable disclosure until
-        // a later exact-current destructive transition replaces it.
-        pendingOldTransportStop: freezeConversationPendingOldTransportStop({
-          ...pending,
-          acceptedPossibleLoss: true,
-        }),
-        pollFailure: null,
-      },
-    };
-  }
-  if (
-    current.deletionState !== 'pendingStopReconciliation'
-    || current.enabled
-    || pending === null
-    || isConversationPendingEndpointRetarget(pending)
-    || pending.stopRequest.reason !== 'delete'
-  ) {
-    return { kind: 'staleAuthority' };
-  }
-  if (!hasAuthoritySteps(current.authorityEpoch, 1)) {
-    return { kind: 'rejected', code: 'authorityEpochExhausted' };
-  }
-  return {
-    kind: 'deleteFinalizing',
-    connection: {
-      ...current,
-      authorityEpoch: current.authorityEpoch + 1,
-      deletionState: 'finalizingDelete',
-      pendingOldTransportStop: freezeConversationPendingOldTransportStop({
-        ...pending,
-        acceptedPossibleLoss: true,
-      }),
-      historyGap: current.historyGap,
       providerReadiness: null,
       pollFailure: null,
     },
@@ -1036,7 +585,15 @@ export function recordConversationConnectionHistoryGap(input: Readonly<{
     kind: 'recorded',
     connection: {
       ...current,
-      historyGap: { reportedAt, ...fact },
+      // A transport report also carries its envelope discriminator (`kind`).
+      // Retain only domain evidence accepted by the closed Account schema.
+      historyGap: {
+        reportedAt,
+        reason: fact.reason,
+        ...(fact.reason === 'providerHistoryUnavailable' && fact.diagnostic !== undefined
+          ? { diagnostic: fact.diagnostic }
+          : {}),
+      },
       pollFailure: null,
     },
   };

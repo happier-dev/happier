@@ -7,6 +7,7 @@ import {
   DISCORD_REQUIRED_PERMISSIONS,
   buildDiscordInviteUrl,
   createDiscordSetupResult,
+  verifyDiscordEndpointPermissions,
 } from './discordSetup.js';
 
 describe('Discord setup facts', () => {
@@ -23,13 +24,14 @@ describe('Discord setup facts', () => {
       'sendMessages',
       'sendMessagesInThreads',
       'readMessageHistory',
+      'createPublicThreads',
     ]);
 
     const invite = new URL(buildDiscordInviteUrl('application-123'));
     expect(invite.origin + invite.pathname).toBe('https://discord.com/oauth2/authorize');
     expect(invite.searchParams.get('client_id')).toBe('application-123');
     expect(invite.searchParams.get('scope')).toBe('bot');
-    expect(invite.searchParams.get('permissions')).toBe('274877975552');
+    expect(invite.searchParams.get('permissions')).toBe('309237713920');
     expect(invite.searchParams.has('applications.commands')).toBe(false);
   });
 
@@ -61,17 +63,33 @@ describe('Discord setup facts', () => {
       outboundTextLimit: { maximum: 2_000, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
       setupGuidance: {
         externalUrl: buildDiscordInviteUrl('application-123'),
-        requiredPermissionsLabel: 'View Channels, Send Messages, Send Messages in Threads, Read Message History',
+        requiredPermissionsLabel: 'View Channels, Send Messages, Send Messages in Threads, Read Message History, Create Public Threads (only for workflow-started conversations)',
         steps: [
           { title: expect.any(String), externalUrl: 'https://discord.com/developers/applications' },
           { title: expect.any(String), externalUrl: expect.any(String) },
           { title: expect.any(String), externalUrl: buildDiscordInviteUrl('application-123'), copyableValues: [
-            { label: expect.any(String), value: 'View Channels, Send Messages, Send Messages in Threads, Read Message History' },
-            { label: expect.any(String), value: '274877975552' },
+            { label: expect.any(String), value: 'View Channels, Send Messages, Send Messages in Threads, Read Message History, Create Public Threads (only for workflow-started conversations)' },
+            { label: expect.any(String), value: '309237713920' },
           ] },
         ],
       },
     });
   });
 
+  it('requires Create Public Threads only for workflow-started conversations, never for endpoint readiness', () => {
+    const guildId = 'guild-1';
+    const required = DISCORD_REQUIRED_PERMISSIONS
+      .filter(({ id }) => id !== 'createPublicThreads')
+      .reduce((bits, { bit }) => bits | bit, 0n);
+    for (const endpointKind of ['shared', 'thread'] as const) {
+      expect(verifyDiscordEndpointPermissions({
+        endpointKind,
+        guildId,
+        botUserId: 'bot-1',
+        botRoleIds: [],
+        guildRoles: [{ roleId: guildId, permissions: required }],
+        permissionOverwrites: [],
+      })).toEqual({ kind: 'verified' });
+    }
+  });
 });

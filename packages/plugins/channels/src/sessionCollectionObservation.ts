@@ -5,7 +5,7 @@ import { readSessionPullRequestBindingRows, sessionPullRequestBindingSelection }
 import { createChannelsCollectionAccess } from './collectionUpdateRequired.js';
 
 /** Content-free watches follow the selected Session's currently admitted membership. */
-export function observeConversationSessionCollections(invalidate: () => void, input: Readonly<{
+export async function observeConversationSessionCollections(invalidate: () => void, input: Readonly<{
   accountStorage: PluginAccountStorageScope;
   sessionId: string;
   signal: AbortSignal;
@@ -58,15 +58,10 @@ export function observeConversationSessionCollections(invalidate: () => void, in
           observation.dispose();
           dependencies.delete(key);
         }
-        let added = false;
         for (const [key, observe] of wanted) {
           if (dependencies.has(key)) continue;
           dependencies.set(key, observe());
-          added = true;
         }
-        // Observe is synchronous while membership resolution is asynchronous.
-        // Re-read once after attaching new dependencies to cover that acquisition gap.
-        if (added) notify();
       }
     } catch {
       if (access.updateRequired !== undefined) {
@@ -103,7 +98,9 @@ export function observeConversationSessionCollections(invalidate: () => void, in
   if (disposed) membership.dispose();
   else {
     input.signal.addEventListener('abort', dispose, { once: true });
-    void refresh();
+    // An observer is acquired only after its initial dependencies are attached.
+    // The caller's first read then covers the acquisition gap without a fake change.
+    await refresh();
   }
   return { dispose };
 }

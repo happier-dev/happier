@@ -234,9 +234,10 @@ describe('readConversationConnectionUpdateRow frozen provider selection', () => 
     })).toThrow(expect.objectContaining({ code: 'channels_connection_update_corrupt' }));
   });
 
-  it('retains the old slot selection independently from the replacement row selection', () => {
+  it('retains the raw legacy slot without projecting stop or abandonment authority', async () => {
+    const row = connectionRow(frozenOldStop(), { overlapSafety: 'destructive' });
     const current = readConversationConnectionUpdateRow({
-      row: connectionRow(frozenOldStop()),
+      row,
       connectionId: CONNECTION_ID,
     });
 
@@ -252,6 +253,40 @@ describe('readConversationConnectionUpdateRow frozen provider selection', () => 
       connectionRevision: 3,
       authorityEpoch: 7,
       transportOrigin: oldAuthority.transportOrigin,
+    });
+    expect(current.lifecycle.overlapSafety).toBe('destructive');
+    expect(pending.overlapSafety).toBe('destructive');
+    const collection = new MemoryCollection<Record<string, JsonValue>>();
+    collection.rows.set(row.rowId, row);
+    const projected = await readConversationConnectionManagementRows({
+      collection: collection as unknown as ChannelStateBindingCollection,
+    });
+    expect(projected.connections[0]?.attention).toMatchObject({
+      oldTransportStopUnconfirmed: false, endpointRetargetOwed: false, acceptedPossibleLoss: false,
+    });
+    expect(projected.connections[0]?.recommendedRecovery).toBeUndefined();
+    expect(collection.rows.get(row.rowId)).toBe(row);
+  });
+
+  it('serializes ordinary policy updates without retired stop custody', async () => {
+    // 5033889b: Telegram setup:538 emits providerExclusive; management:2083/2497
+    // persists it, and lifecycle:811 freezes it when a safe replacement wins.
+    const pending = frozenOldStop({ overlapSafety: 'providerExclusive', predecessorTransportKind: 'checkpointedPull' });
+    const row = connectionRow(pending);
+    const schema = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+    expect(isValidPluginJsonSchemaValue(schema, row.value)).toBe(true);
+    const collection = new MemoryCollection<Record<string, JsonValue>>();
+    collection.rows.set(row.rowId, row);
+    await expect(updateConversationConnectionInAccountCollection({
+      collection: collection as unknown as ChannelStateBindingCollection,
+      connectionId: CONNECTION_ID, expectedRevision: 4,
+      enabled: false, maximumObservationAgeMs: 60_000,
+    })).resolves.toMatchObject({ kind: 'updated', authorityEpoch: 9 });
+    const emitted = collection.rows.get(row.rowId);
+    if (!emitted) throw new Error('Expected the updated connection row.');
+    expect(isValidPluginJsonSchemaValue(schema, emitted.value)).toBe(true);
+    expect(emitted.value.payload).toMatchObject({
+      enabled: false, pendingOldTransportStop: null,
     });
   });
 
@@ -374,7 +409,7 @@ describe('Channels ingress conflict Account projections', () => {
     };
   }
 
-  it('derives one redacted ingress conflict from each connection’s exact V2 census prefix', async () => {
+  it('ignores retained conflict latches without reading reverse ingress indexes', async () => {
     const fixture = conflictProjectionCollection();
 
     const projected = await readConversationConnectionManagementRows({
@@ -384,21 +419,14 @@ describe('Channels ingress conflict Account projections', () => {
     expect(projected.connections).toEqual([expect.objectContaining({
       connectionId: CONNECTION_ID,
       attention: expect.objectContaining({
-        ingressConflict: { kind: 'occurrenceEvidenceMismatch' },
+        ingressConflict: null,
       }),
     })]);
-    expect(fixture.queries).toContainEqual({
-      index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-      prefix: [
-        CONNECTION_ID,
-        null,
-        CHANNEL_STATE_RECORD_KIND.ingressCensus,
-        true,
-      ],
-    });
+    expect(fixture.queries).toEqual([{ index: CHANNEL_STATE_INDEX_ID.byKind,
+      prefix: [CHANNEL_STATE_RECORD_KIND.connection] }]);
   });
 
-  it('projects an occurrence conflict into the shared attention union without evidence or retry data', async () => {
+  it('omits retained occurrence conflict rows from active ingress attention', async () => {
     const fixture = conflictProjectionCollection();
 
     const attention = await readConversationIngressAttentionPage({
@@ -406,13 +434,7 @@ describe('Channels ingress conflict Account projections', () => {
     });
 
     expect(attention).toEqual({
-      obligations: [{
-        kind: 'occurrenceConflict',
-        censusId: 'census-conflict',
-        revision: 6,
-        connectionId: CONNECTION_ID,
-        recommendedRecovery: { action: { pluginId: 'happier.channels', localId: 'connection/list-v1' }, input: {}, reason: 'occurrenceEvidenceMismatch' },
-      }],
+      obligations: [],
     });
   });
 
@@ -546,6 +568,23 @@ describe('updateConversationBindingPolicyInAccountCollection Account-resolvable 
       },
     } as unknown as ChannelStateRow;
   }
+
+  it('reports an unknown binding target as typed unavailable rather than a corrupt known target', async () => {
+    const current = bindingRow();
+    const payload = current.value.payload;
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Expected binding payload');
+    const withTarget = (target: JsonValue): ChannelStateRow => ({ ...current,
+      value: { ...current.value, payload: { ...payload, target } } });
+    expect(() => readConversationBindingUpdateRow({ row: withTarget({ kind: 'future-target' }), bindingId: BINDING_ID }))
+      .toThrowError(expect.objectContaining({ code: 'channels_binding_target_unavailable', retryable: false }));
+    expect(() => readConversationBindingUpdateRow({ row: withTarget({ kind: 'session' }), bindingId: BINDING_ID }))
+      .toThrowError(expect.objectContaining({ code: 'channels_binding_set_enabled_corrupt' }));
+    const collection = new MemoryCollection<Record<string, JsonValue>>();
+    collection.rows.set(BINDING_ID, withTarget({ kind: 'future-target' }));
+    // Only the persistent Collection boundary is substituted; the management decoder stays real.
+    await expect(readConversationBindingManagementRows({ collection: collection as unknown as ChannelStateBindingCollection }))
+      .rejects.toMatchObject({ code: 'channels_binding_target_unavailable', retryable: false });
+  });
 
   function ownerConnectionRow(): ChannelStateRow {
     const connection = createCurrentConversationConnectionFixture({

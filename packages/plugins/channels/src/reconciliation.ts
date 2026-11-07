@@ -1,5 +1,4 @@
 import {
-  PluginError,
   type JsonValue,
   type PluginInvocationCaller,
   type PluginInvocationContext,
@@ -27,33 +26,18 @@ import {
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import type { ConversationPairingManager } from './pairing.js';
 import { asChannelStateRow, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
 import {
-  hasUnsettledDestructiveOldTransportStop,
   getSelfStampedPluginCallerExecutionOrigin,
   getConversationConnectionExecutionRouting,
   type ConversationConnectionTransportOriginV1,
   type ConversationPendingOldTransportStopV1,
 } from './connectionLifecycle.js';
 
-/*
- * Keep the two Account-backed projections on one observed Account revision.
- * The single authoritative pass fails closed under continuous mutation by
- * surfacing the existing retryable outcome instead of publishing a
- * connection/binding combination that never existed.
- */
 type ReconciliationCollectionRead = Readonly<{
   values: readonly JsonValue[];
-  changeCursor: number;
 }>;
-
-function reconciliationSnapshotChangedError(): PluginError {
-  return new PluginError({
-    code: 'channels_reconciliation_snapshot_changed',
-    message: 'Channel reconciliation state changed during its authoritative read.',
-    retryable: true,
-  });
-}
 
 type WithoutConnectionIdentity<T> = T extends unknown
   ? Omit<T, 'connectionId' | 'v'>
@@ -88,7 +72,7 @@ type WithoutReconciliationDemand<T> = T extends unknown
 export type ConversationReconciliationConnectionStateV1 =
   WithoutReconciliationDemand<ConversationProviderConnectionReconciliationSnapshotV1> & Readonly<{
     providerPluginId: string;
-    overlapSafety: 'safe' | 'providerExclusive' | 'destructive';
+    overlapSafety: 'safe' | 'providerExclusive';
     transport: Readonly<{ kind: ConversationTransportKindV1 }>;
     transportOrigin: ConversationConnectionTransportOriginV1;
     historyGap: JsonValue | null;
@@ -203,8 +187,8 @@ export async function readConversationBindingInputModesNoLongerDeliverable(input
   // stating it here keeps the read off the common path without a second answer.
   if (input.sharedEndpointInputModes === undefined) return [];
   const read = await readCollectionValues(input.context, {
-    index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-    prefix: [input.connectionId],
+    index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+    prefix: [input.connectionId, CHANNEL_STATE_RECORD_KIND.binding],
   });
   return bindingInputModesNoLongerDeliverable({
     connectionId: input.connectionId,
@@ -236,30 +220,24 @@ function requiresFullSharedMessageContent(
  * Eligibility does not depend on the connection's persisted transport kind:
  * every truthful kind (checkpointedPull, socket, durablePush) is listable so
  * providers such as Telegram observe their own checkpointed-pull connection
- * through source setup. Caller currentness, history-gap custody, and
- * destructive-replacement exclusions remain the authority gates.
+ * through source setup. Caller placement is the gate; retained old-stop
+ * disclosures grant or withhold no current transport authority.
  */
 function projectReconciliationSnapshotForCaller(
   connection: ConversationReconciliationConnectionStateV1,
   caller: PluginInvocationCaller | undefined,
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[],
+  pairing?: ConversationPairingManager,
 ): ConversationProviderConnectionReconciliationSnapshotV1 | undefined {
   if (
-    // The lifecycle owner records an incompatible replacement's gap before the
-    // replacement becomes visible to ordinary reconciliation.
-    connection.historyGap !== null
-    // A `none` deletion state with a pending old stop is the Collection
-    // lifecycle's transfer-only shape. Destructive replacements cannot start
-    // reconciliation until that exact custody is proven or explicitly accepted.
-    || hasUnsettledDestructiveOldTransportStop(connection)
-    || !hasCurrentConversationTransportCaller({
+    !hasCurrentConversationTransportCaller({
       caller,
       providerPluginId: connection.providerPluginId,
       transportOrigin: connection.transportOrigin,
     })
   ) return undefined;
 
-  const derivedDemand = requiresFullSharedMessageContent(
+  const derivedDemand = pairing?.requiresFullSharedMessageContent(connection.connectionId) === true || requiresFullSharedMessageContent(
     connection.connectionId,
     bindingPolicies,
   );
@@ -353,13 +331,12 @@ function bindingPolicyFromCollectionValue(
 async function readCollectionValues(
   context: PluginInvocationContext,
   query: Pick<PluginCollectionQuery<
-    typeof CHANNEL_STATE_INDEX_ID.byKind | typeof CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
+    typeof CHANNEL_STATE_INDEX_ID.byKind | typeof CHANNEL_STATE_INDEX_ID.byConnectionKindV1
   >, 'index' | 'prefix'>,
 ): Promise<ReconciliationCollectionRead> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   const values: JsonValue[] = [];
   let cursor: string | undefined;
-  let observedCursor: number | undefined;
 
   for (;;) {
     const page = await collection.query({
@@ -368,13 +345,9 @@ async function readCollectionValues(
       limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: context.signal });
-    if (observedCursor !== undefined && page.changeCursor !== observedCursor) {
-      throw reconciliationSnapshotChangedError();
-    }
-    observedCursor = page.changeCursor;
     values.push(...page.rows.map((row) => row.value));
     if (page.nextCursor === undefined) {
-      return { values, changeCursor: page.changeCursor };
+      return { values };
     }
     cursor = page.nextCursor;
   }
@@ -387,25 +360,19 @@ async function readCurrentReconciliationState(
   connections: readonly ConversationReconciliationConnectionStateV1[];
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
 }>> {
-  // One authoritative pass owns the answer. Cursor movement during the read —
-  // within either scan or between the two — surfaces the existing retryable
-  // outcome to the operation/supervisor retry owners instead of an unowned
-  // local attempt count masking the contention.
-  // An exact read gathers both families in one existing connection-prefix
-  // traversal. Its pages share the same cursor proof, without rereading any
-  // other connection's rows or reusing authority from provider discovery.
+  // Demand is a recoverable projection, not an Account-wide snapshot. Current
+  // placement and each admission's authority checks remain authoritative.
   const [connectionRead, bindingRead] = connectionId === undefined
     ? await Promise.all([
       readCollectionValues(context, { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.connection] }),
       readCollectionValues(context, { index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [CHANNEL_STATE_RECORD_KIND.binding] }),
     ])
-    : await readCollectionValues(context, {
-      index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-      prefix: [connectionId],
-    }).then(read => [read, read] as const);
-  if (connectionRead.changeCursor !== bindingRead.changeCursor) {
-    throw reconciliationSnapshotChangedError();
-  }
+    : await Promise.all([
+      readCollectionValues(context, { index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+        prefix: [connectionId, CHANNEL_STATE_RECORD_KIND.connection] }),
+      readCollectionValues(context, { index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+        prefix: [connectionId, CHANNEL_STATE_RECORD_KIND.binding] }),
+    ]);
   return {
     connections: connectionRead.values.flatMap((value) => {
       const connection = connectionStateFromCollectionValue(value);
@@ -422,6 +389,7 @@ export function listConversationProviderConnectionsForCaller(input: Readonly<{
   caller: PluginInvocationCaller | undefined;
   connections: readonly ConversationReconciliationConnectionStateV1[];
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
+  pairing?: ConversationPairingManager;
 }>): ConversationProviderConnectionsSnapshotV1 {
   const snapshots: ConversationProviderConnectionReconciliationSnapshotV1[] = [];
   for (const connection of input.connections) {
@@ -429,6 +397,7 @@ export function listConversationProviderConnectionsForCaller(input: Readonly<{
       connection,
       input.caller,
       input.bindingPolicies,
+      input.pairing,
     );
     if (snapshot !== undefined) snapshots.push(snapshot);
   }
@@ -444,6 +413,7 @@ export function readConversationProviderConnectionForCaller(input: Readonly<{
   connections: readonly ConversationReconciliationConnectionStateV1[];
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
   connectionId: string;
+  pairing?: ConversationPairingManager;
 }>): ConversationProviderConnectionReadResultV1 {
   const connection = input.connections.find((candidate) => candidate.connectionId === input.connectionId);
   if (connection === undefined) return reconciliationSnapshotMap([]);
@@ -451,6 +421,7 @@ export function readConversationProviderConnectionForCaller(input: Readonly<{
     connection,
     input.caller,
     input.bindingPolicies,
+    input.pairing,
   );
   return snapshot === undefined ? reconciliationSnapshotMap([]) : reconciliationSnapshotMap([snapshot]);
 }
@@ -462,18 +433,21 @@ export function readConversationProviderConnectionForCaller(input: Readonly<{
 export async function listConversationProviderConnectionsForInvocation(
   _input: ConversationProviderConnectionsListInputV1,
   context: PluginInvocationContext,
+  pairing?: ConversationPairingManager,
 ): Promise<ConversationProviderConnectionsSnapshotV1> {
   const { connections, bindingPolicies } = await readCurrentReconciliationState(context);
   return listConversationProviderConnectionsForCaller({
     caller: context.caller,
     connections,
     bindingPolicies,
+    pairing,
   });
 }
 
 export async function readConversationProviderConnectionForInvocation(
   input: ConversationProviderConnectionReadInputV1,
   context: PluginInvocationContext,
+  pairing?: ConversationPairingManager,
 ): Promise<ConversationProviderConnectionReadResultV1> {
   const { connections, bindingPolicies } = await readCurrentReconciliationState(context, input.connectionId);
   return readConversationProviderConnectionForCaller({
@@ -481,5 +455,6 @@ export async function readConversationProviderConnectionForInvocation(
     connections,
     bindingPolicies,
     connectionId: input.connectionId,
+    pairing,
   });
 }

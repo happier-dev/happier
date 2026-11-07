@@ -3939,7 +3939,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([pendingConnection], digestCharacter),
       executeAction: async (actionId, payload) => {
-        expect(actionId).toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon);
+        expect(actionId).toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete);
         expect(payload).toEqual({ connectionId: 'connection-1', expectedRevision: 7 });
         pendingConnection = connectionFixture({
           revision: 8,

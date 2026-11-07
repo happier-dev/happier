@@ -6,7 +6,6 @@ export type ConversationNonAdmissionReason =
   (typeof CONVERSATION_NON_ADMISSION_REASONS)[number];
 
 const SENDER_VISIBLE_REFUSALS = new Set<ConversationNonAdmissionReason>([
-  'messageTooOld',
   'messageTooLarge',
   'unsupportedContent',
   'notAddressed',
@@ -33,9 +32,7 @@ export function isConversationSenderFeedbackEligible(input: Readonly<{
  * own live retry or owner-exit affordance, never from this mapping.
  */
 const RECOVERABLE_NON_ADMISSION_REASONS = new Set<ConversationNonAdmissionReason>([
-  'connectionUnavailable',
   'targetUnavailable',
-  'permissionCeilingUnavailable',
 ]);
 
 export function projectConversationNonAdmissionPresentationCategory(
@@ -54,7 +51,7 @@ export type ConversationCommandPolicyInput = Readonly<{
   contentProvenance: 'original' | 'forwarded' | 'viaBot';
   actorAllowed: boolean;
   allowBotSenders: boolean;
-  targetKind: 'session' | 'automation';
+  targetKind: 'session' | 'automation' | 'discussion';
   approvalCommandsEnabled: boolean;
   newSessionEnabled: boolean;
   senderFeedback: 'off' | 'eligibleRefusals';
@@ -90,6 +87,23 @@ function terminal(
   };
 }
 
+/** Classifies transport text without deciding whether its sender may act. */
+export function conversationCommandForProvenance(
+  input: Pick<ConversationCommandPolicyInput, 'command' | 'actor' | 'contentProvenance' | 'targetKind'>,
+): ConversationCommandClassification {
+  const command = input.command;
+  if ((command.kind === 'stop' || (command.kind === 'malformedCommand' && command.command === 'stop'))
+    && (input.contentProvenance !== 'original' || input.actor.kind === 'bot')) {
+    return { kind: 'ordinaryText' };
+  }
+  if (input.contentProvenance !== 'original'
+    && (command.kind === 'pair' || command.kind === 'approve' || command.kind === 'userActionAnswer'
+      || (command.kind === 'malformedCommand' && command.command !== 'newSession'))) {
+    return { kind: 'ordinaryText' };
+  }
+  return command.kind === 'newSession' && input.targetKind !== 'session' ? { kind: 'ordinaryText' } : command;
+}
+
 /** Applies authority/provenance to evidence from the one canonical text classifier. */
 export function decideConversationCommandPolicy(
   input: ConversationCommandPolicyInput,
@@ -100,19 +114,12 @@ export function decideConversationCommandPolicy(
   }
   if (!input.actorAllowed) return terminal(input, 'actorNotAllowed');
   if (input.actor.kind === 'bot' && !input.allowBotSenders) return terminal(input, 'botSenderDisabled');
+  return decideAdmittedConversationCommandPolicy(input);
+}
 
-  const command = input.command;
-  if ((command.kind === 'stop' || (command.kind === 'malformedCommand' && command.command === 'stop'))
-    && (input.contentProvenance !== 'original' || input.actor.kind === 'bot')) {
-    return { kind: 'ordinaryText' };
-  }
-  if (input.contentProvenance !== 'original'
-    && (command.kind === 'pair'
-      || command.kind === 'approve'
-      || command.kind === 'userActionAnswer'
-      || (command.kind === 'malformedCommand' && command.command !== 'newSession'))) {
-    return { kind: 'ordinaryText' };
-  }
+/** Command permissions still apply when the router already admitted this birth's sender. */
+export function decideAdmittedConversationCommandPolicy(input: ConversationCommandPolicyInput): ConversationCommandPolicyResult {
+  const command = conversationCommandForProvenance(input);
   if (input.actor.kind === 'bot'
     && (command.kind === 'pair'
       || command.kind === 'approve'
@@ -149,29 +156,6 @@ export function decideConversationCommandPolicy(
       ? command
       : terminal(input, 'commandNotAuthorized');
   }
-  if (input.targetKind === 'automation') return { kind: 'ordinaryText' };
   if (!input.newSessionEnabled) return terminal(input, 'commandNotAuthorized');
   return command;
-}
-
-export function settleCompetingNewSessionCommand(input: Readonly<{
-  ingressObligationId: string;
-  initialPrompt?: string;
-  createBusyResponse: boolean;
-}>) {
-  return {
-    ingress: {
-      phase: 'terminal',
-      disposition: 'rotationBusy',
-    },
-    initialPromptDisposition: input.initialPrompt === undefined ? 'absent' : 'discarded',
-    ...(input.createBusyResponse
-      ? {
-        controlResponse: {
-          controlId: input.ingressObligationId,
-          controlKind: 'newSession',
-        },
-      }
-      : {}),
-  } as const;
 }

@@ -64,7 +64,7 @@ const conversationPairingCancelResultV1 = defineProtocolUnion([
 /**
  * One live challenge's presentation, projected identically by the create result
  * and by the authenticated challenge Resource entry. A person sees the same
- * deadline, remaining attempts, destination, manual token, and deep link in
+ * deadline, destination, manual token, and deep link in
  * both, so the two projections read one declaration instead of drifting apart.
  */
 const conversationPairingChallengePresentationV1 = {
@@ -73,7 +73,7 @@ const conversationPairingChallengePresentationV1 = {
         minimum: 0,
         maximum: Number.MAX_SAFE_INTEGER,
     }),
-    attemptsRemaining: defineProtocolNumber({ integer: true, minimum: 0, maximum: 5 }),
+
     destinationLabel: ConversationEndpointDisplayLabelV1ProtocolSchema,
     proofEndpoint: ConversationResolvedEndpointV1ProtocolSchema.optional(),
     manualToken: defineProtocolString({ pattern: '^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{8}$' }),
@@ -93,11 +93,11 @@ const conversationPairingCreateResultV1 = defineProtocolUnion([
     ConversationAutomationTargetNotVerifiedResultV1ProtocolSchema,
 ]);
 
-/** One active challenge remains readable only through its authenticated owner Resource. */
+/** One active challenge's authenticated owner projection. */
 const conversationPairingChallengeResourceEntryV1 = defineProtocolObject({
     challengeId: pairingIdentifier,
     connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedConnectionRevision: collectionRowRevision,
+
     pairingRequestId: pairingIdentifier,
     ...conversationPairingChallengePresentationV1,
 }, { policy: 'closed' });
@@ -107,7 +107,7 @@ const conversationPairingProposalResourceEntryV1 = defineProtocolObject({
     challengeId: pairingIdentifier,
     proposalId: pairingIdentifier,
     connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedConnectionRevision: collectionRowRevision,
+
     expiresAt: defineProtocolNumber({
         integer: true,
         minimum: 0,
@@ -198,11 +198,31 @@ export type ConversationPairingResourceV1 = ReturnType<
 export const ConversationPairingResourceV1JsonSchema: PluginJsonSchema =
     /* @__PURE__ */ (() => ConversationPairingResourceV1Schema.jsonSchema)();
 
+/** Exact read within the invoking Account; generation and challenge are not selectors for another Account. */
+export const ConversationPairingReadInputV1Schema = defineProtocolObject({
+    connectionId: ConversationConnectionIdV1ProtocolSchema,
+    generationId: pairingIdentifier,
+    challengeId: pairingIdentifier,
+}, { policy: 'closed' });
+export type ConversationPairingReadInputV1 = ReturnType<typeof ConversationPairingReadInputV1Schema.parse>;
+export const ConversationPairingReadInputV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationPairingReadInputV1Schema.jsonSchema)();
+
+export const ConversationPairingReadResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        kind: defineProtocolLiteral('ready'),
+        pairing: conversationPairingResourceV1,
+    }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('restarted') }, { policy: 'closed' }),
+]);
+export type ConversationPairingReadResultV1 = ReturnType<typeof ConversationPairingReadResultV1Schema.parse>;
+export const ConversationPairingReadResultV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationPairingReadResultV1Schema.jsonSchema)();
+
 export const ConversationPairingFinalizeInputV1Schema = defineProtocolObject({
     generationId: pairingIdentifier,
     proposalId: pairingIdentifier,
     connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedConnectionRevision: collectionRowRevision,
+
     finalizeIdempotencyKey: pairingIdentifier,
 }, { policy: 'closed' });
 export type ConversationPairingFinalizeInputV1 = ReturnType<

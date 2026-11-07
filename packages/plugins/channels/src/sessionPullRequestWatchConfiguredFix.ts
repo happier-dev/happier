@@ -5,7 +5,9 @@ import { renderSessionInputContextPromptV1, SessionAcceptedWorkspaceV1Schema, Se
 import { type SessionPullRequestConfiguredFixInputV1,
     type SessionPullRequestConfiguredFixResultV1 } from '@happier-dev/channels-protocol/v1';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_RECORD_KIND, SessionPullRequestConfiguredFixCustodySchema } from './collections.js';
-import { readConversationBindingUpdateRow } from './accountLocalBindingPolicy.js';
+import { isConfiguredFixResultUncertain, persistConfiguredFixResultV19, restoreConfiguredFixResultV19 } from './configuredFixResultV19.js';
+import { readConversationBindingUpdateRow, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
+import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import { readSessionPullRequestWatchPolicy } from './sessionPullRequestWatchPolicy.js';
 import { admitSessionPullRequestFixRound, reconcileSessionPullRequestFixProgress } from './sessionPullRequestWatchProgress.js';
@@ -41,9 +43,10 @@ export async function deliverSessionPullRequestConfiguredFix(input: SessionPullR
     }
     // Reading an already delivered request reconciles its original host input,
     // even after Stop or terminal PR settlement. It never admits another round.
-    if (retained?.result && 'status' in retained.result && retained.result.status !== 'outcomeUnknown') {
+    const retainedResult = retained?.result && restoreConfiguredFixResultV19(retained.result);
+    if (retainedResult && !isConfiguredFixResultUncertain(retainedResult)) {
         await reconcileSessionPullRequestFixProgress(input.bindingId, context);
-        return { kind: 'configuredFixResult', result: retained.result };
+        return { kind: 'configuredFixResult', result: retainedResult };
     }
     const policy = readSessionPullRequestWatchPolicy(current.binding);
     if (!current.binding.enabled || (policy.mode !== 'address' && policy.mode !== 'autoFix')
@@ -65,7 +68,16 @@ export async function deliverSessionPullRequestConfiguredFix(input: SessionPullR
     if (isPluginActionApprovalRequestCreated(status)) return { kind: 'configuredFixUncertain' };
     const workspace = SessionAcceptedWorkspaceV1Schema.safeParse('acceptedWorkspace' in status ? status.acceptedWorkspace : undefined);
     if (!('session' in status) || status.session.id !== input.sessionId || !workspace.success) return refuse('channels_pr_watch_session_unavailable');
-    const observed = await readCurrentSessionPullRequestWatchHead({ update: input, cwd: workspace.data.checkout.rootPath }, context);
+    const connectionRow = await collection.get(current.binding.connectionId, { signal: context.signal });
+    if (!connectionRow) return refuse('channels_pr_watch_binding_unavailable');
+    const connection = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: current.binding.connectionId });
+    const contribution = await readCurrentProviderContributionForPersistedSelection({
+        context: { targetedContributions: context.services.targetedContributions, signal: context.signal },
+        providerPluginId: connection.providerPluginId, providerContributionSelection: connection.providerContributionSelection,
+    });
+    const provider = contribution.descriptor.pullRequests;
+    if (!provider) return refuse('channels_pr_watch_pr_unavailable');
+    const observed = await readCurrentSessionPullRequestWatchHead({ update: input, cwd: workspace.data.checkout.rootPath, provider }, context);
     if (observed.kind === 'held') {
         if (observed.reason === 'approval') return { kind: 'configuredFixUncertain' };
         return refuse(observed.reason === 'scope' ? 'channels_pr_watch_pr_unavailable' : 'channels_pr_watch_stale_head');
@@ -105,10 +117,9 @@ export async function deliverSessionPullRequestConfiguredFix(input: SessionPullR
     });
     if (result === undefined || isPluginActionApprovalRequestCreated(result)) return { kind: 'configuredFixUncertain' };
     const accepted = SessionMessageSendResultV1ProtocolSchema.parse(result);
-    if (!('status' in accepted)) return { kind: 'configuredFixUncertain' };
     await collection.put({ ...original.value,
-        terminal: accepted.status !== 'outcomeUnknown', 'updated-at': context.invokedAtMs,
-        payload: { kind: 'configuredFix', request: retained.request, result: accepted },
+        terminal: !isConfiguredFixResultUncertain(accepted), 'updated-at': context.invokedAtMs,
+        payload: { kind: 'configuredFix', request: retained.request, result: persistConfiguredFixResultV19(accepted) },
     }, { expectedRevision: original.revision, signal: context.signal });
     await reconcileSessionPullRequestFixProgress(input.bindingId, context);
     return { kind: 'configuredFixResult', result: accepted };

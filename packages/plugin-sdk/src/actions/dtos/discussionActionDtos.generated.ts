@@ -2,22 +2,12 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type DiscussionActionInputById = {
     readonly "discussion.second_opinion.start": {
-        intent: 'preview' | 'ask';
+        intent: 'ask' | 'preview';
         source: {
-            kind: 'session';
-            message: {
-                kind: 'session';
-                session: {
-                    serverId: string;
-                    sessionId: string;
-                };
-                messageId: string;
-            };
-        } | {
             kind: 'doc_passage';
             passage: {
                 ref: {
@@ -37,17 +27,21 @@ export type DiscussionActionInputById = {
                 prefix?: string | undefined;
                 suffix?: string | undefined;
             };
-        };
-        title: string;
-        question: string;
-        reviewers: {
-            selection: {
+        } | {
+            kind: 'session';
+            message: {
                 kind: 'session';
                 session: {
                     serverId: string;
                     sessionId: string;
                 };
-            } | {
+                messageId: string;
+            };
+        };
+        title: string;
+        question: string;
+        reviewers: {
+            selection: {
                 kind: 'model';
                 launch: {
                     executionTarget: {
@@ -55,10 +49,10 @@ export type DiscussionActionInputById = {
                         machineId: string;
                     };
                     directory: {
+                        kind: 'managed';
+                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'managed';
                     };
                     agentTarget: {
                         kind: 'agent';
@@ -68,16 +62,16 @@ export type DiscussionActionInputById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    placementOrigin?: {
+                    placementOrigin?: undefined | {
                         kind: 'machine_pool';
                         poolId: string;
-                    } | undefined;
-                    organizationPlacement?: {
-                        folderId: string | null;
+                    };
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
                         tagIds: string[];
-                    } | undefined;
+                    };
                     roleId?: string | undefined;
-                    modelSelection?: {
+                    modelSelection?: undefined | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;
@@ -89,59 +83,67 @@ export type DiscussionActionInputById = {
                             modelId: string;
                         };
                         updatedAt: number;
-                    } | undefined;
+                    };
                     profileId?: string | undefined;
-                    secretReferenceOverlay?: {
+                    approvalProfileId?: null | string | undefined;
+                    secretReferenceOverlay?: undefined | {
                         v: 1;
                         bindings: Record<string, {
                             ref: string;
                             revision?: number | undefined;
                         }>;
-                    } | undefined;
-                    permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                    };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     agentModeId?: string | undefined;
                     configuration?: unknown;
-                    connectedServices?: {
+                    connectedServices?: undefined | {
                         v: 1;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
                         }>;
                     } | {
                         v: 1;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
                         }>;
                     } | {
                         v: 2;
                         bindingsByServiceId?: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -153,59 +155,52 @@ export type DiscussionActionInputById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }> | undefined;
-                    } | undefined;
-                    capabilitySelection?: {
-                        mcp?: {
+                    };
+                    capabilitySelection?: undefined | {
+                        mcp?: undefined | {
                             v?: 1 | undefined;
                             managedServersEnabled?: boolean | undefined;
                             happierToolsEnabled?: boolean | undefined;
                             forceIncludeServerIds?: string[] | undefined;
                             forceExcludeServerIds?: string[] | undefined;
-                        } | undefined;
-                        skills?: {
+                        };
+                        skills?: undefined | {
                             v?: 1 | undefined;
                             forceIncludeSkillIds?: string[] | undefined;
                             forceExcludeSkillIds?: string[] | undefined;
                             excludeNativeSkillNames?: string[] | undefined;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     transcriptStorage?: 'direct' | 'persisted' | undefined;
-                    terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                        tmux?: {
+                    terminal?: undefined | {
+                        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                        tmux?: undefined | {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
-                            tmpDir?: string | null | undefined;
-                        } | undefined;
-                        herdr?: {
+                            tmpDir?: null | string | undefined;
+                        };
+                        herdr?: undefined | {
                             sessionName?: string | undefined;
-                        } | undefined;
-                        windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        };
+                        windows?: undefined | {
+                            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
-                        } | undefined;
-                    } | undefined;
-                    checkoutCreationDraft?: {
+                        };
+                    };
+                    checkoutCreationDraft?: null | undefined | {
                         kind: 'git_worktree';
                         displayName: string;
-                        baseRef: string | null;
-                        branchMode?: 'new' | 'existing' | undefined;
-                    } | null | undefined;
+                        baseRef: null | string;
+                        branchMode?: 'existing' | 'new' | undefined;
+                    };
                     title?: string | undefined;
                     memoryEnabled?: boolean | undefined;
-                    primaryTeamId?: string | null | undefined;
+                    primaryTeamId?: null | string | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
-                            kind: 'provider_model';
-                        } | {
                             kind: 'connected_service_purpose';
                             purpose: {
                                 consumer: {
@@ -214,30 +209,47 @@ export type DiscussionActionInputById = {
                                 };
                                 purpose: string;
                             };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: null;
+                    } | {
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                         teamId?: string | undefined;
-                        providerModelSelection?: {
+                        providerModelSelection?: undefined | {
                             agentTargetKey: string;
                             modelId: string;
-                            application?: {
-                                agentTargetKey: string;
+                            application?: undefined | {
                                 implementationIdentity: {
                                     pluginId: string;
                                     localId: string;
                                 };
                                 endpointTemplateId: string;
                                 protocol: string;
-                            } | undefined;
+                                agentTargetKey: string;
+                            };
                             executionMachineId?: string | undefined;
-                            nativeSource?: {
+                            nativeSource?: undefined | {
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | undefined;
-                        nativeDelivery?: {
+                            };
+                        };
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -245,28 +257,19 @@ export type DiscussionActionInputById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | {
-                        v: 1;
-                        slot: {
-                            kind: 'provider_model';
-                        } | {
-                            kind: 'connected_service_purpose';
-                            purpose: {
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                purpose: string;
-                            };
                         };
-                        resourceId: null;
                     })[] | undefined;
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
                 };
+            } | {
+                kind: 'session';
+                session: {
+                    serverId: string;
+                    sessionId: string;
+                };
             };
-            sourceAccess?: 'read' | 'quote_only' | undefined;
+            sourceAccess?: 'quote_only' | 'read' | undefined;
             participantSlotId?: string | undefined;
         }[];
         retry: {
@@ -274,12 +277,12 @@ export type DiscussionActionInputById = {
             quoteLocalId: string;
             questionLocalId: string;
         };
-        participants?: {
+        participants?: undefined | {
             kind: 'account';
             accountId: string;
-        }[] | undefined;
+        }[];
         publisherSessionId?: string | undefined;
-        confirmedPreview?: {
+        confirmedPreview?: undefined | {
             source: {
                 kind: 'doc_passage';
                 doc: {
@@ -309,20 +312,14 @@ export type DiscussionActionInputById = {
             discussionAudienceAccountIds: string[];
             missingDiscussionSourceAccountIds: string[];
             discussionDisclosure: {
-                ok: true;
-            } | {
                 ok: false;
-                reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
+                reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+            } | {
+                ok: true;
             };
             canGrantSource: boolean;
             reviewers: {
                 selection: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                } | {
                     kind: 'model';
                     launch: {
                         executionTarget: {
@@ -330,10 +327,10 @@ export type DiscussionActionInputById = {
                             machineId: string;
                         };
                         directory: {
+                            kind: 'managed';
+                        } | {
                             kind: 'path';
                             path: string;
-                        } | {
-                            kind: 'managed';
                         };
                         agentTarget: {
                             kind: 'agent';
@@ -343,16 +340,16 @@ export type DiscussionActionInputById = {
                             };
                             definitionId?: string | undefined;
                         };
-                        placementOrigin?: {
+                        placementOrigin?: undefined | {
                             kind: 'machine_pool';
                             poolId: string;
-                        } | undefined;
-                        organizationPlacement?: {
-                            folderId: string | null;
+                        };
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
                             tagIds: string[];
-                        } | undefined;
+                        };
                         roleId?: string | undefined;
-                        modelSelection?: {
+                        modelSelection?: undefined | {
                             v: 1;
                             ref: {
                                 agentTargetKey: string;
@@ -364,59 +361,67 @@ export type DiscussionActionInputById = {
                                 modelId: string;
                             };
                             updatedAt: number;
-                        } | undefined;
+                        };
                         profileId?: string | undefined;
-                        secretReferenceOverlay?: {
+                        approvalProfileId?: null | string | undefined;
+                        secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
                                 ref: string;
                                 revision?: number | undefined;
                             }>;
-                        } | undefined;
-                        permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                        };
+                        permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                         agentModeId?: string | undefined;
                         configuration?: unknown;
-                        connectedServices?: {
+                        connectedServices?: undefined | {
                             v: 1;
                             bindingsByServiceId: Record<string, {
-                                source: 'native';
+                                source: 'connected';
+                                profileId: string;
+                                selection?: 'profile' | undefined;
                             } | {
                                 source: 'connected';
                                 selection: 'group';
                                 groupId: string;
                                 profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
                             } | {
-                                source: 'connected';
-                                profileId: string;
-                                selection?: 'profile' | undefined;
+                                source: 'native';
                             }>;
                         } | {
                             v: 1;
                             bindingsByServiceId: Record<string, {
-                                source: 'native';
+                                source: 'connected';
+                                profileId: string;
+                                selection?: 'profile' | undefined;
                             } | {
                                 source: 'connected';
                                 selection: 'group';
                                 groupId: string;
                                 profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
                             } | {
-                                source: 'connected';
-                                profileId: string;
-                                selection?: 'profile' | undefined;
+                                source: 'native';
                             }>;
                         } | {
                             v: 2;
                             bindingsByServiceId?: Record<string, {
-                                source: 'native';
+                                source: 'connected';
+                                profileId: string;
+                                selection?: 'profile' | undefined;
                             } | {
                                 source: 'connected';
                                 selection: 'group';
                                 groupId: string;
                                 profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
                             } | {
-                                source: 'connected';
-                                profileId: string;
-                                selection?: 'profile' | undefined;
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
                             } | {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -428,59 +433,52 @@ export type DiscussionActionInputById = {
                                     };
                                     accountId: string;
                                 };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
                             }> | undefined;
-                        } | undefined;
-                        capabilitySelection?: {
-                            mcp?: {
+                        };
+                        capabilitySelection?: undefined | {
+                            mcp?: undefined | {
                                 v?: 1 | undefined;
                                 managedServersEnabled?: boolean | undefined;
                                 happierToolsEnabled?: boolean | undefined;
                                 forceIncludeServerIds?: string[] | undefined;
                                 forceExcludeServerIds?: string[] | undefined;
-                            } | undefined;
-                            skills?: {
+                            };
+                            skills?: undefined | {
                                 v?: 1 | undefined;
                                 forceIncludeSkillIds?: string[] | undefined;
                                 forceExcludeSkillIds?: string[] | undefined;
                                 excludeNativeSkillNames?: string[] | undefined;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         transcriptStorage?: 'direct' | 'persisted' | undefined;
-                        terminal?: {
-                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                            tmux?: {
+                        terminal?: undefined | {
+                            mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                            tmux?: undefined | {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
-                                tmpDir?: string | null | undefined;
-                            } | undefined;
-                            herdr?: {
+                                tmpDir?: null | string | undefined;
+                            };
+                            herdr?: undefined | {
                                 sessionName?: string | undefined;
-                            } | undefined;
-                            windows?: {
-                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            };
+                            windows?: undefined | {
+                                launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
-                            } | undefined;
-                        } | undefined;
-                        checkoutCreationDraft?: {
+                            };
+                        };
+                        checkoutCreationDraft?: null | undefined | {
                             kind: 'git_worktree';
                             displayName: string;
-                            baseRef: string | null;
-                            branchMode?: 'new' | 'existing' | undefined;
-                        } | null | undefined;
+                            baseRef: null | string;
+                            branchMode?: 'existing' | 'new' | undefined;
+                        };
                         title?: string | undefined;
                         memoryEnabled?: boolean | undefined;
-                        primaryTeamId?: string | null | undefined;
+                        primaryTeamId?: null | string | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
-                                kind: 'provider_model';
-                            } | {
                                 kind: 'connected_service_purpose';
                                 purpose: {
                                     consumer: {
@@ -489,30 +487,47 @@ export type DiscussionActionInputById = {
                                     };
                                     purpose: string;
                                 };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                             teamId?: string | undefined;
-                            providerModelSelection?: {
+                            providerModelSelection?: undefined | {
                                 agentTargetKey: string;
                                 modelId: string;
-                                application?: {
-                                    agentTargetKey: string;
+                                application?: undefined | {
                                     implementationIdentity: {
                                         pluginId: string;
                                         localId: string;
                                     };
                                     endpointTemplateId: string;
                                     protocol: string;
-                                } | undefined;
+                                    agentTargetKey: string;
+                                };
                                 executionMachineId?: string | undefined;
-                                nativeSource?: {
+                                nativeSource?: undefined | {
                                     sourceRevision: string;
                                     providerTicket: string;
-                                } | undefined;
-                            } | undefined;
-                            nativeDelivery?: {
+                                };
+                            };
+                            nativeDelivery?: undefined | {
                                 managedId: string;
                                 controllerInstallationId: string;
                                 guestInstallationId: string;
@@ -520,57 +535,48 @@ export type DiscussionActionInputById = {
                                 placeholderRef: string;
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | {
-                            v: 1;
-                            slot: {
-                                kind: 'provider_model';
-                            } | {
-                                kind: 'connected_service_purpose';
-                                purpose: {
-                                    consumer: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    purpose: string;
-                                };
                             };
-                            resourceId: null;
                         })[] | undefined;
                         allowedTools?: string[] | undefined;
                         unlistedTools?: 'ask' | 'deny' | undefined;
                     };
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
                 };
-                sourceAccess: 'read' | 'quote_only';
-                runtimeAccountId: string | null;
+                sourceAccess: 'quote_only' | 'read';
+                runtimeAccountId: null | string;
                 audienceAccountIds: string[];
                 missingSourceAccountIds: string[];
                 canGrantSource: boolean;
                 disclosure: {
-                    ok: true;
-                } | {
                     ok: false;
-                    reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
+                    reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+                } | {
+                    ok: true;
                 };
                 participantSlotId?: string | undefined;
             }[];
-            publisher?: {
+            publisher?: undefined | {
                 sessionId: string;
                 answerPolicy: 'when_addressed';
                 audienceAccountIds: string[];
                 disclosure: {
-                    ok: true;
-                } | {
                     ok: false;
-                    reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
+                    reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+                } | {
+                    ok: true;
                 };
-            } | undefined;
-        } | undefined;
-        project?: {
+            };
+        };
+        project?: undefined | {
             machineId: string;
             directory: string;
             workspaceRefId?: string | undefined;
-        } | undefined;
+        };
     };
     readonly "discussion.list": {
         state?: 'active' | 'archived' | undefined;
@@ -602,146 +608,6 @@ export type DiscussionActionInputById = {
         title: string;
         firstMessage: {
             content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: unknown;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -770,195 +636,101 @@ export type DiscussionActionInputById = {
                     after: string;
                     reason: string;
                 };
-            };
-            localId?: string | undefined;
-            mentionedAccountIds?: string[] | undefined;
-            mentionedSessionIds?: string[] | undefined;
-            replyTarget?: {
-                kind: 'doc_passage';
-                doc: {
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
                     ref: {
                         artifactId: string;
                         kind: 'doc';
-                        serverId: string;
+                        serverId?: string | undefined;
                     };
                     revision: {
                         headerVersion: number;
                         bodyVersion: number;
                     };
-                };
-            } | {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'message';
-                messageId: string;
-            } | undefined;
-        };
-        creationLocalId?: string | undefined;
-        attachmentSources?: {
-            blobId: string;
-            path: string;
-        }[] | undefined;
-        anchor?: {
-            kind: 'task';
-            entry: Readonly<{
-                source: Readonly<{
-                    pluginId: string;
-                    localId: string;
-                }>;
-                kindId: string;
-                collisionScope: string;
-                entryId: string;
-            }>;
-        } | {
-            kind: 'session';
-            sessionId: string;
-            messageId?: string | undefined;
-        } | {
-            kind: 'doc';
-            doc: {
-                ref: {
-                    artifactId: string;
-                    kind: 'doc';
-                    serverId: string;
-                };
-                revision: {
-                    headerVersion: number;
-                    bodyVersion: number;
-                };
-            };
-        } | undefined;
-        participants?: ({
-            kind: 'account';
-            accountId: string;
-        } | {
-            kind: 'session';
-            sessionId: SessionTargetV1<true>;
-        })[] | undefined;
-    };
-    readonly "discussion.post": {
-        discussionId: string;
-        content: {
-            v: 1;
-            parts: ({
-                t: 'text';
-                text: string;
-            } | {
-                t: 'mention';
-                participant: {
-                    kind: 'account';
-                    accountId: string;
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                };
-            } | {
-                t: 'reference';
-                reference: {
-                    kind: string;
-                    ref: string;
-                    token: string;
-                    label?: string | undefined;
-                    composerReference?: {
-                        pluginId: string;
-                        localId: string;
-                    } | undefined;
-                    composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                };
-            } | {
-                t: 'attachment';
-                attachment: {
-                    kind: 'file';
-                    id: string;
-                    name: string;
-                    file: {
-                        blobId: string;
-                        mime: string;
-                        sizeBytes: number;
-                        sha256: string;
+                    range: {
+                        start: number;
+                        end: number;
                     };
-                } | {
-                    kind: 'folder';
-                    id: string;
-                    name: string;
-                    entries: {
-                        relativePath: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
                         };
-                    }[];
-                    directories: string[];
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
                 };
-            })[];
-        } | {
-            kind: 'workflow_result';
-            value: unknown;
-            summary: string;
-            source: {
-                runId: string;
-                invocationRecordId: string;
-                invocationAttempt: string;
-            };
-        } | {
-            kind: 'doc_passage_comment';
-            passage: {
-                ref: {
-                    artifactId: string;
-                    kind: 'doc';
-                    serverId?: string | undefined;
+            } | {
+                kind: 'workflow_result';
+                value: unknown;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
                 };
-                revision: {
-                    headerVersion: number;
-                    bodyVersion: number;
-                };
-                range: {
-                    start: number;
-                    end: number;
-                };
-                quote: string;
-                prefix?: string | undefined;
-                suffix?: string | undefined;
-            };
-            content: {
+            } | {
                 v: 1;
                 parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
                     t: 'attachment';
                     attachment: {
                         kind: 'file';
@@ -985,9 +757,117 @@ export type DiscussionActionInputById = {
                         }[];
                         directories: string[];
                     };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
                 })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
+            localId?: string | undefined;
+            mentionedAccountIds?: string[] | undefined;
+            mentionedSessionIds?: string[] | undefined;
+            replyTarget?: undefined | {
+                kind: 'doc_passage';
+                doc: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId: string;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                };
+            } | {
+                kind: 'message';
+                messageId: string;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
+        };
+        creationLocalId?: string | undefined;
+        attachmentSources?: undefined | {
+            blobId: string;
+            path: string;
+        }[];
+        anchor?: undefined | {
+            kind: 'doc';
+            doc: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId: string;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             };
         } | {
+            kind: 'session';
+            sessionId: string;
+            messageId?: string | undefined;
+        } | {
+            kind: 'task';
+            entry: Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }>;
+        };
+        participants?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'session';
+            sessionId: SessionTargetV1<true>;
+        })[] | undefined;
+    };
+    readonly "discussion.post": {
+        discussionId: string;
+        content: {
             kind: 'doc_edit_proposal';
             proposal: {
                 target: {
@@ -1016,15 +896,169 @@ export type DiscussionActionInputById = {
                 after: string;
                 reason: string;
             };
+        } | {
+            kind: 'doc_passage_comment';
+            passage: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                range: {
+                    start: number;
+                    end: number;
+                };
+                quote: string;
+                prefix?: string | undefined;
+                suffix?: string | undefined;
+            };
+            content: {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
+        } | {
+            kind: 'workflow_result';
+            value: unknown;
+            summary: string;
+            source: {
+                runId: string;
+                invocationRecordId: string;
+                invocationAttempt: string;
+            };
+        } | {
+            v: 1;
+            parts: ({
+                t: 'attachment';
+                attachment: {
+                    kind: 'file';
+                    id: string;
+                    name: string;
+                    file: {
+                        blobId: string;
+                        mime: string;
+                        sizeBytes: number;
+                        sha256: string;
+                    };
+                } | {
+                    kind: 'folder';
+                    id: string;
+                    name: string;
+                    entries: {
+                        relativePath: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    }[];
+                    directories: string[];
+                };
+            } | {
+                t: 'mention';
+                participant: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+            } | {
+                t: 'reference';
+                reference: {
+                    kind: string;
+                    ref: string;
+                    token: string;
+                    label?: string | undefined;
+                    composerReference?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                };
+            } | {
+                t: 'text';
+                text: string;
+            })[];
+            externalSource?: undefined | {
+                kind: 'channel';
+                providerPluginId: string;
+                conversationDisplayName: string;
+                senderDisplayName?: string | undefined;
+                inputLocalId?: string | undefined;
+            };
         };
-        attachmentSources?: {
+        attachmentSources?: undefined | {
             blobId: string;
             path: string;
-        }[] | undefined;
+        }[];
         localId?: string | undefined;
         mentionedAccountIds?: string[] | undefined;
         mentionedSessionIds?: string[] | undefined;
-        replyTarget?: {
+        replyTarget?: undefined | {
             kind: 'doc_passage';
             doc: {
                 ref: {
@@ -1038,6 +1072,9 @@ export type DiscussionActionInputById = {
                 };
             };
         } | {
+            kind: 'message';
+            messageId: string;
+        } | {
             kind: 'task';
             entry: Readonly<{
                 source: Readonly<{
@@ -1048,10 +1085,7 @@ export type DiscussionActionInputById = {
                 collisionScope: string;
                 entryId: string;
             }>;
-        } | {
-            kind: 'message';
-            messageId: string;
-        } | undefined;
+        };
     };
     readonly "discussion.rename": {
         discussionId: string;
@@ -1070,146 +1104,6 @@ export type DiscussionActionInputById = {
     readonly "discussion.reply": {
         discussionId: string;
         content: {
-            v: 1;
-            parts: ({
-                t: 'text';
-                text: string;
-            } | {
-                t: 'mention';
-                participant: {
-                    kind: 'account';
-                    accountId: string;
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                };
-            } | {
-                t: 'reference';
-                reference: {
-                    kind: string;
-                    ref: string;
-                    token: string;
-                    label?: string | undefined;
-                    composerReference?: {
-                        pluginId: string;
-                        localId: string;
-                    } | undefined;
-                    composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                };
-            } | {
-                t: 'attachment';
-                attachment: {
-                    kind: 'file';
-                    id: string;
-                    name: string;
-                    file: {
-                        blobId: string;
-                        mime: string;
-                        sizeBytes: number;
-                        sha256: string;
-                    };
-                } | {
-                    kind: 'folder';
-                    id: string;
-                    name: string;
-                    entries: {
-                        relativePath: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    }[];
-                    directories: string[];
-                };
-            })[];
-        } | {
-            kind: 'workflow_result';
-            value: unknown;
-            summary: string;
-            source: {
-                runId: string;
-                invocationRecordId: string;
-                invocationAttempt: string;
-            };
-        } | {
-            kind: 'doc_passage_comment';
-            passage: {
-                ref: {
-                    artifactId: string;
-                    kind: 'doc';
-                    serverId?: string | undefined;
-                };
-                revision: {
-                    headerVersion: number;
-                    bodyVersion: number;
-                };
-                range: {
-                    start: number;
-                    end: number;
-                };
-                quote: string;
-                prefix?: string | undefined;
-                suffix?: string | undefined;
-            };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            };
-        } | {
             kind: 'doc_edit_proposal';
             proposal: {
                 target: {
@@ -1238,6 +1132,160 @@ export type DiscussionActionInputById = {
                 after: string;
                 reason: string;
             };
+        } | {
+            kind: 'doc_passage_comment';
+            passage: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                range: {
+                    start: number;
+                    end: number;
+                };
+                quote: string;
+                prefix?: string | undefined;
+                suffix?: string | undefined;
+            };
+            content: {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
+        } | {
+            kind: 'workflow_result';
+            value: unknown;
+            summary: string;
+            source: {
+                runId: string;
+                invocationRecordId: string;
+                invocationAttempt: string;
+            };
+        } | {
+            v: 1;
+            parts: ({
+                t: 'attachment';
+                attachment: {
+                    kind: 'file';
+                    id: string;
+                    name: string;
+                    file: {
+                        blobId: string;
+                        mime: string;
+                        sizeBytes: number;
+                        sha256: string;
+                    };
+                } | {
+                    kind: 'folder';
+                    id: string;
+                    name: string;
+                    entries: {
+                        relativePath: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    }[];
+                    directories: string[];
+                };
+            } | {
+                t: 'mention';
+                participant: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+            } | {
+                t: 'reference';
+                reference: {
+                    kind: string;
+                    ref: string;
+                    token: string;
+                    label?: string | undefined;
+                    composerReference?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                };
+            } | {
+                t: 'text';
+                text: string;
+            })[];
+            externalSource?: undefined | {
+                kind: 'channel';
+                providerPluginId: string;
+                conversationDisplayName: string;
+                senderDisplayName?: string | undefined;
+                inputLocalId?: string | undefined;
+            };
         };
         replyTarget: {
             kind: 'doc_passage';
@@ -1253,6 +1301,9 @@ export type DiscussionActionInputById = {
                 };
             };
         } | {
+            kind: 'message';
+            messageId: string;
+        } | {
             kind: 'task';
             entry: Readonly<{
                 source: Readonly<{
@@ -1263,14 +1314,11 @@ export type DiscussionActionInputById = {
                 collisionScope: string;
                 entryId: string;
             }>;
-        } | {
-            kind: 'message';
-            messageId: string;
         };
-        attachmentSources?: {
+        attachmentSources?: undefined | {
             blobId: string;
             path: string;
-        }[] | undefined;
+        }[];
         localId?: string | undefined;
         mentionedAccountIds?: string[] | undefined;
         mentionedSessionIds?: string[] | undefined;
@@ -1279,15 +1327,6 @@ export type DiscussionActionInputById = {
         discussionId: string;
     };
     readonly "discussion.candidates.list": {
-        source: 'people';
-        query: string;
-        discussionId?: string | undefined;
-        cursor?: string | undefined;
-    } | {
-        source: 'sessions';
-        discussionId?: string | undefined;
-        cursor?: string | undefined;
-    } | {
         source: 'models';
         options: {
             selection: {
@@ -1298,10 +1337,10 @@ export type DiscussionActionInputById = {
                         machineId: string;
                     };
                     directory: {
+                        kind: 'managed';
+                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'managed';
                     };
                     agentTarget: {
                         kind: 'agent';
@@ -1311,16 +1350,16 @@ export type DiscussionActionInputById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    placementOrigin?: {
+                    placementOrigin?: undefined | {
                         kind: 'machine_pool';
                         poolId: string;
-                    } | undefined;
-                    organizationPlacement?: {
-                        folderId: string | null;
+                    };
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
                         tagIds: string[];
-                    } | undefined;
+                    };
                     roleId?: string | undefined;
-                    modelSelection?: {
+                    modelSelection?: undefined | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;
@@ -1332,59 +1371,67 @@ export type DiscussionActionInputById = {
                             modelId: string;
                         };
                         updatedAt: number;
-                    } | undefined;
+                    };
                     profileId?: string | undefined;
-                    secretReferenceOverlay?: {
+                    approvalProfileId?: null | string | undefined;
+                    secretReferenceOverlay?: undefined | {
                         v: 1;
                         bindings: Record<string, {
                             ref: string;
                             revision?: number | undefined;
                         }>;
-                    } | undefined;
-                    permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                    };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     agentModeId?: string | undefined;
                     configuration?: unknown;
-                    connectedServices?: {
+                    connectedServices?: undefined | {
                         v: 1;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
                         }>;
                     } | {
                         v: 1;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
                         }>;
                     } | {
                         v: 2;
                         bindingsByServiceId?: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -1396,59 +1443,52 @@ export type DiscussionActionInputById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }> | undefined;
-                    } | undefined;
-                    capabilitySelection?: {
-                        mcp?: {
+                    };
+                    capabilitySelection?: undefined | {
+                        mcp?: undefined | {
                             v?: 1 | undefined;
                             managedServersEnabled?: boolean | undefined;
                             happierToolsEnabled?: boolean | undefined;
                             forceIncludeServerIds?: string[] | undefined;
                             forceExcludeServerIds?: string[] | undefined;
-                        } | undefined;
-                        skills?: {
+                        };
+                        skills?: undefined | {
                             v?: 1 | undefined;
                             forceIncludeSkillIds?: string[] | undefined;
                             forceExcludeSkillIds?: string[] | undefined;
                             excludeNativeSkillNames?: string[] | undefined;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     transcriptStorage?: 'direct' | 'persisted' | undefined;
-                    terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                        tmux?: {
+                    terminal?: undefined | {
+                        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                        tmux?: undefined | {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
-                            tmpDir?: string | null | undefined;
-                        } | undefined;
-                        herdr?: {
+                            tmpDir?: null | string | undefined;
+                        };
+                        herdr?: undefined | {
                             sessionName?: string | undefined;
-                        } | undefined;
-                        windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        };
+                        windows?: undefined | {
+                            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
-                        } | undefined;
-                    } | undefined;
-                    checkoutCreationDraft?: {
+                        };
+                    };
+                    checkoutCreationDraft?: null | undefined | {
                         kind: 'git_worktree';
                         displayName: string;
-                        baseRef: string | null;
-                        branchMode?: 'new' | 'existing' | undefined;
-                    } | null | undefined;
+                        baseRef: null | string;
+                        branchMode?: 'existing' | 'new' | undefined;
+                    };
                     title?: string | undefined;
                     memoryEnabled?: boolean | undefined;
-                    primaryTeamId?: string | null | undefined;
+                    primaryTeamId?: null | string | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
-                            kind: 'provider_model';
-                        } | {
                             kind: 'connected_service_purpose';
                             purpose: {
                                 consumer: {
@@ -1457,30 +1497,47 @@ export type DiscussionActionInputById = {
                                 };
                                 purpose: string;
                             };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: null;
+                    } | {
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                         teamId?: string | undefined;
-                        providerModelSelection?: {
+                        providerModelSelection?: undefined | {
                             agentTargetKey: string;
                             modelId: string;
-                            application?: {
-                                agentTargetKey: string;
+                            application?: undefined | {
                                 implementationIdentity: {
                                     pluginId: string;
                                     localId: string;
                                 };
                                 endpointTemplateId: string;
                                 protocol: string;
-                            } | undefined;
+                                agentTargetKey: string;
+                            };
                             executionMachineId?: string | undefined;
-                            nativeSource?: {
+                            nativeSource?: undefined | {
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | undefined;
-                        nativeDelivery?: {
+                            };
+                        };
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -1488,76 +1545,50 @@ export type DiscussionActionInputById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | {
-                        v: 1;
-                        slot: {
-                            kind: 'provider_model';
-                        } | {
-                            kind: 'connected_service_purpose';
-                            purpose: {
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                purpose: string;
-                            };
                         };
-                        resourceId: null;
                     })[] | undefined;
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
                 };
             };
             label: string;
-            readiness?: {
+            readiness?: undefined | {
                 v: 1;
-                status: 'unknown' | 'unavailable' | 'ready';
-                cause: 'agent' | 'configuration' | 'credential' | 'machine' | 'invocation' | null;
+                status: 'ready' | 'unavailable' | 'unknown';
+                cause: 'agent' | 'configuration' | 'credential' | 'invocation' | 'machine' | null;
                 configured: boolean;
                 operation: 'conversation' | 'credential';
-                machine: {
+                machine: null | {
+                    status: 'keyUnavailable';
+                    machineId: string;
+                } | {
                     status: 'missing';
-                } | {
-                    status: 'ready';
-                    machineId: string;
-                } | {
-                    status: 'revoked';
-                    machineId: string;
                 } | {
                     status: 'offline';
                     machineId: string;
                 } | {
-                    status: 'unknown';
-                    machineId: string;
-                } | {
-                    status: 'probing';
-                    machineId: string;
-                } | {
-                    status: 'rpcUnavailable';
-                    machineId: string;
-                } | {
-                    status: 'keyUnavailable';
+                    status: 'ready';
                     machineId: string;
                 } | {
                     status: 'replaced';
                     machineId: string;
                     replacedByMachineId: string;
-                } | null;
-                agent: {
+                } | {
+                    status: 'revoked';
+                    machineId: string;
+                } | {
+                    status: 'rpcUnavailable';
+                    machineId: string;
+                } | {
+                    status: 'unknown';
+                    machineId: string;
+                };
+                agent: null | {
                     agentId: string;
-                    state: 'unknown' | 'ready' | 'needsSignIn' | 'notInstalled' | 'unsupported' | 'checking';
+                    state: 'checking' | 'needsSignIn' | 'notInstalled' | 'ready' | 'unknown' | 'unsupported';
                     current: boolean;
-                    observedAtMs: number | null;
-                    repair: {
-                        actionId: 'machines.agents.signIn.start';
-                        input: {
-                            agentId: string;
-                            machineId: string;
-                            serviceId?: string | undefined;
-                            method?: 'native' | 'connected' | undefined;
-                        };
-                    } | {
+                    observedAtMs: null | number;
+                    repair: null | {
                         actionId: 'connectedServices.authentication.beginReconnect';
                         input: {
                             account: {
@@ -1567,28 +1598,36 @@ export type DiscussionActionInputById = {
                                 };
                                 accountId: string;
                             };
-                            machineId: string;
                             expectedConfigurationRevision?: string | undefined;
+                            machineId?: string | undefined;
                         };
-                    } | null;
-                    definitionId?: string | undefined;
-                } | null;
-                invocation: {
-                    v: 1;
-                    level: 'view' | 'edit' | 'admin' | 'owner';
-                    sources: ({
-                        kind: 'owner';
                     } | {
+                        actionId: 'machines.agents.signIn.start';
+                        input: {
+                            agentId: string;
+                            machineId: string;
+                            serviceId?: string | undefined;
+                            method?: 'connected' | 'native' | undefined;
+                        };
+                    };
+                    definitionId?: string | undefined;
+                };
+                invocation: null | {
+                    v: 1;
+                    level: 'admin' | 'edit' | 'owner' | 'view';
+                    sources: ({
                         kind: 'direct';
                         shareId: string;
-                    } | {
-                        kind: 'team';
-                        teamId: string;
-                        requiredByTeamPolicy: boolean;
                     } | {
                         kind: 'group';
                         teamId: string;
                         groupId: string;
+                    } | {
+                        kind: 'owner';
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                        requiredByTeamPolicy: boolean;
                     })[];
                     capabilities: {
                         readTranscript: boolean;
@@ -1604,46 +1643,18 @@ export type DiscussionActionInputById = {
                         stopSession: boolean;
                         deleteSession: boolean;
                     };
-                    audienceContext?: {
-                        kind: 'team';
-                        teamId: string;
-                    } | {
+                    audienceContext?: null | undefined | {
                         kind: 'group';
                         teamId: string;
                         groupId: string;
-                    } | null | undefined;
-                    primaryTeamId?: string | null | undefined;
-                } | null;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    primaryTeamId?: null | string | undefined;
+                };
                 credential: {
                     kind: 'not_required';
-                } | {
-                    kind: 'unknown';
-                } | {
-                    kind: 'team';
-                    resourceId: string;
-                    teamId: string;
-                    readiness: {
-                        kind: 'available';
-                    } | {
-                        kind: 'resource_corrupt';
-                    } | {
-                        kind: 'resource_unavailable';
-                    } | {
-                        kind: 'source_unavailable';
-                        reason?: 'connected_service_credential_reconnect_required' | undefined;
-                    } | {
-                        kind: 'broker_unavailable';
-                        reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
-                    } | {
-                        kind: 'update_required';
-                    } | {
-                        kind: 'policy_denied';
-                    } | {
-                        kind: 'limit_reached';
-                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                        resetsAtUtc: string;
-                    } | null;
-                    recoveryAction: 'retry' | 'update_required' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
                 } | {
                     kind: 'personal';
                     purpose: {
@@ -1654,15 +1665,7 @@ export type DiscussionActionInputById = {
                         purpose: string;
                     };
                     usable: boolean | null;
-                    repair: {
-                        actionId: 'machines.agents.signIn.start';
-                        input: {
-                            agentId: string;
-                            machineId: string;
-                            serviceId?: string | undefined;
-                            method?: 'native' | 'connected' | undefined;
-                        };
-                    } | {
+                    repair: null | {
                         actionId: 'connectedServices.authentication.beginReconnect';
                         input: {
                             account: {
@@ -1672,21 +1675,49 @@ export type DiscussionActionInputById = {
                                 };
                                 accountId: string;
                             };
-                            machineId: string;
                             expectedConfigurationRevision?: string | undefined;
+                            machineId?: string | undefined;
                         };
-                    } | null;
+                    } | {
+                        actionId: 'machines.agents.signIn.start';
+                        input: {
+                            agentId: string;
+                            machineId: string;
+                            serviceId?: string | undefined;
+                            method?: 'connected' | 'native' | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'team';
+                    resourceId: string;
+                    teamId: string;
+                    readiness: null | {
+                        kind: 'available';
+                    } | {
+                        kind: 'broker_unavailable';
+                        reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+                    } | {
+                        kind: 'limit_reached';
+                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                        resetsAtUtc: string;
+                    } | {
+                        kind: 'policy_denied';
+                    } | {
+                        kind: 'resource_corrupt';
+                    } | {
+                        kind: 'resource_unavailable';
+                    } | {
+                        kind: 'source_unavailable';
+                        reason?: 'connected_service_credential_reconnect_required' | undefined;
+                    } | {
+                        kind: 'update_required';
+                    };
+                    recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+                } | {
+                    kind: 'unknown';
                 };
-            } | undefined;
-            repair?: {
-                actionId: 'machines.agents.signIn.start';
-                input: {
-                    agentId: string;
-                    machineId: string;
-                    serviceId?: string | undefined;
-                    method?: 'native' | 'connected' | undefined;
-                };
-            } | {
+            };
+            repair?: null | undefined | {
                 actionId: 'connectedServices.authentication.beginReconnect';
                 input: {
                     account: {
@@ -1696,23 +1727,40 @@ export type DiscussionActionInputById = {
                         };
                         accountId: string;
                     };
-                    machineId: string;
                     expectedConfigurationRevision?: string | undefined;
+                    machineId?: string | undefined;
                 };
-            } | null | undefined;
+            } | {
+                actionId: 'machines.agents.signIn.start';
+                input: {
+                    agentId: string;
+                    machineId: string;
+                    serviceId?: string | undefined;
+                    method?: 'connected' | 'native' | undefined;
+                };
+            };
         }[];
         discussionId?: string | undefined;
+    } | {
+        source: 'people';
+        query: string;
+        discussionId?: string | undefined;
+        cursor?: string | undefined;
+    } | {
+        source: 'sessions';
+        discussionId?: string | undefined;
+        cursor?: string | undefined;
     };
     readonly "discussion.settings.get": {
         discussionId: string;
     };
     readonly "discussion.settings.set": {
         settings: {
-            coordination?: {
-                autonomousCheckIn?: {
-                    afterTurns: number | null;
-                } | undefined;
-            } | undefined;
+            coordination?: undefined | {
+                autonomousCheckIn?: undefined | {
+                    afterTurns: null | number;
+                };
+            };
         };
         discussionId: string;
     };
@@ -1724,13 +1772,6 @@ export type DiscussionActionInputById = {
         discussionId: string;
     } | {
         participant: {
-            kind: 'session';
-            sessionId: SessionTargetV1<true>;
-        };
-        discussionId: string;
-        answerPolicy?: 'when_addressed' | 'reads_only' | 'drafts_for_approval' | 'watches_and_speaks_up' | undefined;
-    } | {
-        participant: {
             kind: 'model';
             participantSlotId: string;
             launch: {
@@ -1739,10 +1780,10 @@ export type DiscussionActionInputById = {
                     machineId: string;
                 };
                 directory: {
+                    kind: 'managed';
+                } | {
                     kind: 'path';
                     path: string;
-                } | {
-                    kind: 'managed';
                 };
                 agentTarget: {
                     kind: 'agent';
@@ -1752,16 +1793,16 @@ export type DiscussionActionInputById = {
                     };
                     definitionId?: string | undefined;
                 };
-                placementOrigin?: {
+                placementOrigin?: undefined | {
                     kind: 'machine_pool';
                     poolId: string;
-                } | undefined;
-                organizationPlacement?: {
-                    folderId: string | null;
+                };
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
                     tagIds: string[];
-                } | undefined;
+                };
                 roleId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     v: 1;
                     ref: {
                         agentTargetKey: string;
@@ -1773,59 +1814,67 @@ export type DiscussionActionInputById = {
                         modelId: string;
                     };
                     updatedAt: number;
-                } | undefined;
+                };
                 profileId?: string | undefined;
-                secretReferenceOverlay?: {
+                approvalProfileId?: null | string | undefined;
+                secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-                permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                };
+                permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                 agentModeId?: string | undefined;
                 configuration?: unknown;
-                connectedServices?: {
+                connectedServices?: undefined | {
                     v: 1;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
+                        source: 'connected';
+                        profileId: string;
+                        selection?: 'profile' | undefined;
                     } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
-                        source: 'connected';
-                        profileId: string;
-                        selection?: 'profile' | undefined;
+                        source: 'native';
                     }>;
                 } | {
                     v: 1;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
+                        source: 'connected';
+                        profileId: string;
+                        selection?: 'profile' | undefined;
                     } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
-                        source: 'connected';
-                        profileId: string;
-                        selection?: 'profile' | undefined;
+                        source: 'native';
                     }>;
                 } | {
                     v: 2;
                     bindingsByServiceId?: Record<string, {
-                        source: 'native';
+                        source: 'connected';
+                        profileId: string;
+                        selection?: 'profile' | undefined;
                     } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
-                        source: 'connected';
-                        profileId: string;
-                        selection?: 'profile' | undefined;
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -1837,59 +1886,52 @@ export type DiscussionActionInputById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }> | undefined;
-                } | undefined;
-                capabilitySelection?: {
-                    mcp?: {
+                };
+                capabilitySelection?: undefined | {
+                    mcp?: undefined | {
                         v?: 1 | undefined;
                         managedServersEnabled?: boolean | undefined;
                         happierToolsEnabled?: boolean | undefined;
                         forceIncludeServerIds?: string[] | undefined;
                         forceExcludeServerIds?: string[] | undefined;
-                    } | undefined;
-                    skills?: {
+                    };
+                    skills?: undefined | {
                         v?: 1 | undefined;
                         forceIncludeSkillIds?: string[] | undefined;
                         forceExcludeSkillIds?: string[] | undefined;
                         excludeNativeSkillNames?: string[] | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 transcriptStorage?: 'direct' | 'persisted' | undefined;
-                terminal?: {
-                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                    tmux?: {
+                terminal?: undefined | {
+                    mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                    tmux?: undefined | {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
-                        tmpDir?: string | null | undefined;
-                    } | undefined;
-                    herdr?: {
+                        tmpDir?: null | string | undefined;
+                    };
+                    herdr?: undefined | {
                         sessionName?: string | undefined;
-                    } | undefined;
-                    windows?: {
-                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                    };
+                    windows?: undefined | {
+                        launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
-                    } | undefined;
-                } | undefined;
-                checkoutCreationDraft?: {
+                    };
+                };
+                checkoutCreationDraft?: null | undefined | {
                     kind: 'git_worktree';
                     displayName: string;
-                    baseRef: string | null;
-                    branchMode?: 'new' | 'existing' | undefined;
-                } | null | undefined;
+                    baseRef: null | string;
+                    branchMode?: 'existing' | 'new' | undefined;
+                };
                 title?: string | undefined;
                 memoryEnabled?: boolean | undefined;
-                primaryTeamId?: string | null | undefined;
+                primaryTeamId?: null | string | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
-                        kind: 'provider_model';
-                    } | {
                         kind: 'connected_service_purpose';
                         purpose: {
                             consumer: {
@@ -1898,30 +1940,47 @@ export type DiscussionActionInputById = {
                             };
                             purpose: string;
                         };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                     teamId?: string | undefined;
-                    providerModelSelection?: {
+                    providerModelSelection?: undefined | {
                         agentTargetKey: string;
                         modelId: string;
-                        application?: {
-                            agentTargetKey: string;
+                        application?: undefined | {
                             implementationIdentity: {
                                 pluginId: string;
                                 localId: string;
                             };
                             endpointTemplateId: string;
                             protocol: string;
-                        } | undefined;
+                            agentTargetKey: string;
+                        };
                         executionMachineId?: string | undefined;
-                        nativeSource?: {
+                        nativeSource?: undefined | {
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
-                    nativeDelivery?: {
+                        };
+                    };
+                    nativeDelivery?: undefined | {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -1929,39 +1988,31 @@ export type DiscussionActionInputById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    } | undefined;
-                } | {
-                    v: 1;
-                    slot: {
-                        kind: 'provider_model';
-                    } | {
-                        kind: 'connected_service_purpose';
-                        purpose: {
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            purpose: string;
-                        };
                     };
-                    resourceId: null;
                 })[] | undefined;
                 allowedTools?: string[] | undefined;
                 unlistedTools?: 'ask' | 'deny' | undefined;
             };
         };
         discussionId: string;
-        answerPolicy?: 'when_addressed' | 'reads_only' | 'drafts_for_approval' | 'watches_and_speaks_up' | undefined;
-    };
-    readonly "discussion.participant.policy.set": {
+        answerPolicy?: 'drafts_for_approval' | 'reads_only' | 'watches_and_speaks_up' | 'when_addressed' | undefined;
+    } | {
         participant: {
             kind: 'session';
-            sessionId: string;
-        } | {
+            sessionId: SessionTargetV1<true>;
+        };
+        discussionId: string;
+        answerPolicy?: 'drafts_for_approval' | 'reads_only' | 'watches_and_speaks_up' | 'when_addressed' | undefined;
+    };
+    readonly "discussion.participant.policy.set": {
+        answerPolicy: 'drafts_for_approval' | 'reads_only' | 'watches_and_speaks_up' | 'when_addressed';
+        participant: {
             kind: 'model';
             participantSlotId: string;
+        } | {
+            kind: 'session';
+            sessionId: SessionTargetV1<true>;
         };
-        answerPolicy: 'when_addressed' | 'reads_only' | 'drafts_for_approval' | 'watches_and_speaks_up';
         discussionId: string;
     };
     readonly "discussion.participant.remove": {
@@ -1969,11 +2020,11 @@ export type DiscussionActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
             kind: 'model';
             participantSlotId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
         };
         discussionId: string;
     };
@@ -1992,14 +2043,14 @@ export type DiscussionActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'team';
-            teamId: string;
-        } | {
             kind: 'group';
             teamId: string;
             groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
         };
-        accessLevel: 'view' | 'edit' | 'admin';
+        accessLevel: 'admin' | 'edit' | 'view';
         discussionId: string;
     };
     readonly "discussion.access.grants.remove": {
@@ -2007,12 +2058,12 @@ export type DiscussionActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'team';
-            teamId: string;
-        } | {
             kind: 'group';
             teamId: string;
             groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
         };
         discussionId: string;
     };
@@ -2022,291 +2073,14 @@ export type DiscussionActionInputById = {
 };
 export type DiscussionActionResultById = {
     readonly "discussion.second_opinion.start": {
-        status: 'preview';
-        preview: {
-            source: {
-                kind: 'doc_passage';
-                doc: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId: string;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                };
-            } | {
-                kind: 'session';
-                message: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                };
-            };
-            sourceAudienceAccountIds: string[];
-            sourceContentReady: boolean;
-            discussionAudienceAccountIds: string[];
-            missingDiscussionSourceAccountIds: string[];
-            discussionDisclosure: {
-                ok: true;
-            } | {
-                ok: false;
-                reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
-            };
-            canGrantSource: boolean;
-            reviewers: {
-                selection: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                } | {
-                    kind: 'model';
-                    launch: {
-                        executionTarget: {
-                            serverId: string;
-                            machineId: string;
-                        };
-                        directory: {
-                            kind: 'path';
-                            path: string;
-                        } | {
-                            kind: 'managed';
-                        };
-                        agentTarget: {
-                            kind: 'agent';
-                            identity: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            definitionId?: string | undefined;
-                        };
-                        placementOrigin?: {
-                            kind: 'machine_pool';
-                            poolId: string;
-                        } | undefined;
-                        organizationPlacement?: {
-                            folderId: string | null;
-                            tagIds: string[];
-                        } | undefined;
-                        roleId?: string | undefined;
-                        modelSelection?: {
-                            v: 1;
-                            ref: {
-                                agentTargetKey: string;
-                                providerConnectionId: null;
-                                modelId: string;
-                            } | {
-                                agentTargetKey: string;
-                                providerConnectionId: string;
-                                modelId: string;
-                            };
-                            updatedAt: number;
-                        } | undefined;
-                        profileId?: string | undefined;
-                        secretReferenceOverlay?: {
-                            v: 1;
-                            bindings: Record<string, {
-                                ref: string;
-                                revision?: number | undefined;
-                            }>;
-                        } | undefined;
-                        permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
-                        agentModeId?: string | undefined;
-                        configuration?: {
-                            mode: {
-                                value: string | null;
-                                updatedAtMs: number;
-                            };
-                            model: {
-                                value: string | null;
-                                updatedAtMs: number;
-                            };
-                            permissionIntent: {
-                                value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
-                                updatedAtMs: number;
-                            };
-                            options: Record<string, {
-                                value: string | number | boolean | null;
-                                updatedAtMs: number;
-                            }>;
-                            workspaceWrites?: 'deny' | 'allow' | undefined;
-                            providerSessionResume?: {
-                                kind: 'provider_session.v1';
-                                providerSessionId: string;
-                            } | undefined;
-                            allowedTools?: string[] | undefined;
-                            unlistedTools?: 'ask' | 'deny' | undefined;
-                        } | undefined;
-                        connectedServices?: {
-                            v: 2;
-                            bindingsByServiceId: Record<string, {
-                                source: 'native';
-                            } | {
-                                source: 'connected';
-                                selection: 'group';
-                                groupId: string;
-                                profileId?: string | undefined;
-                            } | {
-                                source: 'connected';
-                                selection: 'profile';
-                                profileId: string;
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'direct';
-                                disclosedMember: {
-                                    service: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    accountId: string;
-                                };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
-                            }>;
-                        } | undefined;
-                        capabilitySelection?: {
-                            mcp?: {
-                                forceIncludeServerIds: string[];
-                                forceExcludeServerIds: string[];
-                                v: 1;
-                                managedServersEnabled: boolean;
-                                happierToolsEnabled?: boolean | undefined;
-                            } | undefined;
-                            skills?: {
-                                forceIncludeSkillIds: string[];
-                                forceExcludeSkillIds: string[];
-                                excludeNativeSkillNames: string[];
-                                v: 1;
-                            } | undefined;
-                        } | undefined;
-                        transcriptStorage?: 'direct' | 'persisted' | undefined;
-                        terminal?: {
-                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                            tmux?: {
-                                sessionName?: string | undefined;
-                                isolated?: boolean | undefined;
-                                tmpDir?: string | null | undefined;
-                            } | undefined;
-                            herdr?: {
-                                sessionName?: string | undefined;
-                            } | undefined;
-                            windows?: {
-                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                                console?: 'hidden' | 'visible' | undefined;
-                                windowName?: string | undefined;
-                            } | undefined;
-                        } | undefined;
-                        checkoutCreationDraft?: {
-                            kind: 'git_worktree';
-                            displayName: string;
-                            baseRef: string | null;
-                            branchMode?: 'new' | 'existing' | undefined;
-                        } | null | undefined;
-                        title?: string | undefined;
-                        memoryEnabled?: boolean | undefined;
-                        primaryTeamId?: string | null | undefined;
-                        teamCredentialBindings?: ({
-                            v: 1;
-                            slot: {
-                                kind: 'provider_model';
-                            } | {
-                                kind: 'connected_service_purpose';
-                                purpose: {
-                                    consumer: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    purpose: string;
-                                };
-                            };
-                            resourceId: string;
-                            expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
-                            teamId?: string | undefined;
-                            providerModelSelection?: {
-                                agentTargetKey: string;
-                                modelId: string;
-                                application?: {
-                                    agentTargetKey: string;
-                                    implementationIdentity: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    endpointTemplateId: string;
-                                    protocol: string;
-                                } | undefined;
-                                executionMachineId?: string | undefined;
-                                nativeSource?: {
-                                    sourceRevision: string;
-                                    providerTicket: string;
-                                } | undefined;
-                            } | undefined;
-                            nativeDelivery?: {
-                                managedId: string;
-                                controllerInstallationId: string;
-                                guestInstallationId: string;
-                                bindingKey: string;
-                                placeholderRef: string;
-                                sourceRevision: string;
-                                providerTicket: string;
-                            } | undefined;
-                        } | {
-                            v: 1;
-                            slot: {
-                                kind: 'provider_model';
-                            } | {
-                                kind: 'connected_service_purpose';
-                                purpose: {
-                                    consumer: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    purpose: string;
-                                };
-                            };
-                            resourceId: null;
-                        })[] | undefined;
-                        allowedTools?: string[] | undefined;
-                        unlistedTools?: 'ask' | 'deny' | undefined;
-                    };
-                };
-                sourceAccess: 'read' | 'quote_only';
-                runtimeAccountId: string | null;
-                audienceAccountIds: string[];
-                missingSourceAccountIds: string[];
-                canGrantSource: boolean;
-                disclosure: {
-                    ok: true;
-                } | {
-                    ok: false;
-                    reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
-                };
-                participantSlotId?: string | undefined;
-            }[];
-            publisher?: {
-                sessionId: string;
-                answerPolicy: 'when_addressed';
-                audienceAccountIds: string[];
-                disclosure: {
-                    ok: true;
-                } | {
-                    ok: false;
-                    reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
-                };
-            } | undefined;
+        grantedAccountIds: string[];
+        status: 'pending';
+        stage: 'ask' | 'create' | 'grant' | 'invite' | 'workflow';
+        errorCode: string;
+        discussion?: undefined | {
+            serverId: string;
+            discussionId: string;
         };
-        sourceText: string;
     } | {
         grantedAccountIds: string[];
         status: 'preview_changed';
@@ -2340,20 +2114,14 @@ export type DiscussionActionResultById = {
             discussionAudienceAccountIds: string[];
             missingDiscussionSourceAccountIds: string[];
             discussionDisclosure: {
-                ok: true;
-            } | {
                 ok: false;
-                reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
+                reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+            } | {
+                ok: true;
             };
             canGrantSource: boolean;
             reviewers: {
                 selection: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                } | {
                     kind: 'model';
                     launch: {
                         executionTarget: {
@@ -2361,10 +2129,10 @@ export type DiscussionActionResultById = {
                             machineId: string;
                         };
                         directory: {
+                            kind: 'managed';
+                        } | {
                             kind: 'path';
                             path: string;
-                        } | {
-                            kind: 'managed';
                         };
                         agentTarget: {
                             kind: 'agent';
@@ -2374,16 +2142,16 @@ export type DiscussionActionResultById = {
                             };
                             definitionId?: string | undefined;
                         };
-                        placementOrigin?: {
+                        placementOrigin?: undefined | {
                             kind: 'machine_pool';
                             poolId: string;
-                        } | undefined;
-                        organizationPlacement?: {
-                            folderId: string | null;
+                        };
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
                             tagIds: string[];
-                        } | undefined;
+                        };
                         roleId?: string | undefined;
-                        modelSelection?: {
+                        modelSelection?: undefined | {
                             v: 1;
                             ref: {
                                 agentTargetKey: string;
@@ -2395,55 +2163,62 @@ export type DiscussionActionResultById = {
                                 modelId: string;
                             };
                             updatedAt: number;
-                        } | undefined;
+                        };
                         profileId?: string | undefined;
-                        secretReferenceOverlay?: {
+                        approvalProfileId?: null | string | undefined;
+                        secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
                                 ref: string;
                                 revision?: number | undefined;
                             }>;
-                        } | undefined;
-                        permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                        };
+                        permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                         agentModeId?: string | undefined;
-                        configuration?: {
+                        configuration?: undefined | {
                             mode: {
-                                value: string | null;
+                                value: null | string;
                                 updatedAtMs: number;
                             };
                             model: {
-                                value: string | null;
+                                value: null | string;
                                 updatedAtMs: number;
+                                selectionSource?: 'explicit' | 'inherited' | undefined;
                             };
                             permissionIntent: {
-                                value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
+                                value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
                                 updatedAtMs: number;
                             };
                             options: Record<string, {
-                                value: string | number | boolean | null;
+                                value: boolean | null | number | string;
                                 updatedAtMs: number;
                             }>;
-                            workspaceWrites?: 'deny' | 'allow' | undefined;
-                            providerSessionResume?: {
+                            workspaceWrites?: 'allow' | 'deny' | undefined;
+                            providerSessionResume?: undefined | {
                                 kind: 'provider_session.v1';
                                 providerSessionId: string;
-                            } | undefined;
+                            };
                             allowedTools?: string[] | undefined;
                             unlistedTools?: 'ask' | 'deny' | undefined;
-                        } | undefined;
-                        connectedServices?: {
+                        };
+                        connectedServices?: undefined | {
                             v: 2;
                             bindingsByServiceId: Record<string, {
-                                source: 'native';
-                            } | {
                                 source: 'connected';
                                 selection: 'group';
                                 groupId: string;
                                 profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
                             } | {
                                 source: 'connected';
                                 selection: 'profile';
                                 profileId: string;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
                             } | {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -2455,59 +2230,52 @@ export type DiscussionActionResultById = {
                                     };
                                     accountId: string;
                                 };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
                             }>;
-                        } | undefined;
-                        capabilitySelection?: {
-                            mcp?: {
+                        };
+                        capabilitySelection?: undefined | {
+                            mcp?: undefined | {
                                 forceIncludeServerIds: string[];
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
                                 happierToolsEnabled?: boolean | undefined;
-                            } | undefined;
-                            skills?: {
+                            };
+                            skills?: undefined | {
                                 forceIncludeSkillIds: string[];
                                 forceExcludeSkillIds: string[];
                                 excludeNativeSkillNames: string[];
                                 v: 1;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         transcriptStorage?: 'direct' | 'persisted' | undefined;
-                        terminal?: {
-                            mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                            tmux?: {
+                        terminal?: undefined | {
+                            mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                            tmux?: undefined | {
                                 sessionName?: string | undefined;
                                 isolated?: boolean | undefined;
-                                tmpDir?: string | null | undefined;
-                            } | undefined;
-                            herdr?: {
+                                tmpDir?: null | string | undefined;
+                            };
+                            herdr?: undefined | {
                                 sessionName?: string | undefined;
-                            } | undefined;
-                            windows?: {
-                                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            };
+                            windows?: undefined | {
+                                launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                                 console?: 'hidden' | 'visible' | undefined;
                                 windowName?: string | undefined;
-                            } | undefined;
-                        } | undefined;
-                        checkoutCreationDraft?: {
+                            };
+                        };
+                        checkoutCreationDraft?: null | undefined | {
                             kind: 'git_worktree';
                             displayName: string;
-                            baseRef: string | null;
-                            branchMode?: 'new' | 'existing' | undefined;
-                        } | null | undefined;
+                            baseRef: null | string;
+                            branchMode?: 'existing' | 'new' | undefined;
+                        };
                         title?: string | undefined;
                         memoryEnabled?: boolean | undefined;
-                        primaryTeamId?: string | null | undefined;
+                        primaryTeamId?: null | string | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
-                                kind: 'provider_model';
-                            } | {
                                 kind: 'connected_service_purpose';
                                 purpose: {
                                     consumer: {
@@ -2516,30 +2284,47 @@ export type DiscussionActionResultById = {
                                     };
                                     purpose: string;
                                 };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                             teamId?: string | undefined;
-                            providerModelSelection?: {
+                            providerModelSelection?: undefined | {
                                 agentTargetKey: string;
                                 modelId: string;
-                                application?: {
-                                    agentTargetKey: string;
+                                application?: undefined | {
                                     implementationIdentity: {
                                         pluginId: string;
                                         localId: string;
                                     };
                                     endpointTemplateId: string;
                                     protocol: string;
-                                } | undefined;
+                                    agentTargetKey: string;
+                                };
                                 executionMachineId?: string | undefined;
-                                nativeSource?: {
+                                nativeSource?: undefined | {
                                     sourceRevision: string;
                                     providerTicket: string;
-                                } | undefined;
-                            } | undefined;
-                            nativeDelivery?: {
+                                };
+                            };
+                            nativeDelivery?: undefined | {
                                 managedId: string;
                                 controllerInstallationId: string;
                                 guestInstallationId: string;
@@ -2547,56 +2332,47 @@ export type DiscussionActionResultById = {
                                 placeholderRef: string;
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | {
-                            v: 1;
-                            slot: {
-                                kind: 'provider_model';
-                            } | {
-                                kind: 'connected_service_purpose';
-                                purpose: {
-                                    consumer: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    purpose: string;
-                                };
                             };
-                            resourceId: null;
                         })[] | undefined;
                         allowedTools?: string[] | undefined;
                         unlistedTools?: 'ask' | 'deny' | undefined;
                     };
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
                 };
-                sourceAccess: 'read' | 'quote_only';
-                runtimeAccountId: string | null;
+                sourceAccess: 'quote_only' | 'read';
+                runtimeAccountId: null | string;
                 audienceAccountIds: string[];
                 missingSourceAccountIds: string[];
                 canGrantSource: boolean;
                 disclosure: {
-                    ok: true;
-                } | {
                     ok: false;
-                    reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
+                    reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+                } | {
+                    ok: true;
                 };
                 participantSlotId?: string | undefined;
             }[];
-            publisher?: {
+            publisher?: undefined | {
                 sessionId: string;
                 answerPolicy: 'when_addressed';
                 audienceAccountIds: string[];
                 disclosure: {
-                    ok: true;
-                } | {
                     ok: false;
-                    reason: 'unavailable' | 'same_session' | 'configurer_not_allowed' | 'destination_runtime_not_allowed' | 'destination_audience_broader' | 'destination_public';
+                    reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+                } | {
+                    ok: true;
                 };
-            } | undefined;
+            };
         };
-        discussion?: {
+        discussion?: undefined | {
             serverId: string;
             discussionId: string;
-        } | undefined;
+        };
     } | {
         status: 'asked';
         mode: 'ask' | 'fresh_opinions';
@@ -2615,90 +2391,369 @@ export type DiscussionActionResultById = {
         grantedAccountIds: string[];
         runId?: string | undefined;
     } | {
-        grantedAccountIds: string[];
-        status: 'pending';
-        stage: 'ask' | 'grant' | 'create' | 'invite' | 'workflow';
-        errorCode: string;
-        discussion?: {
-            serverId: string;
-            discussionId: string;
-        } | undefined;
+        status: 'preview';
+        preview: {
+            source: {
+                kind: 'doc_passage';
+                doc: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId: string;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                };
+            } | {
+                kind: 'session';
+                message: {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                };
+            };
+            sourceAudienceAccountIds: string[];
+            sourceContentReady: boolean;
+            discussionAudienceAccountIds: string[];
+            missingDiscussionSourceAccountIds: string[];
+            discussionDisclosure: {
+                ok: false;
+                reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+            } | {
+                ok: true;
+            };
+            canGrantSource: boolean;
+            reviewers: {
+                selection: {
+                    kind: 'model';
+                    launch: {
+                        executionTarget: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionId?: string | undefined;
+                        };
+                        placementOrigin?: undefined | {
+                            kind: 'machine_pool';
+                            poolId: string;
+                        };
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
+                        };
+                        roleId?: string | undefined;
+                        modelSelection?: undefined | {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        };
+                        profileId?: string | undefined;
+                        approvalProfileId?: null | string | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                        agentModeId?: string | undefined;
+                        configuration?: undefined | {
+                            mode: {
+                                value: null | string;
+                                updatedAtMs: number;
+                            };
+                            model: {
+                                value: null | string;
+                                updatedAtMs: number;
+                                selectionSource?: 'explicit' | 'inherited' | undefined;
+                            };
+                            permissionIntent: {
+                                value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
+                                updatedAtMs: number;
+                            };
+                            options: Record<string, {
+                                value: boolean | null | number | string;
+                                updatedAtMs: number;
+                            }>;
+                            workspaceWrites?: 'allow' | 'deny' | undefined;
+                            providerSessionResume?: undefined | {
+                                kind: 'provider_session.v1';
+                                providerSessionId: string;
+                            };
+                            allowedTools?: string[] | undefined;
+                            unlistedTools?: 'ask' | 'deny' | undefined;
+                        };
+                        connectedServices?: undefined | {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            }>;
+                        };
+                        capabilitySelection?: undefined | {
+                            mcp?: undefined | {
+                                forceIncludeServerIds: string[];
+                                forceExcludeServerIds: string[];
+                                v: 1;
+                                managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
+                            };
+                            skills?: undefined | {
+                                forceIncludeSkillIds: string[];
+                                forceExcludeSkillIds: string[];
+                                excludeNativeSkillNames: string[];
+                                v: 1;
+                            };
+                        };
+                        transcriptStorage?: 'direct' | 'persisted' | undefined;
+                        terminal?: undefined | {
+                            mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                            tmux?: undefined | {
+                                sessionName?: string | undefined;
+                                isolated?: boolean | undefined;
+                                tmpDir?: null | string | undefined;
+                            };
+                            herdr?: undefined | {
+                                sessionName?: string | undefined;
+                            };
+                            windows?: undefined | {
+                                launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+                                console?: 'hidden' | 'visible' | undefined;
+                                windowName?: string | undefined;
+                            };
+                        };
+                        checkoutCreationDraft?: null | undefined | {
+                            kind: 'git_worktree';
+                            displayName: string;
+                            baseRef: null | string;
+                            branchMode?: 'existing' | 'new' | undefined;
+                        };
+                        title?: string | undefined;
+                        memoryEnabled?: boolean | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        allowedTools?: string[] | undefined;
+                        unlistedTools?: 'ask' | 'deny' | undefined;
+                    };
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                };
+                sourceAccess: 'quote_only' | 'read';
+                runtimeAccountId: null | string;
+                audienceAccountIds: string[];
+                missingSourceAccountIds: string[];
+                canGrantSource: boolean;
+                disclosure: {
+                    ok: false;
+                    reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+                } | {
+                    ok: true;
+                };
+                participantSlotId?: string | undefined;
+            }[];
+            publisher?: undefined | {
+                sessionId: string;
+                answerPolicy: 'when_addressed';
+                audienceAccountIds: string[];
+                disclosure: {
+                    ok: false;
+                    reason: 'configurer_not_allowed' | 'destination_audience_broader' | 'destination_public' | 'destination_runtime_not_allowed' | 'same_session' | 'unavailable';
+                } | {
+                    ok: true;
+                };
+            };
+        };
+        sourceText: string;
     };
     readonly "discussion.list": {
         discussions: {
-            title: string | null;
+            title: null | string;
             latestMessage: {
                 id: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -2715,150 +2770,10 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 createdAt: number;
-                content?: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content?: null | undefined | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -2887,36 +2802,177 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null | undefined;
-                requesterAccountActor?: {
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
+                };
             };
-            anchor: {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'session';
-                sessionId: string;
-                messageId?: string | undefined;
-            } | {
+            id: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            anchor: null | {
                 kind: 'doc';
                 doc: {
                     ref: {
@@ -2929,10 +2985,22 @@ export type DiscussionActionResultById = {
                         bodyVersion: number;
                     };
                 };
-            } | null;
-            creationLocalId: string | null;
-            id: string;
-            lastReadSeq: number | null;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                messageId?: string | undefined;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -2944,16 +3012,17 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'plain' | 'e2ee';
-            access: 'view' | 'edit' | 'admin' | 'owner';
-            keyReadiness: boolean;
-            dataEncryptionKey: string | null;
+            archivedAt: null | number;
+            encryptionMode: 'e2ee' | 'plain';
+            creationLocalId: null | string;
             messageSeq: number;
+            keyReadiness: boolean;
+            dataEncryptionKey: null | string;
+            lastReadSeq: null | number;
             unreadCount: number;
             unreadMentionCount: number;
             recentAuthorAccountIds: string[];
-            archivedAt: number | null;
-            firstMessage?: {
+            firstMessage?: null | undefined | {
                 messageRef: {
                     kind: 'discussion';
                     discussion: {
@@ -2962,147 +3031,7 @@ export type DiscussionActionResultById = {
                     };
                     messageId: string;
                 };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content: null | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -3131,79 +3060,233 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null;
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
                 id: string;
                 discussionId: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -3220,33 +3303,41 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 mentionedAccountIds: string[];
                 createdAt: number;
-                requesterAccountActor?: {
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
-                addressingV1?: {
+                };
+                addressingV1?: null | undefined | {
                     throughSeq: number;
                     participantSessionIds: string[];
                     watcherSessionIds?: string[] | undefined;
-                } | null | undefined;
-                participantDeliveryV1?: {
+                };
+                participantDeliveryV1?: ({
+                    participantSessionId: string;
+                    disposition: 'failed';
+                    failure: {
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                        retryable: boolean;
+                    };
+                } | {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
-                }[] | undefined;
-                replyTarget?: {
+                })[] | undefined;
+                replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
                         ref: {
@@ -3260,6 +3351,9 @@ export type DiscussionActionResultById = {
                         };
                     };
                 } | {
+                    kind: 'message';
+                    messageId: string;
+                } | {
                     kind: 'task';
                     entry: Readonly<{
                         source: Readonly<{
@@ -3270,13 +3364,8 @@ export type DiscussionActionResultById = {
                         collisionScope: string;
                         entryId: string;
                     }>;
-                } | {
-                    kind: 'message';
-                    messageId: string;
-                } | undefined;
-                docEditProposalDispositionV1?: {
-                    state: 'open';
-                } | {
+                };
+                docEditProposalDispositionV1?: undefined | {
                     state: 'accepted';
                     acceptedRevision: {
                         headerVersion: number;
@@ -3292,102 +3381,113 @@ export type DiscussionActionResultById = {
                         accountId: string;
                         atMs: number;
                     };
-                } | undefined;
-            } | null | undefined;
+                } | {
+                    state: 'open';
+                };
+            };
             participantSessionIds?: string[] | undefined;
-            participantAccounts?: {
+            roundOutcomeV1?: null | undefined | {
+                runId: string;
+                pattern: 'answer_and_review' | 'fresh_opinions';
+                answerCount: number;
+                synthesized: boolean;
+                settled: boolean;
+            };
+            openCommentCount?: null | number | undefined;
+            recipientKeyPreparationRequired?: boolean | undefined;
+            participantAccounts?: undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            }[] | undefined;
+            }[];
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
         incomplete: boolean;
         v: 1;
         serverId: string;
     };
     readonly "discussion.get": {
         discussion: {
-            title: string | null;
+            title: null | string;
             latestMessage: {
                 id: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -3404,150 +3504,10 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 createdAt: number;
-                content?: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content?: null | undefined | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -3576,36 +3536,177 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null | undefined;
-                requesterAccountActor?: {
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
+                };
             };
-            anchor: {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'session';
-                sessionId: string;
-                messageId?: string | undefined;
-            } | {
+            id: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            anchor: null | {
                 kind: 'doc';
                 doc: {
                     ref: {
@@ -3618,10 +3719,22 @@ export type DiscussionActionResultById = {
                         bodyVersion: number;
                     };
                 };
-            } | null;
-            creationLocalId: string | null;
-            id: string;
-            lastReadSeq: number | null;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                messageId?: string | undefined;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -3633,16 +3746,17 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'plain' | 'e2ee';
-            access: 'view' | 'edit' | 'admin' | 'owner';
-            keyReadiness: boolean;
-            dataEncryptionKey: string | null;
+            archivedAt: null | number;
+            encryptionMode: 'e2ee' | 'plain';
+            creationLocalId: null | string;
             messageSeq: number;
+            keyReadiness: boolean;
+            dataEncryptionKey: null | string;
+            lastReadSeq: null | number;
             unreadCount: number;
             unreadMentionCount: number;
             recentAuthorAccountIds: string[];
-            archivedAt: number | null;
-            firstMessage?: {
+            firstMessage?: null | undefined | {
                 messageRef: {
                     kind: 'discussion';
                     discussion: {
@@ -3651,147 +3765,7 @@ export type DiscussionActionResultById = {
                     };
                     messageId: string;
                 };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content: null | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -3820,79 +3794,233 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null;
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
                 id: string;
                 discussionId: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -3909,33 +4037,41 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 mentionedAccountIds: string[];
                 createdAt: number;
-                requesterAccountActor?: {
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
-                addressingV1?: {
+                };
+                addressingV1?: null | undefined | {
                     throughSeq: number;
                     participantSessionIds: string[];
                     watcherSessionIds?: string[] | undefined;
-                } | null | undefined;
-                participantDeliveryV1?: {
+                };
+                participantDeliveryV1?: ({
+                    participantSessionId: string;
+                    disposition: 'failed';
+                    failure: {
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                        retryable: boolean;
+                    };
+                } | {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
-                }[] | undefined;
-                replyTarget?: {
+                })[] | undefined;
+                replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
                         ref: {
@@ -3949,6 +4085,9 @@ export type DiscussionActionResultById = {
                         };
                     };
                 } | {
+                    kind: 'message';
+                    messageId: string;
+                } | {
                     kind: 'task';
                     entry: Readonly<{
                         source: Readonly<{
@@ -3959,13 +4098,8 @@ export type DiscussionActionResultById = {
                         collisionScope: string;
                         entryId: string;
                     }>;
-                } | {
-                    kind: 'message';
-                    messageId: string;
-                } | undefined;
-                docEditProposalDispositionV1?: {
-                    state: 'open';
-                } | {
+                };
+                docEditProposalDispositionV1?: undefined | {
                     state: 'accepted';
                     acceptedRevision: {
                         headerVersion: number;
@@ -3981,29 +4115,40 @@ export type DiscussionActionResultById = {
                         accountId: string;
                         atMs: number;
                     };
-                } | undefined;
-            } | null | undefined;
+                } | {
+                    state: 'open';
+                };
+            };
             participantSessionIds?: string[] | undefined;
-            participantAccounts?: {
+            roundOutcomeV1?: null | undefined | {
+                runId: string;
+                pattern: 'answer_and_review' | 'fresh_opinions';
+                answerCount: number;
+                synthesized: boolean;
+                settled: boolean;
+            };
+            openCommentCount?: null | number | undefined;
+            recipientKeyPreparationRequired?: boolean | undefined;
+            participantAccounts?: undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            }[] | undefined;
+            }[];
         };
         v: 1;
         serverId: string;
-        ownedSessions?: {
+        ownedSessions?: undefined | {
             discussionId: string;
             participantSlotId: string;
             sessionId: string;
-        }[] | undefined;
+        }[];
     };
     readonly "discussion.read": {
         discussionId: string;
@@ -4016,147 +4161,7 @@ export type DiscussionActionResultById = {
                 };
                 messageId: string;
             };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: JsonValue;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
+            content: null | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -4185,79 +4190,233 @@ export type DiscussionActionResultById = {
                     after: string;
                     reason: string;
                 };
-            } | null;
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'workflow_result';
+                value: JsonValue;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
+                };
+            } | {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
             id: string;
             discussionId: string;
-            localId: string | null;
+            localId: null | string;
             seq: number;
-            authorAccountId: string | null;
-            accountActor: {
+            authorAccountId: null | string;
+            accountActor: null | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null;
-            producerV1: {
+            };
+            producerV1: null | {
                 v: 1;
                 kind: 'agent';
                 sessionId: string;
                 runId?: string | undefined;
                 toolCallId?: string | undefined;
-                sourceSession?: {
+                sourceSession?: undefined | {
                     sourceSessionId: string;
                     sourceTurnId: string;
-                    via: 'mcp' | 'action';
+                    via: 'action' | 'mcp';
                     sourceInputId?: string | undefined;
-                    discussionAddressing?: {
+                    discussionAddressing?: undefined | {
                         discussionId: string;
                         messageId: string;
                         throughSeq: number;
                         participantSessionId: string;
-                    } | undefined;
-                } | undefined;
-                actionRequestAttributionV1?: {
+                    };
+                };
+                actionRequestAttributionV1?: undefined | {
                     requestRef: string;
-                    requester: {
+                    requester: null | {
                         serverId: string;
                         accountId: string;
-                    } | null;
+                    };
                     persona: {
                         serverId: string;
                         sessionId: string;
                     };
-                    origin: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
+                    origin: null | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
                             discussionId: string;
                         };
                         messageId: string;
-                    } | null;
-                } | undefined;
-                replyReturn?: {
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    };
+                };
+                replyReturn?: undefined | {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
-                    workflow?: {
+                    workflow?: undefined | {
                         runId: string;
                         invocationRecordId: string;
                         invocationAttempt: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             } | {
                 v: 1;
                 kind: 'workflow';
@@ -4274,33 +4433,41 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-            } | null;
+                outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+            };
             mentionedAccountIds: string[];
             createdAt: number;
-            requesterAccountActor?: {
+            requesterAccountActor?: null | undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null | undefined;
-            addressingV1?: {
+            };
+            addressingV1?: null | undefined | {
                 throughSeq: number;
                 participantSessionIds: string[];
                 watcherSessionIds?: string[] | undefined;
-            } | null | undefined;
-            participantDeliveryV1?: {
+            };
+            participantDeliveryV1?: ({
+                participantSessionId: string;
+                disposition: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            } | {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
-            }[] | undefined;
-            replyTarget?: {
+            })[] | undefined;
+            replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
                     ref: {
@@ -4314,6 +4481,9 @@ export type DiscussionActionResultById = {
                     };
                 };
             } | {
+                kind: 'message';
+                messageId: string;
+            } | {
                 kind: 'task';
                 entry: Readonly<{
                     source: Readonly<{
@@ -4324,13 +4494,8 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
-            } | {
-                kind: 'message';
-                messageId: string;
-            } | undefined;
-            docEditProposalDispositionV1?: {
-                state: 'open';
-            } | {
+            };
+            docEditProposalDispositionV1?: undefined | {
                 state: 'accepted';
                 acceptedRevision: {
                     headerVersion: number;
@@ -4346,7 +4511,9 @@ export type DiscussionActionResultById = {
                     accountId: string;
                     atMs: number;
                 };
-            } | undefined;
+            } | {
+                state: 'open';
+            };
         }[];
         hasMoreOlder: boolean;
         messageSeq: number;
@@ -4363,79 +4530,79 @@ export type DiscussionActionResultById = {
     };
     readonly "discussion.create": {
         discussion: {
-            title: string | null;
+            title: null | string;
             latestMessage: {
                 id: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -4452,150 +4619,10 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 createdAt: number;
-                content?: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content?: null | undefined | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -4624,36 +4651,177 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null | undefined;
-                requesterAccountActor?: {
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
+                };
             };
-            anchor: {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'session';
-                sessionId: string;
-                messageId?: string | undefined;
-            } | {
+            id: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            anchor: null | {
                 kind: 'doc';
                 doc: {
                     ref: {
@@ -4666,10 +4834,22 @@ export type DiscussionActionResultById = {
                         bodyVersion: number;
                     };
                 };
-            } | null;
-            creationLocalId: string | null;
-            id: string;
-            lastReadSeq: number | null;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                messageId?: string | undefined;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -4681,16 +4861,17 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'plain' | 'e2ee';
-            access: 'view' | 'edit' | 'admin' | 'owner';
-            keyReadiness: boolean;
-            dataEncryptionKey: string | null;
+            archivedAt: null | number;
+            encryptionMode: 'e2ee' | 'plain';
+            creationLocalId: null | string;
             messageSeq: number;
+            keyReadiness: boolean;
+            dataEncryptionKey: null | string;
+            lastReadSeq: null | number;
             unreadCount: number;
             unreadMentionCount: number;
             recentAuthorAccountIds: string[];
-            archivedAt: number | null;
-            firstMessage?: {
+            firstMessage?: null | undefined | {
                 messageRef: {
                     kind: 'discussion';
                     discussion: {
@@ -4699,147 +4880,7 @@ export type DiscussionActionResultById = {
                     };
                     messageId: string;
                 };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content: null | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -4868,79 +4909,233 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null;
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
                 id: string;
                 discussionId: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -4957,33 +5152,41 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 mentionedAccountIds: string[];
                 createdAt: number;
-                requesterAccountActor?: {
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
-                addressingV1?: {
+                };
+                addressingV1?: null | undefined | {
                     throughSeq: number;
                     participantSessionIds: string[];
                     watcherSessionIds?: string[] | undefined;
-                } | null | undefined;
-                participantDeliveryV1?: {
+                };
+                participantDeliveryV1?: ({
+                    participantSessionId: string;
+                    disposition: 'failed';
+                    failure: {
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                        retryable: boolean;
+                    };
+                } | {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
-                }[] | undefined;
-                replyTarget?: {
+                })[] | undefined;
+                replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
                         ref: {
@@ -4997,6 +5200,9 @@ export type DiscussionActionResultById = {
                         };
                     };
                 } | {
+                    kind: 'message';
+                    messageId: string;
+                } | {
                     kind: 'task';
                     entry: Readonly<{
                         source: Readonly<{
@@ -5007,13 +5213,8 @@ export type DiscussionActionResultById = {
                         collisionScope: string;
                         entryId: string;
                     }>;
-                } | {
-                    kind: 'message';
-                    messageId: string;
-                } | undefined;
-                docEditProposalDispositionV1?: {
-                    state: 'open';
-                } | {
+                };
+                docEditProposalDispositionV1?: undefined | {
                     state: 'accepted';
                     acceptedRevision: {
                         headerVersion: number;
@@ -5029,21 +5230,32 @@ export type DiscussionActionResultById = {
                         accountId: string;
                         atMs: number;
                     };
-                } | undefined;
-            } | null | undefined;
+                } | {
+                    state: 'open';
+                };
+            };
             participantSessionIds?: string[] | undefined;
-            participantAccounts?: {
+            roundOutcomeV1?: null | undefined | {
+                runId: string;
+                pattern: 'answer_and_review' | 'fresh_opinions';
+                answerCount: number;
+                synthesized: boolean;
+                settled: boolean;
+            };
+            openCommentCount?: null | number | undefined;
+            recipientKeyPreparationRequired?: boolean | undefined;
+            participantAccounts?: undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            }[] | undefined;
+            }[];
         };
         firstMessage: {
             messageRef: {
@@ -5054,147 +5266,7 @@ export type DiscussionActionResultById = {
                 };
                 messageId: string;
             };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: JsonValue;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
+            content: null | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -5223,79 +5295,233 @@ export type DiscussionActionResultById = {
                     after: string;
                     reason: string;
                 };
-            } | null;
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'workflow_result';
+                value: JsonValue;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
+                };
+            } | {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
             id: string;
             discussionId: string;
-            localId: string | null;
+            localId: null | string;
             seq: number;
-            authorAccountId: string | null;
-            accountActor: {
+            authorAccountId: null | string;
+            accountActor: null | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null;
-            producerV1: {
+            };
+            producerV1: null | {
                 v: 1;
                 kind: 'agent';
                 sessionId: string;
                 runId?: string | undefined;
                 toolCallId?: string | undefined;
-                sourceSession?: {
+                sourceSession?: undefined | {
                     sourceSessionId: string;
                     sourceTurnId: string;
-                    via: 'mcp' | 'action';
+                    via: 'action' | 'mcp';
                     sourceInputId?: string | undefined;
-                    discussionAddressing?: {
+                    discussionAddressing?: undefined | {
                         discussionId: string;
                         messageId: string;
                         throughSeq: number;
                         participantSessionId: string;
-                    } | undefined;
-                } | undefined;
-                actionRequestAttributionV1?: {
+                    };
+                };
+                actionRequestAttributionV1?: undefined | {
                     requestRef: string;
-                    requester: {
+                    requester: null | {
                         serverId: string;
                         accountId: string;
-                    } | null;
+                    };
                     persona: {
                         serverId: string;
                         sessionId: string;
                     };
-                    origin: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
+                    origin: null | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
                             discussionId: string;
                         };
                         messageId: string;
-                    } | null;
-                } | undefined;
-                replyReturn?: {
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    };
+                };
+                replyReturn?: undefined | {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
-                    workflow?: {
+                    workflow?: undefined | {
                         runId: string;
                         invocationRecordId: string;
                         invocationAttempt: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             } | {
                 v: 1;
                 kind: 'workflow';
@@ -5312,33 +5538,41 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-            } | null;
+                outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+            };
             mentionedAccountIds: string[];
             createdAt: number;
-            requesterAccountActor?: {
+            requesterAccountActor?: null | undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null | undefined;
-            addressingV1?: {
+            };
+            addressingV1?: null | undefined | {
                 throughSeq: number;
                 participantSessionIds: string[];
                 watcherSessionIds?: string[] | undefined;
-            } | null | undefined;
-            participantDeliveryV1?: {
+            };
+            participantDeliveryV1?: ({
+                participantSessionId: string;
+                disposition: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            } | {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
-            }[] | undefined;
-            replyTarget?: {
+            })[] | undefined;
+            replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
                     ref: {
@@ -5352,6 +5586,9 @@ export type DiscussionActionResultById = {
                     };
                 };
             } | {
+                kind: 'message';
+                messageId: string;
+            } | {
                 kind: 'task';
                 entry: Readonly<{
                     source: Readonly<{
@@ -5362,13 +5599,8 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
-            } | {
-                kind: 'message';
-                messageId: string;
-            } | undefined;
-            docEditProposalDispositionV1?: {
-                state: 'open';
-            } | {
+            };
+            docEditProposalDispositionV1?: undefined | {
                 state: 'accepted';
                 acceptedRevision: {
                     headerVersion: number;
@@ -5384,7 +5616,9 @@ export type DiscussionActionResultById = {
                     accountId: string;
                     atMs: number;
                 };
-            } | undefined;
+            } | {
+                state: 'open';
+            };
         };
         v: 1;
         serverId: string;
@@ -5399,147 +5633,7 @@ export type DiscussionActionResultById = {
                 };
                 messageId: string;
             };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: JsonValue;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
+            content: null | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -5568,79 +5662,233 @@ export type DiscussionActionResultById = {
                     after: string;
                     reason: string;
                 };
-            } | null;
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'workflow_result';
+                value: JsonValue;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
+                };
+            } | {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
             id: string;
             discussionId: string;
-            localId: string | null;
+            localId: null | string;
             seq: number;
-            authorAccountId: string | null;
-            accountActor: {
+            authorAccountId: null | string;
+            accountActor: null | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null;
-            producerV1: {
+            };
+            producerV1: null | {
                 v: 1;
                 kind: 'agent';
                 sessionId: string;
                 runId?: string | undefined;
                 toolCallId?: string | undefined;
-                sourceSession?: {
+                sourceSession?: undefined | {
                     sourceSessionId: string;
                     sourceTurnId: string;
-                    via: 'mcp' | 'action';
+                    via: 'action' | 'mcp';
                     sourceInputId?: string | undefined;
-                    discussionAddressing?: {
+                    discussionAddressing?: undefined | {
                         discussionId: string;
                         messageId: string;
                         throughSeq: number;
                         participantSessionId: string;
-                    } | undefined;
-                } | undefined;
-                actionRequestAttributionV1?: {
+                    };
+                };
+                actionRequestAttributionV1?: undefined | {
                     requestRef: string;
-                    requester: {
+                    requester: null | {
                         serverId: string;
                         accountId: string;
-                    } | null;
+                    };
                     persona: {
                         serverId: string;
                         sessionId: string;
                     };
-                    origin: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
+                    origin: null | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
                             discussionId: string;
                         };
                         messageId: string;
-                    } | null;
-                } | undefined;
-                replyReturn?: {
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    };
+                };
+                replyReturn?: undefined | {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
-                    workflow?: {
+                    workflow?: undefined | {
                         runId: string;
                         invocationRecordId: string;
                         invocationAttempt: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             } | {
                 v: 1;
                 kind: 'workflow';
@@ -5657,33 +5905,41 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-            } | null;
+                outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+            };
             mentionedAccountIds: string[];
             createdAt: number;
-            requesterAccountActor?: {
+            requesterAccountActor?: null | undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null | undefined;
-            addressingV1?: {
+            };
+            addressingV1?: null | undefined | {
                 throughSeq: number;
                 participantSessionIds: string[];
                 watcherSessionIds?: string[] | undefined;
-            } | null | undefined;
-            participantDeliveryV1?: {
+            };
+            participantDeliveryV1?: ({
+                participantSessionId: string;
+                disposition: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            } | {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
-            }[] | undefined;
-            replyTarget?: {
+            })[] | undefined;
+            replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
                     ref: {
@@ -5697,6 +5953,9 @@ export type DiscussionActionResultById = {
                     };
                 };
             } | {
+                kind: 'message';
+                messageId: string;
+            } | {
                 kind: 'task';
                 entry: Readonly<{
                     source: Readonly<{
@@ -5707,13 +5966,8 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
-            } | {
-                kind: 'message';
-                messageId: string;
-            } | undefined;
-            docEditProposalDispositionV1?: {
-                state: 'open';
-            } | {
+            };
+            docEditProposalDispositionV1?: undefined | {
                 state: 'accepted';
                 acceptedRevision: {
                     headerVersion: number;
@@ -5729,7 +5983,9 @@ export type DiscussionActionResultById = {
                     accountId: string;
                     atMs: number;
                 };
-            } | undefined;
+            } | {
+                state: 'open';
+            };
         };
         messageSeq: number;
         v: 1;
@@ -5737,79 +5993,79 @@ export type DiscussionActionResultById = {
     };
     readonly "discussion.rename": {
         discussion: {
-            title: string | null;
+            title: null | string;
             latestMessage: {
                 id: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -5826,150 +6082,10 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 createdAt: number;
-                content?: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content?: null | undefined | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -5998,36 +6114,177 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null | undefined;
-                requesterAccountActor?: {
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
+                };
             };
-            anchor: {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'session';
-                sessionId: string;
-                messageId?: string | undefined;
-            } | {
+            id: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            anchor: null | {
                 kind: 'doc';
                 doc: {
                     ref: {
@@ -6040,10 +6297,22 @@ export type DiscussionActionResultById = {
                         bodyVersion: number;
                     };
                 };
-            } | null;
-            creationLocalId: string | null;
-            id: string;
-            lastReadSeq: number | null;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                messageId?: string | undefined;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -6055,16 +6324,17 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'plain' | 'e2ee';
-            access: 'view' | 'edit' | 'admin' | 'owner';
-            keyReadiness: boolean;
-            dataEncryptionKey: string | null;
+            archivedAt: null | number;
+            encryptionMode: 'e2ee' | 'plain';
+            creationLocalId: null | string;
             messageSeq: number;
+            keyReadiness: boolean;
+            dataEncryptionKey: null | string;
+            lastReadSeq: null | number;
             unreadCount: number;
             unreadMentionCount: number;
             recentAuthorAccountIds: string[];
-            archivedAt: number | null;
-            firstMessage?: {
+            firstMessage?: null | undefined | {
                 messageRef: {
                     kind: 'discussion';
                     discussion: {
@@ -6073,147 +6343,7 @@ export type DiscussionActionResultById = {
                     };
                     messageId: string;
                 };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content: null | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -6242,79 +6372,233 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null;
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
                 id: string;
                 discussionId: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -6331,33 +6615,41 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 mentionedAccountIds: string[];
                 createdAt: number;
-                requesterAccountActor?: {
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
-                addressingV1?: {
+                };
+                addressingV1?: null | undefined | {
                     throughSeq: number;
                     participantSessionIds: string[];
                     watcherSessionIds?: string[] | undefined;
-                } | null | undefined;
-                participantDeliveryV1?: {
+                };
+                participantDeliveryV1?: ({
+                    participantSessionId: string;
+                    disposition: 'failed';
+                    failure: {
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                        retryable: boolean;
+                    };
+                } | {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
-                }[] | undefined;
-                replyTarget?: {
+                })[] | undefined;
+                replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
                         ref: {
@@ -6371,6 +6663,9 @@ export type DiscussionActionResultById = {
                         };
                     };
                 } | {
+                    kind: 'message';
+                    messageId: string;
+                } | {
                     kind: 'task';
                     entry: Readonly<{
                         source: Readonly<{
@@ -6381,13 +6676,8 @@ export type DiscussionActionResultById = {
                         collisionScope: string;
                         entryId: string;
                     }>;
-                } | {
-                    kind: 'message';
-                    messageId: string;
-                } | undefined;
-                docEditProposalDispositionV1?: {
-                    state: 'open';
-                } | {
+                };
+                docEditProposalDispositionV1?: undefined | {
                     state: 'accepted';
                     acceptedRevision: {
                         headerVersion: number;
@@ -6403,105 +6693,116 @@ export type DiscussionActionResultById = {
                         accountId: string;
                         atMs: number;
                     };
-                } | undefined;
-            } | null | undefined;
+                } | {
+                    state: 'open';
+                };
+            };
             participantSessionIds?: string[] | undefined;
-            participantAccounts?: {
+            roundOutcomeV1?: null | undefined | {
+                runId: string;
+                pattern: 'answer_and_review' | 'fresh_opinions';
+                answerCount: number;
+                synthesized: boolean;
+                settled: boolean;
+            };
+            openCommentCount?: null | number | undefined;
+            recipientKeyPreparationRequired?: boolean | undefined;
+            participantAccounts?: undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            }[] | undefined;
+            }[];
         };
         v: 1;
         serverId: string;
-        ownedSessions?: {
+        ownedSessions?: undefined | {
             discussionId: string;
             participantSlotId: string;
             sessionId: string;
-        }[] | undefined;
+        }[];
     };
     readonly "discussion.archive": {
         discussion: {
-            title: string | null;
+            title: null | string;
             latestMessage: {
                 id: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -6518,150 +6819,10 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 createdAt: number;
-                content?: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content?: null | undefined | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -6690,36 +6851,177 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null | undefined;
-                requesterAccountActor?: {
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
+                };
             };
-            anchor: {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'session';
-                sessionId: string;
-                messageId?: string | undefined;
-            } | {
+            id: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            anchor: null | {
                 kind: 'doc';
                 doc: {
                     ref: {
@@ -6732,10 +7034,22 @@ export type DiscussionActionResultById = {
                         bodyVersion: number;
                     };
                 };
-            } | null;
-            creationLocalId: string | null;
-            id: string;
-            lastReadSeq: number | null;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                messageId?: string | undefined;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -6747,16 +7061,17 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'plain' | 'e2ee';
-            access: 'view' | 'edit' | 'admin' | 'owner';
-            keyReadiness: boolean;
-            dataEncryptionKey: string | null;
+            archivedAt: null | number;
+            encryptionMode: 'e2ee' | 'plain';
+            creationLocalId: null | string;
             messageSeq: number;
+            keyReadiness: boolean;
+            dataEncryptionKey: null | string;
+            lastReadSeq: null | number;
             unreadCount: number;
             unreadMentionCount: number;
             recentAuthorAccountIds: string[];
-            archivedAt: number | null;
-            firstMessage?: {
+            firstMessage?: null | undefined | {
                 messageRef: {
                     kind: 'discussion';
                     discussion: {
@@ -6765,147 +7080,7 @@ export type DiscussionActionResultById = {
                     };
                     messageId: string;
                 };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content: null | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -6934,79 +7109,233 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null;
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
                 id: string;
                 discussionId: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -7023,33 +7352,41 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 mentionedAccountIds: string[];
                 createdAt: number;
-                requesterAccountActor?: {
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
-                addressingV1?: {
+                };
+                addressingV1?: null | undefined | {
                     throughSeq: number;
                     participantSessionIds: string[];
                     watcherSessionIds?: string[] | undefined;
-                } | null | undefined;
-                participantDeliveryV1?: {
+                };
+                participantDeliveryV1?: ({
+                    participantSessionId: string;
+                    disposition: 'failed';
+                    failure: {
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                        retryable: boolean;
+                    };
+                } | {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
-                }[] | undefined;
-                replyTarget?: {
+                })[] | undefined;
+                replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
                         ref: {
@@ -7063,6 +7400,9 @@ export type DiscussionActionResultById = {
                         };
                     };
                 } | {
+                    kind: 'message';
+                    messageId: string;
+                } | {
                     kind: 'task';
                     entry: Readonly<{
                         source: Readonly<{
@@ -7073,13 +7413,8 @@ export type DiscussionActionResultById = {
                         collisionScope: string;
                         entryId: string;
                     }>;
-                } | {
-                    kind: 'message';
-                    messageId: string;
-                } | undefined;
-                docEditProposalDispositionV1?: {
-                    state: 'open';
-                } | {
+                };
+                docEditProposalDispositionV1?: undefined | {
                     state: 'accepted';
                     acceptedRevision: {
                         headerVersion: number;
@@ -7095,105 +7430,116 @@ export type DiscussionActionResultById = {
                         accountId: string;
                         atMs: number;
                     };
-                } | undefined;
-            } | null | undefined;
+                } | {
+                    state: 'open';
+                };
+            };
             participantSessionIds?: string[] | undefined;
-            participantAccounts?: {
+            roundOutcomeV1?: null | undefined | {
+                runId: string;
+                pattern: 'answer_and_review' | 'fresh_opinions';
+                answerCount: number;
+                synthesized: boolean;
+                settled: boolean;
+            };
+            openCommentCount?: null | number | undefined;
+            recipientKeyPreparationRequired?: boolean | undefined;
+            participantAccounts?: undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            }[] | undefined;
+            }[];
         };
         v: 1;
         serverId: string;
-        ownedSessions?: {
+        ownedSessions?: undefined | {
             discussionId: string;
             participantSlotId: string;
             sessionId: string;
-        }[] | undefined;
+        }[];
     };
     readonly "discussion.restore": {
         discussion: {
-            title: string | null;
+            title: null | string;
             latestMessage: {
                 id: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -7210,150 +7556,10 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 createdAt: number;
-                content?: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content?: null | undefined | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -7382,36 +7588,177 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null | undefined;
-                requesterAccountActor?: {
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
+                };
             };
-            anchor: {
-                kind: 'task';
-                entry: Readonly<{
-                    source: Readonly<{
-                        pluginId: string;
-                        localId: string;
-                    }>;
-                    kindId: string;
-                    collisionScope: string;
-                    entryId: string;
-                }>;
-            } | {
-                kind: 'session';
-                sessionId: string;
-                messageId?: string | undefined;
-            } | {
+            id: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            anchor: null | {
                 kind: 'doc';
                 doc: {
                     ref: {
@@ -7424,10 +7771,22 @@ export type DiscussionActionResultById = {
                         bodyVersion: number;
                     };
                 };
-            } | null;
-            creationLocalId: string | null;
-            id: string;
-            lastReadSeq: number | null;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                messageId?: string | undefined;
+            } | {
+                kind: 'task';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            };
             capabilities: {
                 postMessages: boolean;
                 rename: boolean;
@@ -7439,16 +7798,17 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            encryptionMode: 'plain' | 'e2ee';
-            access: 'view' | 'edit' | 'admin' | 'owner';
-            keyReadiness: boolean;
-            dataEncryptionKey: string | null;
+            archivedAt: null | number;
+            encryptionMode: 'e2ee' | 'plain';
+            creationLocalId: null | string;
             messageSeq: number;
+            keyReadiness: boolean;
+            dataEncryptionKey: null | string;
+            lastReadSeq: null | number;
             unreadCount: number;
             unreadMentionCount: number;
             recentAuthorAccountIds: string[];
-            archivedAt: number | null;
-            firstMessage?: {
+            firstMessage?: null | undefined | {
                 messageRef: {
                     kind: 'discussion';
                     discussion: {
@@ -7457,147 +7817,7 @@ export type DiscussionActionResultById = {
                     };
                     messageId: string;
                 };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                } | {
-                    kind: 'workflow_result';
-                    value: JsonValue;
-                    summary: string;
-                    source: {
-                        runId: string;
-                        invocationRecordId: string;
-                        invocationAttempt: string;
-                    };
-                } | {
-                    kind: 'doc_passage_comment';
-                    passage: {
-                        ref: {
-                            artifactId: string;
-                            kind: 'doc';
-                            serverId?: string | undefined;
-                        };
-                        revision: {
-                            headerVersion: number;
-                            bodyVersion: number;
-                        };
-                        range: {
-                            start: number;
-                            end: number;
-                        };
-                        quote: string;
-                        prefix?: string | undefined;
-                        suffix?: string | undefined;
-                    };
-                    content: {
-                        v: 1;
-                        parts: ({
-                            t: 'text';
-                            text: string;
-                        } | {
-                            t: 'mention';
-                            participant: {
-                                kind: 'account';
-                                accountId: string;
-                            } | {
-                                kind: 'session';
-                                sessionId: string;
-                            };
-                        } | {
-                            t: 'reference';
-                            reference: {
-                                kind: string;
-                                ref: string;
-                                token: string;
-                                label?: string | undefined;
-                                composerReference?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | undefined;
-                                composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                            };
-                        } | {
-                            t: 'attachment';
-                            attachment: {
-                                kind: 'file';
-                                id: string;
-                                name: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            } | {
-                                kind: 'folder';
-                                id: string;
-                                name: string;
-                                entries: {
-                                    relativePath: string;
-                                    file: {
-                                        blobId: string;
-                                        mime: string;
-                                        sizeBytes: number;
-                                        sha256: string;
-                                    };
-                                }[];
-                                directories: string[];
-                            };
-                        })[];
-                    };
-                } | {
+                content: null | {
                     kind: 'doc_edit_proposal';
                     proposal: {
                         target: {
@@ -7626,79 +7846,233 @@ export type DiscussionActionResultById = {
                         after: string;
                         reason: string;
                     };
-                } | null;
+                } | {
+                    kind: 'doc_passage_comment';
+                    passage: {
+                        ref: {
+                            artifactId: string;
+                            kind: 'doc';
+                            serverId?: string | undefined;
+                        };
+                        revision: {
+                            headerVersion: number;
+                            bodyVersion: number;
+                        };
+                        range: {
+                            start: number;
+                            end: number;
+                        };
+                        quote: string;
+                        prefix?: string | undefined;
+                        suffix?: string | undefined;
+                    };
+                    content: {
+                        v: 1;
+                        parts: ({
+                            t: 'attachment';
+                            attachment: {
+                                kind: 'file';
+                                id: string;
+                                name: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            } | {
+                                kind: 'folder';
+                                id: string;
+                                name: string;
+                                entries: {
+                                    relativePath: string;
+                                    file: {
+                                        blobId: string;
+                                        mime: string;
+                                        sizeBytes: number;
+                                        sha256: string;
+                                    };
+                                }[];
+                                directories: string[];
+                            };
+                        } | {
+                            t: 'mention';
+                            participant: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'session';
+                                sessionId: string;
+                            };
+                        } | {
+                            t: 'reference';
+                            reference: {
+                                kind: string;
+                                ref: string;
+                                token: string;
+                                label?: string | undefined;
+                                composerReference?: undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                            };
+                        } | {
+                            t: 'text';
+                            text: string;
+                        })[];
+                        externalSource?: undefined | {
+                            kind: 'channel';
+                            providerPluginId: string;
+                            conversationDisplayName: string;
+                            senderDisplayName?: string | undefined;
+                            inputLocalId?: string | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'workflow_result';
+                    value: JsonValue;
+                    summary: string;
+                    source: {
+                        runId: string;
+                        invocationRecordId: string;
+                        invocationAttempt: string;
+                    };
+                } | {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
                 id: string;
                 discussionId: string;
-                localId: string | null;
+                localId: null | string;
                 seq: number;
-                authorAccountId: string | null;
-                accountActor: {
+                authorAccountId: null | string;
+                accountActor: null | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null;
-                producerV1: {
+                };
+                producerV1: null | {
                     v: 1;
                     kind: 'agent';
                     sessionId: string;
                     runId?: string | undefined;
                     toolCallId?: string | undefined;
-                    sourceSession?: {
+                    sourceSession?: undefined | {
                         sourceSessionId: string;
                         sourceTurnId: string;
-                        via: 'mcp' | 'action';
+                        via: 'action' | 'mcp';
                         sourceInputId?: string | undefined;
-                        discussionAddressing?: {
+                        discussionAddressing?: undefined | {
                             discussionId: string;
                             messageId: string;
                             throughSeq: number;
                             participantSessionId: string;
-                        } | undefined;
-                    } | undefined;
-                    actionRequestAttributionV1?: {
+                        };
+                    };
+                    actionRequestAttributionV1?: undefined | {
                         requestRef: string;
-                        requester: {
+                        requester: null | {
                             serverId: string;
                             accountId: string;
-                        } | null;
+                        };
                         persona: {
                             serverId: string;
                             sessionId: string;
                         };
-                        origin: {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        } | {
+                        origin: null | {
                             kind: 'discussion';
                             discussion: {
                                 serverId: string;
                                 discussionId: string;
                             };
                             messageId: string;
-                        } | null;
-                    } | undefined;
-                    replyReturn?: {
+                        } | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                    replyReturn?: undefined | {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                        outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
-                        workflow?: {
+                        workflow?: undefined | {
                             runId: string;
                             invocationRecordId: string;
                             invocationAttempt: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 } | {
                     v: 1;
                     kind: 'workflow';
@@ -7715,33 +8089,41 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-                } | null;
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+                };
                 mentionedAccountIds: string[];
                 createdAt: number;
-                requesterAccountActor?: {
+                requesterAccountActor?: null | undefined | {
                     v: 1;
                     accountId: string;
-                    profile: {
-                        name: string | null;
-                        firstName: string | null;
-                        lastName: string | null;
-                        username: string | null;
-                        avatarUrl: string | null;
-                    } | null;
+                    profile: null | {
+                        name: null | string;
+                        firstName: null | string;
+                        lastName: null | string;
+                        username: null | string;
+                        avatarUrl: null | string;
+                    };
                     accessibility?: 'current' | 'former' | undefined;
-                } | null | undefined;
-                addressingV1?: {
+                };
+                addressingV1?: null | undefined | {
                     throughSeq: number;
                     participantSessionIds: string[];
                     watcherSessionIds?: string[] | undefined;
-                } | null | undefined;
-                participantDeliveryV1?: {
+                };
+                participantDeliveryV1?: ({
+                    participantSessionId: string;
+                    disposition: 'failed';
+                    failure: {
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                        retryable: boolean;
+                    };
+                } | {
                     participantSessionId: string;
                     disposition: 'held';
                     code: 'session_input_target_unavailable';
-                }[] | undefined;
-                replyTarget?: {
+                })[] | undefined;
+                replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
                         ref: {
@@ -7755,6 +8137,9 @@ export type DiscussionActionResultById = {
                         };
                     };
                 } | {
+                    kind: 'message';
+                    messageId: string;
+                } | {
                     kind: 'task';
                     entry: Readonly<{
                         source: Readonly<{
@@ -7765,13 +8150,8 @@ export type DiscussionActionResultById = {
                         collisionScope: string;
                         entryId: string;
                     }>;
-                } | {
-                    kind: 'message';
-                    messageId: string;
-                } | undefined;
-                docEditProposalDispositionV1?: {
-                    state: 'open';
-                } | {
+                };
+                docEditProposalDispositionV1?: undefined | {
                     state: 'accepted';
                     acceptedRevision: {
                         headerVersion: number;
@@ -7787,29 +8167,40 @@ export type DiscussionActionResultById = {
                         accountId: string;
                         atMs: number;
                     };
-                } | undefined;
-            } | null | undefined;
+                } | {
+                    state: 'open';
+                };
+            };
             participantSessionIds?: string[] | undefined;
-            participantAccounts?: {
+            roundOutcomeV1?: null | undefined | {
+                runId: string;
+                pattern: 'answer_and_review' | 'fresh_opinions';
+                answerCount: number;
+                synthesized: boolean;
+                settled: boolean;
+            };
+            openCommentCount?: null | number | undefined;
+            recipientKeyPreparationRequired?: boolean | undefined;
+            participantAccounts?: undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            }[] | undefined;
+            }[];
         };
         v: 1;
         serverId: string;
-        ownedSessions?: {
+        ownedSessions?: undefined | {
             discussionId: string;
             participantSlotId: string;
             sessionId: string;
-        }[] | undefined;
+        }[];
     };
     readonly "discussion.read_state.set": {
         cursor: {
@@ -7830,147 +8221,7 @@ export type DiscussionActionResultById = {
                 };
                 messageId: string;
             };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: JsonValue;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
+            content: null | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -7999,79 +8250,233 @@ export type DiscussionActionResultById = {
                     after: string;
                     reason: string;
                 };
-            } | null;
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'workflow_result';
+                value: JsonValue;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
+                };
+            } | {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
             id: string;
             discussionId: string;
-            localId: string | null;
+            localId: null | string;
             seq: number;
-            authorAccountId: string | null;
-            accountActor: {
+            authorAccountId: null | string;
+            accountActor: null | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null;
-            producerV1: {
+            };
+            producerV1: null | {
                 v: 1;
                 kind: 'agent';
                 sessionId: string;
                 runId?: string | undefined;
                 toolCallId?: string | undefined;
-                sourceSession?: {
+                sourceSession?: undefined | {
                     sourceSessionId: string;
                     sourceTurnId: string;
-                    via: 'mcp' | 'action';
+                    via: 'action' | 'mcp';
                     sourceInputId?: string | undefined;
-                    discussionAddressing?: {
+                    discussionAddressing?: undefined | {
                         discussionId: string;
                         messageId: string;
                         throughSeq: number;
                         participantSessionId: string;
-                    } | undefined;
-                } | undefined;
-                actionRequestAttributionV1?: {
+                    };
+                };
+                actionRequestAttributionV1?: undefined | {
                     requestRef: string;
-                    requester: {
+                    requester: null | {
                         serverId: string;
                         accountId: string;
-                    } | null;
+                    };
                     persona: {
                         serverId: string;
                         sessionId: string;
                     };
-                    origin: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
+                    origin: null | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
                             discussionId: string;
                         };
                         messageId: string;
-                    } | null;
-                } | undefined;
-                replyReturn?: {
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    };
+                };
+                replyReturn?: undefined | {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
-                    workflow?: {
+                    workflow?: undefined | {
                         runId: string;
                         invocationRecordId: string;
                         invocationAttempt: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             } | {
                 v: 1;
                 kind: 'workflow';
@@ -8088,33 +8493,41 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-            } | null;
+                outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+            };
             mentionedAccountIds: string[];
             createdAt: number;
-            requesterAccountActor?: {
+            requesterAccountActor?: null | undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null | undefined;
-            addressingV1?: {
+            };
+            addressingV1?: null | undefined | {
                 throughSeq: number;
                 participantSessionIds: string[];
                 watcherSessionIds?: string[] | undefined;
-            } | null | undefined;
-            participantDeliveryV1?: {
+            };
+            participantDeliveryV1?: ({
+                participantSessionId: string;
+                disposition: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            } | {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
-            }[] | undefined;
-            replyTarget?: {
+            })[] | undefined;
+            replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
                     ref: {
@@ -8128,6 +8541,9 @@ export type DiscussionActionResultById = {
                     };
                 };
             } | {
+                kind: 'message';
+                messageId: string;
+            } | {
                 kind: 'task';
                 entry: Readonly<{
                     source: Readonly<{
@@ -8138,13 +8554,8 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
-            } | {
-                kind: 'message';
-                messageId: string;
-            } | undefined;
-            docEditProposalDispositionV1?: {
-                state: 'open';
-            } | {
+            };
+            docEditProposalDispositionV1?: undefined | {
                 state: 'accepted';
                 acceptedRevision: {
                     headerVersion: number;
@@ -8160,7 +8571,9 @@ export type DiscussionActionResultById = {
                     accountId: string;
                     atMs: number;
                 };
-            } | undefined;
+            } | {
+                state: 'open';
+            };
         };
         messageSeq: number;
         v: 1;
@@ -8169,25 +8582,25 @@ export type DiscussionActionResultById = {
     readonly "discussion.participants.list": {
         discussionId: string;
         ownerAccountId: string;
-        access: 'view' | 'edit' | 'admin' | 'owner';
+        access: 'admin' | 'edit' | 'owner' | 'view';
         grants: {
             principal: {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
         }[];
         participants: ({
@@ -8201,10 +8614,10 @@ export type DiscussionActionResultById = {
                     machineId: string;
                 };
                 directory: {
+                    kind: 'managed';
+                } | {
                     kind: 'path';
                     path: string;
-                } | {
-                    kind: 'managed';
                 };
                 agentTarget: {
                     kind: 'agent';
@@ -8214,16 +8627,16 @@ export type DiscussionActionResultById = {
                     };
                     definitionId?: string | undefined;
                 };
-                placementOrigin?: {
+                placementOrigin?: undefined | {
                     kind: 'machine_pool';
                     poolId: string;
-                } | undefined;
-                organizationPlacement?: {
-                    folderId: string | null;
+                };
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
                     tagIds: string[];
-                } | undefined;
+                };
                 roleId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     v: 1;
                     ref: {
                         agentTargetKey: string;
@@ -8235,55 +8648,62 @@ export type DiscussionActionResultById = {
                         modelId: string;
                     };
                     updatedAt: number;
-                } | undefined;
+                };
                 profileId?: string | undefined;
-                secretReferenceOverlay?: {
+                approvalProfileId?: null | string | undefined;
+                secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-                permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                };
+                permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                 agentModeId?: string | undefined;
-                configuration?: {
+                configuration?: undefined | {
                     mode: {
-                        value: string | null;
+                        value: null | string;
                         updatedAtMs: number;
                     };
                     model: {
-                        value: string | null;
+                        value: null | string;
                         updatedAtMs: number;
+                        selectionSource?: 'explicit' | 'inherited' | undefined;
                     };
                     permissionIntent: {
-                        value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
+                        value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
                         updatedAtMs: number;
                     };
                     options: Record<string, {
-                        value: string | number | boolean | null;
+                        value: boolean | null | number | string;
                         updatedAtMs: number;
                     }>;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    providerSessionResume?: {
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
-                    } | undefined;
+                    };
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -8295,59 +8715,52 @@ export type DiscussionActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | undefined;
-                capabilitySelection?: {
-                    mcp?: {
+                };
+                capabilitySelection?: undefined | {
+                    mcp?: undefined | {
                         forceIncludeServerIds: string[];
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
                         happierToolsEnabled?: boolean | undefined;
-                    } | undefined;
-                    skills?: {
+                    };
+                    skills?: undefined | {
                         forceIncludeSkillIds: string[];
                         forceExcludeSkillIds: string[];
                         excludeNativeSkillNames: string[];
                         v: 1;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 transcriptStorage?: 'direct' | 'persisted' | undefined;
-                terminal?: {
-                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                    tmux?: {
+                terminal?: undefined | {
+                    mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                    tmux?: undefined | {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
-                        tmpDir?: string | null | undefined;
-                    } | undefined;
-                    herdr?: {
+                        tmpDir?: null | string | undefined;
+                    };
+                    herdr?: undefined | {
                         sessionName?: string | undefined;
-                    } | undefined;
-                    windows?: {
-                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                    };
+                    windows?: undefined | {
+                        launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
-                    } | undefined;
-                } | undefined;
-                checkoutCreationDraft?: {
+                    };
+                };
+                checkoutCreationDraft?: null | undefined | {
                     kind: 'git_worktree';
                     displayName: string;
-                    baseRef: string | null;
-                    branchMode?: 'new' | 'existing' | undefined;
-                } | null | undefined;
+                    baseRef: null | string;
+                    branchMode?: 'existing' | 'new' | undefined;
+                };
                 title?: string | undefined;
                 memoryEnabled?: boolean | undefined;
-                primaryTeamId?: string | null | undefined;
+                primaryTeamId?: null | string | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
-                        kind: 'provider_model';
-                    } | {
                         kind: 'connected_service_purpose';
                         purpose: {
                             consumer: {
@@ -8356,30 +8769,47 @@ export type DiscussionActionResultById = {
                             };
                             purpose: string;
                         };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                     teamId?: string | undefined;
-                    providerModelSelection?: {
+                    providerModelSelection?: undefined | {
                         agentTargetKey: string;
                         modelId: string;
-                        application?: {
-                            agentTargetKey: string;
+                        application?: undefined | {
                             implementationIdentity: {
                                 pluginId: string;
                                 localId: string;
                             };
                             endpointTemplateId: string;
                             protocol: string;
-                        } | undefined;
+                            agentTargetKey: string;
+                        };
                         executionMachineId?: string | undefined;
-                        nativeSource?: {
+                        nativeSource?: undefined | {
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
-                    nativeDelivery?: {
+                        };
+                    };
+                    nativeDelivery?: undefined | {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -8387,42 +8817,39 @@ export type DiscussionActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    } | undefined;
-                } | {
-                    v: 1;
-                    slot: {
-                        kind: 'provider_model';
-                    } | {
-                        kind: 'connected_service_purpose';
-                        purpose: {
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            purpose: string;
-                        };
                     };
-                    resourceId: null;
                 })[] | undefined;
                 allowedTools?: string[] | undefined;
                 unlistedTools?: 'ask' | 'deny' | undefined;
             };
-            sessionId: string | null;
-            answerPolicy: 'when_addressed' | 'reads_only' | 'drafts_for_approval' | 'watches_and_speaks_up';
+            sessionId: null | string;
+            answerPolicy: 'drafts_for_approval' | 'reads_only' | 'watches_and_speaks_up' | 'when_addressed';
             createdAt: number;
         } | {
             participant: {
                 kind: 'session';
                 sessionId: string;
             };
-            answerPolicy: 'when_addressed' | 'reads_only' | 'drafts_for_approval' | 'watches_and_speaks_up';
+            answerPolicy: 'drafts_for_approval' | 'reads_only' | 'watches_and_speaks_up' | 'when_addressed';
             createdAt: number;
         })[];
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
+        }[];
     };
     readonly "discussion.candidates.list": {
         v: 1;
         serverId: string;
-        source: 'people' | 'sessions' | 'models';
+        source: 'models' | 'people' | 'sessions';
         candidates: ({
             kind: 'account';
             key: string;
@@ -8431,25 +8858,14 @@ export type DiscussionActionResultById = {
                 accountId: string;
             };
             profile: {
-                name: string | null;
-                firstName: string | null;
-                lastName: string | null;
-                username: string | null;
-                avatarUrl: string | null;
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
                 kind: 'account';
                 accountId: string;
             };
-        } | {
-            kind: 'session';
-            key: string;
-            selection: {
-                kind: 'session';
-                session: {
-                    serverId: string;
-                    sessionId: string;
-                };
-            };
-            label: string | null;
         } | {
             kind: 'model';
             key: string;
@@ -8461,10 +8877,10 @@ export type DiscussionActionResultById = {
                         machineId: string;
                     };
                     directory: {
+                        kind: 'managed';
+                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'managed';
                     };
                     agentTarget: {
                         kind: 'agent';
@@ -8474,16 +8890,16 @@ export type DiscussionActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    placementOrigin?: {
+                    placementOrigin?: undefined | {
                         kind: 'machine_pool';
                         poolId: string;
-                    } | undefined;
-                    organizationPlacement?: {
-                        folderId: string | null;
+                    };
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
                         tagIds: string[];
-                    } | undefined;
+                    };
                     roleId?: string | undefined;
-                    modelSelection?: {
+                    modelSelection?: undefined | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;
@@ -8495,55 +8911,62 @@ export type DiscussionActionResultById = {
                             modelId: string;
                         };
                         updatedAt: number;
-                    } | undefined;
+                    };
                     profileId?: string | undefined;
-                    secretReferenceOverlay?: {
+                    approvalProfileId?: null | string | undefined;
+                    secretReferenceOverlay?: undefined | {
                         v: 1;
                         bindings: Record<string, {
                             ref: string;
                             revision?: number | undefined;
                         }>;
-                    } | undefined;
-                    permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                    };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     agentModeId?: string | undefined;
-                    configuration?: {
+                    configuration?: undefined | {
                         mode: {
-                            value: string | null;
+                            value: null | string;
                             updatedAtMs: number;
                         };
                         model: {
-                            value: string | null;
+                            value: null | string;
                             updatedAtMs: number;
+                            selectionSource?: 'explicit' | 'inherited' | undefined;
                         };
                         permissionIntent: {
-                            value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
+                            value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
                             updatedAtMs: number;
                         };
                         options: Record<string, {
-                            value: string | number | boolean | null;
+                            value: boolean | null | number | string;
                             updatedAtMs: number;
                         }>;
-                        workspaceWrites?: 'deny' | 'allow' | undefined;
-                        providerSessionResume?: {
+                        workspaceWrites?: 'allow' | 'deny' | undefined;
+                        providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
-                        } | undefined;
+                        };
                         allowedTools?: string[] | undefined;
                         unlistedTools?: 'ask' | 'deny' | undefined;
-                    } | undefined;
-                    connectedServices?: {
+                    };
+                    connectedServices?: undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
                             source: 'connected';
                             selection: 'profile';
                             profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -8555,59 +8978,52 @@ export type DiscussionActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }>;
-                    } | undefined;
-                    capabilitySelection?: {
-                        mcp?: {
+                    };
+                    capabilitySelection?: undefined | {
+                        mcp?: undefined | {
                             forceIncludeServerIds: string[];
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
                             happierToolsEnabled?: boolean | undefined;
-                        } | undefined;
-                        skills?: {
+                        };
+                        skills?: undefined | {
                             forceIncludeSkillIds: string[];
                             forceExcludeSkillIds: string[];
                             excludeNativeSkillNames: string[];
                             v: 1;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     transcriptStorage?: 'direct' | 'persisted' | undefined;
-                    terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                        tmux?: {
+                    terminal?: undefined | {
+                        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                        tmux?: undefined | {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
-                            tmpDir?: string | null | undefined;
-                        } | undefined;
-                        herdr?: {
+                            tmpDir?: null | string | undefined;
+                        };
+                        herdr?: undefined | {
                             sessionName?: string | undefined;
-                        } | undefined;
-                        windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        };
+                        windows?: undefined | {
+                            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
-                        } | undefined;
-                    } | undefined;
-                    checkoutCreationDraft?: {
+                        };
+                    };
+                    checkoutCreationDraft?: null | undefined | {
                         kind: 'git_worktree';
                         displayName: string;
-                        baseRef: string | null;
-                        branchMode?: 'new' | 'existing' | undefined;
-                    } | null | undefined;
+                        baseRef: null | string;
+                        branchMode?: 'existing' | 'new' | undefined;
+                    };
                     title?: string | undefined;
                     memoryEnabled?: boolean | undefined;
-                    primaryTeamId?: string | null | undefined;
+                    primaryTeamId?: null | string | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
-                            kind: 'provider_model';
-                        } | {
                             kind: 'connected_service_purpose';
                             purpose: {
                                 consumer: {
@@ -8616,30 +9032,47 @@ export type DiscussionActionResultById = {
                                 };
                                 purpose: string;
                             };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: null;
+                    } | {
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                         teamId?: string | undefined;
-                        providerModelSelection?: {
+                        providerModelSelection?: undefined | {
                             agentTargetKey: string;
                             modelId: string;
-                            application?: {
-                                agentTargetKey: string;
+                            application?: undefined | {
                                 implementationIdentity: {
                                     pluginId: string;
                                     localId: string;
                                 };
                                 endpointTemplateId: string;
                                 protocol: string;
-                            } | undefined;
+                                agentTargetKey: string;
+                            };
                             executionMachineId?: string | undefined;
-                            nativeSource?: {
+                            nativeSource?: undefined | {
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | undefined;
-                        nativeDelivery?: {
+                            };
+                        };
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -8647,76 +9080,50 @@ export type DiscussionActionResultById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | {
-                        v: 1;
-                        slot: {
-                            kind: 'provider_model';
-                        } | {
-                            kind: 'connected_service_purpose';
-                            purpose: {
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                purpose: string;
-                            };
                         };
-                        resourceId: null;
                     })[] | undefined;
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
                 };
             };
             label: string;
-            availability: {
+            availability: null | {
                 v: 1;
-                status: 'unknown' | 'unavailable' | 'ready';
-                cause: 'agent' | 'configuration' | 'credential' | 'machine' | 'invocation' | null;
+                status: 'ready' | 'unavailable' | 'unknown';
+                cause: 'agent' | 'configuration' | 'credential' | 'invocation' | 'machine' | null;
                 configured: boolean;
                 operation: 'conversation' | 'credential';
-                machine: {
+                machine: null | {
+                    status: 'keyUnavailable';
+                    machineId: string;
+                } | {
                     status: 'missing';
-                } | {
-                    status: 'ready';
-                    machineId: string;
-                } | {
-                    status: 'revoked';
-                    machineId: string;
                 } | {
                     status: 'offline';
                     machineId: string;
                 } | {
-                    status: 'unknown';
-                    machineId: string;
-                } | {
-                    status: 'probing';
-                    machineId: string;
-                } | {
-                    status: 'rpcUnavailable';
-                    machineId: string;
-                } | {
-                    status: 'keyUnavailable';
+                    status: 'ready';
                     machineId: string;
                 } | {
                     status: 'replaced';
                     machineId: string;
                     replacedByMachineId: string;
-                } | null;
-                agent: {
+                } | {
+                    status: 'revoked';
+                    machineId: string;
+                } | {
+                    status: 'rpcUnavailable';
+                    machineId: string;
+                } | {
+                    status: 'unknown';
+                    machineId: string;
+                };
+                agent: null | {
                     agentId: string;
-                    state: 'unknown' | 'ready' | 'needsSignIn' | 'notInstalled' | 'unsupported' | 'checking';
+                    state: 'checking' | 'needsSignIn' | 'notInstalled' | 'ready' | 'unknown' | 'unsupported';
                     current: boolean;
-                    observedAtMs: number | null;
-                    repair: {
-                        actionId: 'machines.agents.signIn.start';
-                        input: {
-                            agentId: string;
-                            machineId: string;
-                            serviceId?: string | undefined;
-                            method?: 'native' | 'connected' | undefined;
-                        };
-                    } | {
+                    observedAtMs: null | number;
+                    repair: null | {
                         actionId: 'connectedServices.authentication.beginReconnect';
                         input: {
                             account: {
@@ -8726,28 +9133,36 @@ export type DiscussionActionResultById = {
                                 };
                                 accountId: string;
                             };
-                            machineId: string;
                             expectedConfigurationRevision?: string | undefined;
+                            machineId?: string | undefined;
                         };
-                    } | null;
-                    definitionId?: string | undefined;
-                } | null;
-                invocation: {
-                    v: 1;
-                    level: 'view' | 'edit' | 'admin' | 'owner';
-                    sources: ({
-                        kind: 'owner';
                     } | {
+                        actionId: 'machines.agents.signIn.start';
+                        input: {
+                            agentId: string;
+                            machineId: string;
+                            serviceId?: string | undefined;
+                            method?: 'connected' | 'native' | undefined;
+                        };
+                    };
+                    definitionId?: string | undefined;
+                };
+                invocation: null | {
+                    v: 1;
+                    level: 'admin' | 'edit' | 'owner' | 'view';
+                    sources: ({
                         kind: 'direct';
                         shareId: string;
-                    } | {
-                        kind: 'team';
-                        teamId: string;
-                        requiredByTeamPolicy: boolean;
                     } | {
                         kind: 'group';
                         teamId: string;
                         groupId: string;
+                    } | {
+                        kind: 'owner';
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                        requiredByTeamPolicy: boolean;
                     })[];
                     capabilities: {
                         readTranscript: boolean;
@@ -8763,46 +9178,18 @@ export type DiscussionActionResultById = {
                         stopSession: boolean;
                         deleteSession: boolean;
                     };
-                    audienceContext?: {
-                        kind: 'team';
-                        teamId: string;
-                    } | {
+                    audienceContext?: null | undefined | {
                         kind: 'group';
                         teamId: string;
                         groupId: string;
-                    } | null | undefined;
-                    primaryTeamId?: string | null | undefined;
-                } | null;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    primaryTeamId?: null | string | undefined;
+                };
                 credential: {
                     kind: 'not_required';
-                } | {
-                    kind: 'unknown';
-                } | {
-                    kind: 'team';
-                    resourceId: string;
-                    teamId: string;
-                    readiness: {
-                        kind: 'available';
-                    } | {
-                        kind: 'resource_corrupt';
-                    } | {
-                        kind: 'resource_unavailable';
-                    } | {
-                        kind: 'source_unavailable';
-                        reason?: 'connected_service_credential_reconnect_required' | undefined;
-                    } | {
-                        kind: 'broker_unavailable';
-                        reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
-                    } | {
-                        kind: 'update_required';
-                    } | {
-                        kind: 'policy_denied';
-                    } | {
-                        kind: 'limit_reached';
-                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                        resetsAtUtc: string;
-                    } | null;
-                    recoveryAction: 'retry' | 'update_required' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
                 } | {
                     kind: 'personal';
                     purpose: {
@@ -8813,15 +9200,7 @@ export type DiscussionActionResultById = {
                         purpose: string;
                     };
                     usable: boolean | null;
-                    repair: {
-                        actionId: 'machines.agents.signIn.start';
-                        input: {
-                            agentId: string;
-                            machineId: string;
-                            serviceId?: string | undefined;
-                            method?: 'native' | 'connected' | undefined;
-                        };
-                    } | {
+                    repair: null | {
                         actionId: 'connectedServices.authentication.beginReconnect';
                         input: {
                             account: {
@@ -8831,21 +9210,49 @@ export type DiscussionActionResultById = {
                                 };
                                 accountId: string;
                             };
-                            machineId: string;
                             expectedConfigurationRevision?: string | undefined;
+                            machineId?: string | undefined;
                         };
-                    } | null;
+                    } | {
+                        actionId: 'machines.agents.signIn.start';
+                        input: {
+                            agentId: string;
+                            machineId: string;
+                            serviceId?: string | undefined;
+                            method?: 'connected' | 'native' | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'team';
+                    resourceId: string;
+                    teamId: string;
+                    readiness: null | {
+                        kind: 'available';
+                    } | {
+                        kind: 'broker_unavailable';
+                        reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+                    } | {
+                        kind: 'limit_reached';
+                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                        resetsAtUtc: string;
+                    } | {
+                        kind: 'policy_denied';
+                    } | {
+                        kind: 'resource_corrupt';
+                    } | {
+                        kind: 'resource_unavailable';
+                    } | {
+                        kind: 'source_unavailable';
+                        reason?: 'connected_service_credential_reconnect_required' | undefined;
+                    } | {
+                        kind: 'update_required';
+                    };
+                    recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+                } | {
+                    kind: 'unknown';
                 };
-            } | null;
-            repair: {
-                actionId: 'machines.agents.signIn.start';
-                input: {
-                    agentId: string;
-                    machineId: string;
-                    serviceId?: string | undefined;
-                    method?: 'native' | 'connected' | undefined;
-                };
-            } | {
+            };
+            repair: null | {
                 actionId: 'connectedServices.authentication.beginReconnect';
                 input: {
                     account: {
@@ -8855,35 +9262,54 @@ export type DiscussionActionResultById = {
                         };
                         accountId: string;
                     };
-                    machineId: string;
                     expectedConfigurationRevision?: string | undefined;
+                    machineId?: string | undefined;
                 };
-            } | null;
+            } | {
+                actionId: 'machines.agents.signIn.start';
+                input: {
+                    agentId: string;
+                    machineId: string;
+                    serviceId?: string | undefined;
+                    method?: 'connected' | 'native' | undefined;
+                };
+            };
+        } | {
+            kind: 'session';
+            key: string;
+            selection: {
+                kind: 'session';
+                session: {
+                    serverId: string;
+                    sessionId: string;
+                };
+            };
+            label: null | string;
         })[];
-        nextCursor: string | null;
+        nextCursor: null | string;
     };
     readonly "discussion.settings.get": {
         discussionId: string;
         settings: {
-            coordination?: {
-                autonomousCheckIn?: {
-                    afterTurns: number | null;
-                } | undefined;
-            } | undefined;
+            coordination?: undefined | {
+                autonomousCheckIn?: undefined | {
+                    afterTurns: null | number;
+                };
+            };
         };
     };
     readonly "discussion.settings.set": {
         discussionId: string;
         settings: {
-            coordination?: {
-                autonomousCheckIn?: {
-                    afterTurns: number | null;
-                } | undefined;
-            } | undefined;
+            coordination?: undefined | {
+                autonomousCheckIn?: undefined | {
+                    afterTurns: null | number;
+                };
+            };
         };
     };
     readonly "discussion.invite": {
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
         discussionId: string;
         ownerAccountId: string;
@@ -8892,22 +9318,34 @@ export type DiscussionActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
         }[];
-        modelParticipant?: {
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
+        }[];
+        modelParticipant?: undefined | {
             participant: {
                 kind: 'model';
                 participantSlotId: string;
@@ -8918,10 +9356,10 @@ export type DiscussionActionResultById = {
                     machineId: string;
                 };
                 directory: {
+                    kind: 'managed';
+                } | {
                     kind: 'path';
                     path: string;
-                } | {
-                    kind: 'managed';
                 };
                 agentTarget: {
                     kind: 'agent';
@@ -8931,16 +9369,16 @@ export type DiscussionActionResultById = {
                     };
                     definitionId?: string | undefined;
                 };
-                placementOrigin?: {
+                placementOrigin?: undefined | {
                     kind: 'machine_pool';
                     poolId: string;
-                } | undefined;
-                organizationPlacement?: {
-                    folderId: string | null;
+                };
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
                     tagIds: string[];
-                } | undefined;
+                };
                 roleId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     v: 1;
                     ref: {
                         agentTargetKey: string;
@@ -8952,55 +9390,62 @@ export type DiscussionActionResultById = {
                         modelId: string;
                     };
                     updatedAt: number;
-                } | undefined;
+                };
                 profileId?: string | undefined;
-                secretReferenceOverlay?: {
+                approvalProfileId?: null | string | undefined;
+                secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-                permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                };
+                permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                 agentModeId?: string | undefined;
-                configuration?: {
+                configuration?: undefined | {
                     mode: {
-                        value: string | null;
+                        value: null | string;
                         updatedAtMs: number;
                     };
                     model: {
-                        value: string | null;
+                        value: null | string;
                         updatedAtMs: number;
+                        selectionSource?: 'explicit' | 'inherited' | undefined;
                     };
                     permissionIntent: {
-                        value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
+                        value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
                         updatedAtMs: number;
                     };
                     options: Record<string, {
-                        value: string | number | boolean | null;
+                        value: boolean | null | number | string;
                         updatedAtMs: number;
                     }>;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    providerSessionResume?: {
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
-                    } | undefined;
+                    };
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -9012,59 +9457,52 @@ export type DiscussionActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | undefined;
-                capabilitySelection?: {
-                    mcp?: {
+                };
+                capabilitySelection?: undefined | {
+                    mcp?: undefined | {
                         forceIncludeServerIds: string[];
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
                         happierToolsEnabled?: boolean | undefined;
-                    } | undefined;
-                    skills?: {
+                    };
+                    skills?: undefined | {
                         forceIncludeSkillIds: string[];
                         forceExcludeSkillIds: string[];
                         excludeNativeSkillNames: string[];
                         v: 1;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 transcriptStorage?: 'direct' | 'persisted' | undefined;
-                terminal?: {
-                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                    tmux?: {
+                terminal?: undefined | {
+                    mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                    tmux?: undefined | {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
-                        tmpDir?: string | null | undefined;
-                    } | undefined;
-                    herdr?: {
+                        tmpDir?: null | string | undefined;
+                    };
+                    herdr?: undefined | {
                         sessionName?: string | undefined;
-                    } | undefined;
-                    windows?: {
-                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                    };
+                    windows?: undefined | {
+                        launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
-                    } | undefined;
-                } | undefined;
-                checkoutCreationDraft?: {
+                    };
+                };
+                checkoutCreationDraft?: null | undefined | {
                     kind: 'git_worktree';
                     displayName: string;
-                    baseRef: string | null;
-                    branchMode?: 'new' | 'existing' | undefined;
-                } | null | undefined;
+                    baseRef: null | string;
+                    branchMode?: 'existing' | 'new' | undefined;
+                };
                 title?: string | undefined;
                 memoryEnabled?: boolean | undefined;
-                primaryTeamId?: string | null | undefined;
+                primaryTeamId?: null | string | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
-                        kind: 'provider_model';
-                    } | {
                         kind: 'connected_service_purpose';
                         purpose: {
                             consumer: {
@@ -9073,30 +9511,47 @@ export type DiscussionActionResultById = {
                             };
                             purpose: string;
                         };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                     teamId?: string | undefined;
-                    providerModelSelection?: {
+                    providerModelSelection?: undefined | {
                         agentTargetKey: string;
                         modelId: string;
-                        application?: {
-                            agentTargetKey: string;
+                        application?: undefined | {
                             implementationIdentity: {
                                 pluginId: string;
                                 localId: string;
                             };
                             endpointTemplateId: string;
                             protocol: string;
-                        } | undefined;
+                            agentTargetKey: string;
+                        };
                         executionMachineId?: string | undefined;
-                        nativeSource?: {
+                        nativeSource?: undefined | {
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
-                    nativeDelivery?: {
+                        };
+                    };
+                    nativeDelivery?: undefined | {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -9104,81 +9559,178 @@ export type DiscussionActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    } | undefined;
-                } | {
-                    v: 1;
-                    slot: {
-                        kind: 'provider_model';
-                    } | {
-                        kind: 'connected_service_purpose';
-                        purpose: {
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            purpose: string;
-                        };
                     };
-                    resourceId: null;
                 })[] | undefined;
                 allowedTools?: string[] | undefined;
                 unlistedTools?: 'ask' | 'deny' | undefined;
             };
-            sessionId: string | null;
-            answerPolicy: 'when_addressed' | 'reads_only' | 'drafts_for_approval' | 'watches_and_speaks_up';
+            sessionId: null | string;
+            answerPolicy: 'drafts_for_approval' | 'reads_only' | 'watches_and_speaks_up' | 'when_addressed';
             createdAt: number;
-        } | undefined;
-        sessionStart?: {
+        };
+        sessionStart?: undefined | {
             type: 'error';
-            code: 'cancelled' | 'invalid_input' | 'target_required' | 'target_unavailable' | 'machine_offline' | 'incompatible_target' | 'organization_unavailable' | 'organization_invalid' | 'creation_conflict' | 'permission_denied' | 'session_access_request_failed' | 'session_data_key_unavailable' | 'spawn_failed' | 'agent_cli_missing' | 'agent_signed_out' | 'session_access_forbidden' | 'session_access_session_not_found' | 'session_access_subject_not_found' | 'session_access_subject_ineligible' | 'session_access_owner_grant_invalid' | 'session_access_self_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_team_policy_required' | 'session_initial_access_creator_mismatch' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_requires_team_admin' | 'session_access_external_sharing_disabled' | 'session_access_sharing_unavailable' | 'session_access_invalid_recipient_envelope' | 'session_responsibility_assignee_unavailable' | 'invalid_cursor' | 'invalid_request' | 'data_key_not_required' | 'recipient_envelope_required' | 'recipient_key_unavailable';
+            code: 'agent_cli_missing' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
             retryable: boolean;
             agentId?: string | undefined;
-            providerError?: {
+            providerError?: undefined | {
                 v: 1;
-                code: 'model_not_granted' | 'permission_mode_not_granted' | 'machine_offline' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
                 retryable: boolean;
-                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                requestId?: string | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
-                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
-            } | undefined;
-            terminalHostError?: {
+                reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            };
+            terminalHostError?: undefined | {
                 kind: 'terminal_host_unavailable';
-                host: 'zellij' | 'herdr';
+                host: 'herdr' | 'zellij';
                 reason: 'installation_unavailable' | 'server_version_unsupported';
-            } | undefined;
-            incompatibleTarget?: {
-                reason: 'terminal_host_unavailable' | 'initial_access_unsupported' | 'target_preparation_rpc_unavailable' | 'target_preparation_invalid_result' | 'checkout_unavailable' | 'session_spawn_protocol_unavailable' | 'creation_lookup_unavailable' | 'initial_trigger_protocol_unavailable' | 'context_memory_protocol_unavailable' | 'spawn_rpc_unavailable' | 'creation_settlement_unavailable' | 'requester_credentials_unavailable' | 'daemon_rpc_unavailable';
-            } | undefined;
-            launchError?: {
+            };
+            incompatibleTarget?: undefined | {
+                reason: 'checkout_unavailable' | 'context_memory_protocol_unavailable' | 'creation_lookup_unavailable' | 'creation_settlement_unavailable' | 'daemon_rpc_unavailable' | 'initial_access_unsupported' | 'initial_trigger_protocol_unavailable' | 'requester_credentials_unavailable' | 'session_spawn_protocol_unavailable' | 'spawn_rpc_unavailable' | 'target_preparation_invalid_result' | 'target_preparation_rpc_unavailable' | 'terminal_host_unavailable';
+            };
+            launchError?: undefined | {
                 kind: 'launch_error';
                 code: string;
                 message: string;
-                rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_TRANSPORT_UNAVAILABLE' | 'RPC_OUTCOME_UNKNOWN' | undefined;
+                subtype?: 'check_failed' | 'closure_changed' | 'no_closure' | 'writer_active' | undefined;
+                rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_OUTCOME_UNKNOWN' | 'RPC_TRANSPORT_UNAVAILABLE' | undefined;
                 connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
-                uxDiagnostic?: {
-                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                currentnessFailure?: undefined | {
+                    reason: 'http_error' | 'invalid_response' | 'network' | 'timeout';
                     retryable: boolean;
-                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    statusCode?: number | undefined;
+                };
+                childExit?: undefined | {
+                    code: null | number;
+                    signal: null | string;
+                    stderrHead?: string | undefined;
+                    cause?: undefined | {
+                        kind: 'module_not_found';
+                        specifierBasename: string;
+                    };
+                };
+                failureCause?: undefined | {
+                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                    code?: string | undefined;
+                    retryable?: boolean | undefined;
+                    requestId?: string | undefined;
+                    preparationCause?: undefined | {
+                        code: string;
+                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                        requestId?: string | undefined;
+                    };
+                    connectedServicesDefault?: undefined | {
+                        v: 1;
+                        source: 'account_default';
+                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                        phase: 'purpose_binding';
+                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                    };
+                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                    httpStatus?: number | undefined;
+                    providerErrorMessage?: string | undefined;
+                };
+                agentIsolationRefusal?: undefined | {
+                    reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                    phase: 'native_execution_preparation' | 'native_identity_binding';
+                    reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                    nativeFailure?: undefined | {
+                        kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                        reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                        phase?: 'apply' | 'check' | undefined;
+                    };
+                    probeFailure?: undefined | {
+                        exitCode: number;
+                        check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                        identity: {
+                            username: string;
+                            uid: number;
+                            gid: number;
+                            home: string;
+                            cwd: string;
+                        };
+                    } | {
+                        transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                        check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                        identity: {
+                            username: string;
+                            uid: number;
+                            gid: number;
+                            home: string;
+                            cwd: string;
+                        };
+                    };
+                    readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                    operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                    remedy?: undefined | {
+                        kind: 'ask_machine_manager';
+                    } | {
+                        kind: 'open_machine_security';
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                    };
+                };
+                profileRefusal?: undefined | {
+                    profileId: string;
+                    reason: 'profile_catalog_unavailable' | 'profile_overlay_mismatch' | 'profile_resume_unavailable' | 'profile_target_incompatible';
+                    catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
+                };
+                uxDiagnostic?: undefined | {
+                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                    retryable: boolean;
+                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                     serviceId?: string | undefined;
                     agentId?: string | undefined;
                     profileId?: string | undefined;
                     groupId?: string | undefined;
-                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                } | undefined;
-                connectedAccountPool?: {
+                    diagnostics?: undefined | ({
+                        [x: string]: boolean | null | number | string;
+                    } & {
+                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                    });
+                };
+                connectedAccountPool?: undefined | {
                     serviceId: string;
                     excluded: {
                         profileId: string;
-                        reason: 'current_active' | 'disabled' | 'cooldown' | 'quota_exhausted' | 'capacity_limited' | 'auth_invalid' | 'credential_unavailable' | 'plan_unavailable' | 'validation_blocked' | 'policy_wait_until_reset';
-                        retryAtMs?: number | null | undefined;
+                        reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_exhausted' | 'validation_blocked';
+                        retryAtMs?: null | number | undefined;
                     }[];
-                } | undefined;
-            } | undefined;
+                };
+            };
+        } | {
+            type: 'error';
+            code: 'update_required';
+            retryable: false;
+            details: {
+                kind: 'update_required';
+                operation: string;
+                component: 'client' | 'daemon' | 'server';
+                reason: string;
+            };
+        } | {
+            type: 'pending';
+            retryWithSameCreationKey: true;
+            outcome: 'accepted' | 'unknown';
+            operation?: undefined | {
+                serverId: string;
+                machineId: string;
+                operationId: string;
+            };
+            sessionId?: string | undefined;
         } | {
             type: 'success';
             disposition: 'created' | 'rejoined';
@@ -9188,64 +9740,45 @@ export type DiscussionActionResultById = {
                 machineId: string;
             };
             organizationPlacement: {
-                folderId: string | null;
+                folderId: null | string;
                 tagIds: string[];
             };
             initialInput: {
-                status: 'notRequested';
-            } | {
                 status: 'accepted';
                 localId: string;
             } | {
                 status: 'alreadyAccepted';
                 localId: string;
             } | {
-                status: 'rejected';
-                code: 'session_input_target_unavailable' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+                status: 'notRequested';
             } | {
                 status: 'outcomeUnknown';
                 localId: string;
                 code: string;
+            } | {
+                status: 'rejected';
+                code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
             };
-            attestedContext?: {
+            attestedContext?: undefined | {
                 externalPrincipalId: string;
                 sourceMessageId: string;
-            } | undefined;
-            filesNotCopied?: {
+            };
+            filesNotCopied?: undefined | {
                 reason: 'cross_machine';
-            } | undefined;
-            sourceKeyPreparation?: {
+            };
+            sourceKeyPreparation?: undefined | {
                 kind: 'not_needed';
             } | {
                 kind: 'prepared';
             } | {
                 kind: 'waiting';
-                reason: 'unsupported' | 'source_key_unavailable' | 'runner_unreachable' | 'runner_key_unavailable';
-                cause?: 'source_key_unavailable' | 'credentials_unavailable' | 'action_context_unavailable' | 'preparation_exception' | 'server_features_exception' | 'source_transport_exception' | 'destination_transport_exception' | 'source_transport_unavailable' | 'destination_transport_unavailable' | 'source_key_exception' | 'home_identity_unavailable' | 'destination_machine_exception' | 'destination_machine_unresolved' | 'destination_machine_missing' | 'rpc_method_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_target_not_current' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | undefined;
-            } | undefined;
-        } | {
-            type: 'pending';
-            retryWithSameCreationKey: true;
-            outcome: 'unknown' | 'accepted';
-            operation?: {
-                serverId: string;
-                machineId: string;
-                operationId: string;
-            } | undefined;
-        } | {
-            type: 'error';
-            code: 'update_required';
-            retryable: false;
-            details: {
-                kind: 'update_required';
-                operation: string;
-                component: 'server' | 'daemon' | 'client';
-                reason: string;
+                reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
+                cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
             };
-        } | undefined;
+        };
     };
     readonly "discussion.participant.policy.set": {
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
         discussionId: string;
         ownerAccountId: string;
@@ -9254,24 +9787,36 @@ export type DiscussionActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
+        }[];
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
         }[];
     };
     readonly "discussion.participant.remove": {
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
         discussionId: string;
         ownerAccountId: string;
@@ -9280,34 +9825,46 @@ export type DiscussionActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
         }[];
-        ownedSession?: {
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
+        }[];
+        ownedSession?: undefined | {
             discussionId: string;
             participantSlotId: string;
             sessionId: string;
-        } | undefined;
+        };
     };
     readonly "discussion.leave": {
         discussionId: string;
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
     };
     readonly "discussion.owner.transfer": {
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
         discussionId: string;
         ownerAccountId: string;
@@ -9316,49 +9873,73 @@ export type DiscussionActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
+        }[];
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
         }[];
     };
     readonly "discussion.access.grants.list": {
         discussionId: string;
         ownerAccountId: string;
-        access: 'view' | 'edit' | 'admin' | 'owner';
+        access: 'admin' | 'edit' | 'owner' | 'view';
         grants: {
             principal: {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
+        }[];
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
         }[];
     };
     readonly "discussion.access.grants.set": {
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
         discussionId: string;
         ownerAccountId: string;
@@ -9367,24 +9948,36 @@ export type DiscussionActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
+        }[];
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
         }[];
     };
     readonly "discussion.access.grants.remove": {
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
         discussionId: string;
         ownerAccountId: string;
@@ -9393,121 +9986,144 @@ export type DiscussionActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
+        }[];
+        accountActors?: undefined | {
+            v: 1;
+            accountId: string;
+            profile: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+            accessibility?: 'current' | 'former' | undefined;
         }[];
     };
     readonly "discussion.pass": {
         v: 1;
+        ok: false;
+        error: 'conflict' | 'forbidden' | 'invalid_request' | 'unavailable';
+    } | {
+        v: 1;
         ok: true;
         progress: {
             v: 1;
-            mode: 'wait' | 'return';
-            disposition: 'observing' | 'inline' | 'return_pending' | 'returned' | 'released';
-            sourceSession?: {
+            mode: 'return' | 'wait';
+            disposition: 'inline' | 'observing' | 'released' | 'return_pending' | 'returned';
+            sourceSession?: undefined | {
                 sourceSessionId: string;
                 sourceTurnId: string;
-                via: 'mcp' | 'action';
+                via: 'action' | 'mcp';
                 sourceInputId?: string | undefined;
-                discussionAddressing?: {
+                discussionAddressing?: undefined | {
                     discussionId: string;
                     messageId: string;
                     throughSeq: number;
                     participantSessionId: string;
-                } | undefined;
-            } | undefined;
-            humanOrigin?: {
+                };
+            };
+            humanOrigin?: undefined | {
                 sessionId: string;
-            } | undefined;
-            discussion?: {
+            };
+            discussion?: undefined | {
                 discussionId: string;
                 messageId: string;
                 throughSeq: number;
                 participantSessionId: string;
-            } | undefined;
-            workflow?: {
+            };
+            workflow?: undefined | {
                 purpose: 'invocation';
                 runId: string;
                 invocationRecordId: string;
                 workDepth?: number | undefined;
                 stepOrdinal?: string | undefined;
-            } | undefined;
-            actionRequestAttributionV1?: {
+            };
+            actionRequestAttributionV1?: undefined | {
                 requestRef: string;
-                requester: {
+                requester: null | {
                     serverId: string;
                     accountId: string;
-                } | null;
+                };
                 persona: {
                     serverId: string;
                     sessionId: string;
                 };
-                origin: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
+                origin: null | {
                     kind: 'discussion';
                     discussion: {
                         serverId: string;
                         discussionId: string;
                     };
                     messageId: string;
-                } | null;
-            } | undefined;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                };
+            };
             acceptedTurnId?: string | undefined;
-            outcome?: {
+            outcome?: undefined | {
+                kind: 'answer';
+                publicationRef: {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                };
+            } | {
                 kind: 'answer';
                 result: {
                     sessionId: string;
                     messageId: string;
                 };
             } | {
-                kind: 'answer';
-                publicationRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
-                    kind: 'discussion';
-                    discussion: {
-                        serverId: string;
-                        discussionId: string;
-                    };
-                    messageId: string;
-                };
+                kind: 'cancelled' | 'declined' | 'failed' | 'pass' | 'terminal_no_result';
             } | {
                 kind: 'cancelled';
                 result: {
                     sessionId: string;
                     messageId: string;
                 };
+            };
+            returnPublication?: undefined | {
+                kind: 'approval_pending';
+                artifactId: string;
             } | {
-                kind: 'pass' | 'failed' | 'cancelled' | 'terminal_no_result' | 'declined';
-            } | undefined;
+                kind: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            };
             returnedInputLocalId?: string | undefined;
         };
-    } | {
-        v: 1;
-        ok: false;
-        error: 'unavailable' | 'invalid_request' | 'forbidden' | 'conflict';
     };
 };

@@ -1,10 +1,11 @@
 import { definePlugin, type JsonValue, type PluginInvocationContext, type PluginServices } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { ConversationProviderObservationIngestInputV1Schema, ConversationTransportFactReportInputV1Schema } from '@happier-dev/channels-protocol/v1';
+import { ConversationProviderObservationIngestInputV1Schema, ConversationProviderConnectionReadInputV1Schema,
+  ConversationProviderConnectionsListInputV1Schema, ConversationTransportFactReportInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CHANNELS_PLUGIN, CHANNELS_PROVIDER_POINT_REF, PLUGIN_MANIFEST } from '../manifest.js';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION } from '../collections.js';
-import { runConversationCheckpointedPollForInvocation, runConversationIngressRetentionForInvocation,
+import { runConversationCheckpointedPollForInvocation, runConversationIngressDueWorkForInvocation, runConversationIngressRetentionForInvocation,
   type ConversationCheckpointedPollRunResult } from '../ingress.js';
 import { runConversationOutwardDeliveryCycle } from '../outwardDeliverySupervisor.js';
 import { channelsTargetedContributionServices } from './operationOnlyTargetedContributionsFixture.js';
@@ -24,6 +25,7 @@ export async function createChannelsJourneyFixture(input: Readonly<{
   binding: Record<string, unknown>;
   sessions: PluginServices['sessions'];
   actions: PluginServices['actions'];
+  settings?: PluginServices['settings'];
   resolveCurrentPluginMaterializationRef?: Parameters<typeof createPluginTestkit>[0]['resolveCurrentPluginMaterializationRef'];
   /** Current provider identity supplied by the host fixture, independently of saved connection state. */
   resolveCurrentProviderExecutionOrigin?: () => PluginMachineExecutionOriginV1 | null;
@@ -44,13 +46,13 @@ export async function createChannelsJourneyFixture(input: Readonly<{
     throw new Error(`Unexpected Channels collection ${definition.id}`);
   } } } as unknown as PluginServices['storage'];
   let kit: PluginTestkit;
-  function withProviderCaller(context: PluginInvocationContext): PluginInvocationContext {
+  function withProviderCaller(context: PluginInvocationContext, contribution?: PluginInvocationContext['contribution']): PluginInvocationContext {
     const entry = kit.readTargetedContributionFixture(CHANNELS_PROVIDER_POINT_REF).contributions[0];
     if (!entry) throw new Error('The activated provider contribution is absent');
     const executionOrigin = PluginMachineExecutionOriginV1Schema.parse(input.resolveCurrentProviderExecutionOrigin?.());
     // Caller identity is stamped at the host boundary, never from provider input.
     return { ...context, caller: { kind: 'plugin', pluginId: entry.contributor.pluginId,
-      contribution: { id: 'poll', qualifiedId: `${entry.contributor.pluginId}/actions/poll` },
+      contribution: contribution ?? { id: 'poll', qualifiedId: `${entry.contributor.pluginId}/actions/poll` },
       occurrenceId: entry.contributor.occurrenceId, sourceCustody: entry.contributor.sourceCustody,
       ...('materializationRef' in executionOrigin ? { materialization: executionOrigin.materializationRef } : {}),
       executionOrigin } };
@@ -73,12 +75,28 @@ export async function createChannelsJourneyFixture(input: Readonly<{
         pollResults.push(await runConversationCheckpointedPollForInvocation({ connectionId: String(input.connection.id), waitMs: 0 }, context));
         return null;
       } },
+    'journey/supervise': { title: 'Run the activated ingress background service', surfaces: ['plugin'], dangerLevel: 'safe',
+      hostAccess: ['account-storage', 'bound-session'],
+      inputSchema: { type: 'object' }, resultSchema: { type: 'null' },
+      async run(_request, context) {
+        const runner = kit.registration('backgroundServices', 'ingress-supervisor');
+        if (!runner) throw new Error('Missing activated ingress supervisor');
+        await runner({ ...context, surface: 'background', session: undefined });
+        return null;
+      } },
     'journey/outward': { title: 'Run the production outward cycle', surfaces: ['plugin'], dangerLevel: 'safe',
       hostAccess: ['account-storage', 'bound-session'],
       inputSchema: { type: 'object' }, resultSchema: { type: 'null' },
       async run(_request, context) {
         await runConversationOutwardDeliveryCycle({ context: context as BackgroundServiceContext,
           createAttemptId: () => `journey-attempt-${++attempt}` });
+        return null;
+      } },
+    'journey/due': { title: 'Run deferred ingress through the production owner', surfaces: ['plugin'], dangerLevel: 'safe',
+      hostAccess: ['account-storage', 'bound-session'],
+      inputSchema: { type: 'object' }, resultSchema: { type: 'null' },
+      async run(_request, context) {
+        await runConversationIngressDueWorkForInvocation({}, context);
         return null;
       } },
     'journey/retention': { title: 'Run the production ingress retention cycle', surfaces: ['plugin'], dangerLevel: 'safe',
@@ -134,15 +152,40 @@ export async function createChannelsJourneyFixture(input: Readonly<{
         },
       }),
     services: { storage, sessions: input.sessions, actions: input.actions,
+      ...(input.settings ? { settings: input.settings } : {}),
       logger: input.logger ?? { debug() {}, info() {}, warn() {}, error() {}, diagnostic() {} } },
   });
   async function invoke(action: string, value: JsonValue) {
     return await kit.invokeAction(action, value, { surface: action.startsWith('journey/') ? 'plugin' : 'cli',
       services: channelsTargetedContributionServices(kit) });
   }
-  return { kit, state, deliveries, invoke,
+  // The reverse plugin-to-core host transport boundary. Both schemas and
+  // handlers are real; only host dispatch/caller/storage binding is supplied.
+  async function executeProviderCoreAction(action: Readonly<{ pluginId: string; localId: string }>,
+    value: unknown, context: PluginInvocationContext) {
+    if (action.pluginId !== 'happier.channels') throw new Error('Unexpected core Action target');
+    const schema = action.localId === 'provider/connection-read-v1' ? ConversationProviderConnectionReadInputV1Schema
+      : action.localId === 'provider/connections-list-v1' ? ConversationProviderConnectionsListInputV1Schema
+      : action.localId === 'provider/observation-ingest-v1' ? ConversationProviderObservationIngestInputV1Schema
+      : action.localId === 'provider/transport-fact-report-v1' ? ConversationTransportFactReportInputV1Schema : undefined;
+    const handler = kit.registration('actions', action.localId);
+    if (schema === undefined || handler === undefined) throw new Error('Missing activated core Action');
+    if (action.localId === 'provider/observation-ingest-v1') {
+      // Use the existing host driver so downstream provider Event obligations
+      // receive the SDK's real admitted-operation executor, not provider services.
+      await kit.invokeAction('journey/ingest', schema.parse(value), { surface: 'plugin', signal: context.signal,
+        services: channelsTargetedContributionServices(kit) });
+      return;
+    }
+    return await handler(schema.parse(value), { ...withProviderCaller(context, context.contribution),
+      plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+      contribution: { id: action.localId, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${action.localId}` },
+      services: { ...context.services, storage } });
+  }
+  return { kit, state, deliveries, invoke, executeProviderCoreAction,
     poll: async () => { await invoke('journey/poll', {}); return pollResults.at(-1); },
     pollResults, outward: () => invoke('journey/outward', {}),
+    due: () => invoke('journey/due', {}),
     retention: () => invoke('journey/retention', {}),
     ingest: (value: JsonValue) => invoke('journey/ingest', value),
     resolveAttachments: (request: ComposerAttachmentResolveRequestV1) => kit.invokeAction('journey/resolve-attachments', request, {

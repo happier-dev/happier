@@ -146,7 +146,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
           routeAuthority: { connectionAuthorityEpoch: 1, bindingRevision: 1, bindingAuthorityEpoch: 1 },
           source: { kind: 'sessionProjection', sessionId: 'fixture-session', semanticItemId: input.item },
           endpoint: thread, content: { text: 'Reply' }, deliveryKey: `fixture-reply:${input.item}`,
-          replyContext: { replyToMessageId: '<incoming@example.com>' }, mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+          replyContext: { replyToMessageId: '<incoming@example.com>' }, linkPreviewPolicy: 'suppress',
         };
         const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state,
           deliveriesCollection: deliveries as unknown as Parameters<typeof createConversationOutwardDeliveryCollectionStore>[0]['deliveriesCollection'],
@@ -168,7 +168,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
           const lookup = await store.lookup(obligation);
           if (lookup.kind !== 'rejoined') throw new Error('Expected retained custody');
           return defineProtocolJsonValue().parse(await reconcileConversationOutwardDeliveryAttemptThroughProviderAction({
-            ...common, record: lookup.record, recoveryAttemptId: `recovery:${invokedAtMs}`, staleAfterMs: 0,
+            ...common, record: lookup.record,
           }));
         }
         return defineProtocolJsonValue().parse(await deliverConversationOutwardDeliveryThroughProviderAction({
@@ -208,4 +208,4 @@ export const connection = { v: 1, connectionId: 'email-fixture', providerConnect
   providerConfigVersion: 1, providerConfig: config, credentialRef: null };
 export const thread = { kind: 'thread', audience: 'direct', id: '<root@example.com>', parentId: mailbox } satisfies ConversationResolvedEndpointV1;
 export const delivery = { ...connection, endpoint: thread, content: { text: 'Reply' }, deliveryKey: 'fixture-reply',
-  replyContext: { replyToMessageId: '<incoming@example.com>' }, mentionPolicy: 'suppress', linkPreviewPolicy: 'providerDefault' };
+  replyContext: { replyToMessageId: '<incoming@example.com>' }, linkPreviewPolicy: 'providerDefault' };

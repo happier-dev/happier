@@ -8,11 +8,10 @@ import type {
 import {
   CHANNEL_DELIVERIES_COLLECTION,
   CHANNEL_STATE_COLLECTION,
-  CHANNEL_STATE_INDEX_ID,
-  CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { readConversationSessionBindingDeliveryTargets } from './accountLocalBindingPolicy.js';
 import { readConversationOutwardDeliveryTranscriptActivities } from './outwardDelivery.js';
+import { observeConversationSessionCollections } from './sessionCollectionObservation.js';
 import {
   requireChannelsResourceAccountStorage,
   requireChannelsResourceSessionId,
@@ -84,21 +83,9 @@ export const TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME: PluginDynamicResourceRuntim
   read: readTranscriptActivitiesResource,
   observe(invalidate, options) {
     const accountStorage = requireChannelsResourceAccountStorage(options, 'transcriptActivities');
-    requireChannelsResourceSessionId(options, 'transcriptActivities');
-    const bindingObservation = accountStorage.collection(CHANNEL_STATE_COLLECTION).watch({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
-      order: 'asc',
-    }, () => { invalidate(); });
-    const deliveriesObservation = accountStorage.collection(CHANNEL_DELIVERIES_COLLECTION).watch(
-      { kind: 'collection' },
-      () => { invalidate(); },
-    );
-    return {
-      dispose() {
-        bindingObservation.dispose();
-        deliveriesObservation.dispose();
-      },
-    };
+    const sessionId = requireChannelsResourceSessionId(options, 'transcriptActivities');
+    return observeConversationSessionCollections(invalidate, {
+      accountStorage, sessionId, signal: options.signal, scope: 'outward',
+    });
   },
 };

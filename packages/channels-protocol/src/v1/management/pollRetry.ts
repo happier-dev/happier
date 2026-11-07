@@ -27,8 +27,6 @@ const collectionRowRevision = ConversationCollectionRowRevisionV1ProtocolSchema;
 
 const conversationConnectionPollRetryInputV1 = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
-    expectedRevision: collectionRowRevision,
-    authorityEpoch: authorityEpochV1,
 }, { policy: 'closed' });
 
 const conversationConnectionPollRetryResultV1 = defineProtocolObject({

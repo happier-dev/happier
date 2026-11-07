@@ -9,6 +9,9 @@ import {
   HealthCheckHeartbeatReceivedHostEventV1Schema,
   type HealthCheckHeartbeatReceivedHostEventV1,
   AutomationHostEventScopeV1Schema,
+  DiscussionInvalidatedHostEventV1Schema,
+  HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
+  type DiscussionInvalidatedHostEventV1,
   AutomationEventSourcesInvalidatedHostEventV1Schema,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
   AutomationRunStateChangedHostEventV1Schema,
@@ -41,6 +44,9 @@ export {
   HealthCheckHeartbeatReceivedHostEventV1Schema,
   type HealthCheckHeartbeatReceivedHostEventV1,
   AutomationHostEventScopeV1Schema,
+  DiscussionInvalidatedHostEventV1Schema,
+  HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
+  type DiscussionInvalidatedHostEventV1,
   AutomationEventSourcesInvalidatedHostEventV1Schema,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
   AutomationRunStateChangedHostEventV1Schema,
@@ -73,6 +79,7 @@ type RuntimeHostEventPayloadByIdV1 = {
 export type HostEventPayloadByIdV1 = RuntimeHostEventPayloadByIdV1 & Readonly<{
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AccountEntitiesInvalidatedHostEventV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: HealthCheckHeartbeatReceivedHostEventV1;
+  [HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1]: DiscussionInvalidatedHostEventV1;
   [HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1]: AutomationRunStateChangedHostEventV1;
   [HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationEventSourcesInvalidatedHostEventV1;
 }>;
@@ -82,6 +89,7 @@ export type HostEventScopeByIdV1 = {
 } & Readonly<{
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
+  [HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
 }>;
@@ -91,6 +99,7 @@ type HostEventDeliveryScopeByIdV1 = {
 } & Readonly<{
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
+  [HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
 }>;
@@ -138,6 +147,11 @@ export function parseHostEventPayloadV1<Id extends HostEventIdV1>(
   }
   if (eventId === HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1) {
     return HealthCheckHeartbeatReceivedHostEventV1Schema.parse(payload) as HostEventPayloadByIdV1[Id];
+  }
+  if (eventId === HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1) {
+    const invalidation = DiscussionInvalidatedHostEventV1Schema.safeParse(payload);
+    if (invalidation.success) return invalidation.data as HostEventPayloadByIdV1[Id];
+    throw new Error(`Invalid payload for Host Event '${eventId}'`);
   }
   if (eventId === HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1) {
     const invalidation = AutomationEventSourcesInvalidatedHostEventV1Schema.safeParse(payload);

@@ -3,8 +3,8 @@ title: Public API surface
 description: Every symbol the Plugin SDK exports and the entrypoint it comes from — generated from the SDK's own api-surface projection.
 ---
 
-The SDK exports **3,477 symbols** across **57 entrypoints**:
-791 values and 2,686 types. This page is the index — it answers
+The SDK exports **3,483 symbols** across **57 entrypoints**:
+795 values and 2,688 types. This page is the index — it answers
 "does this exist, and where do I import it from", which is the question a type
 definition file cannot answer until you already know the answer.
 
@@ -38,7 +38,7 @@ catch.
 | `@happier-dev/plugin-sdk/agents` | author | any | 7 | 29 |
 | `@happier-dev/plugin-sdk/agents/runtime` | author | daemon | 49 | 424 |
 | `@happier-dev/plugin-sdk/async` | author | any | 6 | 4 |
-| `@happier-dev/plugin-sdk/automations` | author | any | 10 | 7 |
+| `@happier-dev/plugin-sdk/automations` | author | any | 11 | 7 |
 | `@happier-dev/plugin-sdk/background-services` | author | daemon | 3 | 14 |
 | `@happier-dev/plugin-sdk/browser` | author | any | 3 | 6 |
 | `@happier-dev/plugin-sdk/collections` | author | daemon | 5 | 32 |
@@ -65,10 +65,10 @@ catch.
 | `@happier-dev/plugin-sdk/manifest` | author | any | 8 | 55 |
 | `@happier-dev/plugin-sdk/mcp` | author | daemon | 1 | 47 |
 | `@happier-dev/plugin-sdk/notifications` | author | any | 0 | 11 |
-| `@happier-dev/plugin-sdk/protocol` | author | any | 32 | 20 |
+| `@happier-dev/plugin-sdk/protocol` | author | any | 34 | 22 |
 | `@happier-dev/plugin-sdk/providers` | author | any | 13 | 63 |
 | `@happier-dev/plugin-sdk/resources` | author | any | 7 | 18 |
-| `@happier-dev/plugin-sdk/reviews` | author | daemon | 36 | 36 |
+| `@happier-dev/plugin-sdk/reviews` | author | daemon | 37 | 36 |
 | `@happier-dev/plugin-sdk/scm` | author | daemon | 42 | 167 |
 | `@happier-dev/plugin-sdk/scm/backend` | author | daemon | 13 | 37 |
 | `@happier-dev/plugin-sdk/scm/git` | author | daemon | 2 | 6 |
@@ -154,11 +154,11 @@ Anywhere. Source: `src/async/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/automations — 17 exports">
+<Accordion title="@happier-dev/plugin-sdk/automations — 18 exports">
 
 Anywhere. Source: `src/automations/index.ts`.
 
-**Values** — `AutomationConversationAdmitInputV1Schema`, `AutomationConversationAdmitResultV1Schema`, `AutomationConversationResultDeliveryV1Schema`, `AutomationIdV1Schema`, `AutomationResultDeliveryInputV1JsonSchema`, `AutomationResultDeliveryInputV1Schema`, `AutomationResultDeliveryResultV1JsonSchema`, `AutomationResultDeliveryResultV1Schema`, `AutomationResultDeliverySourceV1JsonSchema`, `AutomationResultDeliverySourceV1Schema`
+**Values** — `AutomationConversationAdmitInputV1Schema`, `AutomationConversationAdmitResultV1Schema`, `AutomationConversationEventActorsV1Schema`, `AutomationConversationResultDeliveryV1Schema`, `AutomationIdV1Schema`, `AutomationResultDeliveryInputV1JsonSchema`, `AutomationResultDeliveryInputV1Schema`, `AutomationResultDeliveryResultV1JsonSchema`, `AutomationResultDeliveryResultV1Schema`, `AutomationResultDeliverySourceV1JsonSchema`, `AutomationResultDeliverySourceV1Schema`
 
 **Types** — `AutomationConversationAdmitInputV1`, `AutomationConversationAdmitResultV1`, `AutomationConversationResultDeliveryV1`, `AutomationIdV1`, `AutomationResultDeliveryInputV1`, `AutomationResultDeliveryResultV1`, `AutomationResultDeliverySourceV1`
 
@@ -414,13 +414,13 @@ Anywhere. Source: `src/notifications/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/protocol — 52 exports">
+<Accordion title="@happier-dev/plugin-sdk/protocol — 56 exports">
 
 Anywhere. Source: `src/protocol/index.ts`.
 
-**Values** — `createProtocolStoredReadSchema`, `CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1`, `decodeBase64`, `defineProtocolArray`, `defineProtocolJsonValue`, `defineProtocolLiteral`, `defineProtocolNumber`, `defineProtocolObject`, `defineProtocolString`, `defineProtocolUnion`, `defineProtocolUniqueArray`, `defineProtocolUtf8String`, `defineTriageCompositeIdentifierStringV1`, `defineTriageSingleLineStringV1`, `encodeBase64`, `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1`, `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1`, `pluginJsonValuesEqual`, `PluginUiResourceIntentV1Schema`, `ProtocolCollectionOpaqueCursorV1Schema`, `ProtocolComposerReferenceResolutionV1Schema`, `ProtocolComposerRefV1Schema`, `ProtocolCurrentUiContextSnapshotV1Schema`, `ProtocolLaunchProfileIdV2Schema`, `ProtocolValidationError`, `ScmHostingRepositoryIdentityV1ProtocolSchema`, `TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1`, `TRIAGE_SINGLE_LINE_STRING_PATTERN_V1`, `TriageCollisionScopeV1ProtocolSchema`, `TriageEntryRefV1JsonSchema`, `TriageEntryRefV1Schema`, `TriageIdentifierV1ProtocolSchema`
+**Values** — `createProtocolStoredReadSchema`, `CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1`, `decodeBase64`, `defineProtocolArray`, `defineProtocolJsonValue`, `defineProtocolLiteral`, `defineProtocolNumber`, `defineProtocolObject`, `defineProtocolString`, `defineProtocolUnion`, `defineProtocolUniqueArray`, `defineProtocolUtf8String`, `defineTriageCompositeIdentifierStringV1`, `defineTriageSingleLineStringV1`, `embedProtocolJsonSchema`, `encodeBase64`, `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1`, `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1`, `pluginJsonValuesEqual`, `PluginUiResourceIntentV1Schema`, `ProtocolCollectionOpaqueCursorV1Schema`, `ProtocolComposerReferenceResolutionV1Schema`, `ProtocolComposerRefV1Schema`, `ProtocolCurrentUiContextSnapshotV1Schema`, `ProtocolLaunchProfileIdV2Schema`, `ProtocolValidationError`, `readDiscussionMessagePartsV1`, `ScmHostingRepositoryIdentityV1ProtocolSchema`, `TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1`, `TRIAGE_SINGLE_LINE_STRING_PATTERN_V1`, `TriageCollisionScopeV1ProtocolSchema`, `TriageEntryRefV1JsonSchema`, `TriageEntryRefV1Schema`, `TriageIdentifierV1ProtocolSchema`
 
-**Types** — `PluginJsonSchema`, `PluginUiResourceIntentV1`, `ProtocolArrayOptions`, `ProtocolCollectionOpaqueCursorV1`, `ProtocolComposableSchema`, `ProtocolComposerRefV1`, `ProtocolJsonValue`, `ProtocolJsonValueOptions`, `ProtocolNumberOptions`, `ProtocolObjectEvolutionPolicy`, `ProtocolObjectOptions`, `ProtocolSchemaInput`, `ProtocolSchemaOutput`, `ProtocolSchemaSafeParseResult`, `ProtocolStoredReadSchema`, `ProtocolStringOptions`, `ProtocolUniqueJsonArrayOptions`, `ProtocolUtf8StringOptions`, `ProtocolValidationIssue`, `TriageEntryRefV1`
+**Types** — `DiscussionMessageContentV1`, `DiscussionMessagePartV1`, `PluginJsonSchema`, `PluginUiResourceIntentV1`, `ProtocolArrayOptions`, `ProtocolCollectionOpaqueCursorV1`, `ProtocolComposableSchema`, `ProtocolComposerRefV1`, `ProtocolJsonValue`, `ProtocolJsonValueOptions`, `ProtocolNumberOptions`, `ProtocolObjectEvolutionPolicy`, `ProtocolObjectOptions`, `ProtocolSchemaInput`, `ProtocolSchemaOutput`, `ProtocolSchemaSafeParseResult`, `ProtocolStoredReadSchema`, `ProtocolStringOptions`, `ProtocolUniqueJsonArrayOptions`, `ProtocolUtf8StringOptions`, `ProtocolValidationIssue`, `TriageEntryRefV1`
 
 </Accordion>
 
@@ -444,11 +444,11 @@ Anywhere. Source: `src/resources/index.ts`.
 
 </Accordion>
 
-<Accordion title="@happier-dev/plugin-sdk/reviews — 72 exports">
+<Accordion title="@happier-dev/plugin-sdk/reviews — 73 exports">
 
 Daemon only. Source: `src/reviews/index.ts`.
 
-**Values** — `createReviewCommentFingerprint`, `createReviewCommentLinkedIssueIdV1`, `createReviewCommentPublicationSettlementRequestV1`, `defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema`, `defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema`, `formatReviewCommentPublicationMarkerV1`, `matchReviewCommentPublicationMarkerV1`, `parseReviewCommentPublicationPlanV1`, `parseReviewFindingsV2`, `preflightReviewCommentPublicationRoutingV1`, `produceScmPullRequestReviewScope`, `redactReviewCommentSensitiveText`, `resolveReviewNarratorPolicy`, `REVIEW_SCM_SCOPE_INPUT_KEY`, `reviewCommentPublicationEntryIsDiffLessV1`, `ReviewCommentPublicationPlanV1ProtocolSchema`, `ReviewCommentPublicationResultV1ProtocolSchema`, `reviewCommentPublicationTargetMatchesV1`, `ReviewCommentRevisionedPublicationPlanV1ProtocolSchema`, `ReviewCommentUnversionedPublicationPlanV1ProtocolSchema`, `ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema`, `ReviewEngineCapabilitiesSchema`, `ReviewFindingSchema`, `ReviewFindingsV2Schema`, `ReviewScmScopeBaseRefSourceV1Schema`, `ReviewScmScopeBaseRefV1Schema`, `ReviewScmScopeDiagnosticCodeV1Schema`, `ReviewScmScopeDiagnosticV1Schema`, `ReviewScmScopeDiffV1Schema`, `ReviewScmScopePathDiffV1Schema`, `ReviewScmScopePathV1Schema`, `ReviewScmScopeV1Schema`, `ReviewStartInputSchema`, `ScmPullRequestReviewScopeV1Schema`, `validateReviewCommentPublicationClaimAgainstPlanV1`, `validateReviewCommentPublicationResultAgainstPlanV1`
+**Values** — `createReviewCommentFingerprint`, `createReviewCommentLinkedIssueIdV1`, `createReviewCommentPublicationSettlementRequestV1`, `defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema`, `defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema`, `formatReviewCommentPublicationMarkerV1`, `hasReviewCommentPublicationMarkerV1`, `matchReviewCommentPublicationMarkerV1`, `parseReviewCommentPublicationPlanV1`, `parseReviewFindingsV2`, `preflightReviewCommentPublicationRoutingV1`, `produceScmPullRequestReviewScope`, `redactReviewCommentSensitiveText`, `resolveReviewNarratorPolicy`, `REVIEW_SCM_SCOPE_INPUT_KEY`, `reviewCommentPublicationEntryIsDiffLessV1`, `ReviewCommentPublicationPlanV1ProtocolSchema`, `ReviewCommentPublicationResultV1ProtocolSchema`, `reviewCommentPublicationTargetMatchesV1`, `ReviewCommentRevisionedPublicationPlanV1ProtocolSchema`, `ReviewCommentUnversionedPublicationPlanV1ProtocolSchema`, `ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema`, `ReviewEngineCapabilitiesSchema`, `ReviewFindingSchema`, `ReviewFindingsV2Schema`, `ReviewScmScopeBaseRefSourceV1Schema`, `ReviewScmScopeBaseRefV1Schema`, `ReviewScmScopeDiagnosticCodeV1Schema`, `ReviewScmScopeDiagnosticV1Schema`, `ReviewScmScopeDiffV1Schema`, `ReviewScmScopePathDiffV1Schema`, `ReviewScmScopePathV1Schema`, `ReviewScmScopeV1Schema`, `ReviewStartInputSchema`, `ScmPullRequestReviewScopeV1Schema`, `validateReviewCommentPublicationClaimAgainstPlanV1`, `validateReviewCommentPublicationResultAgainstPlanV1`
 
 **Types** — `CreateReviewCommentFingerprintInput`, `ReviewCommentAnchorV1`, `ReviewCommentClaimPublicationDispatchRequestV1`, `ReviewCommentClaimPublicationDispatchResponseV1`, `ReviewCommentEvidenceV1`, `ReviewCommentFingerprintV1`, `ReviewCommentLinkedIssueIdentityV1`, `ReviewCommentPublicationCorrelationV1`, `ReviewCommentPublicationEntryResultV1`, `ReviewCommentPublicationEntryV1`, `ReviewCommentPublicationMarkerMatchV1`, `ReviewCommentPublicationPlanV1`, `ReviewCommentPublicationResultV1`, `ReviewCommentPublicationRoutingV1`, `ReviewCommentPublicationTargetExpectationV1`, `ReviewCommentPublicationTargetV1`, `ReviewCommentPublicationVerdictResultV1`, `ReviewCommentPublicationVerdictV1`, `ReviewCommentSensitiveTextRedactionOptions`, `ReviewCommentSnapshotV1`, `ReviewCommentV1`, `ReviewFinding`, `ReviewFindingId`, `ReviewFindingsV2`, `ReviewNarratorEngineOption`, `ReviewScmScopeBaseRefSourceV1`, `ReviewScmScopeBaseRefV1`, `ReviewScmScopeDiagnosticCodeV1`, `ReviewScmScopeDiagnosticV1`, `ReviewScmScopeDiffV1`, `ReviewScmScopePathDiffV1`, `ReviewScmScopePathV1`, `ReviewScmScopeV1`, `ReviewStartInput`, `ScmPullRequestReviewScopeProductionV1`, `ScmPullRequestReviewScopeV1`
 

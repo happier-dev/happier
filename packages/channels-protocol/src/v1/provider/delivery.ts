@@ -13,7 +13,7 @@ import {
 import {
     CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1,
     CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1,
-    CONVERSATION_DELIVERY_MENTION_POLICIES_V1,
+
     CONVERSATION_DELIVERY_RETRY_KINDS_V1,
     MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES,
     MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
@@ -76,7 +76,7 @@ const conversationDeliveryKeyV1 = defineProtocolUtf8String({
     minLength: 1,
 });
 
-const mentionPolicyV1 = defineProtocolLiteral(CONVERSATION_DELIVERY_MENTION_POLICIES_V1[0]);
+
 const linkPreviewPolicyV1 = defineProtocolUnion([
     defineProtocolLiteral(CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1[0]),
     defineProtocolLiteral(CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1[1]),
@@ -96,7 +96,7 @@ export const ConversationDeliveryInputV1ProtocolSchema = defineProtocolObject({
         maximum: Number.MAX_SAFE_INTEGER,
     }).optional(),
     replyContext: ConversationDeliveryReplyContextV1ProtocolSchema.optional(),
-    mentionPolicy: mentionPolicyV1,
+
     linkPreviewPolicy: linkPreviewPolicyV1,
 }, { policy: 'closed' });
 
@@ -136,45 +136,10 @@ const conversationPartialDeliveryV1 = defineProtocolObject({
         minimum: 0,
         maximum: Number.MAX_SAFE_INTEGER,
     }),
-    retrySafe: defineProtocolLiteral(false),
 }, { policy: 'closed' });
-
-// Content-free effect evidence only: codes never carry provider prose, addresses,
-// message identities or credentials, and never decide custody retry policy.
-const conversationDeliveryResultCodeV1 = defineProtocolUnion([
-    defineProtocolLiteral('invalidConfiguration'),
-    defineProtocolLiteral('invalidEndpoint'),
-    defineProtocolLiteral('replyContextMissing'),
-    defineProtocolLiteral('replyMessageMismatch'),
-    defineProtocolLiteral('replyThreadMismatch'),
-    defineProtocolLiteral('senderUntrusted'),
-    defineProtocolLiteral('senderNotHuman'),
-    defineProtocolLiteral('integrationSelf'),
-    defineProtocolLiteral('recipientInvalid'),
-    defineProtocolLiteral('credentialInvalid'),
-    defineProtocolLiteral('permissionMissing'),
-    defineProtocolLiteral('network'),
-    defineProtocolLiteral('rateLimited'),
-    defineProtocolLiteral('providerConflict'),
-    defineProtocolLiteral('unsupported'),
-    defineProtocolLiteral('submissionNotStarted'),
-    defineProtocolLiteral('submissionOutcomeUnknown'),
-    defineProtocolLiteral('noRecipientsAccepted'),
-    defineProtocolLiteral('submissionRejected'),
-    defineProtocolLiteral('submissionTemporarilyRejected'),
-    defineProtocolLiteral('sentCopyUnconfirmed'),
-    defineProtocolLiteral('reconciliationUnsupported'),
-    defineProtocolLiteral('reconciliationNotFound'),
-    defineProtocolLiteral('reconciliationMismatch'),
-    defineProtocolLiteral('providerResultInvalid'),
-    defineProtocolLiteral('providerInvocationFailed'),
-    defineProtocolLiteral('providerInvocationUnavailable'),
-    defineProtocolLiteral('contentUnrepresentable'),
-]);
 
 const conversationNotDeliveredV1 = defineProtocolObject({
     kind: defineProtocolLiteral('notDelivered'),
-    code: conversationDeliveryResultCodeV1.optional(),
     retry: defineProtocolUnion([
         defineProtocolLiteral(CONVERSATION_DELIVERY_RETRY_KINDS_V1[0]),
         defineProtocolLiteral(CONVERSATION_DELIVERY_RETRY_KINDS_V1[1]),
@@ -197,7 +162,6 @@ const conversationEndpointArchivedV1 = defineProtocolObject({
 
 const conversationOutcomeUnknownV1 = defineProtocolObject({
     kind: defineProtocolLiteral('outcomeUnknown'),
-    code: conversationDeliveryResultCodeV1.optional(),
     providerMessageIds: conversationProviderMessageIdsV1.optional(),
     endpoint: ConversationResolvedEndpointV1ProtocolSchema.optional(),
 }, { policy: 'closed' });

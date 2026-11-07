@@ -24,6 +24,7 @@ function addressesPoint(target: unknown, point: TargetedContributionPointRef<unk
 export function channelsOperationOnlyTargetedContributionsFixture(
   target: PluginTestkit,
   expectedPoint: TargetedContributionPointRef<unknown> = CHANNELS_PROVIDER_POINT_REF,
+  descriptorContributors: readonly DefinedPluginManifest[] = [],
 ): TargetedContributionsService {
   return Object.freeze({
     observeForSelf<TContribution>(
@@ -42,9 +43,14 @@ export function channelsOperationOnlyTargetedContributionsFixture(
           options?.signal?.throwIfAborted();
           const snapshot = target.readTargetedContributionFixture(expectedPoint);
           options?.signal?.throwIfAborted();
-          // This structural fixture supplies only the operation handles consumed
-          // here, not a claim of descriptor or Surface admission.
-          return snapshot as unknown as TargetedContributionSnapshot<TContribution>;
+          // Supply descriptors from the real contributor declarations when the
+          // consumer needs native facts; full cold host admission stays external.
+          return { ...snapshot, contributions: snapshot.contributions.map(entry => {
+            const contributor = descriptorContributors.find(manifest => manifest.id === entry.contributor.pluginId);
+            const declaration = contributor?.contributes.targetedPluginContributions?.find(candidate =>
+              candidate.id === entry.contributor.contributionId && addressesPoint(candidate.target, point));
+            return declaration ? { ...entry, descriptor: declaration.descriptor } : entry;
+          }) } as unknown as TargetedContributionSnapshot<TContribution>;
         },
       });
     },

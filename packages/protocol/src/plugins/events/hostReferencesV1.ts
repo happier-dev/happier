@@ -1,3 +1,4 @@
+import { DiscussionIdSchema } from '../../discussions/content.js';
 import { PluginWebhookHeartbeatReceiptHintV1Schema } from '../webhooks/endpointV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -14,6 +15,8 @@ export const HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1 =
 export const HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1 =
   '@happier/automation/event-sources-invalidated' as const;
 
+export const HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1 =
+  '@happier/session/discussion-invalidated' as const;
 export const HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1 = '@happier/health-check/heartbeat-received' as const;
 export const HealthCheckHeartbeatReceivedHostEventV1Schema = PluginWebhookHeartbeatReceiptHintV1Schema;
 export type HealthCheckHeartbeatReceivedHostEventV1 = z.infer<typeof HealthCheckHeartbeatReceivedHostEventV1Schema>;
@@ -25,6 +28,13 @@ export const AccountEntitiesInvalidatedHostEventV1Schema = lazyZodSchema(() => z
   entityIds: z.array(z.string().check(z.minLength(1))),
 }));
 export type AccountEntitiesInvalidatedHostEventV1 = z.infer<typeof AccountEntitiesInvalidatedHostEventV1Schema>;
+
+/** Refresh hint from an admitted Account change; never authored Discussion content. */
+export const DiscussionInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
+  discussionId: DiscussionIdSchema,
+  revision: z.optional(z.number().check(z.int(), z.nonnegative())),
+}));
+export type DiscussionInvalidatedHostEventV1 = z.infer<typeof DiscussionInvalidatedHostEventV1Schema>;
 
 export type HostSemanticEventKindV1 = typeof AGENT_SESSION_RUNTIME_EVENT_KINDS_V1[number];
 export type RuntimeHostEventIdV1 =
@@ -134,6 +144,7 @@ export const HOST_EVENT_IDS_V1 = Object.freeze([
   ...RUNTIME_HOST_EVENT_IDS_V1,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
+  HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
   HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1,
 ] as const);
@@ -189,6 +200,10 @@ export const HostEventTargetV1Schema = lazyZodSchema(() => z.union([
     eventId: z.literal(HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1),
     scope: z.strictObject({ kind: z.literal('account') }),
   }),
+  z.strictObject({
+    eventId: z.literal(HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1),
+    scope: z.strictObject({ kind: z.literal('account') }),
+  }),
 ]));
 
 export type RuntimeHostEventCatalogEntryV1 = Readonly<{
@@ -228,6 +243,16 @@ export type HostEventCatalogEntryV1 =
   | RuntimeHostEventCatalogEntryV1
   | AutomationRunStateChangedHostEventCatalogEntryV1
   | Readonly<{
+    id: typeof HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1;
+    canonicalProducer: 'account-change-feed';
+    sourceProducers: readonly ['account-change-feed'];
+    payloadType: 'DiscussionInvalidatedHostEventV1';
+    privacy: 'account';
+    allowedScopes: readonly ['account'];
+    realm: 'daemon';
+    disposition: 'public';
+  }>
+  | Readonly<{
     id: typeof HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1;
     canonicalProducer: 'account-change-feed';
     sourceProducers: readonly ['account-change-feed'];
@@ -265,6 +290,16 @@ export const HOST_EVENT_CATALOG_V1: readonly HostEventCatalogEntryV1[] = Object.
     canonicalProducer: 'account-change-feed',
     sourceProducers: Object.freeze(['account-change-feed'] as const),
     payloadType: 'AutomationEventSourcesInvalidatedHostEventV1',
+    privacy: 'account',
+    allowedScopes: Object.freeze(['account'] as const),
+    realm: 'daemon',
+    disposition: 'public',
+  }),
+  Object.freeze({
+    id: HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
+    canonicalProducer: 'account-change-feed',
+    sourceProducers: Object.freeze(['account-change-feed'] as const),
+    payloadType: 'DiscussionInvalidatedHostEventV1',
     privacy: 'account',
     allowedScopes: Object.freeze(['account'] as const),
     realm: 'daemon',

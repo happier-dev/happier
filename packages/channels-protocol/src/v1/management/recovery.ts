@@ -51,11 +51,6 @@ export const ConversationDeliveryResolveInputV1ProtocolSchema = defineProtocolOb
     resolution: defineProtocolUnion([
         defineProtocolLiteral('accepted'),
         defineProtocolLiteral('discarded'),
-        // The provider proved the archived destination received nothing, and
-        // reported the owner-led recovery arm. Reopening that exact obligation
-        // is not a blind resend: it is the only decision the custody owner
-        // will accept for an authoritative no-effect refusal.
-        defineProtocolLiteral('retryAfterUnarchive'),
     ]),
 }, { policy: 'closed' });
 
@@ -75,7 +70,6 @@ export const ConversationDeliveryResolveResultV1ProtocolSchema = defineProtocolO
     resolution: defineProtocolUnion([
         defineProtocolLiteral('accepted'),
         defineProtocolLiteral('discarded'),
-        defineProtocolLiteral('retryAfterUnarchive'),
     ]),
 }, { policy: 'closed' });
 

@@ -3,7 +3,7 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { DocEditProposalV1Schema, DocPassageRefV1Schema } from '../artifacts/artifactCollaborationV1.js';
 
-import { DiscussionIdSchema } from './references.js';
+import { DiscussionIdSchema, DiscussionLocalIdSchema } from './references.js';
 export {
   DiscussionIdSchema, DiscussionMessageIdSchema, DiscussionLocalIdSchema,
   DiscussionAccountIdSchema, DiscussionAddressV1Schema, DiscussionSelectionSourceV1Schema,
@@ -60,6 +60,17 @@ export const DiscussionDocEditProposalContentV1Schema = lazyZodSchema(() => z.st
 }));
 export type DiscussionDocEditProposalContentV1 = z.infer<typeof DiscussionDocEditProposalContentV1Schema>;
 
+/** Display provenance is sealed with the body and never supplies posting authority. */
+export const DiscussionExternalSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('channel'),
+  providerPluginId: z.string().check(z.minLength(1)),
+  conversationDisplayName: nfcString().check(z.minLength(1)),
+  senderDisplayName: z.optional(nfcString().check(z.minLength(1))),
+  /** Sealed correlation to accepted ingress; never posting or access authority. */
+  inputLocalId: z.optional(DiscussionLocalIdSchema),
+}));
+export type DiscussionExternalSourceV1 = z.infer<typeof DiscussionExternalSourceV1Schema>;
+
 /**
  * The authored human document. A message must say something: at least one
  * mention, reference, attachment or non-blank text run. Adjacent empty text parts are rejected so
@@ -69,6 +80,7 @@ export type DiscussionDocEditProposalContentV1 = z.infer<typeof DiscussionDocEdi
 export const DiscussionTextMessageContentV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   parts: z.array(DiscussionMessagePartV1Schema).check(z.minLength(1)),
+  externalSource: z.optional(DiscussionExternalSourceV1Schema),
 }).check(z.superRefine((value, context) => {
   let hasMeaningfulPart = false;
   for (let index = 0; index < value.parts.length; index += 1) {

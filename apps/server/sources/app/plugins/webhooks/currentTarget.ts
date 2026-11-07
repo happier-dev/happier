@@ -1,7 +1,58 @@
-import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
+import { resolveCurrentClaimablePluginMachineMaterializationTx, resolveCurrentClaimablePluginMachineMaterializationsTx } from "@/app/plugins/availability/operations";
 import type { Tx } from "@/storage/inTx";
 
-import type { ResolvedPluginWebhookTargetV1 } from "./endpointStore";
+import { resolveCurrentPluginWebhookClaimAuthoritiesTxV1 } from "./currentContribution";
+import type { ResolvedPluginWebhookContributionV1, ResolvedPluginWebhookTargetV1 } from "./endpointStore";
+
+/** Resolve placement through Availability and the current declaration, once. */
+export async function resolveCurrentPluginWebhookRoutingTargetTxV1(params: Readonly<{
+    tx: Tx;
+    serverIdentityId: string;
+    accountId: string;
+    routing: Readonly<{ serverIdentityId: string; machineId: string }>;
+    contribution: Readonly<{ pluginId: string; localId: string }>;
+}>): Promise<Readonly<{
+    target: ResolvedPluginWebhookTargetV1;
+    contribution: ResolvedPluginWebhookContributionV1;
+}> | null> {
+    // The HTTP facade supplies this Home from the server identity owner.
+    if (params.routing.serverIdentityId !== params.serverIdentityId) return null;
+    const machine = await params.tx.machine.findFirst({
+        where: { accountId: params.accountId, id: params.routing.machineId },
+        select: { installationId: true },
+    });
+    if (!machine?.installationId) return null;
+    const materializations = await resolveCurrentClaimablePluginMachineMaterializationsTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        serverIdentityId: params.serverIdentityId,
+        machineId: params.routing.machineId,
+        machineInstallationId: machine.installationId,
+        pluginId: params.contribution.pluginId,
+        requiredMachineOperationCapability: "pluginWebhookClaim",
+    });
+    const authorities = await resolveCurrentPluginWebhookClaimAuthoritiesTxV1({
+        tx: params.tx,
+        accountId: params.accountId,
+        targets: materializations,
+    });
+    const authority = authorities.find((candidate) => candidate.contribution.localId === params.contribution.localId);
+    if (!authority) return null;
+    const materialization = materializations.find((candidate) => candidate.materializationId === authority.materializationId);
+    if (!materialization) return null;
+    return {
+        target: {
+            materialization: {
+                machineId: materialization.machineId,
+                materializationId: materialization.materializationId,
+                pluginId: materialization.pluginId,
+            },
+            machineInstallationId: machine.installationId,
+            pluginVersion: materialization.version,
+        },
+        contribution: authority.contribution,
+    };
+}
 
 /**
  * Canonical current-target resolver shared by endpoint lifecycle, endpoint

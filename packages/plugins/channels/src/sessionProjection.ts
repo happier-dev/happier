@@ -6,7 +6,15 @@ import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/ac
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionForDefinition } from '@happier-dev/plugin-sdk/collections';
-import { createProtocolStoredReadSchema, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import {
+  readConversationSessionProjectionHistoryGap,
+  type ConversationSessionProjectionHistoryGapReason,
+} from './sessionProjectionNotice.js';
+export {
+  readConversationSessionProjectionHistoryGap,
+  type ConversationSessionProjectionHistoryGap,
+  type ConversationSessionProjectionHistoryGapReason,
+} from './sessionProjectionNotice.js';
 
 import {
   CHANNEL_STATE_COLLECTION,
@@ -15,6 +23,7 @@ import {
 } from './collections.js';
 import {
   asChannelStateRow as asStoredCollectionRow,
+  isChannelStateJsonRecord,
   readConversationBindingUpdateRow,
   readConversationBindingParentEligibility,
   type ChannelStateRow as StoredCollectionRow,
@@ -57,28 +66,6 @@ export type ConversationSessionProjectionFrontier = Readonly<{
   revision: number;
 }>;
 
-export type ConversationSessionProjectionHistoryGapReason =
-  | 'cursorRejected'
-  | 'frontierCursorInvalid'
-  | 'projectionRegression'
-  | 'cursorUnavailable';
-
-export type ConversationSessionProjectionHistoryGap = Readonly<{
-  kind: 'historyGap';
-  reason: ConversationSessionProjectionHistoryGapReason;
-  reportedAt: number;
-}>;
-const storedSessionProjectionHistoryGapSchema = createProtocolStoredReadSchema(defineProtocolObject({
-  kind: defineProtocolLiteral('historyGap'),
-  reason: defineProtocolUnion([
-    defineProtocolLiteral('cursorRejected'),
-    defineProtocolLiteral('frontierCursorInvalid'),
-    defineProtocolLiteral('projectionRegression'),
-    defineProtocolLiteral('cursorUnavailable'),
-  ]),
-  reportedAt: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-}, { policy: 'closed' }));
-
 /**
  * The Channel-state owner supplies one current binding/frontier view and
  * guards the frontier write with that binding revision. Target rotation owns
@@ -113,6 +100,7 @@ export interface ConversationSessionProjectionStore {
     frontier: ConversationSessionProjectionFrontier;
     reason: ConversationSessionProjectionHistoryGapReason;
     reportedAt: number;
+    baseline?: Readonly<{ transcriptCursor: string | null; lastScannedSeq: number }>;
   }>): Promise<Readonly<{ kind: 'recorded' | 'rejoined' | 'conflict' }>>;
 }
 
@@ -149,10 +137,11 @@ export type ConversationSessionProjectionResult =
     reason: ConversationSessionProjectionHistoryGapReason;
     disposition?: 'recorded' | 'rejoined' | 'conflict';
   }>
-  | Readonly<{ kind: 'paused'; reason: 'historyGap' }>
   | Readonly<{
     kind: 'unavailable';
     reason: 'bindingUnavailable' | 'frontierUnavailable' | 'targetChanged' | 'transcriptUnavailable' | 'cancelled';
+    actionErrorCode?: string;
+    retryable?: boolean;
   }>;
 
 /**
@@ -175,23 +164,12 @@ function isTranscriptCursorRejected(error: unknown): boolean {
   return isPluginError(error) && error.code === 'invalid_cursor';
 }
 
-function isJsonRecord(value: JsonValue): value is JsonRecord {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return isNonNegativeSafeInteger(value) && value >= 1;
-}
-
-export function readConversationSessionProjectionHistoryGap(
-  value: JsonValue,
-): ConversationSessionProjectionHistoryGap | null {
-  const parsed = storedSessionProjectionHistoryGapSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
 }
 
 /** One deterministic state-row identity per binding; no opaque delivery identity is reused here. */
@@ -263,17 +241,17 @@ function readProjectionFrontier(input: Readonly<{
 }> | null {
   const rowId = createConversationSessionProjectionFrontierRowId(input.bindingId);
   const { row } = input;
-  const createdAt = isJsonRecord(row.value)
+  const createdAt = isChannelStateJsonRecord(row.value)
     ? row.value[CHANNEL_STATE_FIELD.createdAt]
     : undefined;
-  if (!isJsonRecord(row.value)
+  if (!isChannelStateJsonRecord(row.value)
     || row.rowId !== rowId
     || row.value[CHANNEL_STATE_FIELD.id] !== rowId
     || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.projectionFrontier
     || row.value[CHANNEL_STATE_FIELD.bindingId] !== input.bindingId
     || !isPositiveSafeInteger(row.revision)
     || !isNonNegativeSafeInteger(createdAt)
-    || !isJsonRecord(row.value.payload)) return null;
+    || !isChannelStateJsonRecord(row.value.payload)) return null;
   const { payload } = row.value;
   if (typeof payload.targetSessionId !== 'string' || payload.targetSessionId.length === 0
     || !isNonNegativeSafeInteger(payload.lastScannedSeq)
@@ -394,7 +372,8 @@ export function createConversationSessionProjectionCollectionStore(
       if (current === undefined) return { kind: 'conflict' };
       const persisted = readProjectionFrontier({ row: current, bindingId: gap.bindingId });
       if (persisted === null) return { kind: 'conflict' };
-      if (readConversationSessionProjectionHistoryGap(persisted.frontier.transcriptCursor) !== null) {
+      const retainedNotice = readConversationSessionProjectionHistoryGap(persisted.frontier.transcriptCursor);
+      if (retainedNotice !== null && gap.baseline === undefined) {
         return { kind: 'rejoined' };
       }
       if (current.revision !== gap.expectedFrontierRowRevision
@@ -412,10 +391,11 @@ export function createConversationSessionProjectionCollectionStore(
               targetSessionId: persisted.frontier.targetSessionId,
               transcriptCursor: {
                 kind: 'historyGap',
-                reason: gap.reason,
-                reportedAt: gap.reportedAt,
+                reason: retainedNotice?.reason ?? gap.reason,
+                reportedAt: retainedNotice?.reportedAt ?? gap.reportedAt,
+                ...(gap.baseline === undefined ? {} : { cursor: gap.baseline.transcriptCursor }),
               },
-              lastScannedSeq: persisted.frontier.lastScannedSeq,
+              lastScannedSeq: gap.baseline?.lastScannedSeq ?? persisted.frontier.lastScannedSeq,
               revision: persisted.frontier.revision + 1,
               createdAt: persisted.createdAt,
               now: gap.reportedAt,
@@ -432,13 +412,10 @@ export function createConversationSessionProjectionCollectionStore(
 }
 
 /**
- * Replaces one durably paused transcript frontier with the current no-history
- * tail. The exact binding and frontier revisions are asserted in the same
- * Collection batch, so this never clears a gap after the owner changed the
- * target or another recovery already settled it.
+ * Dismisses one recovered notice without reading or moving the transcript
+ * cursor. The binding and frontier revisions guard the same Collection batch.
  */
-export async function acceptConversationSessionProjectionBaseline(input: Readonly<{
-  actions: ActionsService;
+export async function dismissConversationSessionProjectionNotice(input: Readonly<{
   stateCollection: ChannelStateCollection;
   bindingId: string;
   expectedBindingRevision: number;
@@ -459,33 +436,29 @@ export async function acceptConversationSessionProjectionBaseline(input: Readonl
     ]);
   } catch (cause) {
     throw new PluginError({
-      code: 'channels_session_projection_baseline_unavailable',
+      code: 'channels_session_projection_notice_unavailable',
       message: 'The saved Session projection frontier is unavailable.',
       retryable: true,
     }, { cause });
   }
   const binding = bindingRow === undefined ? null : readProjectionBinding({ row: bindingRow, bindingId: input.bindingId });
   const persisted = frontierRow === undefined ? null : readProjectionFrontier({ row: frontierRow, bindingId: input.bindingId });
+  const notice = persisted === null ? null : readConversationSessionProjectionHistoryGap(persisted.frontier.transcriptCursor);
   if (binding === null || persisted === null
     || bindingRow?.revision !== input.expectedBindingRevision
     || frontierRow?.revision !== input.expectedFrontierRevision
     || persisted.frontier.targetSessionId !== binding.target.sessionId
-    || readConversationSessionProjectionHistoryGap(persisted.frontier.transcriptCursor) === null) {
+    || notice === null) {
     throw new PluginError({
-      code: 'channels_session_projection_baseline_stale',
-      message: 'The saved Session projection frontier changed before its baseline could be accepted.',
+      code: 'channels_session_projection_notice_stale',
+      message: 'The saved Session projection frontier changed before its notice could be dismissed.',
     });
   }
-  const baseline = await readConversationSessionProjectionNoHistoryBaseline({
-    actions: input.actions,
-    sessionId: binding.target.sessionId,
-    signal: input.signal,
-  });
-  if (baseline.kind !== 'ready') {
+  if (notice.cursor === undefined) {
     throw new PluginError({
-      code: 'channels_session_projection_baseline_unavailable',
-      message: 'The current Session transcript tail is unavailable.',
-      retryable: baseline.kind === 'retry' || baseline.kind === 'unavailable',
+      code: 'channels_session_projection_notice_recovery_pending',
+      message: 'Automatic Session transcript recovery has not established its current cursor yet.',
+      retryable: true,
     });
   }
   const nextFrontierRevision = persisted.frontier.revision + 1;
@@ -496,8 +469,8 @@ export async function acceptConversationSessionProjectionBaseline(input: Readonl
       value: createConversationSessionProjectionFrontierRow({
         bindingId: input.bindingId,
         targetSessionId: binding.target.sessionId,
-        transcriptCursor: baseline.transcriptCursor,
-        lastScannedSeq: baseline.lastScannedSeq,
+        transcriptCursor: notice.cursor,
+        lastScannedSeq: persisted.frontier.lastScannedSeq,
         revision: nextFrontierRevision,
         createdAt: persisted.createdAt,
         now: input.now,
@@ -507,8 +480,8 @@ export async function acceptConversationSessionProjectionBaseline(input: Readonl
   ], { signal: input.signal });
   if (result.status !== 'updated') {
     throw new PluginError({
-      code: 'channels_session_projection_baseline_stale',
-      message: 'The saved Session projection frontier changed before its baseline could be accepted.',
+      code: 'channels_session_projection_notice_stale',
+      message: 'The saved Session projection frontier changed before its notice could be dismissed.',
     });
   }
   const persistedFrontierRevision = result.results.find((entry) => (
@@ -516,8 +489,8 @@ export async function acceptConversationSessionProjectionBaseline(input: Readonl
   ))?.revision;
   if (persistedFrontierRevision === undefined) {
     throw new PluginError({
-      code: 'channels_session_projection_baseline_unavailable',
-      message: 'The accepted Session projection frontier was not returned by storage.',
+      code: 'channels_session_projection_notice_unavailable',
+      message: 'The dismissed Session projection notice was not returned by storage.',
       retryable: true,
     });
   }
@@ -559,20 +532,16 @@ function isProjectionDeliveryTerminal(result: ConversationOutwardDeliveryResult)
 }
 
 /**
- * Walks the public, closed external-shareable projection to its stable tail.
- * It deliberately does not persist interim progress: until the final page is
- * observed, the binding has not changed target and the old frontier remains
- * authoritative. This is the no-history boundary used by binding creation,
- * rotation, and the C3 `/new` owner.
+ * Acquires the public projection's no-history boundary at its host owner.
+ * Old unpublished or unsettled turns cannot block a new binding or cause
+ * history replay. Binding creation, rotation, `/new` and gap recovery share it.
  */
 export async function readConversationSessionProjectionNoHistoryBaseline(input: Readonly<{
   actions: ActionsService;
   sessionId: string;
   signal: AbortSignal;
 }>): Promise<ConversationSessionProjectionNoHistoryBaseline> {
-  let cursor: string | null = null;
-  let lastScannedSeq = 0;
-  while (!input.signal.aborted) {
+  if (!input.signal.aborted) {
     let transcript: ExternalShareableTranscriptResult;
     try {
       const read = await input.actions.execute(
@@ -580,7 +549,7 @@ export async function readConversationSessionProjectionNoHistoryBaseline(input: 
         {
           sessionId: input.sessionId,
           projection: 'externalShareableV1',
-          cursor,
+          cursor: 'tail',
           limit: EXTERNAL_SHAREABLE_TRANSCRIPT_PAGE_LIMIT,
         },
         { signal: input.signal },
@@ -612,23 +581,14 @@ export async function readConversationSessionProjectionNoHistoryBaseline(input: 
     if (!Number.isSafeInteger(transcript.scannedThroughSeq) || transcript.scannedThroughSeq < 0) {
       return { kind: 'historyGap', reason: 'projectionMismatch' };
     }
-    if (transcript.scannedThroughSeq < lastScannedSeq) {
-      return { kind: 'historyGap', reason: 'projectionMismatch' };
-    }
     if (!transcript.hasMore) {
       return {
         kind: 'ready',
-        transcriptCursor: transcript.nextCursor ?? cursor,
+        transcriptCursor: transcript.nextCursor ?? null,
         lastScannedSeq: transcript.scannedThroughSeq,
       };
     }
-    if (transcript.nextCursor === undefined
-      || transcript.nextCursor === cursor
-      || transcript.scannedThroughSeq <= lastScannedSeq) {
-      return { kind: 'retry', reason: 'publicationBarrier' };
-    }
-    cursor = transcript.nextCursor;
-    lastScannedSeq = transcript.scannedThroughSeq;
+    return { kind: 'retry', reason: 'publicationBarrier' };
   }
   return { kind: 'unavailable', reason: 'cancelled' };
 }
@@ -675,12 +635,15 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
   if (binding.bindingId !== input.bindingId || frontier.targetSessionId !== binding.target.sessionId) {
     return { kind: 'unavailable', reason: 'targetChanged' };
   }
-  if (readConversationSessionProjectionHistoryGap(frontier.transcriptCursor) !== null) {
-    return { kind: 'paused', reason: 'historyGap' };
-  }
-  const pauseForHistoryGap = async (
+  const notice = readConversationSessionProjectionHistoryGap(frontier.transcriptCursor);
+  const cursor = notice === null ? frontier.transcriptCursor : notice.cursor;
+  const recoverHistoryGap = async (
     reason: ConversationSessionProjectionHistoryGapReason,
-  ): Promise<Extract<ConversationSessionProjectionResult, Readonly<{ kind: 'historyGap' }>>> => {
+  ): Promise<ConversationSessionProjectionResult> => {
+    const baseline = await readConversationSessionProjectionNoHistoryBaseline({
+      actions: input.actions, sessionId: binding.target.sessionId, signal: input.signal,
+    });
+    if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
     const disposition = await input.store.recordHistoryGap({
       bindingId: binding.bindingId,
       expectedBindingRevision: binding.revision,
@@ -689,16 +652,22 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
       frontier,
       reason,
       reportedAt: input.now?.() ?? Date.now(),
+      ...(baseline.kind === 'ready' ? { baseline } : {}),
     });
+    if (disposition.kind === 'conflict') return { kind: 'blocked', reason: 'frontierChanged' };
+    if (baseline.kind === 'ready') return { kind: 'advanced', hasMore: false, deliveredItemCount: 0 };
+    if (baseline.kind === 'unavailable') return baseline;
+    if (baseline.kind === 'retry') return { kind: 'blocked', reason: baseline.reason };
     return { kind: 'historyGap', reason, disposition: disposition.kind };
   };
-  if (frontier.transcriptCursor !== null && typeof frontier.transcriptCursor !== 'string') {
-    return await pauseForHistoryGap('frontierCursorInvalid');
+  if (notice !== null && cursor === undefined) return await recoverHistoryGap(notice.reason);
+  if (cursor !== null && typeof cursor !== 'string') {
+    return await recoverHistoryGap('frontierCursorInvalid');
   }
   if (!Number.isSafeInteger(frontier.lastScannedSeq) || frontier.lastScannedSeq < 0
     || !Number.isSafeInteger(frontier.revision) || frontier.revision < 1
     || !Number.isSafeInteger(frontierRowRevision) || frontierRowRevision < 1) {
-    return await pauseForHistoryGap('projectionRegression');
+    return await recoverHistoryGap('projectionRegression');
   }
 
   let transcript: ExternalShareableTranscriptResult;
@@ -708,7 +677,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
       {
         sessionId: binding.target.sessionId,
         projection: 'externalShareableV1',
-        cursor: frontier.transcriptCursor,
+        cursor,
         limit: EXTERNAL_SHAREABLE_TRANSCRIPT_PAGE_LIMIT,
       },
       { signal: input.signal },
@@ -723,7 +692,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
   } catch (error) {
     if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
     if (isTranscriptCursorRejected(error)) {
-      return await pauseForHistoryGap('cursorRejected');
+      return await recoverHistoryGap('cursorRejected');
     }
     // The supervisor owns availability recovery and redacted failure logging.
     // Hiding this exception in an ignored result can park the preserved
@@ -733,7 +702,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
   if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
   if (transcript.sessionId !== binding.target.sessionId
     || transcript.scannedThroughSeq < frontier.lastScannedSeq) {
-    return await pauseForHistoryGap('projectionRegression');
+    return await recoverHistoryGap('projectionRegression');
   }
 
   let previousItemSeq = frontier.lastScannedSeq;
@@ -742,7 +711,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
     if (item.sessionId !== binding.target.sessionId
       || item.seq <= previousItemSeq
       || item.seq > transcript.scannedThroughSeq) {
-      return await pauseForHistoryGap('projectionRegression');
+      return await recoverHistoryGap('projectionRegression');
     }
     previousItemSeq = item.seq;
     if (!shouldProjectItem({ binding, item })) {
@@ -775,7 +744,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
       : { kind: 'idle', deliveredItemCount };
   }
   if (transcript.nextCursor === undefined || frontier.revision >= Number.MAX_SAFE_INTEGER) {
-    return await pauseForHistoryGap('cursorUnavailable');
+    return await recoverHistoryGap('cursorUnavailable');
   }
 
   const updated = await input.store.compareAndSwap({
@@ -785,7 +754,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
     expectedFrontierRowRevision: frontierRowRevision,
     frontier: {
       targetSessionId: binding.target.sessionId,
-      transcriptCursor: transcript.nextCursor,
+      transcriptCursor: notice === null ? transcript.nextCursor : { ...notice, cursor: transcript.nextCursor },
       lastScannedSeq: transcript.scannedThroughSeq,
       revision: frontier.revision + 1,
     },

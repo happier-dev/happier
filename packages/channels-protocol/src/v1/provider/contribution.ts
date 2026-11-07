@@ -1,9 +1,14 @@
 import {
     defineContributionPoint,
     defineContributionProtocol,
+    type ContributionAdmittedEntry,
+    type ContributionProtocol,
+    type TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk/contributions';
 
 import {
+    CONVERSATION_CORE_PLUGIN_ID_V1,
+    CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
     CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1,
     CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1,
 } from '../bounds.js';
@@ -120,6 +125,7 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             resultSchema: ConversationDeliveryResultV1Schema,
             action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
+        // Retained declaration grammar only; Channels no longer invokes this role.
         connectionStop: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationProviderConnectionStopInputV1Schema },
@@ -134,3 +140,14 @@ export const ConversationProvidersContributionPointV1 = defineContributionPoint(
     [ConversationProvidersContributionProtocolV1],
     { maxContributionsPerContributor: 1 },
 );
+
+export type ConversationProviderContributionV1 = typeof ConversationProvidersContributionProtocolV1 extends ContributionProtocol<
+    infer Operations, infer Surfaces, infer Descriptor, infer _Id, infer _Version
+> ? ContributionAdmittedEntry<Operations, Surfaces, Descriptor, typeof CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1> : never;
+
+/** Portable equality-qualified discovery; operation authority remains host-issued. */
+export const CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1: TargetedContributionPointRef<ConversationProviderContributionV1> = Object.freeze({
+    targetPluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
+    id: CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
+    protocol: Object.freeze({ id: ConversationProvidersContributionProtocolV1.id, version: ConversationProvidersContributionProtocolV1.version }),
+});

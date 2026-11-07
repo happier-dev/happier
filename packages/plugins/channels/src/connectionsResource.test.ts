@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
@@ -93,7 +94,7 @@ function outwardDeliveryObligation(controlId: string): ConversationOutwardDelive
     endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
     content: { text: 'A delivery result needs attention.' },
     deliveryKey: `delivery:${controlId}`,
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -146,13 +147,13 @@ describe('Channels connections Resource invalidation', () => {
         code: 'collection_update_required', retryable: false, message: 'private transport detail',
       }));
       const unavailableHost = () => { throw new Error('This Resource reads Account storage only.'); };
-      const snapshot = JSON.parse(resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read({
+      const snapshot = JSON.parse(resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
         context: { kind: 'global' }, signal: new AbortController().signal,
         resources: { describe: unavailableHost, read: unavailableHost, watch: unavailableHost },
         readAction: unavailableHost, observeAction: unavailableHost,
         // The in-memory Collection is the persistent-storage boundary.
         accountStorage: { collection: (definition: { id: string }) => definition.id === 'channel-state' ? state : deliveries } as unknown as PluginAccountStorageScope,
-      })));
+      }))));
       expect(snapshot).toEqual({ status: {
         kind: 'updateRequired', code: 'collection_update_required', collectionId,
         retryable: false, recovery: 'updateHappierOnThisMachine',
@@ -161,10 +162,10 @@ describe('Channels connections Resource invalidation', () => {
   );
 
   it('uses the shared Resource storage guard with the connections error identity', async () => {
-    await expect(CONNECTIONS_RESOURCE_RUNTIME.read({
+    await expect(CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       accountStorage: undefined,
       signal: new AbortController().signal,
-    } as never)).rejects.toMatchObject({
+    }))).rejects.toMatchObject({
       code: 'channels_connections_resource_account_storage_unavailable',
       message: 'The Channels connections Resource requires admitted Account storage.',
     });
@@ -258,11 +259,11 @@ describe('Channels connections Resource invalidation', () => {
         return definition.id === CHANNEL_STATE_COLLECTION.id ? state : deliveries;
       },
     } as unknown as PluginAccountStorageScope;
-    const serialized = await CONNECTIONS_RESOURCE_RUNTIME.read({
+    const serialized = await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal,
       context: { kind: 'global' },
       accountStorage,
-    });
+    }));
 
     expect(JSON.parse(resourceText(serialized))).toEqual({
       connections: [expect.objectContaining({
@@ -275,9 +276,9 @@ describe('Channels connections Resource invalidation', () => {
             retryNotBeforeMs: null,
             evidence: { kind: 'provider', reason: 'credentialInvalid' },
           },
-          ingressConflict: { kind: 'occurrenceEvidenceMismatch' },
+          ingressConflict: null,
           outwardDelivery: {
-            retryDue: true,
+            retryDue: false,
             notDelivered: false,
             partial: true,
             outcomeUnknown: true,
@@ -299,9 +300,9 @@ describe('Channels connections Resource invalidation', () => {
       expect(isValidPluginJsonSchemaValue(validates, value)).toBe(true);
       await state.put(value, { expectedRevision: 'absent' });
     }
-    const largeProjection = resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read({
+    const largeProjection = resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal, context: { kind: 'global' }, accountStorage,
-    }));
+    })));
     expect(new TextEncoder().encode(largeProjection).byteLength).toBeGreaterThan(196_608);
     const parsed: unknown = JSON.parse(largeProjection);
     if (parsed === null || typeof parsed !== 'object' || !('connections' in parsed) || !Array.isArray(parsed.connections)) {
@@ -316,7 +317,7 @@ describe('Channels connections Resource invalidation', () => {
     }
   });
 
-  it('invalidates its current snapshot when retained outward custody settles without introducing an event broker', () => {
+  it('invalidates its current snapshot when retained outward custody settles without introducing an event broker', async () => {
     const state = createWatchableCollection();
     const deliveries = createWatchableCollection();
     const accountStorage = {
@@ -326,25 +327,25 @@ describe('Channels connections Resource invalidation', () => {
     } as unknown as PluginAccountStorageScope;
     const invalidate = vi.fn();
 
-    const observation = CONNECTIONS_RESOURCE_RUNTIME.observe(invalidate, {
+    const observation = await CONNECTIONS_RESOURCE_RUNTIME.observe(invalidate, createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'global' },
       accountStorage,
-    });
+    }));
     state.emit();
     deliveries.emit();
     expect(invalidate).toHaveBeenCalledTimes(2);
 
-    observation.dispose();
+    await observation.dispose();
     state.emit();
     deliveries.emit();
     expect(invalidate).toHaveBeenCalledTimes(2);
-    expect(state.dispose).toHaveBeenCalledTimes(2);
+    expect(state.dispose).toHaveBeenCalledOnce();
     expect(deliveries.dispose).toHaveBeenCalledOnce();
     expect(deliveries.watch).toHaveBeenCalledWith({ kind: 'collection' }, expect.any(Function));
     expect(state.watch).toHaveBeenCalledWith({
-      index: CHANNEL_STATE_INDEX_ID.byAttention,
-      prefix: [true],
+      index: CHANNEL_STATE_INDEX_ID.byKind,
+      prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
     }, expect.any(Function));
   });

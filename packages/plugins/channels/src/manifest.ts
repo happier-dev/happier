@@ -3,9 +3,6 @@ import type {
   PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
-import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
-  SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
-import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -53,13 +50,12 @@ import {
 } from './collections.js';
 import { CONNECTIONS_RESOURCE_RUNTIME } from './connectionsResource.js';
 import {
-  acceptConversationStreamBaselineForInvocation,
+  dismissConversationStreamNoticeForInvocation,
   createConversationProviderObservationIngestHandler,
   retryConversationIngressForInvocation,
 } from './ingress.js';
 import {
-  abandonConversationConnectionForInvocation,
-  acceptConversationSessionProjectionBaselineForInvocation,
+  dismissConversationSessionProjectionNoticeForInvocation,
   createConversationBindingForInvocation,
   createConversationConnectionForInvocation,
   manageSessionPullRequestBindingForInvocation,
@@ -119,9 +115,16 @@ import {
   CHANNELS_HOME_WIDGET_ID,
   CHANNELS_PAGE_VIEW_ID,
 } from './sessionSurfaceIds.js';
-import { CHANNELS_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { CHANNELS_UI_TRANSLATION_BUNDLES, CHANNELS_UI_TRANSLATION_RESOURCES } from './ui/translations.js';
+import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
+  SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
+import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, SESSION_PULL_REQUEST_RELATIONS_ACCOUNT_EXECUTION_V1,
+  readSessionPullRequestRelationsForInvocation } from './sessionPullRequestRelations.js';
+import { SESSION_PULL_REQUEST_NOTIFICATION_CATEGORY_ID } from './sessionPullRequestNotifications.js';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 import { CHANNEL_FILE_ATTACHMENT } from './channelAttachment.js';
 import { CHANNEL_FILE_ATTACHMENT_RUNTIME } from './channelAttachmentRuntime.js';
+import { INBOUND_CONVERSATION_NOTIFICATION_CATEGORY_ID } from './inboundConversationNotice.js';
 import {
   CHANNELS_PROVIDER_POINT_ID,
   PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
@@ -132,7 +135,6 @@ export { CHANNELS_PROVIDER_POINT_ID } from './targetedContributions.js';
 export const CHANNELS_PLUGIN_ID = 'happier.channels';
 export const CHANNELS_NATIVE_BUNDLE_ID = 'channels-app-native';
 export const CHANNELS_RENDERER_ID = 'channels-renderer';
-export const CHANNELS_SETTINGS_GROUP_ID = 'channels';
 
 /**
  * The Session-facing destinations. All three entry points — the Session-header
@@ -204,17 +206,18 @@ export const CHANNELS_UI = {
     },
     icon: 'conversations' as const,
   }, {
-    // The Channels destination: a rail entry (hideable through the ordinary
-    // destination preferences) whose page is the one owner of conversation
-    // bindings. Its location is the open binding id, and its column lists
-    // every linked conversation beside it.
+    // The Channels destination: the one owner of conversation bindings. It
+    // declares no placement, so it is contextual (owner Q2/Q3, 2026-10-30): no
+    // rail icon by default, opened from Settings → Channels, a Session's
+    // external conversations and the Home widget, and still pinnable. Its
+    // location is the open binding id, and its column lists every linked
+    // conversation beside it.
     id: CHANNELS_PAGE_VIEW_ID,
     container: 'appPage' as const,
     target: { kind: 'app' as const },
     renderer: CHANNELS_RENDERER_ID,
     title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
     icon: 'conversations' as const,
-    placement: { kind: 'rail' as const },
     column: { renderer: CHANNELS_GLANCE_RENDERER_ID },
   }, {
     // Channels is bundled, so a Home card shown by default would sit empty for
@@ -248,22 +251,17 @@ export const CHANNELS_UI = {
     artifact: CHANNELS_GLANCE_BUNDLE_ID,
     requiredHostMethods: ['openSurface' as const],
   }],
-  settingsGroups: [{
-    id: CHANNELS_SETTINGS_GROUP_ID,
-    title: { key: 'plugins.channels.title', fallback: 'Conversation Channels' },
-    icon: 'settings' as const,
-    defaultRank: 20,
-  }],
+  // Settings → Channels (owner Q2): one row in the host's Sessions & behavior group.
   settingsPages: [{
     id: CHANNELS_SETTINGS_PAGE_ID,
-    group: { kind: 'plugin' as const, localId: CHANNELS_SETTINGS_GROUP_ID },
-    title: { key: 'plugins.channels.settings.connections', fallback: 'Connections' },
+    group: { kind: 'host' as const, id: 'sessionsBehavior' as const },
+    title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
     subtitle: {
       key: 'plugins.channels.settings.connections.subtitle',
       fallback: 'Account policy for external conversation integrations.',
     },
     keywords: ['conversation', 'channels', 'connections'],
-    icon: 'settings' as const,
+    icon: 'conversations' as const,
     defaultRank: 20,
     renderer: CHANNELS_RENDERER_ID,
   }],
@@ -280,6 +278,7 @@ export const CHANNELS_UI = {
  * pairing manager serve every activation.
  */
 type ChannelsPluginActivationRuntime = Readonly<{
+  pairing: ReturnType<typeof createConversationPairingManagerForActivation>;
   pairingHandlers: ReturnType<typeof createConversationPairingManagementHandlers>;
   pairingResource: PluginDynamicResourceRuntime;
   ingestProviderObservation: ReturnType<typeof createConversationProviderObservationIngestHandler>;
@@ -312,6 +311,10 @@ function createChannelsPlugin() {
 
   async function createConversationPairingForInvocation(input: JsonValue, context: PluginInvocationContext) {
     return await requireActiveChannelsPluginRuntime().pairingHandlers.create(input, context);
+  }
+
+  async function readConversationPairingForInvocation(input: JsonValue, context: PluginInvocationContext) {
+    return await requireActiveChannelsPluginRuntime().pairingHandlers.read(input, context);
   }
 
   async function finalizeConversationPairingForInvocation(input: JsonValue, context: PluginInvocationContext) {
@@ -353,6 +356,7 @@ function createChannelsPlugin() {
     const ingressSupervisor = createIngressSupervisor({ pairing });
     const outwardDeliverySupervisor = createConversationOutwardDeliverySupervisor();
     const runtime: ChannelsPluginActivationRuntime = Object.freeze({
+      pairing,
       pairingHandlers: createConversationPairingManagementHandlers(pairing),
       pairingResource: createConversationPairingResourceRuntime(pairing),
       ingestProviderObservation: createConversationProviderObservationIngestHandler(pairing),
@@ -375,11 +379,18 @@ function createChannelsPlugin() {
     id: CHANNELS_PLUGIN_ID,
     version: '0.0.0',
     displayName: 'Conversation Channels',
-    description: 'Connects external conversations to Happier sessions and automations.',
+    description: 'Connects external conversations to Happier sessions and workflows.',
+    notifications: {
+      // `external-conversations` is the existing published Session-info section.
+      [INBOUND_CONVERSATION_NOTIFICATION_CATEGORY_ID]: { kind: 'activity', title: 'External conversations', eventIds: [] },
+      [SESSION_PULL_REQUEST_NOTIFICATION_CATEGORY_ID]: { kind: 'activity', title: 'Pull request updates', eventIds: [] },
+    },
     brand: { iconResourceId: 'brand-icon', monochrome: true },
-    engines: { happier: '^0.0.0' },
-    runtime: { apiVersion: 1 },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    activation: { events: [], configuration: { accountCollections: [
+      { pluginId: CHANNELS_PLUGIN_ID, collectionId: CHANNEL_STATE_COLLECTION_ID },
+      { pluginId: CHANNELS_PLUGIN_ID, collectionId: CHANNEL_DELIVERIES_COLLECTION_ID },
+    ] } },
     hostAccess: {
       required: [{
         id: 'account-storage',
@@ -411,6 +422,7 @@ function createChannelsPlugin() {
     },
     contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
     resources: {
+      ...CHANNELS_UI_TRANSLATION_RESOURCES,
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
       'connections-v1': {
         source: 'dynamic',
@@ -577,6 +589,15 @@ function createChannelsPlugin() {
         confirmation: { title: 'Start this conversation?', body: 'This sends to the configured audience and routes replies to the selected Session.', confirmLabel: 'Send' },
         hostAccess: ['account-storage', 'bound-session'], run: startConversationForInvocation,
       },
+      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingRead]: {
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingRead,
+        title: 'Read conversation pairing',
+        description: 'Reads the exact live challenge and authenticated proposal within the current Account.',
+        surfaces: ['cli', 'ui', 'agent', 'mcp'],
+        dangerLevel: 'safe',
+        hostAccess: ['account-storage'],
+        run: readConversationPairingForInvocation,
+      },
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingCreate,
         title: 'Create conversation pairing challenge',
@@ -584,6 +605,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Create conversation pairing challenge?',
           body: 'This creates a short-lived pairing challenge for the selected connection.',
@@ -595,13 +617,14 @@ function createChannelsPlugin() {
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingFinalize]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingFinalize,
         title: 'Finalize conversation pairing',
-        description: 'Saves an authenticated pairing proposal as a paused conversation binding.',
+        description: 'Saves an authenticated pairing proposal, enabling private DMs and leaving shared conversations paused.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Finalize conversation pairing?',
-          body: 'This saves the authenticated pairing proposal as a paused conversation binding.',
+          body: 'This enables a privately proved direct conversation. A shared conversation stays paused for review.',
           confirmLabel: 'Finalize pairing',
         },
         hostAccess: ['account-storage'],
@@ -614,6 +637,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['secondary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Cancel conversation pairing?',
           body: 'This cancels the selected unfinished pairing challenge or proposal.',
@@ -629,6 +653,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Create conversation connection?',
           body: 'This saves the connection and its current transport configuration to this Happier Account.',
@@ -636,6 +661,20 @@ function createChannelsPlugin() {
         },
         hostAccess: ['account-storage'],
         run: createConversationConnectionForInvocation,
+      },
+      [SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1]: {
+        title: 'Read session pull request relationships',
+        description: 'Reads retained pull request links from Account state without requiring a Machine.',
+        inputSchema: SessionPullRequestBindingInputV1Schema,
+        resultSchema: SessionPullRequestBindingResultV1Schema,
+        execution: SESSION_PULL_REQUEST_RELATIONS_ACCOUNT_EXECUTION_V1,
+        surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
+        dangerLevel: 'safe',
+        readOnly: { op: 'eq', path: 'kind', value: 'readRelations' },
+        sessionTarget: { field: 'sessionId', cardinality: 'one' },
+        hostAccess: ['account-storage'],
+        run: readSessionPullRequestRelationsForInvocation,
+        observeRead: observeSessionPullRequestBindingAction,
       },
       [SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1]: {
         title: 'Manage session pull request binding',
@@ -724,6 +763,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesRemote',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Resolve conversation provider setup?',
           body: 'This applies the selected provider’s remote setup repair using its selected account.',
@@ -754,6 +794,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Update conversation connection?',
           body: 'This saves the edited connection policy to this Happier Account.',
@@ -765,47 +806,33 @@ function createChannelsPlugin() {
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionDelete,
         title: 'Delete conversation connection',
-        description: 'Disables and removes a conversation connection after transport cleanup.',
+        description: 'Disables a conversation connection and cleans up its retained relations.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'destructive',
         confirmation: {
           title: 'Delete conversation connection?',
-          body: 'This disables the connection and waits for exact transport-stop proof before cleanup.',
+          body: 'This disables the connection and removes its retained conversations after cleanup.',
           confirmLabel: 'Delete connection',
         },
         hostAccess: ['account-storage'],
         run: deleteConversationConnectionForInvocation,
       },
-      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon]: {
-        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionAbandon,
-        title: 'Abandon pending conversation connection stop',
-        description: 'Accepts possible message loss so a pending connection stop can proceed.',
-        surfaces: ['cli', 'ui', 'agent', 'mcp'],
-        placementBindings: ['secondary'],
-        dangerLevel: 'writesLocal',
-        confirmation: {
-          title: 'Accept possible message loss?',
-          body: 'This permits the connection lifecycle to continue without claiming the old physical transport stopped.',
-          confirmLabel: 'Accept possible loss',
-        },
-        hostAccess: ['account-storage'],
-        run: abandonConversationConnectionForInvocation,
-      },
-      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept]: {
-        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.streamBaselineAccept,
-        title: 'Accept conversation history baseline',
-        description: 'Accepts the provider’s current replay baseline without replaying unavailable history.',
+      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamNoticeDismiss]: {
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.streamNoticeDismiss,
+        title: 'Dismiss conversation history notice',
+        description: 'Dismisses the history notice without changing the saved cursor or retained input.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
         confirmation: {
-          title: 'Accept a new conversation history baseline?',
-          body: 'This accepts the provider’s current replay baseline and resumes the saved connection without replaying unavailable history.',
-          confirmLabel: 'Accept baseline',
+          title: 'Dismiss the conversation history notice?',
+          body: 'This dismisses the notice. New messages already continue, and the saved cursor and retained input stay unchanged.',
+          confirmLabel: 'Dismiss notice',
         },
+        confirmationWhen: { presentUserUi: false },
         hostAccess: ['account-storage'],
-        run: acceptConversationStreamBaselineForInvocation,
+        run: dismissConversationStreamNoticeForInvocation,
       },
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPollRetry,
@@ -814,6 +841,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Retry this conversation poll?',
           body: 'This clears the saved failed poll state, including automatic backoff, so the current connection can retry it.',
@@ -847,6 +875,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Create conversation binding?',
           body: 'This saves the external conversation binding and its target policy to this Happier Account.',
@@ -862,6 +891,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Update conversation binding?',
           body: 'This saves the edited external conversation binding policy to this Happier Account.',
@@ -877,6 +907,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Change conversation binding enabled state?',
           body: 'This changes whether the binding may route eligible external messages to its saved target.',
@@ -900,20 +931,21 @@ function createChannelsPlugin() {
         hostAccess: ['account-storage'],
         run: deleteConversationBindingForInvocation,
       },
-      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionBaselineAccept]: {
-        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.sessionProjectionBaselineAccept,
-        title: 'Accept Session conversation transcript baseline',
-        description: 'Resumes one paused Session conversation from the current transcript tail.',
+      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionNoticeDismiss]: {
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.sessionProjectionNoticeDismiss,
+        title: 'Dismiss Session conversation history notice',
+        description: 'Dismisses the transcript history notice without changing the current cursor or delivery progress.',
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
         confirmation: {
-          title: 'Continue without unavailable transcript history?',
-          body: 'This resumes the conversation from the Session’s current transcript tail without replaying unavailable history.',
-          confirmLabel: 'Accept baseline',
+          title: 'Dismiss the transcript history notice?',
+          body: 'New messages already continue. This dismisses the notice without changing the current cursor or delivery progress.',
+          confirmLabel: 'Dismiss notice',
         },
+        confirmationWhen: { presentUserUi: false },
         hostAccess: ['account-storage'],
-        run: acceptConversationSessionProjectionBaselineForInvocation,
+        run: dismissConversationSessionProjectionNoticeForInvocation,
       },
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.ingressRetry,
@@ -922,6 +954,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Retry this blocked conversation input?',
           body: 'This re-enables the same frozen admission request for bounded retry.',
@@ -937,6 +970,7 @@ function createChannelsPlugin() {
         surfaces: ['cli', 'ui', 'agent', 'mcp'],
         placementBindings: ['primary'],
         dangerLevel: 'writesLocal',
+        confirmationWhen: { presentUserUi: false },
         confirmation: {
           title: 'Record this delivery decision?',
           body: 'This records whether you accept or discard the current delivery outcome. It does not resend the message.',
@@ -966,7 +1000,7 @@ function createChannelsPlugin() {
         description: 'Lists the current provider connections available to the Channels runtime.',
         surfaces: ['plugin'],
         hostAccess: ['account-storage'],
-        run: listConversationProviderConnectionsForInvocation,
+        run: (input, context) => listConversationProviderConnectionsForInvocation(input, context, requireActiveChannelsPluginRuntime().pairing),
       },
       [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead]: {
         inputSchema: ConversationProviderConnectionReadInputV1Schema,
@@ -975,7 +1009,7 @@ function createChannelsPlugin() {
         description: 'Reads one current provider connection for the Channels runtime.',
         surfaces: ['plugin'],
         hostAccess: ['account-storage'],
-        run: readConversationProviderConnectionForInvocation,
+        run: (input, context) => readConversationProviderConnectionForInvocation(input, context, requireActiveChannelsPluginRuntime().pairing),
       },
       [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.permissionMediationSourceCurrentness]: {
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.permissionMediationSourceCurrentness,
@@ -995,8 +1029,8 @@ function createChannelsPlugin() {
       },
       [CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.automationResultDeliver]: {
         ...CONVERSATION_CORE_PROVIDER_ACTION_DECLARATIONS_V1.automationResultDeliver,
-        title: 'Accept Automation result delivery custody',
-        description: 'Accepts custody of one Automation result for conversation delivery.',
+        title: 'Accept Workflow result delivery custody',
+        description: 'Accepts custody of one Workflow result for conversation delivery.',
         surfaces: ['plugin'],
         dangerLevel: 'writesLocal',
         hostAccess: ['account-storage'],

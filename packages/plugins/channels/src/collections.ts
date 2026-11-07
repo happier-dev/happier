@@ -1,7 +1,7 @@
-import { SessionPullRequestConfiguredFixInputV1Schema } from '@happier-dev/channels-protocol/v1';
-import { SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { embedProtocolJsonSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { SessionPullRequestConfiguredFixCustodySchema } from './configuredFixResultV19.js';
+export { SessionPullRequestConfiguredFixCustodySchema } from './configuredFixResultV19.js';
 import { ConversationConnectionTransportOriginV1JsonSchema, ConversationPendingEndpointRetargetIntentV1JsonSchema } from './connectionLifecycle.js';
 import {
   defineAccountCollection,
@@ -13,7 +13,7 @@ import {
   PluginIdJsonSchema,
 } from '@happier-dev/plugin-sdk/manifest';
 import { PluginWebhookEndpointIdV1JsonSchema } from '@happier-dev/plugin-sdk/webhooks';
-import { AutomationResultDeliverySourceV1JsonSchema } from '@happier-dev/plugin-sdk/automations';
+import { AutomationConversationEventActorsV1Schema, AutomationResultDeliverySourceV1JsonSchema } from '@happier-dev/plugin-sdk/automations';
 import {
   CONVERSATION_BINDING_INPUT_MODES_V1,
   CONVERSATION_CONNECTION_HISTORY_GAP_REASONS_V1,
@@ -22,7 +22,9 @@ import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1,
   CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1,
-  CONVERSATION_DELIVERY_MENTION_POLICIES_V1,
+  CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1,
+  CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1,
+
   CONVERSATION_TRANSPORT_KINDS_V1,
   ConversationBindingIdV1Schema,
   ConversationDeliveryContentV1JsonSchema,
@@ -38,6 +40,8 @@ import {
   ConversationResolvedEndpointV1JsonSchema,
   ConversationBindingTargetV1JsonSchema,
   ConversationScopedPullRequestTriggerV1Schema,
+  SessionPullRequestUpdateV1Schema,
+  SessionPullRequestUpdateContinuationV1Schema,
   ConversationAuthenticatedObservationShellV1JsonSchema,
   ConversationIngressAutomationEventCandidateV1JsonSchema,
   ConversationNormalizedIngressV1JsonSchema,
@@ -334,7 +338,7 @@ function pendingOldTransportStopSchema(input: Readonly<{
       endpointRetarget: input.endpointRetarget,
       overlapSafety: {
         type: 'string',
-        enum: ['safe', 'providerExclusive', 'destructive'],
+        enum: ['safe', 'providerExclusive'],
       },
       acceptedPossibleLoss: input.acceptedPossibleLoss,
     },
@@ -538,7 +542,7 @@ const CONNECTION_PAYLOAD_SCHEMA = {
     credentialRef: nullable(QualifiedConnectedAccountRefJsonSchema),
     transportOrigin: CONNECTION_TRANSPORT_ORIGIN_SCHEMA,
     transport: CONNECTION_TRANSPORT_SCHEMA,
-    overlapSafety: { type: 'string', enum: ['safe', 'providerExclusive', 'destructive'] },
+    overlapSafety: { type: 'string', enum: ['safe', 'providerExclusive'] },
     replayContinuity: { type: 'string', enum: ['checkpointed', 'sessionBound', 'none'] },
     // Provider setup validates the exact unit and bounded template before this
     // private connection snapshot is written. These facts are re-read by the
@@ -764,9 +768,8 @@ const FROZEN_SESSION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
         },
       ],
     },
-    // `/answer` freezes only the admitted indexed transport tuple. The
-    // canonical Session Action remains the owner of live-question membership,
-    // choice labels, requiredness, and answer semantics.
+    // Retained `/answer` targets remain readable. Fresh associations keep
+    // only userActionAnswerRequestId; the occurrence owns pending values.
     userActionAnswer: {
       oneOf: [
         { type: 'null' },
@@ -798,9 +801,9 @@ const FROZEN_SESSION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
       ],
     },
     // Old obligations predate `/new`; absence deliberately means no frozen
-    // rotation request. New obligations freeze the binding-owned recipe and
-    // prompt before any Session effect so a later edit cannot redirect a
-    // replay. The recipe remains Session-authoring-owned JSON.
+    // rotation request. New obligations retain the binding-owned recipe;
+    // the original occurrence supplies its prompt without another policy
+    // decision. Historical full targets remain readable.
     newSession: {
       oneOf: [
         { type: 'null' },
@@ -910,6 +913,13 @@ const FROZEN_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
     FROZEN_SESSION_INGRESS_TARGET_SCHEMA,
     FROZEN_AUTOMATION_INGRESS_TARGET_SCHEMA,
     FROZEN_EVENT_INGRESS_TARGET_SCHEMA,
+    {
+      type: 'object',
+      properties: { kind: { type: 'string', const: 'discussion' },
+        discussionId: boundedString(MAX_PLUGIN_ID_LENGTH), localId: boundedString(MAX_PLUGIN_ID_LENGTH),
+        providerPluginId: PluginIdJsonSchema },
+      required: ['kind', 'discussionId', 'localId', 'providerPluginId'], additionalProperties: false,
+    },
   ],
 };
 
@@ -919,7 +929,6 @@ const INGRESS_TERMINAL_DISPOSITION_SCHEMA = {
     'admitted',
     'rejected',
     'suppressed',
-    'pairingConsumed',
     'approvalConsumed',
     'userActionConsumed',
     'rotationBusy',
@@ -950,6 +959,13 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
       items: OCCURRENCE_ID_SCHEMA,
     },
     censusId: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+    prUpdate: SessionPullRequestUpdateV1Schema.jsonSchema,
+    prSplitContinuation: SessionPullRequestUpdateContinuationV1Schema.jsonSchema,
+    prBatchMemberIds: { type: 'array', items: OPAQUE_ROUTING_ROW_ID_SCHEMA, uniqueItems: true },
+    prBatchLeaderId: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+    prRoundPrepared: { const: true },
+    prSequenceEndObserved: { const: true },
+    prFixExhausted: { const: true },
     sessionInput: {
       type: 'object',
       properties: {
@@ -970,12 +986,12 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
         bindingRevision: nullable(COLLECTION_ROW_REVISION_SCHEMA),
         bindingAuthorityEpoch: nullable(POSITIVE_SAFE_INTEGER_SCHEMA),
       },
-      required: ['connectionAuthorityEpoch', 'bindingRevision', 'bindingAuthorityEpoch'],
+      required: ['connectionAuthorityEpoch'],
       additionalProperties: false,
     },
     lifecycle: {
       oneOf: [
-        ...(['debounceDue', 'ready', 'attempting', 'retryDue', 'blocked', 'terminal'] as const)
+        ...(['batchCollecting', 'debounceDue', 'ready', 'attempting', 'retryDue', 'blocked', 'terminal'] as const)
           .map((phase) => ({
             type: 'object' as const,
             properties: {
@@ -1017,7 +1033,7 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
         properties: {
           lifecycle: {
             type: 'object',
-            properties: { phase: { type: 'string', enum: ['debounceDue', 'ready', 'attempting', 'retryDue', 'blocked'] } },
+            properties: { phase: { type: 'string', enum: ['batchCollecting', 'debounceDue', 'ready', 'attempting', 'retryDue', 'blocked'] } },
             required: ['phase'],
           },
           disposition: NULL_SCHEMA,
@@ -1053,7 +1069,7 @@ const INGRESS_CENSUS_MATCHED_BINDING_SCHEMA = {
     bindingRevision: COLLECTION_ROW_REVISION_SCHEMA,
     bindingAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
   },
-  required: ['bindingId', 'bindingRevision', 'bindingAuthorityEpoch'],
+  required: ['bindingId'],
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 
@@ -1066,28 +1082,21 @@ const INGRESS_CENSUS_NORMALIZED_INGRESS_SCHEMA = ConversationNormalizedIngressV1
 
 /**
  * The body-free replay identity a settled census keeps: the authenticated
- * envelope the protocol already publishes without a body, plus one full
- * base64url HMAC-SHA256 digest of the replay-relevant admission.
- *
- * `replayDigest` is the sole digest domain and covers the canonical
- * `{text, eventCandidate}` pair together, so a redelivered occurrence whose
- * provider Event candidate changed conflicts instead of silently rejoining.
+ * envelope the protocol already publishes without a body. Retired digest
+ * fields remain readable without rewriting retained records.
  */
 const INGRESS_CENSUS_COMPACTED_SCHEMA = {
   type: 'object',
   properties: {
     shell: ConversationAuthenticatedObservationShellV1JsonSchema,
     replayDigest: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
-    // The field name is retained from the existing private shape. It now names
-    // every terminal member kept for the separate physical-forgetting step;
-    // predecessor rows contain only attention ids because their other members
-    // were already retired before compaction.
+    // Historical member bookkeeping remains readable, never newly produced.
     retainedAttentionObligationRowIds: {
       type: 'array',
       items: OPAQUE_ROUTING_ROW_ID_SCHEMA,
     },
   },
-  required: ['shell', 'replayDigest', 'retainedAttentionObligationRowIds'],
+  required: ['shell', 'retainedAttentionObligationRowIds'],
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 
@@ -1106,12 +1115,12 @@ const INGRESS_CENSUS_CONFLICT_FACT_SCHEMA = {
  * content/attribution nor a completion state; per-binding obligations retain
  * all dispatch and checkpoint authority.
  */
-const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
+const RETAINED_INGRESS_CENSUS_PAYLOAD_SCHEMA = {
   type: 'object',
   properties: {
     // Exactly one of the two carries the occurrence. The full ingress is
-    // retained while any obligation can still consume its body; a settled unit
-    // keeps only the body-free replay identity for the rest of its window.
+    // retained while any destination still needs its body; native handoff
+    // leaves only the body-free replay identity.
     normalizedIngress: nullable(INGRESS_CENSUS_NORMALIZED_INGRESS_SCHEMA),
     compacted: nullable(INGRESS_CENSUS_COMPACTED_SCHEMA),
     phase: { type: 'string', enum: ['preparing', 'prepared'] },
@@ -1121,8 +1130,7 @@ const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
       minimum: MIN_CONVERSATION_OBSERVATION_AGE_MS,
       maximum: MAX_CONVERSATION_OBSERVATION_AGE_MS,
     },
-    // Existing retained censuses predate checkpoint coverage. Omission remains
-    // readable as uncovered; new census rows write an explicit null.
+    // Historical checkpoint coverage is readable but no longer produced.
     checkpointCoveredAt: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
     conflict: nullable(INGRESS_CENSUS_CONFLICT_FACT_SCHEMA),
     // Existing retained censuses predate Event candidates. Omission reads as
@@ -1148,6 +1156,20 @@ const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 
+// Retained closed payloads remain readable without rewriting their rows. New
+// pending content has no all-destination preparation state.
+const { phase: _retainedPreparationPhase, ...INGRESS_OCCURRENCE_PROPERTIES } = RETAINED_INGRESS_CENSUS_PAYLOAD_SCHEMA.properties;
+const INGRESS_CENSUS_PAYLOAD_SCHEMA = {
+  oneOf: [RETAINED_INGRESS_CENSUS_PAYLOAD_SCHEMA, {
+    ...RETAINED_INGRESS_CENSUS_PAYLOAD_SCHEMA,
+    properties: {
+      ...INGRESS_OCCURRENCE_PROPERTIES,
+      compacted: nullable({ ...INGRESS_CENSUS_COMPACTED_SCHEMA, required: ['shell'] }),
+    },
+    required: ['normalizedIngress', 'compacted', 'conflict', 'matchedBindings'],
+  }],
+} satisfies PluginJsonSchema;
+
 const CHECKPOINT_PAYLOAD_SCHEMA = {
   type: 'object',
   properties: {
@@ -1157,11 +1179,13 @@ const CHECKPOINT_PAYLOAD_SCHEMA = {
     revision: POSITIVE_SAFE_INTEGER_SCHEMA,
     nextPollNotBeforeMs: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
   },
-  required: ['authorityEpoch', 'opaqueToken', 'lastOccurrenceId', 'revision', 'nextPollNotBeforeMs'],
+  // Retained counters remain accepted; current writers use the Collection CAS
+  // revision and provider token rather than a second checkpoint counter.
+  required: ['authorityEpoch', 'opaqueToken', 'nextPollNotBeforeMs'],
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 
-const PROJECTION_FRONTIER_PAYLOAD_SCHEMA = {
+const SESSION_PROJECTION_FRONTIER_PAYLOAD_SCHEMA = {
   type: 'object',
   properties: {
     targetSessionId: boundedString(MAX_PLUGIN_ID_LENGTH),
@@ -1172,6 +1196,14 @@ const PROJECTION_FRONTIER_PAYLOAD_SCHEMA = {
   required: ['targetSessionId', 'transcriptCursor', 'lastScannedSeq', 'revision'],
   additionalProperties: false,
 } satisfies PluginJsonSchema;
+
+const PROJECTION_FRONTIER_PAYLOAD_SCHEMA: PluginJsonSchema = { oneOf: [
+  SESSION_PROJECTION_FRONTIER_PAYLOAD_SCHEMA,
+  { type: 'object', properties: {
+    targetDiscussionId: boundedString(MAX_PLUGIN_ID_LENGTH),
+    lastScannedSeq: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
+  }, required: ['targetDiscussionId', 'lastScannedSeq'], additionalProperties: false },
+] };
 
 const SESSION_ROTATION_PAYLOAD_SCHEMA = {
   type: 'object',
@@ -1199,8 +1231,29 @@ const SESSION_ROTATION_PAYLOAD_SCHEMA = {
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 
-const INGRESS_OBLIGATION_ROW_CONSISTENCY_SCHEMA = {
+const INGRESS_OBLIGATION_ROW_CONSISTENCY_SCHEMA: PluginJsonSchema = {
   oneOf: [
+    {
+      properties: {
+        [CHANNEL_STATE_FIELD.terminal]: BOOLEAN_SCHEMA,
+        [CHANNEL_STATE_FIELD.attention]: { const: false },
+        payload: { type: 'object', properties: { kind: { const: 'configuredFix' } }, required: ['kind'] },
+      },
+      required: [CHANNEL_STATE_FIELD.terminal, CHANNEL_STATE_FIELD.attention, CHANNEL_STATE_FIELD.bindingId,
+        CHANNEL_STATE_FIELD.sessionId, 'payload'],
+    },
+    {
+      properties: {
+        [CHANNEL_STATE_FIELD.terminal]: { type: 'boolean', const: false },
+        [CHANNEL_STATE_FIELD.attention]: { type: 'boolean', const: false },
+        [CHANNEL_STATE_FIELD.dueAt]: NULL_SCHEMA,
+        payload: { type: 'object', properties: {
+          lifecycle: { type: 'object', properties: { phase: { type: 'string', const: 'batchCollecting' } }, required: ['phase'] },
+          disposition: NULL_SCHEMA, nonAdmission: NULL_SCHEMA,
+        }, required: ['lifecycle', 'disposition', 'nonAdmission'] },
+      },
+      required: [CHANNEL_STATE_FIELD.terminal, CHANNEL_STATE_FIELD.attention, 'payload'],
+    },
     {
       properties: {
         [CHANNEL_STATE_FIELD.terminal]: { type: 'boolean', const: false },
@@ -1268,9 +1321,8 @@ const INGRESS_OBLIGATION_ROW_CONSISTENCY_SCHEMA = {
 } satisfies PluginJsonSchema;
 
 /**
- * A census is its own conflict authority. The strict pair means ordinary
- * census rows are false/null and the one monotonic mismatch fact is true/fact;
- * neither preparing nor prepared state can carry an ambiguous projection.
+ * Retained mismatch rows keep their historical strict projection. Current
+ * occurrence writes use the ordinary false/null arm and carry no conflict proof.
  */
 const INGRESS_CENSUS_ROW_CONSISTENCY_SCHEMA = {
   oneOf: [
@@ -1313,6 +1365,26 @@ const NON_INGRESS_ATTENTION_ROW_CONSISTENCY_SCHEMA = {
   },
 } satisfies PluginJsonSchema;
 
+/** Finalizing configuration is immediately eligible through the existing due-work index. */
+const DELETE_FINALIZATION_ROW_CONSISTENCY_SCHEMA = {
+  properties: { [CHANNEL_STATE_FIELD.attention]: NULL_SCHEMA },
+  oneOf: [
+    {
+      properties: {
+        [CHANNEL_STATE_FIELD.dueAt]: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
+        payload: { properties: { deletionState: { const: 'finalizingDelete' } } },
+      },
+      required: [CHANNEL_STATE_FIELD.dueAt],
+    },
+    {
+      properties: {
+        [CHANNEL_STATE_FIELD.dueAt]: NULL_SCHEMA,
+        payload: { properties: { deletionState: { enum: ['none', 'pendingStopReconciliation'] } } },
+      },
+    },
+  ],
+} satisfies PluginJsonSchema;
+
 type StateRecordDefinition = Readonly<{
   kind: (typeof CHANNEL_STATE_RECORD_KINDS)[number];
   payload: PluginJsonSchema;
@@ -1334,7 +1406,7 @@ export function isCanonicalChannelStateRecordIdentity(input: Readonly<{
   bindingId?: string;
   commandOccurrenceId?: string;
   creationKey?: string;
-  ingressTargetKind?: 'session' | 'automation' | 'event';
+  ingressTargetKind?: 'session' | 'automation' | 'event' | 'discussion';
   sessionIdempotencyKey?: string;
 }>): boolean {
   if (input.recordKind === CHANNEL_STATE_RECORD_KIND.connection) {
@@ -1360,16 +1432,10 @@ export function isCanonicalChannelStateRecordIdentity(input: Readonly<{
     if (input.ingressTargetKind === 'session') {
       return input.sessionIdempotencyKey === `channels:input:v1:${input.rowId}`;
     }
-    return input.ingressTargetKind === 'automation' || input.ingressTargetKind === 'event';
+    return input.ingressTargetKind === 'automation' || input.ingressTargetKind === 'event' || input.ingressTargetKind === 'discussion';
   }
   return true;
 }
-
-/** Configured input shares obligation custody without fabricating provider events or a census. */
-export const SessionPullRequestConfiguredFixCustodySchema = defineProtocolObject({
-  kind: defineProtocolLiteral('configuredFix'), request: SessionPullRequestConfiguredFixInputV1Schema,
-  result: SessionMessageSendResultV1ProtocolSchema.optional(),
-}, { policy: 'closed' });
 
 const STATE_RECORDS: readonly StateRecordDefinition[] = [
   {
@@ -1377,7 +1443,7 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
     payload: CONNECTION_PAYLOAD_SCHEMA,
     rowIdSchema: CONNECTION_ID_SCHEMA,
     requiredProjectionFields: [CHANNEL_STATE_FIELD.connectionId],
-    rowConsistency: NON_INGRESS_ATTENTION_ROW_CONSISTENCY_SCHEMA,
+    rowConsistency: DELETE_FINALIZATION_ROW_CONSISTENCY_SCHEMA,
   },
   {
     kind: CHANNEL_STATE_RECORD_KIND.binding,
@@ -1387,7 +1453,7 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
       CHANNEL_STATE_FIELD.connectionId,
       CHANNEL_STATE_FIELD.bindingId,
     ],
-    rowConsistency: NON_INGRESS_ATTENTION_ROW_CONSISTENCY_SCHEMA,
+    rowConsistency: DELETE_FINALIZATION_ROW_CONSISTENCY_SCHEMA,
   },
   {
     kind: CHANNEL_STATE_RECORD_KIND.connectionIdentityKey,
@@ -1497,11 +1563,27 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
         rowIdSchema,
         requiredProjectionFields,
         rowConsistency,
-      }) => ({
+      }, index) => ({
         properties: {
           [CHANNEL_STATE_FIELD.id]: rowIdSchema,
           [CHANNEL_STATE_FIELD.recordKind]: { type: 'string', const: kind },
-          payload,
+          payload: kind === CHANNEL_STATE_RECORD_KIND.ingressObligation ? { oneOf: [payload,
+            embedProtocolJsonSchema(SessionPullRequestConfiguredFixCustodySchema.jsonSchema,
+              ['allOf', 0, 'oneOf', index, 'properties', 'payload', 'oneOf', 1]),
+            // Keep both retained strict arms byte-identical. Presence of the
+            // actual native input evidence distinguishes this additive arm.
+            { ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA,
+              properties: { ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.properties,
+                prEventActors: AutomationConversationEventActorsV1Schema.jsonSchema },
+              required: [...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.required, 'prEventActors'],
+            },
+            // Native request identity, not another answer-content owner. The
+            // retained closed payloads cannot accept this required property.
+            { ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA,
+              properties: { ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.properties,
+                userActionAnswerRequestId: boundedString(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES) },
+              required: [...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.required, 'userActionAnswerRequestId'],
+            }] } : payload,
         },
         required: [
           CHANNEL_STATE_FIELD.id,
@@ -1645,43 +1727,35 @@ const DELIVERY_SOURCE_SCHEMA: PluginJsonSchema = {
       required: ['kind', 'controlId', 'controlKind'],
       additionalProperties: false,
     },
+    {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', const: 'discussionProjection' },
+        discussionId: boundedString(MAX_PLUGIN_ID_LENGTH),
+        semanticItemId: boundedString(MAX_PLUGIN_ID_LENGTH),
+      },
+      required: ['kind', 'discussionId', 'semanticItemId'],
+      additionalProperties: false,
+    },
   ],
 };
 
 /**
- * The one strict persisted route-authority union. The owning runtime correlates
- * its exact arm with the existing optional `binding-id`: connection-only rows
- * carry only their connection epoch; binding rows add binding revision/epoch.
+ * Retained stamps stay readable without a data rewrite. Current Session
+ * projection rows keep the binding epoch for redrive eligibility; other
+ * dispatch policy is decided from current owner records, not these fields.
  */
 const DELIVERY_ROUTE_AUTHORITY_SCHEMA: PluginJsonSchema = {
-  oneOf: [
-    {
-      type: 'object',
-      properties: {
-        connectionAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
-      },
-      required: ['connectionAuthorityEpoch'],
-      additionalProperties: false,
-    },
-    {
-      type: 'object',
-      properties: {
-        connectionAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
-        bindingRevision: COLLECTION_ROW_REVISION_SCHEMA,
-        bindingAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
-      },
-      required: [
-        'connectionAuthorityEpoch',
-        'bindingRevision',
-        'bindingAuthorityEpoch',
-      ],
-      additionalProperties: false,
-    },
-  ],
+  type: 'object',
+  properties: {
+    connectionAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
+    bindingRevision: COLLECTION_ROW_REVISION_SCHEMA,
+    bindingAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
+  },
+  additionalProperties: false,
 };
 
 const DELIVERY_ATTEMPT_ID_SCHEMA = nullable(boundedString(MAX_PLUGIN_ID_LENGTH));
-const DELIVERY_STARTED_AT_SCHEMA = nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA);
 const DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA: PluginJsonSchema = {
   type: 'array',
   items: boundedString(MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES),
@@ -1719,128 +1793,165 @@ function deliveryCustodyStateSchema(
 function deliveryPayloadStateSchema(input: Readonly<{
   state: ConversationDeliveryCustodyStateSelection;
   attemptId: PluginJsonSchema;
-  startedAt: PluginJsonSchema;
+
   providerMessageIds: PluginJsonSchema;
   failedChunk: PluginJsonSchema;
   archiveRecovery: PluginJsonSchema;
+  reason?: PluginJsonSchema;
+  outcome?: PluginJsonSchema;
 }>): PluginJsonSchema {
   return {
     type: 'object',
     properties: {
       state: deliveryCustodyStateSchema(input.state),
       attemptId: input.attemptId,
-      startedAt: input.startedAt,
+
       providerMessageIds: input.providerMessageIds,
       failedChunk: input.failedChunk,
       archiveRecovery: input.archiveRecovery,
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+      ...(input.outcome === undefined ? {} : { outcome: input.outcome }),
     },
     required: [
       'state',
       'attemptId',
-      'startedAt',
+
       'providerMessageIds',
       'failedChunk',
       'archiveRecovery',
+      ...(input.reason === undefined ? [] : ['reason']),
+      ...(input.outcome === undefined ? [] : ['outcome']),
     ],
   };
 }
 
-const DELIVERY_PAYLOAD_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
-  oneOf: [
-    deliveryPayloadStateSchema({
+/** One strict stored-state table supplies payload and row schema projections. */
+const DELIVERY_CUSTODY_STATE_SCHEMAS = [
+    { state: 'notSent', terminal: true, attention: true, attemptId: NULL_SCHEMA,
+      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA, failedChunk: NULL_SCHEMA,
+      archiveRecovery: NULL_SCHEMA, reason: { type: 'string', enum: ['providerRefused', 'ownerMustUnarchiveOrRebind'] } },
+    { state: 'notSent', terminal: true, attention: false, attemptId: NULL_SCHEMA,
+      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA, failedChunk: NULL_SCHEMA,
+      archiveRecovery: NULL_SCHEMA, reason: { type: 'string', enum: ['policySuppressed', 'connectionDeleted'] } },
+    { state: 'resolved', terminal: true, attention: false, attemptId: NULL_SCHEMA,
+      providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA, failedChunk: DELIVERY_FAILED_CHUNK_SCHEMA,
+      archiveRecovery: NULL_SCHEMA, outcome: { type: 'string', enum: [...CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1] } },
+    {
       state: 'ready',
+      terminal: false,
+      attention: false,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: 'retryDue',
+      terminal: false,
+      // Retained rows may carry either value; current retries need no owner attention.
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+      hasRetryNotBefore: true,
+    },
+    {
       state: 'attempting',
+      terminal: false,
+      attention: false,
       attemptId: boundedString(MAX_PLUGIN_ID_LENGTH),
-      startedAt: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
+
       providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: 'delivered',
+      terminal: true,
+      attention: false,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: 'notDelivered',
+      terminal: true,
+      attention: true,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: DELIVERY_ARCHIVE_RECOVERY_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
-      // A currentness/policy suppression is a known no-effect terminal result,
-      // so it neither invents provider evidence nor creates owner attention.
+    },
+    {
       state: 'suppressed',
+      terminal: true,
+      attention: false,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: 'partial',
+      terminal: true,
+      attention: true,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: DELIVERY_CHUNK_INDEX_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: 'outcomeUnknown',
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+      terminal: true,
+      attention: true,
+      attemptId: DELIVERY_ATTEMPT_ID_SCHEMA,
+
       providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: ['resolvedAccepted', 'resolvedDiscarded'],
+      terminal: true,
+      attention: false,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: DELIVERY_FAILED_CHUNK_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryPayloadStateSchema({
+    },
+    {
       state: 'connectionDeleted',
+      terminal: true,
+      attention: false,
       attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
+
       providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
       failedChunk: NULL_SCHEMA,
       archiveRecovery: NULL_SCHEMA,
-    }),
-  ],
+    },
+] as const satisfies readonly Parameters<typeof deliveryRowStateSchema>[0][];
+
+const DELIVERY_PAYLOAD_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
+  // Attention splits the row's notSent cases, not the retained payload grammar.
+  oneOf: DELIVERY_CUSTODY_STATE_SCHEMAS
+    .filter((entry, index) => entry.state !== 'notSent' || index === 0)
+    .map(entry => deliveryPayloadStateSchema(entry.state === 'notSent'
+      ? { ...entry, reason: { type: 'string', enum: [...CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1] } }
+      : entry)),
 };
 
 /**
- * Full delivery bytes may disappear only where the canonical
- * {@link isConversationDeliveryContentFree} predicate says the body is no
- * longer required: a content-free state that no owner-led archive retry can
- * still consume. The opaque HMAC proof lets a later source replay rejoin the
- * same structural custody row without restoring or exposing message content.
- * The body-free arm's `archiveRecovery` constraint is the schema-image of that
- * predicate's archive-retry exception, so schema admission and runtime
- * compaction share one body-required/body-free decision.
+ * Terminal states retain source identity and effect evidence without content.
+ * Historical fingerprints and archive fields stay readable, but do not
+ * authorize another provider submission or restore a delivery body.
  */
 const DELIVERY_PAYLOAD_CONTENT_RETENTION_SCHEMA: PluginJsonSchema = {
   oneOf: [
@@ -1854,19 +1965,11 @@ const DELIVERY_PAYLOAD_CONTENT_RETENTION_SCHEMA: PluginJsonSchema = {
     {
       properties: {
         content: NULL_SCHEMA,
-        contentFingerprint: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+        contentFingerprint: nullable(OPAQUE_ROUTING_ROW_ID_SCHEMA),
         state: { type: 'string', enum: [...CONVERSATION_DELIVERY_CONTENT_FREE_STATES] },
-        // Everything except the one recovery arm an owner can still unarchive
-        // and resend; non-`notDelivered` states always carry null here. The
-        // literal is tied to the protocol vocabulary rather than a positional
-        // index, so reordering that const cannot silently flip this
-        // schema-image of the canonical content-free predicate.
-        archiveRecovery: nullable({
-          type: 'string',
-          const: 'ownerMustUnarchiveOrRebind' satisfies (typeof CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1)[number],
-        }),
+        archiveRecovery: DELIVERY_ARCHIVE_RECOVERY_SCHEMA,
       },
-      required: ['content', 'contentFingerprint', 'state', 'archiveRecovery'],
+      required: ['content', 'state', 'archiveRecovery'],
     },
   ],
 };
@@ -1882,6 +1985,11 @@ const DELIVERY_PAYLOAD_SCHEMA: PluginJsonSchema = {
     deliveryEndpoint: RESOLVED_ENDPOINT_SCHEMA,
     threadBindingPending: BOOLEAN_SCHEMA,
     contentFingerprint: nullable(OPAQUE_ROUTING_ROW_ID_SCHEMA),
+    // Retained pre-simplification records stay readable without a data rewrite.
+    mentionPolicy: { type: 'string', const: 'suppress' },
+    startedAt: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
+    reason: { type: 'string', enum: [...CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1] },
+    outcome: { type: 'string', enum: [...CONVERSATION_DELIVERY_RESOLVED_OUTCOMES_V1] },
     deliveryKey: boundedString(MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES),
     replyContext: nullable({
       type: 'object',
@@ -1895,7 +2003,7 @@ const DELIVERY_PAYLOAD_SCHEMA: PluginJsonSchema = {
         { required: ['threadId'] },
       ],
     }),
-    mentionPolicy: { type: 'string', enum: [...CONVERSATION_DELIVERY_MENTION_POLICIES_V1] },
+
     linkPreviewPolicy: { type: 'string', enum: [...CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1] },
     state: {
       type: 'string',
@@ -1907,7 +2015,7 @@ const DELIVERY_PAYLOAD_SCHEMA: PluginJsonSchema = {
       maximum: Number.MAX_SAFE_INTEGER,
     },
     attemptId: DELIVERY_ATTEMPT_ID_SCHEMA,
-    startedAt: DELIVERY_STARTED_AT_SCHEMA,
+
     providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
     failedChunk: DELIVERY_FAILED_CHUNK_SCHEMA,
     archiveRecovery: DELIVERY_ARCHIVE_RECOVERY_SCHEMA,
@@ -1919,12 +2027,12 @@ const DELIVERY_PAYLOAD_SCHEMA: PluginJsonSchema = {
     'content',
     'deliveryKey',
     'replyContext',
-    'mentionPolicy',
+
     'linkPreviewPolicy',
     'state',
     'attemptCount',
     'attemptId',
-    'startedAt',
+
     'providerMessageIds',
     'failedChunk',
     'archiveRecovery',
@@ -1965,10 +2073,12 @@ function deliveryRowStateSchema(input: Readonly<{
   terminal: boolean;
   attention?: boolean;
   attemptId: PluginJsonSchema;
-  startedAt: PluginJsonSchema;
+
   providerMessageIds: PluginJsonSchema;
   failedChunk: PluginJsonSchema;
   archiveRecovery: PluginJsonSchema;
+  reason?: PluginJsonSchema;
+  outcome?: PluginJsonSchema;
   hasRetryNotBefore?: boolean;
 }>): PluginJsonSchema {
   return {
@@ -1978,14 +2088,14 @@ function deliveryRowStateSchema(input: Readonly<{
       ...(input.hasRetryNotBefore === true
         ? { [CHANNEL_DELIVERIES_FIELD.retryNotBefore]: NON_NEGATIVE_SAFE_INTEGER_SCHEMA }
         : {}),
-      [CHANNEL_DELIVERIES_FIELD.terminal]: input.state === 'delivered' || input.state === 'resolvedAccepted'
+      [CHANNEL_DELIVERIES_FIELD.terminal]: input.terminal && (input.state === 'delivered' || input.state === 'resolvedAccepted' || input.state === 'resolved')
         ? BOOLEAN_SCHEMA : { type: 'boolean', const: input.terminal },
       [CHANNEL_DELIVERIES_FIELD.attention]: input.attention === undefined
         ? BOOLEAN_SCHEMA
         : { type: 'boolean', const: input.attention },
       payload: deliveryPayloadStateSchema(input),
     },
-    ...(input.state === 'delivered' || input.state === 'resolvedAccepted' ? {
+    ...(input.state === 'delivered' || input.state === 'resolvedAccepted' || input.state === 'resolved' ? {
       oneOf: [
         { properties: { terminal: { const: false }, payload: {
           properties: { threadBindingPending: { const: true } }, required: ['threadBindingPending'],
@@ -2005,106 +2115,13 @@ function deliveryRowStateSchema(input: Readonly<{
 
 const DELIVERY_ROW_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
   oneOf: [
+    ...DELIVERY_CUSTODY_STATE_SCHEMAS.map(deliveryRowStateSchema),
+    // Before the resolved outcome union, accepted starts could still owe their
+    // child binding. Keep that disjoint retained shape, never a discarded one.
     deliveryRowStateSchema({
-      state: 'ready',
-      terminal: false,
-      attention: false,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'retryDue',
-      terminal: false,
-      // Existing dev rows may carry false; new writes derive true from custody.
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-      hasRetryNotBefore: true,
-    }),
-    deliveryRowStateSchema({
-      state: 'attempting',
-      terminal: false,
-      attention: false,
-      attemptId: boundedString(MAX_PLUGIN_ID_LENGTH),
-      startedAt: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
-      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'delivered',
-      terminal: true,
-      attention: false,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'notDelivered',
-      terminal: true,
-      attention: true,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: DELIVERY_ARCHIVE_RECOVERY_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'suppressed',
-      terminal: true,
-      attention: false,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'partial',
-      terminal: true,
-      attention: true,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: DELIVERY_CHUNK_INDEX_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'outcomeUnknown',
-      terminal: true,
-      attention: true,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: ['resolvedAccepted', 'resolvedDiscarded'],
-      terminal: true,
-      attention: false,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: DELIVERY_FAILED_CHUNK_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
-    }),
-    deliveryRowStateSchema({
-      state: 'connectionDeleted',
-      terminal: true,
-      attention: false,
-      attemptId: NULL_SCHEMA,
-      startedAt: NULL_SCHEMA,
-      providerMessageIds: EMPTY_DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
-      failedChunk: NULL_SCHEMA,
-      archiveRecovery: NULL_SCHEMA,
+      state: 'resolvedAccepted', terminal: false, attention: false,
+      attemptId: NULL_SCHEMA, providerMessageIds: DELIVERY_PROVIDER_MESSAGE_IDS_SCHEMA,
+      failedChunk: DELIVERY_FAILED_CHUNK_SCHEMA, archiveRecovery: NULL_SCHEMA,
     }),
   ],
 };
@@ -2193,8 +2210,8 @@ export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
   ],
   uiQueries: [],
   relations: [],
-  // The canonical migration wraps retained text content without changing
-  // custody; the shared candidate executor validates every target row.
+  // Canonical adjacent migrations preserve custody; the shared candidate
+  // executor validates every target row before adopting the new contract.
   migrations: CHANNEL_COLLECTION_MIGRATIONS[CHANNEL_DELIVERIES_COLLECTION_ID],
   migrationArtifact: {
     artifactId: CHANNEL_STATE_MIGRATIONS_ARTIFACT_ID,

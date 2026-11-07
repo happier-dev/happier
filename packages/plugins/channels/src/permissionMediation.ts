@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type {
   ActionsService,
@@ -53,7 +54,15 @@ export async function readConversationPendingPermissions(input: Readonly<{
         ...(cursor === null ? {} : { cursor }),
       },
       { signal: input.signal },
-    );
+    ).catch((error: unknown) => {
+      // Pending state belongs to the live Session process. A stopped or
+      // unreachable Session has no pending requests to project.
+      if (!input.signal.aborted && isPluginError(error) && error.code === 'ownerMachineUnavailable') {
+        return null;
+      }
+      throw error;
+    });
+    if (listed === null) return { requests: [], truncated: false };
     // A policy deferral means this page was never read. The projection keeps
     // what it already has and reports itself incomplete rather than presenting
     // a short list as the whole pending set.

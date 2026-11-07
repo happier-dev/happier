@@ -154,9 +154,11 @@ export {
 } from './setup.js';
 
 export {
+    CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1,
     ConversationProvidersContributionPointV1,
     ConversationProvidersContributionProtocolV1,
 } from './contribution.js';
+export type { ConversationProviderContributionV1 } from './contribution.js';
 export {
     ConversationProviderDescriptorV1Schema,
     ConversationProviderDescriptorV1JsonSchema,

@@ -170,11 +170,11 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
     return { kind: 'updated', bindingId: binding.id, revision: result.revision };
 }
 
-export function observeSessionPullRequestWatchAction(input: JsonValue, invalidate: () => void, context: SessionPullRequestWatchContext) {
+export async function observeSessionPullRequestWatchAction(input: JsonValue, invalidate: () => void, context: SessionPullRequestWatchContext) {
     const request = SessionPullRequestWatchInputV1Schema.parse(input);
     const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
     if (request.kind !== 'get' && request.kind !== 'list') throw new PluginError({ code: 'channels_pr_watch_read_required', message: 'Only PR watch reads can be observed.' });
-    const bindings = request.kind === 'get' ? observeConversationSessionCollections(invalidate, {
+    const bindings = request.kind === 'get' ? await observeConversationSessionCollections(invalidate, {
         accountStorage: requireChannelsAccountStorage(context), sessionId: SessionIdSchema.parse(request.sessionId),
         signal: context.signal, scope: 'pullRequestWatch',
     }) : collection.watch({ index: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,

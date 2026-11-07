@@ -4,10 +4,20 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import { ConversationBindingIdV1ProtocolSchema } from '../identity.js';
+
+/** Display-only external origin; never carries provider config, recipients or message content. */
+export const ConversationExternalConversationV1Schema = defineProtocolObject({
+    bindingId: ConversationBindingIdV1ProtocolSchema,
+    providerPluginId: defineProtocolString({ minLength: 1 }),
+    conversationDisplayName: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export type ConversationExternalConversationV1 = ReturnType<typeof ConversationExternalConversationV1Schema.parse>;
+export const ConversationExternalConversationV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationExternalConversationV1Schema.jsonSchema)();
 
 export const ConversationSessionLastDeliveryOutcomeV1Schema = defineProtocolUnion([
     defineProtocolLiteral('delivered'),

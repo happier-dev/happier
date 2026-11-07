@@ -189,7 +189,7 @@ export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: Connecti
           client.send({ from: envelope.from, to: [...envelope.to] }, Buffer.from(mime), (error, result) => error ? reject(error) : resolve(result));
         }), signal);
         confirmed = info.accepted.length > 0;
-        if (!confirmed) return { kind: 'notDelivered', retry: 'never', code: 'noRecipientsAccepted' };
+        if (!confirmed) return { kind: 'notDelivered', retry: 'never' };
         // Observe the server's actual Sent copy for this delivery; no vendor-name rule.
         await withImap(async (client) => {
           const folder = await sentFolder(client);
@@ -198,16 +198,15 @@ export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: Connecti
             if (!appended) throw new Error('Sent append did not complete');
           }
         }, signal);
-        if (info.rejected.length) return { kind: 'partial', providerMessageIds: [messageId], failedChunk: 0, retrySafe: false };
+        if (info.rejected.length) return { kind: 'partial', providerMessageIds: [messageId], failedChunk: 0 };
         return { kind: 'delivered', providerMessageIds: [messageId] };
       } catch (error) {
         signal?.throwIfAborted();
-        if (confirmed) return { kind: 'outcomeUnknown', providerMessageIds: [messageId], code: 'sentCopyUnconfirmed' };
+        if (confirmed) return { kind: 'outcomeUnknown', providerMessageIds: [messageId] };
         const code = smtpResponseCode(error);
-        if (code !== undefined && code >= 400 && code < 600) return { kind: 'notDelivered', retry: code < 500 ? 'safe' : 'never',
-          code: code === 535 ? 'credentialInvalid' : code < 500 ? 'submissionTemporarilyRejected' : 'submissionRejected' };
-        return submissionStarted ? { kind: 'outcomeUnknown', code: 'submissionOutcomeUnknown' }
-          : { kind: 'notDelivered', retry: 'safe', code: 'submissionNotStarted' };
+        if (code !== undefined && code >= 400 && code < 600) return { kind: 'notDelivered', retry: code < 500 ? 'safe' : 'never' };
+        return submissionStarted ? { kind: 'outcomeUnknown' }
+          : { kind: 'notDelivered', retry: 'safe' };
       }
     },
     async findSent(messageId: string, signal?: AbortSignal): Promise<boolean> {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import * as management from './management.js';
+import { withChannelStateSessionIdentity } from './collectionMigrations.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ConversationBindingUpdateInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CHANNELS_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
@@ -11,7 +12,8 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
-import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
+import { MemoryCollection } from './testkit/memoryCollection.js';
+import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
 type StateValue = Readonly<Record<string, JsonValue>>
   & Readonly<{ id: string; payload?: Readonly<Record<string, JsonValue>> }>;
 type StateRow = Readonly<{ rowId: string; revision: number; value: StateValue }>;
@@ -51,24 +53,19 @@ const routerTarget = {
 } as const;
 
 describe('thread router management', () => {
-  it('preserves the retryable Channels cancellation error when a thread binding batch completes after abort', async () => {
-    const collection = createCollection([connectionRow(), bindingRow(routerTarget, 5, { enabled: true })]);
-    const controller = new AbortController();
-    const batch = collection.batch.bind(collection);
-    // Persistent storage can finish its admitted mutation as cancellation arrives.
-    vi.spyOn(collection, 'batch').mockImplementationOnce(async (operations) => {
-      const result = await batch(operations);
-      controller.abort();
-      return result;
-    });
-    const execute = vi.fn(async () => ({ ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 0, hasMore: false, items: [] }));
-    await expect(management.createConversationThreadBindingForInvocation({
-      routerBindingId: 'binding-1', expectedRouterRevision: 5, expectedConnectionRevision: 4,
-      endpoint: { kind: 'thread', audience: 'shared', id: 'cancelled-topic', parentId: 'chat-1' },
-      sessionId: 'session-1', allowedPrincipalIds: ['person-1'], policy: sessionTarget.policy,
-    }, { ...context(collection, execute), signal: controller.signal })).rejects.toMatchObject({
-      code: 'channels_connection_create_cancelled', retryable: true,
-    });
+  it('creates a Discussion binding through the contributed Action without spawning a Session', async () => {
+    const collection = createCollection([connectionRow()]);
+    const execute = vi.fn(async (_id: string) => ({ v: 1, serverId: 'home-1', discussionId: 'discussion-1',
+      messages: [], messageSeq: 0, hasMoreOlder: false, incomplete: false }));
+    const invocation = context(collection, execute);
+    const target = { kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' } };
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: CHANNELS_PLUGIN, services: invocation.services });
+    try {
+      expect(await kit.invokeAction('binding/create-v1', bindingCreateInput(target),
+        { surface: 'ui', sessionId: 'session-1' })).toMatchObject({ kind: 'created', binding: { target } });
+      expect([...collection.rows.values()].filter(row => row.value['record-kind'] === 'binding')).toHaveLength(1);
+      expect(execute.mock.calls.some(([id]) => id === 'session.spawn_new')).toBe(false);
+    } finally { await kit.dispose(); }
   });
 
   it('creates and updates a multi-query router through the contributed Actions with provider-verified identities', async () => {
@@ -166,6 +163,26 @@ describe('thread router management', () => {
     collection.rows.delete(frontierRow.rowId);
     collection.tombstones.set(frontierRow.rowId, { rowId: frontierRow.rowId, revision: frontierRow.revision + 1 });
     expect(await management.createConversationThreadBindingForInvocation(request, invocation)).toMatchObject({ kind: 'created', revision: childRow.revision + 3, binding: { id: first.binding.id, target: sessionTarget } });
+  });
+
+  it('preserves the retryable Channels cancellation error when a thread binding batch completes after abort', async () => {
+    const collection = createCollection([connectionRow(), bindingRow(routerTarget, 5, { enabled: true })]);
+    const controller = new AbortController();
+    const batch = collection.batch.bind(collection);
+    // Persistent storage can finish its admitted mutation as cancellation arrives.
+    vi.spyOn(collection, 'batch').mockImplementationOnce(async (operations) => {
+      const result = await batch(operations);
+      controller.abort();
+      return result;
+    });
+    const execute = vi.fn(async () => ({ ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 0, hasMore: false, items: [] }));
+    await expect(management.createConversationThreadBindingForInvocation({
+      routerBindingId: 'binding-1', expectedRouterRevision: 5, expectedConnectionRevision: 4,
+      endpoint: { kind: 'thread', audience: 'shared', id: 'cancelled-topic', parentId: 'chat-1' },
+      sessionId: 'session-1', allowedPrincipalIds: ['person-1'], policy: sessionTarget.policy,
+    }, { ...context(collection, execute), signal: controller.signal })).rejects.toMatchObject({
+      code: 'channels_connection_create_cancelled', retryable: true,
+    });
   });
 
   it('narrows the route policy to its admitted child audience through the existing revocation owner', async () => {
@@ -308,7 +325,9 @@ function providerContributionSnapshot(
 }
 
 function createCollection(initial: readonly StateRow[]) {
-  const rows = new Map(initial.map((row) => [row.rowId, row]));
+  const collection = new MemoryCollection<StateValue>();
+  const rows = collection.rows;
+  for (const row of initial) rows.set(row.rowId, row);
   // The real Collection hides tombstones from get, but returns their exact
   // revisions on an absent-create conflict so a numeric put can resurrect.
   const tombstones = new Map<string, Readonly<{ rowId: string; revision: number }>>();
@@ -326,25 +345,8 @@ function createCollection(initial: readonly StateRow[]) {
       return rows.get(rowId) ?? null;
     },
     async query(input: StateQueryInput) {
-      assertChannelsTestCollectionQueryLimit(input.limit);
       queries.push(input);
-      if (input.index !== 'by-kind' || input.order !== 'asc') {
-        throw new Error('Expected the canonical ascending Channel binding index.');
-      }
-      const matching = [...rows.values()]
-        .filter((row) => row.value['record-kind'] === input.prefix?.[0])
-        .sort((left, right) => left.rowId.localeCompare(right.rowId));
-      const start = input.cursor === undefined
-        ? 0
-        : matching.findIndex((row) => row.rowId === input.cursor) + 1;
-      const limit = input.limit ?? matching.length;
-      const page = matching.slice(Math.max(0, start), Math.max(0, start) + limit);
-      const next = matching[Math.max(0, start) + limit];
-      return {
-        rows: page,
-        ...(next === undefined ? {} : { nextCursor: page.at(-1)?.rowId }),
-        changeCursor: 1,
-      };
+      return collection.query({ ...input, limit: input.limit ?? rows.size });
     },
     async batch(operations: readonly StateMutation[]) {
       batches.push([...operations]);
@@ -418,10 +420,7 @@ function bindingRow(
   revision = 5,
   payloadOverrides: Readonly<Record<string, JsonValue>> = {},
 ): StateRow {
-  return {
-    rowId: 'binding-1',
-    revision,
-    value: {
+  const value = {
       id: 'binding-1',
       'record-kind': 'binding',
       v: 1,
@@ -443,7 +442,11 @@ function bindingRow(
         deletionState: 'none',
         ...payloadOverrides,
       },
-    },
+  };
+  return {
+    rowId: 'binding-1',
+    revision,
+    value: { ...value, ...withChannelStateSessionIdentity(value, value.payload.target) },
   };
 }
 
@@ -482,6 +485,7 @@ function context(
         sourceCustody: providerSourceCustody,
       },
       protocol: { id: 'happier.channels/providers', version: 1 },
+      descriptor: { v: 1, displayName: 'Provider fixture', pullRequests: GITHUB_CHANNEL_PULL_REQUESTS },
       operations: {
         endpointResolve: endpointResolveAction,
         principalResolve: principalResolveAction,
@@ -587,6 +591,15 @@ describe('Channels target-persisting binding management', () => {
     expect(second).toMatchObject({ kind: 'created', binding: { id: first.kind === 'created' ? first.binding.id : '' } });
     expect([...collection.rows.values()].filter((row) => row.value['record-kind'] === 'binding')).toHaveLength(1);
   });
+  it('keeps an unknown target typed unavailable through the exact binding read Action', async () => {
+    const current = bindingRow(sessionTarget);
+    const collection = createCollection([{ ...current, value: { ...current.value,
+      payload: { ...current.value.payload, target: { kind: 'future-target' } } } }]);
+    await expect(management.readConversationBindingForInvocation({ bindingId: current.rowId }, context(collection, vi.fn())))
+      .rejects.toMatchObject({ code: 'channels_binding_target_unavailable', retryable: false });
+    expect(collection.batches).toEqual([]);
+  });
+
   it('reads only one exact retained binding, distinguishes absence, and fails corrupt rows closed', async () => {
     const read = Reflect.get(management, 'readConversationBindingForInvocation');
     expect(read).toEqual(expect.any(Function));
@@ -746,7 +759,7 @@ describe('Channels target-persisting binding management', () => {
               kind: 'session',
               sessionId: 'session-2',
               policy: expect.objectContaining({
-                permissionCeiling: 'read-only',
+                permissionCeiling: 'yolo',
                 approvals: { kind: 'off' },
               }),
             }),
@@ -833,14 +846,14 @@ describe('Channels target-persisting binding management', () => {
     expect(collection.batches).toEqual([]);
   });
 
-  it('returns stale with zero writes when the admitted provider target occurrence changes during audience resolution', async () => {
+  it('re-resolves the audience through the current same-ID provider after contribution replacement', async () => {
     const update = Reflect.get(management, 'updateConversationBindingForInvocation');
     expect(update).toEqual(expect.any(Function));
     if (typeof update !== 'function') return;
 
     const original = providerContributionSnapshot('provider-occurrence-1');
     const replacement = providerContributionSnapshot(
-      'provider-occurrence-1',
+      'provider-occurrence-2',
       'channels-occurrence-2',
     );
     const readCurrent = vi.fn()
@@ -848,11 +861,12 @@ describe('Channels target-persisting binding management', () => {
       .mockResolvedValue(replacement.snapshot);
     const collection = createCollection([connectionRow(), bindingRow(sessionTarget)]);
     const resolve = vi.fn(async (action: unknown) => {
-      if (action !== original.endpointResolve) throw new Error('Principal resolution must not run after contribution drift.');
+      const endpoint = action === original.endpointResolve || action === replacement.endpointResolve;
+      if (!endpoint && action !== replacement.principalResolve) throw new Error('Expected a current admitted resolver.');
       return {
         result: {
           kind: 'resolved' as const,
-          candidates: [{ kind: 'direct' as const, audience: 'direct' as const, id: 'chat-1', label: 'Alice' }],
+          candidates: endpoint ? [bindingResolutionEndpoint] : [bindingResolutionPrincipal],
         },
         executionOrigin: { serverIdentityId: 'srv_account_one', materializationRef: materialization },
       };
@@ -861,6 +875,7 @@ describe('Channels target-persisting binding management', () => {
     await expect(update({
       bindingId: 'binding-1',
       expectedRevision: 5,
+      allowBotSenders: true,
       audienceSelection: {
         expectedConnectionRevision: 4,
         endpointSelection: {
@@ -872,10 +887,12 @@ describe('Channels target-persisting binding management', () => {
           selected: [{ id: 'person-1', kind: 'human' }],
         },
       },
-    }, context(collection, vi.fn(), resolve, readCurrent))).resolves.toEqual({ kind: 'stale' });
+    }, context(collection, vi.fn(), resolve, readCurrent))).resolves.toMatchObject({ kind: 'updated' });
 
-    expect(resolve).toHaveBeenCalledTimes(1);
-    expect(collection.batches).toEqual([]);
+    expect(resolve.mock.calls.map(([action]) => action)).toEqual([
+      original.endpointResolve, replacement.principalResolve,
+    ]);
+    expect(collection.batches).toHaveLength(1);
   });
 
   it('revalidates the binding connection after target verification before an audience mutation can reach storage', async () => {
@@ -936,9 +953,11 @@ describe('Channels target-persisting binding management', () => {
     if (typeof remove !== 'function') return;
 
     const execute = vi.fn();
+    const prTarget = { ...sessionTarget, pullRequestLink: { repository: 'acme/widgets', number: 12 } };
+    const linked = bindingRow(prTarget, 5, { enabled: true });
     const active = createCollection([
       connectionRow(),
-      bindingRow(sessionTarget, 5, { enabled: true }),
+      { ...linked, value: { ...linked.value, ...withChannelStateSessionIdentity(linked.value, prTarget) } },
     ]);
     await expect(remove({
       bindingId: 'binding-1',
@@ -964,6 +983,7 @@ describe('Channels target-persisting binding management', () => {
         }),
       }),
     ]]);
+    expect(active.rows.get('binding-1')?.value).not.toHaveProperty('pr-binding');
     expect(execute).not.toHaveBeenCalled();
 
     const stale = createCollection([connectionRow(), bindingRow(sessionTarget, 6)]);
@@ -1149,7 +1169,7 @@ describe('Channels target-persisting binding management', () => {
       {
         sessionId: 'session-1',
         projection: 'externalShareableV1',
-        cursor: null,
+        cursor: 'tail',
         limit: 100,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1245,7 +1265,7 @@ describe('Channels target-persisting binding management', () => {
     },
     {
       name: 'the provider target occurrence changes',
-      expected: { kind: 'stale' },
+      expected: { kind: 'created' },
       changeCurrentness(input: Readonly<{
         collection: ReturnType<typeof createCollection>;
         replaceProviderSnapshot: (snapshot: unknown) => void;
@@ -1256,7 +1276,7 @@ describe('Channels target-persisting binding management', () => {
         ).snapshot);
       },
     },
-  ] as const)('does not persist a binding when $name during Automation target verification', async ({
+  ] as const)('revalidates a binding when $name during Automation target verification', async ({
     expected,
     changeCurrentness,
   }) => {
@@ -1269,13 +1289,13 @@ describe('Channels target-persisting binding management', () => {
     let providerSnapshot: unknown = original.snapshot;
     const readCurrent = vi.fn(async () => providerSnapshot);
     const resolve = vi.fn(async (action: unknown) => {
-      if (action === original.endpointResolve) {
+      if ((action as typeof original.endpointResolve).identity.role === 'endpointResolve') {
         return {
           result: { kind: 'resolved' as const, candidates: [bindingResolutionEndpoint] },
           executionOrigin: { serverIdentityId: 'srv_account_one', materializationRef: materialization },
         };
       }
-      if (action === original.principalResolve) {
+      if ((action as typeof original.principalResolve).identity.role === 'principalResolve') {
         return {
           result: { kind: 'resolved' as const, candidates: [bindingResolutionPrincipal] },
           executionOrigin: { serverIdentityId: 'srv_account_one', materializationRef: materialization },
@@ -1297,11 +1317,16 @@ describe('Channels target-persisting binding management', () => {
     await expect(create(
       bindingCreateInput(automationTarget),
       context(collection, execute, resolve, readCurrent),
-    )).resolves.toEqual(expected);
+    )).resolves.toMatchObject(expected);
 
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(collection.batches).toEqual([]);
-    expect([...collection.rows.keys()]).toEqual(['connection-1']);
+    if (expected.kind === 'created') {
+      expect(collection.batches).toHaveLength(1);
+      expect([...collection.rows.values()].filter(row => row.value['record-kind'] === 'binding')).toHaveLength(1);
+    } else {
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(collection.batches).toEqual([]);
+      expect([...collection.rows.keys()]).toEqual(['connection-1']);
+    }
   });
 
   it('persists final-result delivery after the Automation verifier accepts its Session target', async () => {
@@ -2211,7 +2236,7 @@ describe('Channels target-persisting binding management', () => {
     expect(collection.rows.get('connection-1')?.value.payload).toMatchObject({ maximumObservationAgeMs });
   });
 
-  it('cannot bypass frozen transfer-stop custody through the Account-local connection policy writer', async () => {
+  it('clears retired transfer-stop metadata when the Account-local connection policy changes', async () => {
     const update = Reflect.get(management, 'updateConversationConnectionInAccountCollection');
     expect(update).toEqual(expect.any(Function));
     if (typeof update !== 'function') return;
@@ -2252,10 +2277,17 @@ describe('Channels target-persisting binding management', () => {
       enabled: false,
       maximumObservationAgeMs: 60_000,
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({
-      code: 'channels_connection_update_old_transport_stop_pending',
-      retryable: true,
+    })).resolves.toMatchObject({
+      kind: 'updated',
+      connectionId: 'connection-1',
+      revision: 5,
+      authorityEpoch: 3,
     });
-    expect(collection.batches).toEqual([]);
+    expect(collection.rows.get('connection-1')?.value.payload).toMatchObject({
+      enabled: false,
+      maximumObservationAgeMs: 60_000,
+      authorityEpoch: 3,
+      pendingOldTransportStop: null,
+    });
   });
 });

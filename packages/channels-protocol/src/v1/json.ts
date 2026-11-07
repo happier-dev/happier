@@ -7,7 +7,6 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
-    MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES,
     MAX_CONVERSATION_PROVIDER_CONFIG_UTF8_BYTES,
 } from './bounds.js';
 
@@ -29,11 +28,9 @@ export const ConversationProviderConfigV1ProtocolSchema =
         maxSerializedUtf8Bytes: MAX_CONVERSATION_PROVIDER_CONFIG_UTF8_BYTES,
     });
 
-/** @internal One feature-owned aggregate-byte JSON leaf for every checkpoint carrier. */
+/** @internal Checkpoints use their enclosing Action and Collection envelope limits. */
 export const ConversationCheckpointV1ProtocolSchema =
-    defineProtocolJsonValue<ConversationJsonValueV1>({
-        maxSerializedUtf8Bytes: MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES,
-    });
+    ConversationJsonValueV1ProtocolSchema;
 export type ConversationJsonObjectV1 = Readonly<Record<string, ConversationJsonValueV1>>;
 
 /** @internal Relative-only schema for a JSON object with canonical JSON leaves. */

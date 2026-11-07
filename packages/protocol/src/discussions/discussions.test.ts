@@ -61,6 +61,17 @@ const plainMessage = {
 };
 
 describe('session discussion content', () => {
+  it('round-trips channel provenance inside ordinary message content without exposing credentials', () => {
+    const content = { v: 1, parts: [{ t: 'text', text: 'Hello from outside' }],
+      externalSource: { kind: 'channel', providerPluginId: 'happier.channel.telegram',
+        conversationDisplayName: 'Support', senderDisplayName: 'Ada', inputLocalId: 'channels:input-1' } };
+    expect(DiscussionMessageContentV1Schema.parse(content)).toEqual(content);
+    expect(DiscussionMessageContentV1StoredSchema.parse(content)).toEqual(content);
+    expect(readDiscussionMessagePartsV1(DiscussionMessageContentV1Schema.parse(content))).toEqual(content.parts);
+    expect(DiscussionMessageContentV1Schema.safeParse({ ...content,
+      externalSource: { ...content.externalSource, credentialRef: 'forbidden' } }).success).toBe(false);
+  });
+
   it('admits attachment-only files and complete folder trees through strict writes and tolerant stored reads', () => {
     const file = { blobId: '00000000-0000-4000-8000-000000000001', mime: 'image/png', sizeBytes: 4, sha256: 'a'.repeat(64) };
     const attachment = { kind: 'folder', id: '00000000-0000-4000-8000-000000000002', name: 'Pictures',

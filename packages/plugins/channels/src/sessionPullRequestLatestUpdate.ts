@@ -41,11 +41,13 @@ export async function readSessionPullRequestLatestUpdateForBinding(
   const location = isRecord(accepted)
     && accepted.sessionId === input.sessionId && typeof accepted.localId === 'string' && accepted.localId.length > 0
     ? { kind: 'sessionInput' as const, localId: accepted.localId }
-    : [...update.events].reverse().flatMap(event => event.url === undefined ? [] : [{ kind: 'provider' as const, url: event.url }])[0];
+    : [...update.events].reverse().flatMap(event => event.url === undefined ? [] : [{ kind: 'provider' as const,
+        url: event.url, ...(event.resource === undefined ? {} : { resource: event.resource }) }])[0];
   const occurrenceId = Array.isArray(payload.occurrenceIds) ? payload.occurrenceIds[0] : undefined;
   if (location === undefined || typeof occurrenceId !== 'string') return null;
   // A complete semantic aggregate, not a clipped body excerpt. Full provider
-  // evidence stays in retained input/custody at the exact destination below.
+  // evidence belongs to the native Session after acceptance; retained metadata
+  // supplies identities and summary state, not a duplicate message archive.
   const summary = summarizeSessionPullRequestUpdateV1(update);
   return SessionPullRequestLatestUpdateV1Schema.parse({
     occurrenceId,

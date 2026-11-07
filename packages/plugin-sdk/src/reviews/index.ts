@@ -59,6 +59,7 @@ export { createReviewCommentPublicationSettlementRequestV1 } from './comments.js
 export { defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema } from './comments.js';
 export { defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema } from './comments.js';
 export { formatReviewCommentPublicationMarkerV1 } from './comments.js';
+export { hasReviewCommentPublicationMarkerV1 } from './comments.js';
 export { matchReviewCommentPublicationMarkerV1 } from './comments.js';
 export { parseReviewCommentPublicationPlanV1 } from './comments.js';
 export { parseReviewFindingsV2 } from './projections.js';

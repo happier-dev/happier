@@ -54,6 +54,7 @@ export type {
     ConversationIngressObservedEntryV1,
     ConversationNormalizedIngressV1,
     ConversationObservationV1,
+    ConversationProviderObservationIngestInputSchemaV1,
     ConversationProviderObservationIngestInputV1,
 } from './core/ingress.js';
 export {

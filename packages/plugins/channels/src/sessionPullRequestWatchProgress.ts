@@ -118,7 +118,7 @@ export async function reconcileSessionPullRequestFixProgress(bindingId: string, 
         const frozenTarget = payload.target;
         if (!active.started && readSessionPullRequestWatchPolicy(current.binding).mode === 'autoFix'
             && payload.prRoundPrepared !== true && accepted === undefined && record(lifecycle) && lifecycle.phase === 'blocked'
-            && record(sourceAuthority) && sourceAuthority.bindingAuthorityEpoch === current.binding.authorityEpoch
+            && record(sourceAuthority)
             && record(frozenTarget) && frozenTarget.kind === 'session' && frozenTarget.sessionId === target.sessionId) {
             return { ...current, unstartedPreparation: original };
         }

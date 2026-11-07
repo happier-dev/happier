@@ -58,6 +58,7 @@ export { parseReviewCommentPublicationPlanV1 } from './comments.js';
 export { preflightReviewCommentPublicationRoutingV1 } from './comments.js';
 export { reviewCommentPublicationEntryIsDiffLessV1 } from './comments.js';
 export { formatReviewCommentPublicationMarkerV1 } from './comments.js';
+export { hasReviewCommentPublicationMarkerV1 } from './comments.js';
 export { matchReviewCommentPublicationMarkerV1 } from './comments.js';
 export { reviewCommentPublicationTargetMatchesV1 } from './comments.js';
 export { ReviewCommentPublicationPlanV1ProtocolSchema } from './comments.js';

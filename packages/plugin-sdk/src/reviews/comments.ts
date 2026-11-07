@@ -23,7 +23,7 @@ import type {
     ReviewCommentPublicationVerdictResultV1,
 } from '@happier-dev/protocol';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import { createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1 as canonicalReviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, hasReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1 as canonicalReviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { redactBugReportSensitiveText } from '../diagnostics.js';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentity } from '../manifest.js';
@@ -542,6 +542,7 @@ export { parseReviewCommentPublicationPlanV1 };
 export { preflightReviewCommentPublicationRoutingV1 };
 export { reviewCommentPublicationEntryIsDiffLessV1 };
 export { formatReviewCommentPublicationMarkerV1 };
+export { hasReviewCommentPublicationMarkerV1 };
 export { matchReviewCommentPublicationMarkerV1 };
 export const reviewCommentPublicationTargetMatchesV1: (
     target: ReviewCommentPublicationTargetV1,

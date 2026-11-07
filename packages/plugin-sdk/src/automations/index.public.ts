@@ -2,6 +2,7 @@ export type { AutomationIdV1 } from '../automations.js';
 export { AutomationIdV1Schema } from '../automations.js';
 export type { AutomationConversationAdmitInputV1 } from '../automations.js';
 export { AutomationConversationAdmitInputV1Schema } from '../automations.js';
+export { AutomationConversationEventActorsV1Schema } from '../automations.js';
 export type { AutomationConversationAdmitResultV1 } from '../automations.js';
 export { AutomationConversationAdmitResultV1Schema } from '../automations.js';
 export type { AutomationConversationResultDeliveryV1 } from '../automations.js';

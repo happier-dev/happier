@@ -4,23 +4,19 @@ import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
     PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
-    PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
     PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_LIMITS_V1,
     PluginAccountCollectionContributionV1Schema,
-    PluginCollectionGetRequestV1Schema,
     PluginCollectionMutationRequestV1Schema,
-    PluginCollectionQueryRequestV1Schema,
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
-    type PluginCollectionMutationRequestV1,
-    type PluginCollectionRowV1,
 } from '@happier-dev/protocol';
 import {
     type JsonValue,
     type PluginInvocationContext,
     type PluginServices,
 } from '@happier-dev/plugin-sdk';
-import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@happier-dev/plugin-sdk/host/registration';
+import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@/plugins/authoring/registrationProjections';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { ConversationProviderObservationIngestInputV1 } from '@happier-dev/channels-protocol/v1';
@@ -28,6 +24,7 @@ import type { ConversationProviderObservationIngestInputV1 } from '@happier-dev/
 import type { StoredCredentials } from '@/persistence';
 
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
+import { createHttpCollectionBoundary } from './accountPluginDataStorage.testkit';
 
 const CHANNELS_PLUGIN_ID = 'happier.channels';
 const CHANNEL_STATE_COLLECTION_ID = 'channel-state';
@@ -251,118 +248,6 @@ function createIngress(now: number): ConversationProviderObservationIngestInputV
     };
 }
 
-function currentRevision(row: PluginCollectionRowV1 | undefined): number | null {
-    return row?.revision ?? null;
-}
-
-function matchesExpectedRevision(
-    row: PluginCollectionRowV1 | undefined,
-    expectedRevision: number | 'absent',
-): boolean {
-    return expectedRevision === 'absent'
-        ? row === undefined
-        : row?.revision === expectedRevision;
-}
-
-function createHttpCollectionBoundary(indexes: CurrentChannelsSources['channelStateCollection']['indexes']) {
-    const rows = new Map<string, PluginCollectionRowV1>();
-    const capturedMutationRequests: PluginCollectionMutationRequestV1[] = [];
-    let changeCursor = 0;
-
-    return {
-        capturedMutationRequests,
-        http: {
-            async get(url: string) {
-                if (!url.endsWith('/v1/account/encryption')) {
-                    throw new Error(`Unexpected Account Data GET ${url}`);
-                }
-                return { status: 200, data: { mode: 'e2ee' as const, updatedAt: 1 } };
-            },
-            async post(url: string, body: string) {
-                if (url.endsWith(PLUGIN_COLLECTION_GET_HTTP_PATH_V1)) {
-                    const request = PluginCollectionGetRequestV1Schema.parse(JSON.parse(body));
-                    return { status: 200, data: { row: rows.get(request.rowId) ?? null, absenceEpoch: 0 } };
-                }
-                if (url.endsWith(PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1)) {
-                    const request = PluginCollectionQueryRequestV1Schema.parse(JSON.parse(body));
-                    const index = indexes.find(index => index.id === request.indexId);
-                    if (!index) {
-                        throw new Error(`Unexpected Channel Collection query index ${request.indexId}`);
-                    }
-                    const matched = [...rows.values()]
-                        .filter((row) => request.prefix.every((value, position) => {
-                            const field = index.fields[position];
-                            return field !== undefined && row.projection[field.field] === value;
-                        }))
-                        .sort((left, right) => left.rowId.localeCompare(right.rowId));
-                    const offset = request.cursor === undefined ? 0 : Number.parseInt(request.cursor, 10);
-                    if (!Number.isSafeInteger(offset) || offset < 0) {
-                        throw new Error('Invalid test Collection cursor.');
-                    }
-                    const page = matched.slice(offset, offset + request.limit);
-                    const nextOffset = offset + page.length;
-                    return {
-                        status: 200,
-                        data: {
-                            rows: page,
-                            ...(nextOffset < matched.length ? { nextCursor: String(nextOffset) } : {}),
-                            changeCursor,
-                        },
-                    };
-                }
-                if (!url.endsWith(PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1)) {
-                    throw new Error(`Unexpected Account Data POST ${url}`);
-                }
-                const request = PluginCollectionMutationRequestV1Schema.parse(JSON.parse(body));
-                capturedMutationRequests.push(request);
-                const nextRows = new Map(rows);
-                const results: Array<Readonly<{ rowId: string; revision: number; deleted: boolean }>> = [];
-                for (const operation of request.operations) {
-                    const existing = nextRows.get(operation.rowId);
-                    if (!matchesExpectedRevision(existing, operation.expectedRevision)) {
-                        return {
-                            status: 200,
-                            data: {
-                                status: 'conflict' as const,
-                                conflicts: [{
-                                    rowId: operation.rowId,
-                                    revision: currentRevision(existing),
-                                    deleted: false,
-                                }],
-                            },
-                        };
-                    }
-                    if (operation.kind === 'assert') continue;
-                    if (operation.kind === 'delete') {
-                        nextRows.delete(operation.rowId);
-                        results.push({
-                            rowId: operation.rowId,
-                            revision: (existing?.revision ?? 0) + 1,
-                            deleted: true,
-                        });
-                        continue;
-                    }
-                    const row: PluginCollectionRowV1 = {
-                        rowId: operation.rowId,
-                        revision: (existing?.revision ?? 0) + 1,
-                        content: operation.content,
-                        projection: operation.projection,
-                    };
-                    nextRows.set(row.rowId, row);
-                    results.push({ rowId: row.rowId, revision: row.revision, deleted: false });
-                }
-                rows.clear();
-                for (const [rowId, row] of nextRows) rows.set(rowId, row);
-                changeCursor += 1;
-                return {
-                    status: 200,
-                    data: { status: 'updated' as const, results, changeCursor },
-                };
-            },
-        },
-    };
-}
-
 async function readEveryRowOfKind(input: Readonly<{
     collection: ReturnType<ReturnType<typeof createAccountPluginDataStorageHost>['bind']> extends infer TBound
         ? TBound extends { collection: (definition: infer TDefinition) => infer TCollection }
@@ -388,18 +273,21 @@ async function readEveryRowOfKind(input: Readonly<{
 }
 
 describe('Channels C3 physical E2EE ingress batches', () => {
-    it('settles unchanged empty polls through the real Collection reader and writer without assert-only requests', async () => {
+    it.each(['plain', 'e2ee'] as const)('stores checkpoints beyond 48 KiB through the %s Collection owner and preserves its actual size failure', async mode => {
         const channels = await loadCurrentChannelsSources();
-        const boundary = createHttpCollectionBoundary(channels.channelStateCollection.indexes);
+        const boundary = createHttpCollectionBoundary(channels.channelStateCollection.indexes, mode);
         const host = createAccountPluginDataStorageHost({
             contracts: [normalizePluginAccountCollectionContractV1({
                 pluginId: CHANNELS_PLUGIN_ID, contribution: channels.channelStateCollectionDeclaration,
             })],
-            readCredentials: async () => E2EE_CREDENTIALS,
+            readCredentials: async () => mode === 'plain' ? { token: 'channels-checkpoint-plain', encryption: null } : E2EE_CREDENTIALS,
             isCurrentAccount: () => true,
             resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY,
             resolveBaseUrl: () => 'https://channels-c3-physical.example.test',
-            resolveAccountEncryptionCurrentness: async () => e2eeCurrentness(),
+            resolveAccountEncryptionCurrentness: async () => mode === 'plain' ? {
+                mode, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'unavailable' as const, reason: 'plain_account' as const },
+            } : e2eeCurrentness(),
             http: boundary.http,
             randomBytes: length => new Uint8Array(length).fill(19),
         });
@@ -413,6 +301,7 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             transport: { kind: 'checkpointedPull' }, replayContinuity: 'checkpointed',
         } }, { expectedRevision: 'absent' });
         const operation = { identity: { role: 'observationsPoll' } };
+        let checkpointAfterBatch = { uidValidity: '12345', lastUid: 12, nativeRevisions: 'x'.repeat(48 * 1024) };
         // Only the host's admitted contribution and provider Action boundaries
         // are supplied here; ingress, schema admission, crypto and storage stay real.
         const services = {
@@ -421,7 +310,7 @@ describe('Channels C3 physical E2EE ingress batches', () => {
                 getCurrentExecutionRouting: async () => ({ serverIdentityId: 'srv_account_one',
                     machineId: 'machine-1', pluginId: CHANNELS_PLUGIN_ID }),
                 executeAdmittedTargetedOperationWithExecutionOrigin: async () => ({
-                    result: { kind: 'checkpointOnly', checkpointAfterBatch: { uidValidity: '12345', lastUid: 12 } },
+                    result: { kind: 'checkpointOnly', checkpointAfterBatch },
                     executionOrigin: TELEGRAM_EXECUTION_ORIGIN,
                 }),
             },
@@ -439,6 +328,7 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             .resolves.toMatchObject({ kind: 'committed' });
         const checkpoint = await readEveryRowOfKind({ collection, recordKind: 'checkpoint' });
         expect(checkpoint).toHaveLength(1);
+        expect(jsonRecord(jsonRecord(checkpoint[0]!.value).payload).opaqueToken).toEqual(checkpointAfterBatch);
         const writes = boundary.capturedMutationRequests.length;
         for (let index = 0; index < 3; index += 1) {
             await expect(channels.poll({ connectionId: 'connection-1', waitMs: 0 }, context))
@@ -446,9 +336,26 @@ describe('Channels C3 physical E2EE ingress batches', () => {
         }
         expect(boundary.capturedMutationRequests).toHaveLength(writes);
         expect(await readEveryRowOfKind({ collection, recordKind: 'checkpoint' })).toEqual(checkpoint);
+        // A token this large cannot fit inside the actual private envelope in
+        // either Account mode. The Collection codec owns framing and refusal.
+        checkpointAfterBatch = { ...checkpointAfterBatch,
+            nativeRevisions: 'x'.repeat(PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes) };
+        const overflowCheckpoint = { ...jsonRecord(checkpoint[0]!.value),
+            payload: { ...jsonRecord(jsonRecord(checkpoint[0]!.value).payload), opaqueToken: checkpointAfterBatch } };
+        await expect(collection.put(overflowCheckpoint, { expectedRevision: checkpoint[0]!.revision }))
+            .rejects.toMatchObject({ code: 'collection_quota_incompatible',
+                details: { dimension: 'maxRowEncodedBytes', effectiveMaximum: PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes } });
+        await expect(channels.poll({ connectionId: 'connection-1', waitMs: 0 }, context))
+            .resolves.toMatchObject({ kind: 'blocked' });
+        const failedConnection = await collection.get('connection-1');
+        expect(jsonRecord(failedConnection!.value).payload).toMatchObject({ pollFailure: {
+            phase: 'blocked', evidence: { kind: 'action', code: 'collection_quota_incompatible' },
+        } });
+        expect(boundary.capturedMutationRequests).toHaveLength(writes + 1);
+        expect(await readEveryRowOfKind({ collection, recordKind: 'checkpoint' })).toEqual(checkpoint);
     });
 
-    it('fills sealed ingress batches and compacts terminal attention through the strict E2EE Collection host', async () => {
+    it.each(['fullText', 'routableNonAdmission'] as const)('retains %s ingress through the strict E2EE Collection host without unnecessary reads', async (kind) => {
         const channels = await loadCurrentChannelsSources();
         const boundary = createHttpCollectionBoundary(channels.channelStateCollection.indexes);
         const admittedContract = normalizePluginAccountCollectionContractV1({
@@ -520,7 +427,15 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             signal: new AbortController().signal,
             services: { storage: { account } } as PluginServices,
         } satisfies PluginInvocationContext;
-        await channels.ingest(createIngress(Date.now()), context);
+        const now = Date.now();
+        const ingress = createIngress(now);
+        if (ingress.entry.observation.kind !== 'fullText') throw new Error('Expected the full-text ingress fixture.');
+        const { text: _text, ...message } = ingress.entry.observation.observation.message;
+        await channels.ingest(kind === 'fullText' ? ingress : {
+            ...ingress,
+            entry: { ...ingress.entry, observation: { kind: 'routableNonAdmission', reason: 'messageTooLarge',
+                shell: { ...ingress.entry.observation.observation, message } } },
+        }, context);
 
         const allRequests = boundary.capturedMutationRequests.map((request) => (
             PluginCollectionMutationRequestV1Schema.parse(request)
@@ -586,6 +501,23 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             expectedRevision: member.revision,
         }])).rejects.toMatchObject({ code: 'plugin_collection_invalid_value' });
         expect(boundary.capturedMutationRequests).toHaveLength(beforeInvalidWrite);
+
+        if (kind === 'routableNonAdmission') {
+            boundary.capturedReadPaths.length = 0;
+            await expect(channels.retain({ now, limit: 1 }, context))
+                .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0,
+                    nextRetentionAt: now + Number(jsonRecord(census.payload).maximumObservationAgeMs) + 1 });
+            expect(boundary.capturedReadPaths).toEqual([PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1]);
+            // The deadline still hydrates the whole unit: attention continues
+            // to prevent physical retirement through the real encrypted reader.
+            boundary.capturedReadPaths.length = 0;
+            await expect(channels.retain({ now: now + Number(jsonRecord(census.payload).maximumObservationAgeMs) + 1, limit: 1 }, context))
+                .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
+            expect(boundary.capturedReadPaths.filter(path => path === PLUGIN_COLLECTION_GET_HTTP_PATH_V1))
+                .toHaveLength(bindingIds.length + 1);
+            expect(await readEveryRowOfKind({ collection, recordKind: 'ingress-obligation' })).toHaveLength(bindingIds.length);
+            return;
+        }
 
         await expect(channels.retain({ now: Date.now(), limit: 1 }, context))
             .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });

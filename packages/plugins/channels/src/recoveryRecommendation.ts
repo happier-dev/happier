@@ -20,15 +20,7 @@ export function recommendConversationConnectionRecovery(row: ConversationConnect
   const exact = { connectionId: row.connectionId, expectedRevision: row.revision, authorityEpoch: row.authorityEpoch };
   if (row.deletionState !== 'none') return recommendConversationRecovery(actions.connectionDelete,
     { connectionId: row.connectionId, expectedRevision: row.revision }, 'connectionDeleting',
-    row.deletionState === 'finalizingDelete' ? 'cleanupInProgress' : 'transportStopUnconfirmed');
-  if (row.attention.ingressConflict !== null) return row.selectedTransport === 'checkpointedPull'
-    ? recommendConversationRecovery(actions.connectionPollRetry, exact, 'occurrenceEvidenceMismatch')
-    : recommendConversationRecovery(actions.connectionDelete,
-      { connectionId: row.connectionId, expectedRevision: row.revision }, 'occurrenceEvidenceMismatch');
-  if (row.attention.endpointRetargetOwed) return recommendConversationRecovery(actions.connectionTransfer,
-    { connectionId: row.connectionId, expectedRevision: row.revision }, 'endpointRetargetOwed', 'setupSelectionRequired');
-  if (row.attention.oldTransportStopUnconfirmed && !row.attention.acceptedPossibleLoss) return recommendConversationRecovery(actions.connectionTransfer,
-    { connectionId: row.connectionId, expectedRevision: row.revision }, 'transportStopUnconfirmed', 'setupSelectionRequired');
+    row.deletionState === 'finalizingDelete' ? 'cleanupInProgress' : undefined);
   if (row.attention.providerReadiness?.code === 'providerCredentialInvalid') {
     const account = QualifiedConnectedAccountRefSchema.safeParse(credentialRef);
     if (account.success) {
@@ -43,13 +35,13 @@ export function recommendConversationConnectionRecovery(row: ConversationConnect
     row.attention.providerReadiness.code);
   if (!row.enabled) return recommendConversationRecovery(actions.connectionUpdate,
     { connectionId: row.connectionId, expectedRevision: row.revision, enabled: true, maximumObservationAgeMs: row.maximumObservationAgeMs }, 'connectionDisabled');
-  if (row.attention.historyGap !== null) return recommendConversationRecovery(actions.streamBaselineAccept,
-    { connectionId: row.connectionId, expectedRevision: row.revision }, 'historyGap');
   if (row.attention.pollFailure?.phase === 'blocked') return recommendConversationRecovery(actions.connectionPollRetry, exact, 'pollBlocked');
   if (row.attention.pollFailure?.phase === 'retryDue') return recommendConversationRecovery(actions.connectionList, {}, 'retryScheduled');
   const delivery = row.attention.outwardDelivery;
   if (delivery && Object.values(delivery).some(Boolean)) return recommendConversationRecovery(actions.deliveryAttention,
     { connectionId: row.connectionId }, 'deliveryAttention');
+  if (row.attention.historyGap !== null) return recommendConversationRecovery(actions.streamNoticeDismiss,
+    { connectionId: row.connectionId, expectedRevision: row.revision }, 'historyGap');
   return null;
 }
 
@@ -64,7 +56,6 @@ export function recommendConversationBindingRecovery(row: ConversationBindingMan
 export function recommendConversationIngressRecovery(row: ConversationIngressAttentionRow): ConversationRecommendedRecoveryV1 | null {
   if (row.kind === 'blocked') return recommendConversationRecovery(actions.ingressRetry,
     { obligationId: row.obligationId, expectedRevision: row.revision }, 'ingressBlocked');
-  if (row.kind === 'occurrenceConflict') return recommendConversationRecovery(actions.connectionList, {}, 'occurrenceEvidenceMismatch');
   if (row.category === 'recoverable') return recommendConversationRecovery(row.bindingId ? actions.bindingRead : actions.connectionList,
     row.bindingId ? { bindingId: row.bindingId } : {}, row.reason ?? 'ingressAttention');
   return null;
@@ -76,8 +67,7 @@ export function recommendConversationDeliveryRecovery(row: Readonly<{
   const exact = { custodyId: row.custodyId, expectedRevision: row.revision };
   if (row.state === 'partial' || row.state === 'outcomeUnknown') return recommendConversationRecovery(actions.deliveryResolve,
     exact, row.state, 'ownerDecisionRequired');
-  if (row.state === 'archiveRecoverable') return recommendConversationRecovery(actions.deliveryResolve,
-    { ...exact, resolution: 'retryAfterUnarchive' }, 'endpointArchived');
+  if (row.state === 'archiveRecoverable') return null;
   if (row.state === 'ready' || row.state === 'retryDue' || row.state === 'attempting' || row.state === 'notDelivered') {
     return recommendConversationRecovery(actions.deliveryRead, { custodyId: row.custodyId }, row.state);
   }

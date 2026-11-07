@@ -35,9 +35,9 @@ import {
 export type ConversationAutomationResultRouteV1 = Readonly<{
   connectionId: string;
   bindingId: string;
-  bindingRevision: number;
-  connectionAuthorityEpoch: number;
-  bindingAuthorityEpoch: number;
+  bindingRevision?: number;
+  connectionAuthorityEpoch?: number;
+  bindingAuthorityEpoch?: number;
   endpoint: ConversationResolvedEndpointV1;
   replyContext: ConversationDeliveryReplyContextV1;
   linkPreviewPolicy: ConversationDeliveryLinkPreviewPolicyV1;
@@ -73,13 +73,12 @@ const storedAutomationResultRouteSchema = createProtocolStoredReadSchema(defineP
   kind: defineProtocolLiteral('conversationAutomationResultDelivery'),
   connectionId: ConversationConnectionIdV1Schema,
   bindingId: ConversationBindingIdV1Schema,
-  bindingRevision: positiveSafeIntegerSchema,
-  connectionAuthorityEpoch: positiveSafeIntegerSchema,
-  bindingAuthorityEpoch: positiveSafeIntegerSchema,
+  bindingRevision: positiveSafeIntegerSchema.optional(),
+  connectionAuthorityEpoch: positiveSafeIntegerSchema.optional(),
+  bindingAuthorityEpoch: positiveSafeIntegerSchema.optional(),
   endpoint: ConversationResolvedEndpointV1Schema,
   reply: defineProtocolObject({
     providerMessageId: defineProtocolString(),
-    providerReplyToMessageId: defineProtocolString().optional(),
   }, { policy: 'closed' }),
   linkPreviewPolicy: defineProtocolUnion([
     defineProtocolLiteral(CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1[0]),
@@ -105,19 +104,12 @@ function readRoute(opaqueContext: unknown): ParsedConversationAutomationResultHa
   const context = parsed.data;
   if (!ConversationDeliveryReplyContextV1Schema.safeParse({
       replyToMessageId: context.reply.providerMessageId,
-    }).success
-    || (context.reply.providerReplyToMessageId !== undefined
-      && !ConversationDeliveryReplyContextV1Schema.safeParse({
-          replyToMessageId: context.reply.providerReplyToMessageId,
-        }).success)) return undefined;
+    }).success) return undefined;
 
   return {
     route: {
       connectionId: context.connectionId,
       bindingId: context.bindingId,
-      bindingRevision: context.bindingRevision,
-      connectionAuthorityEpoch: context.connectionAuthorityEpoch,
-      bindingAuthorityEpoch: context.bindingAuthorityEpoch,
       endpoint: context.endpoint,
       replyContext: { replyToMessageId: context.reply.providerMessageId },
       linkPreviewPolicy: context.linkPreviewPolicy,
@@ -203,17 +195,13 @@ export async function deliverConversationAutomationResultForInvocation(
   const obligation = {
     connectionId: admission.route.connectionId,
     bindingId: admission.route.bindingId,
-    routeAuthority: {
-      connectionAuthorityEpoch: admission.route.connectionAuthorityEpoch,
-      bindingRevision: admission.route.bindingRevision,
-      bindingAuthorityEpoch: admission.route.bindingAuthorityEpoch,
-    },
+    routeAuthority: {},
     source: admission.source,
     endpoint: admission.route.endpoint,
     content: { text: admission.input.result.text },
     deliveryKey: `automation:${admission.source.resultId}`,
     replyContext: admission.route.replyContext,
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: admission.route.linkPreviewPolicy,
   } satisfies ConversationOutwardDeliveryObligation;
   const stateCollection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);

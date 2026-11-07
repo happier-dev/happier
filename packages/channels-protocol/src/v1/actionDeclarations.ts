@@ -31,9 +31,9 @@ export type ConversationManagementActionDeclarationsV1 = Readonly<{
     connectionRetest: ConversationActionDeclarationV1;
     connectionUpdate: ConversationActionDeclarationV1;
     connectionDelete: ConversationActionDeclarationV1;
-    connectionAbandon: ConversationActionDeclarationV1;
-    streamBaselineAccept: ConversationActionDeclarationV1;
+    streamNoticeDismiss: ConversationActionDeclarationV1;
     connectionPairingCreate: ConversationActionDeclarationV1;
+    connectionPairingRead: ConversationActionDeclarationV1;
     connectionPairingFinalize: ConversationActionDeclarationV1;
     connectionPairingCancel: ConversationActionDeclarationV1;
     bindingRead: ConversationActionDeclarationV1;
@@ -42,7 +42,7 @@ export type ConversationManagementActionDeclarationsV1 = Readonly<{
     bindingUpdate: ConversationActionDeclarationV1;
     bindingSetEnabled: ConversationActionDeclarationV1;
     bindingDelete: ConversationActionDeclarationV1;
-    sessionProjectionBaselineAccept: ConversationActionDeclarationV1;
+    sessionProjectionNoticeDismiss: ConversationActionDeclarationV1;
     ingressRetry: ConversationActionDeclarationV1;
     deliveryResolve: ConversationActionDeclarationV1;
     connectionPollRetry: ConversationActionDeclarationV1;

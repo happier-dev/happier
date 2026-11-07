@@ -30,6 +30,11 @@ import {
 import { collectionMigrations, PLUGIN_MANIFEST } from './manifest.js';
 import { ConversationConnectionTransportOriginV1JsonSchema } from './connectionLifecycle.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
+import {
+  deriveConversationDeliveryProjection,
+  isConversationDeliveryContentFree,
+  type ConversationDeliveryCustody,
+} from './deliveryCustody.js';
 
 /**
  * The shipped static declarations and their executable half, both projected by
@@ -47,7 +52,7 @@ const retainedManifest = parsePluginManifest({
     JSON.parse(readFileSync(new URL('./testkit/fixtures/channelStateV5.json', import.meta.url), 'utf8')).collection,
   ] },
 });
-if (!retainedManifest.ok) throw new Error('Historical Channels v5 declaration must be admitted by the manifest owner.');
+if (!retainedManifest.ok) throw new Error(`Historical Channels v5 declaration must be admitted by the manifest owner: ${JSON.stringify(retainedManifest)}`);
 // The public manifest parser validated this schema; its generic contribution
 // projection intentionally exposes the field as unknown to author callers.
 const RETAINED_STATE_V5_SCHEMA = retainedManifest.manifest.contributes.accountCollections![0]!.schema as PluginJsonSchema;
@@ -95,10 +100,57 @@ function findChannelStateRecordBranch(recordKind: string): PluginJsonSchema | un
 }
 
 function findChannelStateRecordPayload(recordKind: string): PluginJsonSchema | undefined {
-  return findChannelStateRecordBranch(recordKind)?.properties?.payload;
+  const payload = findChannelStateRecordBranch(recordKind)?.properties?.payload;
+  // These assertions describe provider ingress. Configured Fix is the other
+  // explicit obligation cause and has no fabricated census or provider target.
+  return recordKind === CHANNEL_STATE_RECORD_KIND.ingressObligation
+    ? payload?.oneOf?.find(branch => branch.properties?.censusId !== undefined)
+    : recordKind === CHANNEL_STATE_RECORD_KIND.ingressCensus
+      ? payload?.oneOf?.at(-1) ?? payload
+      : payload;
 }
 
 describe('Channels collection declarations', () => {
+  it('keeps answer request metadata without a second copy of pending values', () => {
+    const schema = findSchemaProperty(CHANNEL_STATE_COLLECTION.schema, 'userActionAnswer');
+    if (schema === undefined) throw new Error('Missing answer target declaration.');
+    const validate = compilePluginJsonSchema(schema);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      requestId: 'question-1', answers: [{ questionIndex: 0, values: ['private answer'] }],
+    })).toBe(true);
+    const payload = findChannelStateRecordBranch(CHANNEL_STATE_RECORD_KIND.ingressObligation)?.properties?.payload;
+    const requestOnly = payload?.oneOf?.find(branch => branch.required?.includes('userActionAnswerRequestId'));
+    expect(requestOnly).toBeDefined();
+    if (requestOnly === undefined) throw new Error('Missing native answer request metadata declaration.');
+    const validateAssociation = compilePluginJsonSchema(requestOnly);
+    expect(isValidPluginJsonSchemaValue(validateAssociation, {
+      occurrenceIds: ['answer-1'], censusId: 'A'.repeat(43), target: null,
+      sourceAuthority: { connectionAuthorityEpoch: 1 },
+      lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
+      disposition: null, nonAdmission: null, userActionAnswerRequestId: 'question-1',
+    })).toBe(true);
+  });
+  it('retains optional exact native PR actors without changing historical association input', () => {
+    const validate = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+    const association = (payload: JsonValue) => ({ id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
+      'connection-id': 'connection-1', 'binding-id': 'binding-1', 'session-id': 'session-1',
+      'created-at': 1, 'updated-at': 1, 'due-at': 100, terminal: false, attention: false, payload });
+    const historical = { occurrenceIds: ['pr-1'], censusId: 'A'.repeat(43),
+      target: { kind: 'automation', automationId: 'automation-1', occurrenceKey: 'pr-1', resultDelivery: { kind: 'none' } },
+      sourceAuthority: { connectionAuthorityEpoch: 1 }, lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
+      disposition: null, nonAdmission: null,
+      prUpdate: { v: 1, bindingId: 'binding-1', sessionId: 'session-1', pullRequest: { repository: 'acme/widgets', number: 1 },
+        head: { sha: 'head-1', ref: 'fix/widgets' }, events: [{ kind: 'comment', id: '1', revision: '1', occurredAt: 1,
+          author: { principalId: 'writer', kind: 'person' }, body: '' }] },
+    };
+    const prEventActors = [{ occurrenceId: 'pr-1', sender: { principalId: 'writer' },
+      observationActorPrincipalId: 'writer', actor: { principalId: 'writer', repositoryWriteAccess: true } }];
+    expect(isValidPluginJsonSchemaValue(validate, association(historical))).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validate, association({ ...historical, prEventActors }))).toBe(true);
+    for (const sender of [{ principalId: 'writer', label: 'Private display label' }, { principalId: 'writer', privateKey: 'secret' }]) {
+      expect(isValidPluginJsonSchemaValue(validate, association({ ...historical, prEventActors: [{ ...prEventActors[0], sender }] }))).toBe(false);
+    }
+  });
   it('migrates the retained v9 native-limit contract without rewriting connection or checkpoint data', async () => {
     const historical = JSON.parse(readFileSync(new URL('./testkit/fixtures/channelStateV9.json', import.meta.url), 'utf8'));
     const v8 = JSON.parse(readFileSync(new URL('./testkit/fixtures/channelStateV8.json', import.meta.url), 'utf8'));
@@ -115,7 +167,7 @@ describe('Channels collection declarations', () => {
     expect(isValidPluginJsonSchemaValue(target, formatted)).toBe(true);
     expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBeGreaterThan(historical.collection.schemaVersion);
     const edge = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-state']?.find(step => step.fromSchemaVersion === 9);
-    expect(edge).toMatchObject({ toSchemaVersion: CHANNEL_STATE_COLLECTION.schemaVersion });
+    expect(edge).toMatchObject({ toSchemaVersion: 10 });
     if (!edge) throw new Error('Missing retained v9 native-limit migration');
     for (const row of [connection, v8.checkpoint]) {
       expect(isValidPluginJsonSchemaValue(source, row)).toBe(true);
@@ -303,8 +355,121 @@ describe('Channels collection declarations', () => {
     expect(migrated).toEqual({ ...retained, payload: {
       ...(retained.payload as Readonly<Record<string, JsonValue>>), content: fixture.targetContent,
     } });
-    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema), migrated)).toBe(true);
+    let current = migrated;
+    if (current === undefined) throw new Error('Missing migrated delivery.');
+    for (const edge of CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']!.filter(edge => edge.fromSchemaVersion >= 3)) {
+      current = await edge.migrate(current, { currentRevision: 1 });
+    }
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema), current)).toBe(true);
     expect(JSON.stringify(retained)).toBe(before);
+  });
+
+  it('migrates retained v3 delivery custody unchanged into the v4 attempt-identity contract', async () => {
+    const migration = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find(edge => edge.fromSchemaVersion === 3);
+    expect(migration).toMatchObject({ id: 'channel-deliveries-v3-to-v4', toSchemaVersion: 4 });
+    if (!migration) throw new Error('Missing retained v3 delivery migration');
+    const contraction = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find(edge => edge.fromSchemaVersion === 4);
+    expect(contraction).toMatchObject({ toSchemaVersion: 5 });
+    if (!contraction) throw new Error('Missing retained delivery dead-field migration');
+    const declared = CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS.find(collection => collection.id === 'channel-deliveries');
+    expect(declared).toMatchObject({ schemaVersion: 5, readableSchemaVersions: [1, 2, 3, 4] });
+    const validate = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
+    const base = { attemptCount: 1, providerMessageIds: [] };
+    const custodies = {
+      ready: { ...base, state: 'ready', attemptCount: 0 },
+      attempting: { ...base, state: 'attempting', attemptId: 'original-attempt' },
+      retryDue: { ...base, state: 'retryDue', retryNotBefore: 200 },
+      delivered: { ...base, state: 'delivered', providerMessageIds: ['message-1'] },
+      notDelivered: { ...base, state: 'notDelivered' },
+      suppressed: { ...base, state: 'suppressed' },
+      partial: { ...base, state: 'partial', providerMessageIds: ['message-1'], failedChunk: 1 },
+      outcomeUnknown: { ...base, state: 'outcomeUnknown', providerMessageIds: ['message-1'] },
+      resolvedAccepted: { ...base, state: 'resolvedAccepted', providerMessageIds: ['message-1'] },
+      resolvedDiscarded: { ...base, state: 'resolvedDiscarded', providerMessageIds: ['message-1'] },
+      connectionDeleted: { ...base, state: 'connectionDeleted' },
+      notSent: { ...base, state: 'notSent', reason: 'providerRefused' },
+      resolved: { ...base, state: 'resolved', outcome: 'discarded', providerMessageIds: ['message-1'] },
+    } satisfies Record<ConversationDeliveryCustody['state'], ConversationDeliveryCustody>;
+    let retainedUnknown: Readonly<Record<string, JsonValue>> | undefined;
+    // Retained v3 ambiguous rows have no attempt identity. Every former state
+    // and its retained/compacted body must survive the identity edge unchanged.
+    for (const custody of Object.values(custodies)) {
+      const projection = deriveConversationDeliveryProjection(custody);
+      const contents = isConversationDeliveryContentFree(custody)
+        ? [{ text: 'Retained reply', html: '<p>Retained reply</p>' }, null]
+        : [{ text: 'Retained reply', html: '<p>Retained reply</p>' }];
+      for (const content of contents) {
+        const retained: Readonly<Record<string, JsonValue>> = {
+          id: 'a'.repeat(43), 'record-kind': 'outward-delivery', v: 1,
+          'connection-id': 'connection-1', 'binding-id': 'binding-1',
+          terminal: projection.terminal, attention: projection.attention, 'created-at': 100, 'updated-at': 100,
+          ...(projection.retryNotBefore === undefined ? {} : { 'retry-not-before': projection.retryNotBefore }),
+          payload: {
+            source: { kind: 'sessionProjection', sessionId: 'session-1', semanticItemId: 'semantic-1' },
+            routeAuthority: { connectionAuthorityEpoch: 4, bindingRevision: 1, bindingAuthorityEpoch: 7 },
+            endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' }, content,
+            contentFingerprint: content === null ? 'b'.repeat(43) : null,
+            deliveryKey: 'channels:delivery:v1:session-1:semantic-1', replyContext: null,
+            mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress', state: custody.state,
+            attemptCount: custody.attemptCount, attemptId: 'attemptId' in custody ? custody.attemptId : null,
+            startedAt: custody.state === 'attempting' ? 100 : null,
+            providerMessageIds: custody.providerMessageIds,
+            ...('reason' in custody ? { reason: custody.reason } : {}),
+            ...('outcome' in custody ? { outcome: custody.outcome } : {}),
+            failedChunk: 'failedChunk' in custody ? custody.failedChunk : null, archiveRecovery: null,
+          },
+        };
+        const before = JSON.stringify(retained);
+        const migrated = await migration.migrate(retained, { currentRevision: 7 });
+        expect(migrated).toEqual(retained);
+        const current = await contraction.migrate(migrated, { currentRevision: 7 });
+        expect(isValidPluginJsonSchemaValue(validate, current), custody.state).toBe(true);
+        const payload = current.payload;
+        expect(current).toEqual(retained);
+        expect(payload).toMatchObject({ source: retained.payload && (retained.payload as Readonly<Record<string, JsonValue>>).source,
+          content, state: custody.state, providerMessageIds: custody.providerMessageIds });
+        expect(await contraction.migrate(current, { currentRevision: 7 })).toEqual(current);
+        expect(JSON.stringify(retained)).toBe(before);
+        if (custody.state === 'outcomeUnknown') retainedUnknown = retained;
+      }
+    }
+    if (!retainedUnknown) throw new Error('Missing retained ambiguous custody vector');
+    // Historical v4 recovery could retain the claimed attempt for late
+    // completion. New readers still accept that already-retained evidence.
+    expect(isValidPluginJsonSchemaValue(validate, await contraction.migrate({ ...retainedUnknown, payload: {
+      ...(retainedUnknown.payload as Readonly<Record<string, JsonValue>>),
+      attemptId: custodies.attempting.attemptId,
+    } }, { currentRevision: 7 }))).toBe(true);
+  });
+
+  it('reads retained accepted-start custody while its child binding is still pending', () => {
+    // Pre-simplification resolve producer: accepted starts retained the binding
+    // work in resolvedAccepted, with no second external send.
+    const retained = {
+      id: 'a'.repeat(43), 'record-kind': 'outward-delivery', v: 1,
+      'connection-id': 'connection-1', 'binding-id': 'router-1',
+      terminal: false, attention: false, 'created-at': 100, 'updated-at': 200,
+      payload: {
+        source: { kind: 'conversationStart', sessionId: 'session-1', requestId: 'start-1' },
+        routeAuthority: { connectionAuthorityEpoch: 4, bindingRevision: 1, bindingAuthorityEpoch: 7 },
+        endpoint: { kind: 'direct', audience: 'direct', id: 'mailbox' },
+        newThread: { recipients: ['principal-1'], subject: 'Brief' },
+        deliveryEndpoint: { kind: 'thread', audience: 'shared', id: 'created-thread', parentId: 'mailbox' },
+        threadBindingPending: true, content: null, contentFingerprint: 'b'.repeat(43),
+        deliveryKey: 'conversation-start:session-1:start-1', replyContext: null,
+        mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+        state: 'resolvedAccepted', attemptCount: 1, attemptId: null, startedAt: null,
+        providerMessageIds: ['receipt'], failedChunk: null, archiveRecovery: null,
+      },
+    };
+    const validate = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
+    expect(isValidPluginJsonSchemaValue(validate, retained)).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validate, { ...retained, terminal: true,
+      payload: { ...retained.payload, threadBindingPending: false },
+    })).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validate, { ...retained,
+      payload: { ...retained.payload, state: 'resolvedDiscarded' },
+    })).toBe(false);
   });
 
   it('declares no Account-mode identity tags in either static Collection contract', () => {
@@ -363,39 +528,21 @@ describe('Channels collection declarations', () => {
     ]);
   });
 
-  it('persists one strict route-authority union correlated with outward custody scope', () => {
+  it('accepts current and retained delivery stamps without admitting unknown fields or out-of-range revisions', () => {
     const payload = CHANNEL_DELIVERIES_COLLECTION.schema.properties?.payload;
     const routeAuthority = payload?.properties?.routeAuthority;
 
-    expect(payload?.required).toContain('routeAuthority');
-    expect(routeAuthority?.oneOf?.map((branch) => ({
-      properties: Object.keys(branch.properties ?? {}).sort(),
-      required: branch.required,
-      additionalProperties: branch.additionalProperties,
-    }))).toEqual([
-      {
-        properties: ['connectionAuthorityEpoch'],
-        required: ['connectionAuthorityEpoch'],
-        additionalProperties: false,
-      },
-      {
-        properties: [
-          'bindingAuthorityEpoch',
-          'bindingRevision',
-          'connectionAuthorityEpoch',
-        ],
-        required: [
-          'connectionAuthorityEpoch',
-          'bindingRevision',
-          'bindingAuthorityEpoch',
-        ],
-        additionalProperties: false,
-      },
-    ]);
-    expect(payload?.properties?.source?.oneOf).toContain(AutomationResultDeliverySourceV1JsonSchema);
+    if (routeAuthority === undefined) throw new Error('Missing delivery stamp persistence contract');
+    const validate = compilePluginJsonSchema(routeAuthority);
+    for (const stamp of [{}, { bindingAuthorityEpoch: 7 }, { connectionAuthorityEpoch: 4 },
+      { connectionAuthorityEpoch: 4, bindingRevision: 1, bindingAuthorityEpoch: 7 }]) {
+      expect(isValidPluginJsonSchemaValue(validate, stamp)).toBe(true);
+    }
+    expect(isValidPluginJsonSchemaValue(validate, { bindingRevision: PLUGIN_COLLECTION_REVISION_MAX + 1 })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, { arbitraryAuthority: true })).toBe(false);
   });
 
-  it('keeps one census body and projects the sixth ingress due-work query key', () => {
+  it('keeps one pending occurrence body without an all-destination preparation state', () => {
     const ingressPayload = findChannelStateRecordPayload(
       CHANNEL_STATE_RECORD_KIND.ingressObligation,
     );
@@ -409,12 +556,10 @@ describe('Channels collection declarations', () => {
       'nonAdmission',
     ]));
     expect(ingressPayload?.properties?.input).toBeUndefined();
-    expect(censusPayload?.required).toEqual(expect.arrayContaining([
-      'normalizedIngress',
-      'phase',
-      'connectionAuthorityEpoch',
-      'maximumObservationAgeMs',
-    ]));
+    expect(censusPayload?.required).toContain('normalizedIngress');
+    expect(censusPayload?.properties?.phase).toBeUndefined();
+    expect(censusPayload?.required).not.toContain('connectionAuthorityEpoch');
+    expect(censusPayload?.required).not.toContain('maximumObservationAgeMs');
     // The admitted arm stays the exact protocol schema object rather than a
     // drifting hand-rolled copy; only its settled-census null arm is added.
     expect(censusPayload?.properties?.normalizedIngress).toEqual({
@@ -749,7 +894,7 @@ describe('Channels collection declarations', () => {
       .toBe(ConversationProviderContributionSelectionJsonSchema);
     expect(frozenSlot?.properties?.overlapSafety).toEqual({
       type: 'string',
-      enum: ['safe', 'providerExclusive', 'destructive'],
+      enum: ['safe', 'providerExclusive'],
     });
     expect(frozenSlot?.properties?.acceptedPossibleLoss).toEqual({ type: 'boolean' });
   });
@@ -803,7 +948,7 @@ describe('Channels collection declarations', () => {
     ]);
   });
 
-  it('declares closed frozen Session, Automation, and Event target branches for ingress obligations', () => {
+  it('declares closed frozen Session, Automation, Event and Discussion target branches for ingress obligations', () => {
     const ingressTarget = findChannelStateRecordPayload(
       CHANNEL_STATE_RECORD_KIND.ingressObligation,
     )?.properties?.target;
@@ -870,6 +1015,12 @@ describe('Channels collection declarations', () => {
           'providerContributionSelection',
           'executionOrigin',
         ],
+        additionalProperties: false,
+      },
+      {
+        kind: 'discussion',
+        properties: ['kind', 'discussionId', 'localId', 'providerPluginId'],
+        required: ['kind', 'discussionId', 'localId', 'providerPluginId'],
         additionalProperties: false,
       },
     ]);

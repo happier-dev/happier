@@ -11,6 +11,8 @@ import {
 } from './collections.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import { createSupervisorWake } from './supervisorWake.js';
+import { createOutwardBindingObservation } from './outwardBindingObservation.js';
+import { createChannelsCollectionAccess } from './collectionUpdateRequired.js';
 import { hasCurrentConversationExecutionPlacement, isConversationConnectionPlacedForInvocation } from './reconciliation.js';
 import { asChannelStateRow, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
 import {
@@ -47,9 +49,9 @@ import {
   hasConversationInputOriginFromBinding,
   projectConversationSessionTranscriptPage,
 } from './sessionProjection.js';
+import { projectConversationDiscussionPage } from './discussionProjection.js';
 
 const RECONCILIATION_INTERVAL_MS = 1_000;
-const STALE_ATTEMPT_AFTER_MS = 30_000;
 const OUTWARD_DELIVERY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 /**
  * One outward wake reads exactly one Account Collection page of durable work.
@@ -73,7 +75,6 @@ type JsonRecord = Readonly<Record<string, JsonValue>>;
 type PermissionWaitMediationSnapshot = Readonly<{
   source: ConversationPermissionWaitMediationSource;
   pendingRequestKeys: ReadonlySet<string>;
-  truncated: boolean;
 }>;
 
 
@@ -102,25 +103,25 @@ export type ConversationOutwardRetentionSweepState = Readonly<{
 export type ConversationOutwardDeliveryCycleOptions = Readonly<{
   context: BackgroundServiceContext;
   now?: () => number;
-  staleAttemptAfterMs?: number;
   deliveryCursor?: string;
   retentionSweep?: ConversationOutwardRetentionSweepState;
   createAttemptId?: () => string;
-  observeSession?: (sessionId: string) => Promise<void>;
-  /** Generation-local terminal reads, invalidated by binding/Session changes. */
-  unavailablePermissionBindings?: Set<string>;
+  /** Omitted for structural discovery; delivery-only wakes supply an empty list. */
+  bindingIds?: readonly string[];
+  observeSession?: (sessionId: string, bindingId: string) => Promise<void>;
+  observeDiscussion?: (discussionId: string, bindingId: string) => void;
 }>;
 
 export type ConversationOutwardDeliveryCycleResult = Readonly<{
   nextDeliveryCursor?: string;
   nextRetentionSweep?: ConversationOutwardRetentionSweepState;
   nextWakeAt?: number;
+  nextBindingIds?: readonly string[] | 'all';
 }>;
 
 export type ConversationOutwardDeliverySupervisorOptions = Readonly<{
   clock?: Clock;
   reconciliationIntervalMs?: number;
-  staleAttemptAfterMs?: number;
   runCycle?: (
     input: ConversationOutwardDeliveryCycleOptions,
   ) => Promise<ConversationOutwardDeliveryCycleResult>;
@@ -281,6 +282,7 @@ function logOutwardDeliverySupervisorDeliveryOutcome(
   logOutwardDeliverySupervisorWorkFailure(context, boundary, {
     ...identifiers,
     outcome: { code, retryable, informational: result.kind === 'retired'
+      || (result.kind === 'notAttempted' && result.reason === 'notDue')
       || (result.kind === 'settled' && result.custody.state === 'delivered') },
     ...(settlement === undefined || providerResult === undefined || !('custody' in result) ? {} : {
       attemptSettlement: {
@@ -291,8 +293,6 @@ function logOutwardDeliverySupervisorDeliveryOutcome(
         providerOperation: settlement.operation,
         providerResultKind: providerResult.kind,
         ...(providerResult.kind === 'notReady' ? { providerResultCode: providerResult.reason } : {}),
-        ...((providerResult.kind === 'notDelivered' || providerResult.kind === 'outcomeUnknown') && providerResult.code !== undefined
-          ? { providerResultCode: providerResult.code } : {}),
         ...(providerResult.kind === 'notDelivered' ? { providerRetry: providerResult.retry } : {}),
         ...(providerResult.kind === 'endpointArchived' ? { providerRecovery: providerResult.recovery } : {}),
         ...(result.custody.retryNotBefore === undefined ? {} : { retryNotBefore: result.custody.retryNotBefore }),
@@ -325,88 +325,11 @@ function matchesPermissionWaitMediationSource(
     || record.obligation.connectionId !== source.connectionId
     || record.obligation.bindingId !== source.bindingId
     || record.obligation.source.sessionId !== source.sessionId) return false;
-  const routeAuthority = record.obligation.routeAuthority;
-  return 'bindingAuthorityEpoch' in routeAuthority
-    && routeAuthority.connectionAuthorityEpoch === source.connectionAuthorityEpoch
-    && routeAuthority.bindingAuthorityEpoch === source.bindingAuthorityEpoch;
+  return true;
 }
 
 function isUnattemptedPermissionWait(record: ConversationOutwardDeliveryRecord): boolean {
   return record.custody.state === 'ready' && record.custody.attemptCount === 0;
-}
-
-/**
- * Session and Automation sources are not forgotten until their canonical
- * owners can prove the deterministic occurrence unreachable. Of the remaining
- * repeatable sources, a pending permission producer needs the same complete
- * current projection that mediation already reads during this wake before
- * retention can remove its terminal notification.
- *
- * A binding that is no longer current cannot recreate its former custody. A
- * current binding whose mediation read was unavailable or incomplete remains
- * fail-closed: absence from that partial view is not absence from the source.
- */
-function canPhysicallyForgetOutwardCustody(input: Readonly<{
-  record: ConversationOutwardDeliveryRecord;
-  currentBindingIds: ReadonlySet<string>;
-  mediationsByBindingId: ReadonlyMap<string, PermissionWaitMediationSnapshot>;
-  unreachableControlSourceIds: ReadonlySet<string>;
-}>): boolean {
-  const source = input.record.obligation.source;
-  // Session and Automation producers can revisit the same deterministic
-  // occurrence while their own frontier/handoff remains behind. Their
-  // content-free terminal custody is therefore the dedupe proof until those
-  // owners expose affirmative unreachability.
-  if (source.kind === 'sessionProjection' || source.kind === 'automationResult' || source.kind === 'conversationStart') return false;
-  // A control response is not a one-shot effect either: its identity is the
-  // durable ingress row that produced it, and that row stays addressable until
-  // ingress retention proves the occurrence past its replay horizon. Only that
-  // owner's own proof — the row's absence — may retire the dedupe evidence.
-  if (source.kind === 'controlResponse') {
-    return input.unreachableControlSourceIds.has(source.controlId);
-  }
-  const bindingId = input.record.obligation.bindingId;
-  if (bindingId === undefined) return false;
-  if (!input.currentBindingIds.has(bindingId)) return true;
-  const mediation = input.mediationsByBindingId.get(bindingId);
-  if (mediation === undefined || !matchesPermissionWaitMediationSource(input.record, mediation.source)) {
-    return false;
-  }
-  return !mediation.truncated
-    && !mediation.pendingRequestKeys.has(permissionWaitRequestIdentityKey(source));
-}
-
-/**
- * Reads the one affirmative unreachability proof a control response has: the
- * absence of the ingress census/obligation row whose id is its control id.
- * Ingress owns that row's replay horizon and physically forgets it only after
- * the occurrence can never be observed again, so this consults the existing
- * proof instead of introducing a second horizon. Only the ids this retention
- * page actually selected are read, and an unreadable row stays fail-closed.
- */
-async function readUnreachableControlSourceIds(input: Readonly<{
-  context: BackgroundServiceContext;
-  records: readonly ConversationOutwardDeliveryRecord[];
-}>): Promise<ReadonlySet<string>> {
-  const controlIds = new Set(input.records.flatMap((record) => (
-    record.obligation.source.kind === 'controlResponse'
-      ? [record.obligation.source.controlId]
-      : []
-  )));
-  const unreachable = new Set<string>();
-  if (controlIds.size === 0) return unreachable;
-  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
-  for (const controlId of controlIds) {
-    if (input.context.signal.aborted) return new Set();
-    try {
-      const row = await collection.get(controlId, { signal: input.context.signal });
-      if (row === null) unreachable.add(controlId);
-    } catch {
-      // An unreadable ingress row is not an absent one; leave the logical
-      // tombstone in place and let the next wake re-decide.
-    }
-  }
-  return unreachable;
 }
 
 async function readCurrentBindingIds(context: BackgroundServiceContext): Promise<readonly string[]> {
@@ -457,22 +380,18 @@ export async function runConversationOutwardDeliveryCycle(
   input: ConversationOutwardDeliveryCycleOptions,
 ): Promise<ConversationOutwardDeliveryCycleResult> {
   const now = input.now ?? Date.now;
-  const staleAttemptAfterMs = positiveDelay(
-    input.staleAttemptAfterMs,
-    STALE_ATTEMPT_AFTER_MS,
-    'Outward delivery stale-attempt interval',
-  );
   const createAttemptId = input.createAttemptId ?? defaultAttemptId;
   const { context } = input;
   if (context.signal.aborted) return {};
   let nextWakeAt: number | undefined;
+  const nextBindingIds = new Set<string>();
+  let bindingDiscoveryFailed = false;
   const noteDeadline = (at: number | undefined) => {
     if (at !== undefined) nextWakeAt = Math.min(nextWakeAt ?? Infinity, at);
   };
   const noteCustody = (custody: ConversationDeliveryCustody) => {
     if (hasPendingConversationThreadBinding(custody)) noteDeadline(now());
     if (custody.state === 'retryDue') noteDeadline(custody.retryNotBefore ?? now());
-    if (custody.state === 'attempting' && custody.startedAt !== undefined) noteDeadline(custody.startedAt + staleAttemptAfterMs);
   };
   // Retained redrive and first projection share the same recovery decision.
   // A failed pre-custody read has no durable row to wake it later.
@@ -486,6 +405,7 @@ export async function runConversationOutwardDeliveryCycle(
     return 'custody' in result && result.custody.state === 'retryDue';
   };
   const workFailed = (boundary: OutwardDeliveryWorkFailureBoundary, detail: Parameters<typeof logOutwardDeliverySupervisorWorkFailure>[2] = {}) => {
+    if (detail.bindingId !== undefined) nextBindingIds.add(detail.bindingId);
     noteDeadline(now() + RECONCILIATION_INTERVAL_MS);
     logOutwardDeliverySupervisorWorkFailure(context, boundary, detail);
   };
@@ -528,13 +448,10 @@ export async function runConversationOutwardDeliveryCycle(
         actions: context.services.actions,
         store: deliveryStore,
         record,
-        recoveryAttemptId: createAttemptId(),
-        staleAfterMs: staleAttemptAfterMs,
         now,
         signal: context.signal,
       });
       if ('custody' in result) noteCustody(result.custody);
-      if (result.kind === 'notAttempted' && result.reason === 'attemptStillCurrent') noteCustody(record.custody);
       const recoveryPending = result.kind === 'settlementPending' || (result.kind === 'notAttempted' && result.reason === 'custodyUnavailable');
       if (recoveryPending) noteDeadline(now() + RECONCILIATION_INTERVAL_MS);
       const retryable = recoveryPending || ('custody' in result && result.custody.state === 'retryDue');
@@ -562,11 +479,13 @@ export async function runConversationOutwardDeliveryCycle(
   let nextDeliveryCursor = input.deliveryCursor;
   let nextRetentionSweep = input.retentionSweep;
   const cycleResult = (): ConversationOutwardDeliveryCycleResult => ({
+    ...(bindingDiscoveryFailed ? { nextBindingIds: 'all' as const }
+      : nextBindingIds.size === 0 ? {} : { nextBindingIds: [...nextBindingIds] }),
     ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
     ...(nextDeliveryCursor === undefined ? {} : { nextDeliveryCursor }),
     ...(nextRetentionSweep === undefined ? {} : { nextRetentionSweep }),
   });
-  const retainedPermissionWaits: ConversationOutwardDeliveryRecord[] = [];
+  const retainedPermissionWaits = new Map<string, ConversationOutwardDeliveryRecord>();
   try {
     const scanned = await scanner.scan({
       now: now(),
@@ -585,7 +504,7 @@ export async function runConversationOutwardDeliveryCycle(
         if (record.obligation.source.kind === 'permissionWait') {
           // A permission-wait can be redriven only after the generic Permission
           // owner confirms its exact source tuple on this wake.
-          retainedPermissionWaits.push(record);
+          retainedPermissionWaits.set(record.custodyId, record);
           continue;
         }
         try {
@@ -610,34 +529,38 @@ export async function runConversationOutwardDeliveryCycle(
 
   let bindingIds: readonly string[];
   try {
-    bindingIds = await readCurrentBindingIds(context);
+    bindingIds = input.bindingIds ?? await readCurrentBindingIds(context);
   } catch (error) {
+    bindingDiscoveryFailed = true;
     workFailed('binding-discovery', { error });
     return cycleResult();
   }
 
   const permissionMediationsByBindingId = new Map<string, PermissionWaitMediationSnapshot>();
-  for (const bindingId of bindingIds) {
-    if (context.signal.aborted) break;
+  const mediateBinding = async (bindingId: string): Promise<void> => {
+    if (context.signal.aborted) return;
     const source = await readConversationPermissionWaitMediationSource({
       stateCollection,
       bindingId,
       signal: context.signal,
     });
-    if (source.kind === 'notEligible') continue;
+    if (source.kind === 'notEligible') return;
     if (source.kind === 'unavailable') {
-      if (source.reason !== 'cancelled') {
+      if (source.reason === 'bindingUnavailable') {
+        logOutwardDeliverySupervisorWorkFailure(context, 'permission-mediation', {
+          bindingId, outcome: { code: 'channels_binding_target_unavailable', retryable: false, informational: false },
+        });
+      } else if (source.reason !== 'cancelled') {
         workFailed('permission-mediation', { bindingId });
       }
-      continue;
+      return;
     }
-    if (!await isConversationConnectionPlacedForInvocation(context, source.source.connectionId)) continue;
+    if (!await isConversationConnectionPlacedForInvocation(context, source.source.connectionId)) return;
     try {
-      await input.observeSession?.(source.source.sessionId);
+      await input.observeSession?.(source.source.sessionId, bindingId);
     } catch (error) {
       workFailed('transcript-projection', { error, bindingId });
     }
-    if (input.unavailablePermissionBindings?.has(bindingId)) continue;
     let pending: ConversationPendingPermissionProjection;
     try {
       // The complete projection, not its first bounded page: a permission wait
@@ -653,19 +576,8 @@ export async function runConversationOutwardDeliveryCycle(
         signal: context.signal,
       });
     } catch (error) {
-      if (!context.signal.aborted) {
-        const failure = classifySupervisorFailure(error);
-        if (failure?.code === 'ownerMachineUnavailable' && !failure.retryable) {
-          // No exact live Session owner can answer. Keep custody and its
-          // existing Session watch; a delivery deadline cannot change this
-          // fact. Binding or Session invalidation admits the next read.
-          input.unavailablePermissionBindings?.add(bindingId);
-          logOutwardDeliverySupervisorWorkFailure(context, 'permission-mediation', { error, bindingId });
-        } else {
-          workFailed('permission-mediation', { error, bindingId });
-        }
-      }
-      continue;
+      if (!context.signal.aborted) workFailed('permission-mediation', { error, bindingId });
+      return;
     }
     const pendingRequestKeys = new Set<string>();
     for (const request of pending.requests) {
@@ -689,17 +601,41 @@ export async function runConversationOutwardDeliveryCycle(
         && !context.signal.aborted) {
         workFailed('permission-mediation', { bindingId });
       }
-      if (accepted.kind === 'accepted' && accepted.custody.state === 'ready') noteDeadline(now());
+      if (accepted.kind === 'accepted' && !isConversationDeliveryAutomaticTerminal(accepted.custody)) {
+        // Admission already supplied the exact durable record. Send through
+        // the canonical claim/currentness owner now, before transcript
+        // publication or another binding's unavailable Session can delay it.
+        retainedPermissionWaits.delete(accepted.custodyId);
+        try {
+          await redriveRetainedDelivery(accepted.record);
+        } catch (error) {
+          workFailed('delivery-operation', { error, bindingId, connectionId: source.source.connectionId });
+        }
+      }
     }
+    // Only the canonical reader's complete projection proves absence. Positive
+    // requests above remain usable even when another page is unavailable.
+    if (pending.truncated) return;
     permissionMediationsByBindingId.set(bindingId, {
       source: source.source,
       pendingRequestKeys,
-      truncated: pending.truncated,
     });
+  };
+  // Bindings have independent Session owners. A slow or unavailable owner
+  // must not serialize another binding's pending-request notification.
+  const mediationBindingIds = new Set(bindingIds);
+  for (const record of retainedPermissionWaits.values()) {
+    if (record.obligation.bindingId !== undefined) mediationBindingIds.add(record.obligation.bindingId);
   }
+  await Promise.all([...mediationBindingIds].map(async bindingId => {
+    try {
+      await mediateBinding(bindingId);
+    } catch (error) {
+      workFailed('permission-mediation', { error, bindingId });
+    }
+  }));
 
-  const currentBindingIds = new Set(bindingIds);
-  for (const record of retainedPermissionWaits) {
+  for (const record of retainedPermissionWaits.values()) {
     if (context.signal.aborted) break;
     const bindingId = record.obligation.bindingId;
     const mediation = bindingId === undefined
@@ -712,21 +648,20 @@ export async function runConversationOutwardDeliveryCycle(
     if (source.kind !== 'permissionWait') continue;
     const stillPending = mediation.pendingRequestKeys.has(permissionWaitRequestIdentityKey(source));
     if (stillPending) {
+      // A changed summary can conflict with frozen admission content. The
+      // exact positive request still authorizes recovery of its original
+      // custody; records already driven above were removed from this map.
       try {
         await redriveRetainedDelivery(record);
       } catch (error) {
-        workFailed('delivery-operation', {
-          error,
-          connectionId: record.obligation.connectionId,
-          ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
-        });
+        workFailed('delivery-operation', { error, connectionId: record.obligation.connectionId,
+          ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }) });
       }
       continue;
     }
-    // A truncated source list cannot prove absence. Only an untouched custody
-    // row can be suppressed after a complete exact-source negative read;
-    // attempted or ambiguous effects retain their ordinary custody truth.
-    if (mediation.truncated || !isUnattemptedPermissionWait(record)
+    // Snapshot admission already proved a complete exact-source read. Attempted
+    // or ambiguous effects retain their ordinary custody truth.
+    if (!isUnattemptedPermissionWait(record)
       || !await isConversationConnectionPlacedForInvocation(context, record.obligation.connectionId)) continue;
     try {
       const result = await redriveConversationOutwardDelivery({
@@ -765,10 +700,34 @@ export async function runConversationOutwardDeliveryCycle(
     if (context.signal.aborted) break;
     let observedDeliveryOutcome = false;
     try {
-      const bindingRow = await stateCollection.get(bindingId, { signal: context.signal });
-      const connectionId = bindingRow === null ? undefined : bindingConnectionIdFromRow(bindingRow.value, bindingId);
-      if (connectionId === undefined || !await isConversationConnectionPlacedForInvocation(context, connectionId)) continue;
-      const projected = await projectConversationSessionTranscriptPage({
+      const bindingRow = asChannelStateRow(await stateCollection.get(bindingId, { signal: context.signal }));
+      const connectionId = bindingRow === undefined ? undefined : bindingConnectionIdFromRow(bindingRow.value, bindingId);
+      if (bindingRow === undefined || connectionId === undefined || !await isConversationConnectionPlacedForInvocation(context, connectionId)) continue;
+      const deliverProjection = async (projection: Pick<Parameters<typeof deliverConversationSessionProjectionOutwardDelivery>[0],
+        'binding' | 'frontierRowRevision' | 'source' | 'content' | 'replyContext'>): Promise<ConversationOutwardDeliveryResult> => {
+        // A content read can outlive placement changes. Both projection kinds
+        // enter the same custody claim after this natural-boundary check.
+        if (!await isConversationConnectionPlacedForInvocation(context, projection.binding.connectionId)) {
+          return { kind: 'notAttempted', reason: 'connectionUnavailable' };
+        }
+        const result = await deliverConversationSessionProjectionOutwardDelivery({ stateCollection,
+          targetedContributions: context.services.targetedContributions, actions: context.services.actions,
+          store: deliveryStore, ...projection, attemptId: createAttemptId(), now, signal: context.signal });
+        const retryable = noteDeliveryResult(result);
+        observedDeliveryOutcome = logOutwardDeliverySupervisorDeliveryOutcome(context,
+          'transcript-projection', { bindingId }, result, retryable) || observedDeliveryOutcome;
+        return result;
+      };
+      const target = isJsonRecord(bindingRow.value) && isJsonRecord(bindingRow.value.payload)
+        ? bindingRow.value.payload.target : undefined;
+      const projected = target !== undefined && isJsonRecord(target) && target.kind === 'discussion'
+        ? await projectConversationDiscussionPage({
+          actions: context.services.actions, stateCollection,
+          bindingRow, bindingId, signal: context.signal, now,
+          observeDiscussion: input.observeDiscussion,
+          deliver: deliverProjection,
+        })
+        : await projectConversationSessionTranscriptPage({
         actions: context.services.actions,
         store: projectionStore,
         bindingId,
@@ -779,11 +738,6 @@ export async function runConversationOutwardDeliveryCycle(
           outcome: { code: 'channels_projection_repliesOnlyInputNotConsumed', retryable: false, informational: true },
         }),
         deliver: async ({ binding, frontierRowRevision, item, source }) => {
-          // Transcript reads can outlive a placement change. Recheck before
-          // this callback can materialize or claim the final's custody.
-          if (!await isConversationConnectionPlacedForInvocation(context, binding.connectionId)) {
-            return { kind: 'notAttempted', reason: 'connectionUnavailable' };
-          }
           const relations = await readConversationSessionInputReplyRelations({
             stateCollection, bindingId: binding.bindingId, connectionId: binding.connectionId,
             sessionId: source.sessionId, signal: context.signal,
@@ -793,23 +747,13 @@ export async function runConversationOutwardDeliveryCycle(
               : [],
           });
           const replyContext = relations.at(-1)?.replyContext;
-          const result = await deliverConversationSessionProjectionOutwardDelivery({
-            stateCollection,
-            targetedContributions: context.services.targetedContributions,
-            actions: context.services.actions,
-            store: deliveryStore,
+          const result = await deliverProjection({
             binding,
             frontierRowRevision,
             source,
             content: item.text,
             ...(replyContext === undefined ? {} : { replyContext }),
-            attemptId: createAttemptId(),
-            now,
-            signal: context.signal,
           });
-          const retryable = noteDeliveryResult(result);
-          observedDeliveryOutcome = logOutwardDeliverySupervisorDeliveryOutcome(context,
-            'transcript-projection', { bindingId }, result, retryable) || observedDeliveryOutcome;
           if (result.kind === 'retired' || ((result.kind === 'settled' || result.kind === 'suppressed')
             && isConversationDeliveryAutomaticTerminal(result.custody))) {
             await markConversationSessionInputRepliesProjected({ stateCollection, relations, seq: item.seq, signal: context.signal });
@@ -817,12 +761,17 @@ export async function runConversationOutwardDeliveryCycle(
           return result;
         },
       });
-      if (projected.kind === 'advanced' && projected.hasMore) noteDeadline(now());
+      if (projected.kind === 'advanced' && projected.hasMore) {
+        nextBindingIds.add(bindingId);
+        noteDeadline(now());
+      }
       // Publication can recover without another transcript invalidation.
       // Re-read the preserved frontier on the existing recovery cadence.
       if (projected.kind === 'blocked' && projected.reason === 'publicationBarrier') {
+        nextBindingIds.add(bindingId);
         noteDeadline(now() + RECONCILIATION_INTERVAL_MS);
       }
+      if (projected.kind === 'blocked' && projected.reason === 'deliveryPending') nextBindingIds.add(bindingId);
       // Typed outcomes used to disappear here, leaving no way to distinguish
       // a parked frontier, a deferred Action and a page with no eligible reply.
       // Emit one content-free result through the same work record as thrown
@@ -831,15 +780,18 @@ export async function runConversationOutwardDeliveryCycle(
         && !((projected.kind === 'advanced' || projected.kind === 'idle') && projected.deliveredItemCount > 0)
         && !(observedDeliveryOutcome && projected.kind === 'blocked' && projected.reason === 'deliveryPending')) {
         const retryable = projected.kind === 'blocked'
-          || (projected.kind === 'unavailable' && projected.reason === 'frontierUnavailable');
+          || (projected.kind === 'unavailable' && (projected.reason === 'frontierUnavailable' || projected.retryable === true));
         const informational = projected.kind === 'advanced' || projected.kind === 'idle';
-        const code = `channels_projection_${'reason' in projected ? projected.reason : projected.kind}`;
+        const code = (projected.kind === 'unavailable' ? projected.actionErrorCode : undefined)
+          ?? `channels_projection_${'reason' in projected ? projected.reason : projected.kind}`;
         if (projected.kind === 'unavailable' && retryable) {
+          nextBindingIds.add(bindingId);
           noteDeadline(now() + RECONCILIATION_INTERVAL_MS);
         }
         logOutwardDeliverySupervisorWorkFailure(context, 'transcript-projection', {
           bindingId, outcome: { code, retryable, informational },
         });
+        if (projected.kind === 'blocked' && retryable) nextBindingIds.add(bindingId);
       }
     } catch (error) {
       // Projection never receives a local replacement owner; its unchanged
@@ -894,20 +846,10 @@ export async function runConversationOutwardDeliveryCycle(
             retirementRecords.push(record);
           }
         }
-        const unreachableControlSourceIds = await readUnreachableControlSourceIds({
-          context,
-          records: retirementRecords,
-        });
         const retired = await deliveryStore.retireSelected({
           records: retirementRecords.map((record) => ({
             custodyId: record.custodyId,
             expectedRevision: record.revision,
-            physicallyForget: canPhysicallyForgetOutwardCustody({
-              record,
-              currentBindingIds,
-              mediationsByBindingId: permissionMediationsByBindingId,
-              unreachableControlSourceIds,
-            }),
           })),
         });
         if (retired.kind === 'unavailable' && retired.reason !== 'cancelled') {
@@ -947,19 +889,16 @@ export function createConversationOutwardDeliverySupervisor(
     RECONCILIATION_INTERVAL_MS,
     'Outward delivery reconciliation interval',
   );
-  const staleAttemptAfterMs = positiveDelay(
-    options.staleAttemptAfterMs,
-    STALE_ATTEMPT_AFTER_MS,
-    'Outward delivery stale-attempt interval',
-  );
   const runCycle = options.runCycle ?? runConversationOutwardDeliveryCycle;
   let controller: AbortController | null = null;
   let running: Promise<void> | null = null;
   let disposed = false;
+  let updateRequired = false;
 
   const run = async (context: BackgroundServiceContext): Promise<void> => {
     if (disposed) throw new Error('Outward delivery supervisor is disposed.');
     if (running !== null) throw new Error('Outward delivery supervisor is already running.');
+    if (updateRequired) return;
     const supervisorController = new AbortController();
     controller = supervisorController;
     const abortFromContext = (): void => supervisorController.abort(context.signal.reason);
@@ -970,26 +909,37 @@ export function createConversationOutwardDeliverySupervisor(
     let retentionSweep: ConversationOutwardRetentionSweepState | undefined;
     const wake = createSupervisorWake(supervisorController.signal);
     const observations: Array<{ dispose(): void }> = [];
-    const sessions = new Map<string, { dispose(): void }>();
-    const unavailablePermissionBindings = new Set<string>();
-    let permissionSourcesInvalidated = false;
+    let discoverBindings = true;
+    const changedBindingIds = new Set<string>();
+    const retryBindingIds = new Set<string>();
+    const sessions = createOutwardBindingObservation({ ...context, signal: supervisorController.signal }, bindingIds => {
+      for (const bindingId of bindingIds) changedBindingIds.add(bindingId);
+      wake.wake();
+    });
     let discoveryInvalidated = false;
     const invalidate = () => {
       discoveryInvalidated = true;
       wake.wake();
     };
-    const invalidatePermissionSources = () => {
-      permissionSourcesInvalidated = true;
-      unavailablePermissionBindings.clear();
-      invalidate();
-    };
     running = (async () => {
       try {
-        const account = requireChannelsAccountStorage(context);
-        for (const definition of [CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION]) {
-          observations.push(account.collection(definition).watch({ kind: 'collection' },
-            definition === CHANNEL_STATE_COLLECTION ? invalidatePermissionSources : invalidate));
-        }
+        const access = createChannelsCollectionAccess(requireChannelsAccountStorage(context), (status, error) => {
+          updateRequired = true;
+          context.services.logger.warn('[Channels] Account Collection requires an update', status);
+          supervisorController.abort(error);
+        });
+        context = { ...context, services: { ...context.services, storage: {
+          ...context.services.storage, account: access.storage,
+        } } };
+        const account = access.storage;
+        // Only structural changes require binding discovery. Input publication
+        // uses its Session selector; projection-frontier writes are our output.
+        observations.push(account.collection(CHANNEL_STATE_COLLECTION).watch({
+          index: CHANNEL_STATE_INDEX_ID.byKind,
+          prefixes: [CHANNEL_STATE_RECORD_KIND.connection, CHANNEL_STATE_RECORD_KIND.binding].map(kind => [kind]),
+          order: 'asc',
+        }, () => { discoverBindings = true; invalidate(); }));
+        observations.push(account.collection(CHANNEL_DELIVERIES_COLLECTION).watch({ kind: 'collection' }, invalidate));
         while (!supervisorController.signal.aborted) {
           // Retirement and delivery writes emit the same hints as foreign
           // changes. Finish the current keyset pass before replaying them,
@@ -997,12 +947,21 @@ export function createConversationOutwardDeliverySupervisor(
           // The fresh pass still discovers changes behind either cursor.
           if (discoveryInvalidated && deliveryCursor === undefined && retentionSweep?.cursor === undefined) {
             discoveryInvalidated = false;
-            deliveryDeadline = undefined;
+            if (retryBindingIds.size === 0) deliveryDeadline = undefined;
             retentionSweep = undefined;
           }
+          const fullBindingDiscovery = discoverBindings;
+          discoverBindings = false;
+          const bindingIds = new Set(changedBindingIds);
+          changedBindingIds.clear();
+          if (deliveryDeadline !== undefined && deliveryDeadline <= clock.now()) {
+            for (const bindingId of retryBindingIds) bindingIds.add(bindingId);
+            retryBindingIds.clear();
+            deliveryDeadline = undefined;
+          }
           wake.reset();
-          permissionSourcesInvalidated = false;
-          const observedSessions = new Set<string>();
+          const observedBindings = new Map<string, string>();
+          const observedDiscussions = new Map<string, string>();
           let nextWakeAt: number | undefined;
           let continuationStalled = false;
           const workerContext = {
@@ -1010,17 +969,18 @@ export function createConversationOutwardDeliverySupervisor(
             signal: supervisorController.signal,
           } satisfies BackgroundServiceContext;
           try {
-            if (deliveryCursor === undefined) deliveryDeadline = undefined;
+            if (deliveryCursor === undefined && retryBindingIds.size === 0) deliveryDeadline = undefined;
             const cycle = await runCycle({
               context: workerContext,
               now: clock.now,
-              staleAttemptAfterMs,
-              unavailablePermissionBindings,
-              observeSession: async sessionId => {
-                observedSessions.add(sessionId);
-                if (sessions.has(sessionId)) return;
-                const session = await context.services.sessions.get(sessionId, { signal: supervisorController.signal });
-                if (session !== null) sessions.set(sessionId, session.watch(invalidatePermissionSources));
+              ...(fullBindingDiscovery ? {} : { bindingIds: [...bindingIds] }),
+              observeSession: async (sessionId, bindingId) => {
+                observedBindings.set(bindingId, sessionId);
+                await sessions.observe(sessionId, bindingId);
+              },
+              observeDiscussion: (discussionId, bindingId) => {
+                observedDiscussions.set(bindingId, discussionId);
+                sessions.observeDiscussion(discussionId, bindingId);
               },
               ...(deliveryCursor === undefined ? {} : { deliveryCursor }),
               ...(retentionSweep === undefined ? {} : { retentionSweep }),
@@ -1031,25 +991,25 @@ export function createConversationOutwardDeliverySupervisor(
               || (cycle.nextRetentionSweep?.cursor !== undefined && cycle.nextRetentionSweep.cursor === retentionSweep?.cursor);
             deliveryCursor = cycle.nextDeliveryCursor;
             retentionSweep = cycle.nextRetentionSweep;
-            // An invalidation during the pending read must not be overwritten
-            // by that read's later terminal failure.
-            if (permissionSourcesInvalidated) unavailablePermissionBindings.clear();
             nextWakeAt = cycle.nextWakeAt;
+            if (cycle.nextBindingIds === 'all') discoverBindings = true;
+            else for (const bindingId of cycle.nextBindingIds ?? []) retryBindingIds.add(bindingId);
             if (nextWakeAt !== undefined) deliveryDeadline = Math.min(deliveryDeadline ?? Infinity, nextWakeAt);
             nextWakeAt = deliveryDeadline;
             if (advancedContinuation || (discoveryInvalidated && !continuationStalled)) nextWakeAt = clock.now();
             else if (retentionSweep?.notBefore !== undefined) {
               nextWakeAt = Math.min(nextWakeAt ?? Infinity, retentionSweep.notBefore);
             }
-            for (const [id, observation] of sessions) {
-              if (!observedSessions.has(id)) { observation.dispose(); sessions.delete(id); }
-            }
+            if (fullBindingDiscovery && cycle.nextBindingIds !== 'all') sessions.reconcile(observedBindings, observedDiscussions);
           } catch (error) {
             // Leave the cursor unchanged so a transient failure cannot skip
             // a durable row. The next wake repeats canonical discovery.
             if (!supervisorController.signal.aborted) {
               logOutwardDeliverySupervisorCycleFailure(workerContext, error);
+              if (fullBindingDiscovery) discoverBindings = true;
+              else for (const bindingId of bindingIds) retryBindingIds.add(bindingId);
               nextWakeAt = clock.now() + reconciliationIntervalMs;
+              deliveryDeadline = Math.min(deliveryDeadline ?? Infinity, nextWakeAt);
               continuationStalled = true;
             }
           }
@@ -1067,7 +1027,8 @@ export function createConversationOutwardDeliverySupervisor(
           }
         }
       } finally {
-        for (const observation of [...observations, ...sessions.values()]) observation.dispose();
+        for (const observation of observations) observation.dispose();
+        sessions.dispose();
         wake.dispose();
         context.signal.removeEventListener('abort', abortFromContext);
         controller = null;

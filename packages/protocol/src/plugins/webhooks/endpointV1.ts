@@ -1,3 +1,4 @@
+import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { PLUGIN_WEBHOOK_ACTION_IDS_V1, PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1 } from './endpointActionIdsV1.js';
 export { PLUGIN_WEBHOOK_ACTION_IDS_V1, PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1 } from './endpointActionIdsV1.js';
 import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
@@ -6,7 +7,7 @@ import { z } from 'zod/mini';
 
 import { encodeBase64 } from '../../crypto/base64.js';
 import { isLoopbackHostname } from '../../server/urls/loopbackHostname.js';
-import { PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
+import { PluginMachineMaterializationMachineIdV1Schema, PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
 import type { PluginJsonSchemaV2 } from '../contributions/publicTypes.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
@@ -198,14 +199,29 @@ export const PluginWebhookEndpointCheckCorrespondenceResultV1Schema = lazyZodSch
  * ordering epoch of the intent that desires it. No expected revision is
  * accepted, because the endpoint revision is not this caller's authority.
  */
-export const PluginWebhookEndpointConvergeTargetInputV1Schema = lazyZodSchema(() => z.strictObject({
-  webhookEndpointId: PluginWebhookEndpointIdV1Schema,
-  webhookContribution: asProtocolZod(PluginContributionIdentityV1Schema),
-  sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
-  setup: PluginWebhookEndpointSetupV1Schema,
-  desiredTargetMaterialization: PluginMachineMaterializationRefV1Schema,
-  targetIntentEpoch: PluginWebhookTargetIntentEpochV1Schema,
-}));
+export const PluginWebhookEndpointConvergeTargetInputV1Schema = lazyZodSchema(() => {
+  const fields = {
+    webhookEndpointId: PluginWebhookEndpointIdV1Schema,
+    webhookContribution: asProtocolZod(PluginContributionIdentityV1Schema),
+    sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
+    setup: PluginWebhookEndpointSetupV1Schema,
+    targetIntentEpoch: PluginWebhookTargetIntentEpochV1Schema,
+  };
+  return z.union([
+    z.strictObject({
+      ...fields,
+      desiredTargetMaterialization: PluginMachineMaterializationRefV1Schema,
+    }),
+    z.strictObject({
+      ...fields,
+      /** The host resolves the current installation; the controller owns only placement. */
+      desiredTargetRouting: z.strictObject({
+        serverIdentityId: z.string().check(z.trim(), z.regex(SERVER_IDENTITY_ID_PATTERN)),
+        machineId: PluginMachineMaterializationMachineIdV1Schema,
+      }),
+    }),
+  ]);
+});
 
 export const PluginWebhookEndpointConvergeTargetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({

@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, projectPluginFailureText, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
-import { asChannelStateRow, readConversationBindingUpdateRow, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
+import { asChannelStateRow, readConversationBindingUpdateRow } from './accountLocalBindingPolicy.js';
 import { CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_COLLECTION } from './collections.js';
 import { hasPendingConversationThreadBinding } from './deliveryCustody.js';
 import { createConversationThreadBindingForInvocation } from './management.js';
@@ -38,17 +38,14 @@ export async function startConversationForInvocation(input: unknown, context: Pl
   if (router.target.kind !== 'threadRouter') throw new PluginError({ code: 'channels_conversation_start_router_required', message: 'Starting a conversation requires a thread router.' });
   const audience = router.target.principalGroups.find((group) => group.id === request.audienceGroupId);
   if (audience === undefined || audience.principalIds.length === 0) throw new PluginError({ code: 'channels_conversation_start_audience_not_found', message: 'Choose a configured router audience.' });
-  const connectionRow = asChannelStateRow(await state.get(router.connectionId, { signal: context.signal }));
-  if (connectionRow === undefined) throw new PluginError({ code: 'channels_conversation_start_connection_unavailable', message: 'The router connection is unavailable.' });
-  const connection = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: router.connectionId });
   const obligation: ConversationOutwardDeliveryObligation = {
     connectionId: router.connectionId, bindingId: router.id,
-    routeAuthority: { connectionAuthorityEpoch: connection.lifecycle.authorityEpoch, bindingRevision: row.revision, bindingAuthorityEpoch: router.authorityEpoch },
+    routeAuthority: {},
     source: { kind: 'conversationStart', sessionId: request.sessionId, requestId: context.invocationId },
     endpoint: router.endpoint, content: request.content,
     newThread: { recipients: audience.principalIds, subject: request.subject },
     deliveryKey: `conversation-start:${context.invocationId}`,
-    mentionPolicy: 'suppress', linkPreviewPolicy: router.linkPreviewPolicy,
+     linkPreviewPolicy: router.linkPreviewPolicy,
   };
   const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state,
     deliveriesCollection: account.collection(CHANNEL_DELIVERIES_COLLECTION), signal: context.signal });
@@ -74,8 +71,17 @@ export async function startConversationForInvocation(input: unknown, context: Pl
   const target = await readConversationSessionProjectionNoHistoryBaseline({
     actions: context.services.actions, sessionId: request.sessionId, signal: context.signal,
   });
-  if (target.kind !== 'ready') throw new PluginError({ code: 'channels_conversation_start_session_unavailable',
-    message: 'The reply Session transcript is unavailable.', retryable: target.kind === 'retry' || target.kind === 'unavailable' });
+  if (target.kind !== 'ready') {
+    const details = { projectionKind: target.kind, projectionReason: target.reason,
+      ...(target.kind === 'unavailable' && target.actionErrorCode !== undefined ? { actionErrorCode: target.actionErrorCode } : {}),
+    };
+    // Target approval receipts deliberately exclude opaque plugin details.
+    // Record only the projection owner's classified facts, never the caught
+    // throwable, Action payload, transcript, or conversation content.
+    context.services.logger.info('[Channels] Conversation start baseline unavailable', { sessionId: request.sessionId, ...details });
+    throw new PluginError({ code: 'channels_conversation_start_session_unavailable',
+      message: 'The reply Session transcript is unavailable.', retryable: target.kind === 'retry' || target.kind === 'unavailable', details });
+  }
   const accepted = await admitConversationOutwardDeliveryReady({
     stateCollection: state, store,
     obligation, signal: context.signal,

@@ -16,14 +16,17 @@ import {
   isInactiveSupervisorCollectionFailure,
 } from './supervisorFailure.js';
 import {
+  readNextConversationIngressDueAtForInvocation,
   runConversationCheckpointedPollForInvocation,
   runConversationIngressDueWorkForInvocation,
   runConversationIngressRetentionForInvocation,
+  settleConversationIngressAttemptsForInvocation,
   type ConversationCheckpointedPollRunResult,
 } from './ingress.js';
-import type { ConversationPairingManager } from './management.js';
+import { convergeConversationConnectionEndpointForInvocation, type ConversationPairingManager } from './management.js';
 import { createSupervisorWake } from './supervisorWake.js';
 import { createChannelsCollectionAccess } from './collectionUpdateRequired.js';
+import { conversationRetryDelayMs } from './retryBackoff.js';
 
 const RECOVERY_INTERVAL_MS = 1_000;
 
@@ -49,7 +52,7 @@ export type IngressSupervisorOptions = Readonly<{
   runRetention?: (
     input: Readonly<{ now: number; limit: number; cursor?: string }>,
     context: BackgroundServiceContext,
-  ) => Promise<Readonly<{ nextCursor?: string; nextRetentionAt?: number; retryRequired?: true }>>;
+  ) => Promise<Readonly<{ nextCursor?: string }>>;
 }>;
 
 export type IngressSupervisor = Readonly<{
@@ -115,9 +118,11 @@ function logIngressSupervisorFailure(
 async function readCurrentConnections(context: BackgroundServiceContext): Promise<readonly Readonly<{
   connectionId: string;
   retryAt?: number;
+  durablePush?: true;
+  desiredKey?: string;
 }>[]> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const result: Array<{ connectionId: string; retryAt?: number }> = [];
+  const result: Array<{ connectionId: string; retryAt?: number; durablePush?: true; desiredKey?: string }> = [];
   let cursor: string | undefined;
   do {
     const page = await collection.query({
@@ -132,10 +137,26 @@ async function readCurrentConnections(context: BackgroundServiceContext): Promis
       if (connectionId === undefined) continue;
       const payload = isJsonRecord(row.value) ? row.value.payload : undefined;
       const failure = payload !== undefined && isJsonRecord(payload) ? payload.pollFailure : undefined;
+      const transport = payload !== undefined && isJsonRecord(payload) ? payload.transport : undefined;
+      const origin = payload !== undefined && isJsonRecord(payload) ? payload.transportOrigin : undefined;
       const retryAt = failure !== undefined && isJsonRecord(failure) && failure.phase === 'retryDue'
         && typeof failure.retryNotBeforeMs === 'number' && Number.isSafeInteger(failure.retryNotBeforeMs)
         ? failure.retryNotBeforeMs : undefined;
-      result.push({ connectionId, ...(retryAt === undefined ? {} : { retryAt }) });
+      result.push({ connectionId, ...(retryAt === undefined ? {} : { retryAt }),
+        ...(transport !== undefined && isJsonRecord(transport) && transport.kind === 'durablePush' ? {
+          durablePush: true as const,
+          // Scheduling input only: the endpoint owner reads and admits current
+          // authority at the actual invocation.
+          desiredKey: JSON.stringify([
+            payload !== undefined && isJsonRecord(payload) ? payload.authorityEpoch : null,
+            origin !== undefined && isJsonRecord(origin) ? origin.serverIdentityId : null,
+            origin !== undefined && isJsonRecord(origin) ? origin.machineId : null,
+            transport,
+            failure !== undefined && isJsonRecord(failure) && failure.phase === 'blocked',
+            retryAt,
+          ]),
+        } : {}),
+      });
     }
     cursor = page.nextCursor;
   } while (cursor !== undefined);
@@ -144,7 +165,7 @@ async function readCurrentConnections(context: BackgroundServiceContext): Promis
 
 /**
  * One core-owned background service reconstructs only persisted connection
- * rows on each wake. It has no retained connection cache, queue, or poll
+ * rows on connection/binding invalidation. It has no retained connection authority, queue, or poll
  * cursor: the ingress owner rereads and fences every actual poll effect. Its
  * transient state tracks in-flight polls, owner-derived next deadlines and
  * Collection keyset position. None is a durable queue, checkpoint, retained
@@ -159,15 +180,6 @@ export function createIngressSupervisor(
     RECOVERY_INTERVAL_MS,
     'Checkpointed poll reconciliation interval',
   );
-  const runPoll = options.runPoll ?? (async (input, context) => await runConversationCheckpointedPollForInvocation(
-    input,
-    context,
-    options.pairing,
-  ));
-  const runDueWork = options.runDueWork ?? (async (input, context) => await runConversationIngressDueWorkForInvocation(
-    input,
-    context,
-  ));
   const runRetention = options.runRetention ?? (async (input, context) => await runConversationIngressRetentionForInvocation(
     input,
     context,
@@ -187,15 +199,14 @@ export function createIngressSupervisor(
     if (context.signal.aborted) abortFromContext();
     else context.signal.addEventListener('abort', abortFromContext, { once: true });
     let retentionCursor: string | undefined;
-    let retentionDeadline: number | undefined;
-    let retentionRetryRequired = false;
     let retentionInvalidated = false;
     // The first wake owns the startup pass: there is no earlier sweep to pace.
     let nextRetentionSweepAt = 0;
     const wake = createSupervisorWake(supervisorController.signal);
     // null parks a permanent boundary failure until stored input changes;
     // Infinity remains an ordinary ineligible connection awaiting its watch.
-    const pollDeadlines = new Map<string, number | null>();
+    const pollDeadlines = new Map<string, { deadline: number | null; retryAt?: number; durablePush?: true; desiredKey?: string; thrownFailures?: number }>();
+    let discoverConnections = true;
     const observations: Array<{ dispose(): void }> = [];
     // The polls this generation started and has not yet seen settle, keyed by
     // connection. It is the whole of the concurrency contract: a key that is
@@ -208,6 +219,25 @@ export function createIngressSupervisor(
     // The single outstanding retention pass, for exactly the same reason and
     // with exactly the same lifetime as the poll map above.
     let retentionPass: Promise<void> | null = null;
+    // Collection pushes may wake maintenance during recovery; they do not
+    // bring a failed due-work attempt forward from the owner's retry time.
+    let dueWorkRetryAt = 0;
+    const retainDiscussionAttempt = (attempt: Promise<unknown>): void => {
+      // Dispatch releases row custody before notifying us. A Collection wake
+      // alone can run earlier, skip the busy row and park its next due attempt.
+      void attempt.then(() => wake.wake(), error => {
+        if (supervisorController.signal.aborted) return;
+        logIngressSupervisorFailure(context, 'due-work', error);
+        dueWorkRetryAt = clock.now() + reconciliationIntervalMs;
+        wake.wake();
+      });
+    };
+    const runPoll = options.runPoll ?? (async (input, workerContext) => await runConversationCheckpointedPollForInvocation(
+      input, workerContext, options.pairing, { retainDiscussionAttempt },
+    ));
+    const runDueWork = options.runDueWork ?? (async (input, workerContext) => await runConversationIngressDueWorkForInvocation(
+      input, workerContext, { retainDiscussionAttempt },
+    ));
     running = (async () => {
       try {
         const access = createChannelsCollectionAccess(requireChannelsAccountStorage(context), (status, error) => {
@@ -219,22 +249,43 @@ export function createIngressSupervisor(
           ...context.services.storage, account: access.storage,
         } } };
         const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-        observations.push(collection.watch({ kind: 'collection' }, () => {
-          // A checkpoint/census repair can unblock a failed poll without
-          // changing the connection or binding index watched below.
-          for (const [id, deadline] of pollDeadlines) {
-            if (deadline === null) pollDeadlines.delete(id);
+        const resumeFailedPolls = () => {
+          let resumed = false;
+          for (const schedule of pollDeadlines.values()) {
+            if (schedule.deadline === null) { schedule.deadline = 0; resumed = true; }
           }
+          return resumed;
+        };
+        observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind,
+          prefix: [CHANNEL_STATE_RECORD_KIND.checkpoint], order: 'asc' }, () => {
+          if (resumeFailedPolls()) wake.wake();
+        }));
+        const invalidateRetention = () => {
+          resumeFailedPolls();
           retentionInvalidated = true;
           nextRetentionSweepAt = 0;
           wake.wake();
-        }));
+        };
+        // Only pending content and destination handoffs can change body
+        // recovery. Cursors and projected reply frontiers are not its owners.
+        for (const kind of [CHANNEL_STATE_RECORD_KIND.ingressCensus,
+          CHANNEL_STATE_RECORD_KIND.ingressObligation]) {
+          observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [kind], order: 'asc' }, invalidateRetention));
+        }
+        const invalidateProviderConnections = () => {
+          context.services.logger.info('[Channels] Provider connections invalidated', { phase: 'connectionsInvalidated' });
+          void context.services.events.plugin.emit('connections-invalidated-v1', {}, { signal: supervisorController.signal })
+            .then(result => context.services.logger.info('[Channels] Provider invalidation admitted', {
+              phase: 'connectionsInvalidationAdmitted', subscriberCount: result.subscriberCount,
+            }))
+            .catch(error => logIngressSupervisorFailure(context, 'connection-discovery', error));
+        };
+        if (options.pairing !== undefined) observations.push(options.pairing.subscribe(invalidateProviderConnections));
         for (const kind of [CHANNEL_STATE_RECORD_KIND.connection, CHANNEL_STATE_RECORD_KIND.binding]) {
           observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [kind], order: 'asc' }, () => {
-            pollDeadlines.clear();
-            wake.wake();
-            void context.services.events.plugin.emit('connections-invalidated-v1', {}, { signal: supervisorController.signal })
-              .catch(error => logIngressSupervisorFailure(context, 'connection-discovery', error));
+            discoverConnections = true;
+            invalidateRetention();
+            invalidateProviderConnections();
           }));
         }
         while (!supervisorController.signal.aborted) {
@@ -244,7 +295,6 @@ export function createIngressSupervisor(
             signal: supervisorController.signal,
           } satisfies BackgroundServiceContext;
           const now = clock.now();
-          let recoveryAt: number | undefined;
           // Retention is maintenance and one page of it walks a whole
           // census unit per row — up to a connection read plus one read per
           // matched binding. Awaiting it inline put thousands of serial storage
@@ -261,7 +311,6 @@ export function createIngressSupervisor(
               // restarting every page would repeatedly reread its prefix.
               // Keep the pending invalidation until exhaustion so rows changed
               // behind the cursor are still covered by the following sweep.
-              retentionDeadline = undefined;
               retentionInvalidated = false;
             }
             const pass = (async () => {
@@ -272,27 +321,13 @@ export function createIngressSupervisor(
                   ...(retentionCursor === undefined ? {} : { cursor: retentionCursor }),
                 }, workerContext);
                 retentionCursor = retention.nextCursor;
-                if (retention.nextRetentionAt !== undefined) {
-                  retentionDeadline = Math.min(retentionDeadline ?? Infinity, retention.nextRetentionAt);
-                }
-                if (retention.retryRequired) {
-                  retentionRetryRequired = true;
-                  retentionDeadline = Math.min(retentionDeadline ?? Infinity, clock.now() + reconciliationIntervalMs);
-                }
                 // A live cursor means this sweep is still mid-collection, so the
                 // next wake takes its next page. After exhaustion, replay any
-                // pending invalidation before parking until an owner-derived
-                // expiry. A soft failure on any page retains the existing
-                // recovery deadline (or earlier expiry) after exhaustion;
-                // this sweep's own writes must not immediately retry it.
-                // Later Collection hints still wake fresh work immediately.
-                nextRetentionSweepAt = retentionCursor !== undefined || (retentionInvalidated && !retentionRetryRequired)
+                // pending invalidation, then park until an actual change.
+                // Failed pages use the existing recovery path below.
+                nextRetentionSweepAt = retentionCursor !== undefined || retentionInvalidated
                   ? now
-                  : retentionDeadline ?? Number.POSITIVE_INFINITY;
-                if (retentionCursor === undefined) {
-                  retentionDeadline = undefined;
-                  retentionRetryRequired = false;
-                }
+                  : Number.POSITIVE_INFINITY;
               } catch (error) {
                 if (supervisorController.signal.aborted) return;
                 logIngressSupervisorFailure(workerContext, 'retention', error);
@@ -308,61 +343,79 @@ export function createIngressSupervisor(
               if (Number.isFinite(nextRetentionSweepAt)) wake.wake();
             });
           }
-          try {
-            await runDueWork({ now, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 }, workerContext);
-          } catch (error) {
-            if (supervisorController.signal.aborted) break;
-            logIngressSupervisorFailure(workerContext, 'due-work', error);
-            recoveryAt = now + reconciliationIntervalMs;
-          }
-          let connections: Awaited<ReturnType<typeof readCurrentConnections>>;
-          try {
-            connections = await readCurrentConnections(workerContext);
-          } catch (error) {
-            if (supervisorController.signal.aborted) break;
-            logIngressSupervisorFailure(workerContext, 'connection-discovery', error);
+          if (now >= dueWorkRetryAt) {
             try {
-              await wake.wait(clock, now + reconciliationIntervalMs);
-            } catch {
-              if (!supervisorController.signal.aborted) {
-                throw new Error('Checkpointed poll supervisor retry wait failed.');
-              }
+              await runDueWork({ now, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 }, workerContext);
+            } catch (error) {
+              if (supervisorController.signal.aborted) break;
+              logIngressSupervisorFailure(workerContext, 'due-work', error);
+              dueWorkRetryAt = clock.now() + reconciliationIntervalMs;
             }
-            continue;
           }
-          const currentIds = new Set(connections.map(connection => connection.connectionId));
-          for (const id of pollDeadlines.keys()) if (!currentIds.has(id)) pollDeadlines.delete(id);
-          for (const { connectionId, retryAt } of connections) {
+          if (discoverConnections) {
+            discoverConnections = false;
+            try {
+              const connections = await readCurrentConnections(workerContext);
+              const currentIds = new Set(connections.map(connection => connection.connectionId));
+              for (const id of pollDeadlines.keys()) if (!currentIds.has(id)) pollDeadlines.delete(id);
+              for (const { connectionId, ...schedule } of connections) {
+                const current = pollDeadlines.get(connectionId);
+                // Bindings can make ordinary polls eligible. A settled
+                // endpoint instead follows only its own desired target.
+                if (schedule.durablePush && current?.desiredKey === schedule.desiredKey) continue;
+                pollDeadlines.set(connectionId, { ...schedule, deadline: 0 });
+              }
+            } catch (error) {
+              if (supervisorController.signal.aborted) break;
+              discoverConnections = true;
+              logIngressSupervisorFailure(workerContext, 'connection-discovery', error);
+              try {
+                await wake.wait(clock, now + reconciliationIntervalMs);
+              } catch {
+                if (!supervisorController.signal.aborted) {
+                  throw new Error('Checkpointed poll supervisor retry wait failed.');
+                }
+              }
+              continue;
+            }
+          }
+          for (const [connectionId, schedule] of pollDeadlines) {
             if (supervisorController.signal.aborted) break;
             // A provider long poll blocks for its own wait, not for the other
             // connections': awaiting each one in turn made connections share a
             // serial sweep, so the last connection waited for every earlier round trip before it was
             // polled again, and due work and retention below waited with it.
             if (inFlightPollsByConnectionId.has(connectionId)) continue;
-            if (pollDeadlines.get(connectionId) === null) continue;
-            const deadline = Math.max(pollDeadlines.get(connectionId) ?? 0, retryAt ?? 0);
+            if (schedule.deadline === null) continue;
+            const deadline = Math.max(schedule.deadline, schedule.retryAt ?? 0);
             if (deadline > now) {
-              pollDeadlines.set(connectionId, deadline);
+              schedule.deadline = deadline;
               continue;
             }
             if (deadline === Number.POSITIVE_INFINITY) continue;
-            // A connection watch clears this entry. A settling older read may
-            // not overwrite that invalidation with an ineligible outcome.
-            pollDeadlines.set(connectionId, Number.POSITIVE_INFINITY);
+            // Replacing this scheduling projection on a connection change
+            // prevents a retired job from overwriting its successor's wake.
+            schedule.deadline = Number.POSITIVE_INFINITY;
             const poll = (async () => {
               try {
+                if (schedule.durablePush && await convergeConversationConnectionEndpointForInvocation({ connectionId }, workerContext)) return;
                 const result = await runPoll({ connectionId, waitMs: MAX_CONVERSATION_RECEIVE_WAIT_MS }, workerContext);
-                if (pollDeadlines.has(connectionId)) {
-                  pollDeadlines.set(connectionId, result.kind === 'retry' || result.kind === 'committed'
+                if (pollDeadlines.get(connectionId) === schedule) {
+                  schedule.thrownFailures = 0;
+                  schedule.deadline = result.kind === 'retry' || result.kind === 'committed'
                     ? Math.min(Number.MAX_SAFE_INTEGER, clock.now() + (result.retryAfterMs ?? reconciliationIntervalMs))
-                    : Number.POSITIVE_INFINITY);
+                    : Number.POSITIVE_INFINITY;
                 }
               } catch (error) {
                 if (supervisorController.signal.aborted) return;
                 logIngressSupervisorFailure(workerContext, 'poll', error, connectionId);
-                if (pollDeadlines.has(connectionId)) {
-                  pollDeadlines.set(connectionId, classifySupervisorFailure(error)?.retryable === false
-                    ? null : clock.now() + reconciliationIntervalMs);
+                if (pollDeadlines.get(connectionId) === schedule) {
+                  // Storage/host failures can precede the durable poll-failure
+                  // owner. Keep only this generation's scheduling progress here;
+                  // returned retries still supply their own delay unchanged.
+                  schedule.thrownFailures = (schedule.thrownFailures ?? 0) + 1;
+                  schedule.deadline = classifySupervisorFailure(error)?.retryable === false
+                    ? null : clock.now() + conversationRetryDelayMs(schedule.thrownFailures);
                 }
               }
             })();
@@ -374,29 +427,28 @@ export function createIngressSupervisor(
             // permanently in flight for the rest of the generation.
             void poll.finally(() => {
               inFlightPollsByConnectionId.delete(connectionId);
-              if (!pollDeadlines.has(connectionId) || Number.isFinite(pollDeadlines.get(connectionId))) wake.wake();
+              // Releasing poll custody also releases retained due work, even
+              // when the provider itself is now ineligible or parked.
+              wake.wake();
             });
           }
           if (supervisorController.signal.aborted) break;
           let dueAt: number | undefined;
           try {
-            const due = await collection.query({
-              index: CHANNEL_STATE_INDEX_ID.byIngressDue,
-              prefix: [CHANNEL_STATE_RECORD_KIND.ingressObligation],
-              range: { lower: 0 }, order: 'asc', limit: 1,
-            }, { signal: supervisorController.signal });
-            const dueValue = due.rows[0]?.value;
-            const value = dueValue !== undefined && isJsonRecord(dueValue) ? dueValue['due-at'] : undefined;
-            if (typeof value === 'number') dueAt = value;
+            dueAt = await readNextConversationIngressDueAtForInvocation(workerContext);
           } catch (error) {
             if (supervisorController.signal.aborted) break;
             logIngressSupervisorFailure(workerContext, 'due-work', error);
-            recoveryAt = clock.now() + reconciliationIntervalMs;
+            dueWorkRetryAt = clock.now() + reconciliationIntervalMs;
           }
-          const deadlines = [...pollDeadlines.values()].filter((value): value is number => value !== null && Number.isFinite(value));
+          // An in-flight predecessor already wakes its successor on completion.
+          const deadlines = [...pollDeadlines]
+            .filter(([connectionId]) => !inFlightPollsByConnectionId.has(connectionId))
+            .map(([, schedule]) => schedule.deadline)
+            .filter((value): value is number => value !== null && Number.isFinite(value));
           if (retentionPass === null && Number.isFinite(nextRetentionSweepAt)) deadlines.push(nextRetentionSweepAt);
-          if (dueAt !== undefined) deadlines.push(dueAt);
-          if (recoveryAt !== undefined) deadlines.push(recoveryAt);
+          if (dueAt !== undefined) deadlines.push(Math.max(dueAt, dueWorkRetryAt));
+          else if (dueWorkRetryAt > now) deadlines.push(dueWorkRetryAt);
           try {
             await wake.wait(clock, deadlines.length === 0 ? undefined : Math.min(...deadlines));
           } catch {
@@ -416,6 +468,7 @@ export function createIngressSupervisor(
           ...inFlightPollsByConnectionId.values(),
           ...(retentionPass === null ? [] : [retentionPass]),
         ]);
+        await settleConversationIngressAttemptsForInvocation({ signal: supervisorController.signal });
         context.signal.removeEventListener('abort', abortFromContext);
         controller = null;
       }

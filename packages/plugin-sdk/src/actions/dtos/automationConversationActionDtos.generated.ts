@@ -6,20 +6,20 @@ import type { JsonValue } from '../../identity.js';
 export type AutomationConversationActionInputById = {
     readonly "automation.conversation.targets.list": {
         limit?: number | undefined;
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
     };
     readonly "automation.conversation.target.verify": {
         automationId: string;
-        scopedTrigger?: {
+        scopedTrigger?: undefined | {
             sessionId: string;
             triggerId: string;
             triggerRevision: number;
-            triggerKind: 'prComment' | 'ciFailed';
+            triggerKind: 'ciFailed' | 'prComment';
             pullRequest: {
                 repository: string;
                 number: number;
             };
-        } | undefined;
+        };
         resultDelivery?: 'finalResult' | undefined;
     };
     readonly "automation.conversation.admit": {
@@ -30,21 +30,21 @@ export type AutomationConversationActionInputById = {
         sender: JsonValue;
         text: string;
         resultDelivery: {
-            kind: 'none';
-        } | {
             kind: 'finalResult';
             actionRef: {
                 pluginId: string;
                 localId: string;
             };
             opaqueContext: JsonValue;
+        } | {
+            kind: 'none';
         };
         prUpdate?: JsonValue | undefined;
-        hostEvidence?: {
+        hostEvidence?: undefined | {
             sessionId: string;
             triggerId: string;
             triggerRevision: number;
-            triggerKind: 'prComment' | 'ciFailed';
+            triggerKind: 'ciFailed' | 'prComment';
             pullRequest: {
                 repository: string;
                 number: number;
@@ -55,7 +55,18 @@ export type AutomationConversationActionInputById = {
                 principalId: string;
                 repositoryWriteAccess: boolean | null;
             };
-        } | undefined;
+            eventActors?: undefined | {
+                occurrenceId: string;
+                sender: {
+                    principalId: string;
+                };
+                observationActorPrincipalId: string;
+                actor: {
+                    principalId: string;
+                    repositoryWriteAccess: boolean | null;
+                };
+            }[];
+        };
     };
 };
 export type AutomationConversationActionResultById = {
@@ -64,33 +75,33 @@ export type AutomationConversationActionResultById = {
             automationId: string;
             label: string;
             execution: {
-                targetType: 'new_session' | 'existing_session' | 'execution_run' | null;
+                targetType: 'execution_run' | 'existing_session' | 'new_session' | null;
                 enabled: boolean;
             };
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
     };
     readonly "automation.conversation.target.verify": {
-        kind: 'verified';
-    } | {
         kind: 'notVerified';
         reason: 'notFound' | 'resultDeliveryUnsupported' | 'scopedTriggerIdentityMismatch';
+    } | {
+        kind: 'verified';
     };
     readonly "automation.conversation.admit": {
-        kind: 'refused';
-        reason: 'scopedTriggerIdentityMismatch' | 'repositoryWriteAccessUnknown' | 'repositoryWriteAccessDenied';
-        checkpointSafe: true;
-    } | {
         kind: 'admitted';
         runId: string;
+        checkpointSafe: true;
+    } | {
+        kind: 'blocked';
+        reason: 'capacity' | 'noEnabledAssignment' | 'occurrenceConflict' | 'resultDeliveryUnsupported' | 'temporarilyUnavailable';
+        checkpointSafe: false;
+    } | {
+        kind: 'refused';
+        reason: 'repositoryWriteAccessDenied' | 'repositoryWriteAccessUnknown' | 'scopedTriggerIdentityMismatch';
         checkpointSafe: true;
     } | {
         kind: 'rejoined';
         runId: string;
         checkpointSafe: true;
-    } | {
-        kind: 'blocked';
-        reason: 'resultDeliveryUnsupported' | 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict' | 'noEnabledAssignment';
-        checkpointSafe: false;
     };
 };

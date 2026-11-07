@@ -3,6 +3,7 @@ import type {
   ConversationDeliveryReconcileInputV1,
   ConversationDeliveryReplyContextV1,
   ConversationDeliveryResultV1,
+  ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 import {
   ConversationBindingTargetV1Schema,
@@ -12,7 +13,7 @@ import {
   countConversationTextUnits,
 } from '@happier-dev/channels-protocol/v1';
 import { sha256 } from '@noble/hashes/sha256';
-import type { TargetedContributionsService } from '@happier-dev/plugin-sdk';
+import { isPluginError, type TargetedContributionsService } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
   isPluginActionHandlerInvocationNotStartedAdvisory,
@@ -29,6 +30,7 @@ import type {
   ConversationSessionProjectionSource,
 } from './sessionProjection.js';
 import { createConversationSessionProjectionFrontierRowId } from './sessionProjection.js';
+import type { ConversationDiscussionProjectionBinding, ConversationDiscussionProjectionSource } from './discussionProjection.js';
 import {
   type ChannelStateCollection,
   type StoredCollectionRow,
@@ -40,6 +42,7 @@ import {
   readBindingFacts,
   checkConversationOutwardDeliveryRouteCurrentness,
   normalizeConversationOutwardDeliveryCurrentnessResult,
+  normalizeConversationStartedThreadResult,
   isConversationOutwardDeliveryPreEffectSuppression,
   redriveConversationOutwardDelivery,
   deliverConversationOutwardDelivery,
@@ -91,7 +94,6 @@ async function prepareConversationOutwardDeliveryProviderActionInvocation(input:
     stateCollection: input.stateCollection,
     signal: input.signal,
     obligation: input.record.obligation,
-    requireBindingRevision: false,
   });
   if (currentness.kind !== 'current') return normalizeConversationOutwardDeliveryCurrentnessResult(currentness);
   const provider = currentness.connection.providerAction;
@@ -129,7 +131,7 @@ async function prepareConversationOutwardDeliveryProviderActionInvocation(input:
       ...(input.record.obligation.replyContext === undefined
         ? {}
         : { replyContext: input.record.obligation.replyContext }),
-      mentionPolicy: input.record.obligation.mentionPolicy,
+
       linkPreviewPolicy: input.record.obligation.linkPreviewPolicy,
     })
     : ConversationDeliveryReconcileInputV1Schema.safeParse({
@@ -248,9 +250,9 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
       },
     },
     async invoke(signal) {
-      let current = invocation;
+      const current = invocation;
       const currentRecord = record;
-      if (current === undefined || currentRecord === undefined) return { kind: 'outcomeUnknown', code: 'providerInvocationUnavailable' };
+      if (current === undefined || currentRecord === undefined) return { kind: 'outcomeUnknown' };
       const invoke = async (
         target: ConversationOutwardDeliveryProviderActionInvocation,
         actionInput: typeof target.input,
@@ -259,15 +261,15 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
           const execution = await input.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
             target.action, actionInput, { signal, expectedExecutionRouting: target.expectedExecutionRouting },
           );
-          // The host checks routing before the effect and exact invocation currentness afterward.
+          // The host checks routing once, before the effect, and reports the settled result.
           const result = ConversationDeliveryResultV1Schema.safeParse(execution.result);
-          return result.success ? result.data : { kind: 'outcomeUnknown', code: 'providerResultInvalid' };
+          return result.success ? result.data : { kind: 'outcomeUnknown' };
         } catch (error) {
           // A missing delivery handler proves no send started. A missing
           // reconciliation handler says nothing about the earlier send.
           return input.operation === 'deliver' && isPluginActionHandlerInvocationNotStartedAdvisory(error)
-            ? { kind: 'notDelivered', retry: 'safe', code: 'submissionNotStarted' }
-            : { kind: 'outcomeUnknown', code: 'providerInvocationFailed' };
+            ? { kind: 'notDelivered', retry: 'safe' }
+            : { kind: 'outcomeUnknown' };
         }
       };
       const limit = current.outboundTextLimit;
@@ -277,45 +279,57 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
       }
       const content = current.input.content;
       const chunks = splitConversationOutboundText(content.text, limit);
-      if (chunks === null) return { kind: 'notDelivered', retry: 'never', code: 'contentUnrepresentable' };
+      if (chunks === null) return { kind: 'notDelivered', retry: 'never' };
       const providerMessageIds: string[] = [];
+      const startsThread = current.input.newThread !== undefined;
+      let createdEndpoint: ConversationResolvedEndpointV1 | undefined;
+      // Partial starts already created an external conversation. Preserve that
+      // endpoint in the existing resolve flow, without recreating it on retry.
+      const incomplete = (failedChunk: number): ConversationDeliveryResultV1 => startsThread
+        ? { kind: 'outcomeUnknown', providerMessageIds,
+          ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }) }
+        : { kind: 'partial', providerMessageIds, failedChunk };
       for (const [index, text] of chunks.entries()) {
         if (signal.aborted) return index === 0
           ? { kind: 'suppressedBeforeProviderEffect', reason: 'cancelled' }
-          : { kind: 'partial', providerMessageIds, failedChunk: index, retrySafe: false };
-        if (index > 0) {
-          // Each later native message is a new effect. Reuse the same Account
-          // and provider currentness owner, retaining any accepted evidence.
-          const prepared = await prepareConversationOutwardDeliveryProviderActionInvocation({
-            ...input, record: currentRecord, signal,
-          }).catch(() => null);
-          if (prepared === null || prepared.kind !== 'ready' || signal.aborted) {
-            return { kind: 'partial', providerMessageIds, failedChunk: index, retrySafe: false };
-          }
-          current = prepared.invocation;
-        }
+          : incomplete(index);
+        // Owner settings are checked at the send claim. Every native chunk
+        // still crosses host Action admission and respects cancellation.
         // Provider idempotency (such as Discord nonces) must distinguish chunks.
         // Hash the complete custody key so every allowed key remains bounded.
         const deliveryKey = `channels:chunk:v1:${encodeUnpaddedBase64Url(sha256(new TextEncoder().encode(
           JSON.stringify([current.input.deliveryKey, index]),
         )))}`;
-        const result = await invoke(current, { ...current.input,
+        if (!('content' in current.input)) return incomplete(index);
+        const { newThread, ...continuation } = current.input;
+        const result = normalizeConversationStartedThreadResult(currentRecord.obligation, await invoke(current, {
+          ...continuation, ...(index === 0 && newThread !== undefined ? { newThread } : {}),
+          ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }),
           content: { ...content, text }, deliveryKey, chunkIndex: index,
-        });
+        }));
         if (result.kind === 'delivered') {
           providerMessageIds.push(...result.providerMessageIds);
+          if (startsThread && index === 0) {
+            createdEndpoint = result.endpoint;
+            // Without the returned child, another chunk could create another
+            // thread or disclose text in the parent. Stop with known receipts.
+            if (createdEndpoint === undefined) return incomplete(index);
+          }
           continue;
         }
         if (result.kind === 'outcomeUnknown') return { ...result,
           providerMessageIds: [...providerMessageIds, ...(result.providerMessageIds ?? [])],
+          ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }),
         };
-        if (result.kind === 'partial') return { ...result,
-          providerMessageIds: [...providerMessageIds, ...result.providerMessageIds], failedChunk: index,
-        };
+        if (result.kind === 'partial') {
+          providerMessageIds.push(...result.providerMessageIds);
+          return startsThread ? incomplete(index) : { ...result, providerMessageIds, failedChunk: index };
+        }
         return index === 0 ? result
-          : { kind: 'partial', providerMessageIds, failedChunk: index, retrySafe: false };
+          : incomplete(index);
       }
-      return { kind: 'delivered', providerMessageIds };
+      return { kind: 'delivered', providerMessageIds,
+        ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }) };
     },
   };
 }
@@ -388,7 +402,7 @@ export async function deliverConversationOutwardDeliveryThroughProviderAction(in
 }
 
 /**
- * The Session projection source reaches custody only here. It re-reads the
+ * Session and Discussion projections reach custody only here. It re-reads the
  * current binding to construct the binding-scoped authority arm, derives the
  * bounded external delivery key from the incumbent opaque custody identity,
  * and then enters the same provider/currentness path as every other source.
@@ -398,9 +412,9 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   targetedContributions: TargetedContributionsService;
   actions: ActionsService;
   store: ConversationOutwardDeliveryStore;
-  binding: ConversationSessionProjectionBinding;
+  binding: ConversationSessionProjectionBinding | ConversationDiscussionProjectionBinding;
   frontierRowRevision: number;
-  source: ConversationSessionProjectionSource;
+  source: ConversationSessionProjectionSource | ConversationDiscussionProjectionSource;
   content: string;
   replyContext?: ConversationDeliveryReplyContextV1;
   attemptId: string;
@@ -426,23 +440,32 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
     };
   }
   if (bindingRow === null) return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
-  const binding = readBindingFacts({
-    accountLocalBindingPolicy,
-    row: bindingRow,
-    bindingId: input.binding.bindingId,
-  });
+  let binding: ReturnType<typeof readBindingFacts>;
+  try {
+    binding = readBindingFacts({ accountLocalBindingPolicy, row: bindingRow, bindingId: input.binding.bindingId });
+  } catch (error) {
+    if (isPluginError(error) && error.code === 'channels_binding_target_unavailable') {
+      return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
+    }
+    throw error;
+  }
   const target = binding === null
     ? { success: false as const }
     : ConversationBindingTargetV1Schema.safeParse(binding.target);
+  const matchesTarget = target.success && (
+    (target.data.kind === 'session' && input.source.kind === 'sessionProjection'
+      && 'sessionId' in input.binding.target
+      && target.data.sessionId === input.binding.target.sessionId
+      && target.data.sessionId === input.source.sessionId
+      && target.data.policy.deliveryMode === input.binding.target.deliveryMode)
+    || (target.data.kind === 'discussion' && input.source.kind === 'discussionProjection'
+      && 'discussionId' in input.binding.target
+      && target.data.discussionId === input.binding.target.discussionId
+      && target.data.discussionId === input.source.discussionId
+      && target.data.policy.deliveryMode === input.binding.target.deliveryMode));
   if (binding === null
-    || !target.success
-    || target.data.kind !== 'session'
+    || !matchesTarget
     || binding.connectionId !== input.binding.connectionId
-    || target.data.sessionId !== input.binding.target.sessionId
-    || target.data.sessionId !== input.source.sessionId
-    || target.data.policy.deliveryMode !== input.binding.target.deliveryMode
-    || !binding.enabled
-    || binding.deletionState !== 'none'
     || binding.linkPreviewPolicy === undefined) {
     return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
   }
@@ -482,18 +505,16 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   const provisional: ConversationOutwardDeliveryObligation = {
     connectionId: binding.connectionId,
     bindingId: input.binding.bindingId,
-    routeAuthority: {
-      connectionAuthorityEpoch: connection.authorityEpoch,
-      bindingRevision: binding.revision,
-      bindingAuthorityEpoch: binding.authorityEpoch,
-    },
+    routeAuthority: { bindingAuthorityEpoch: binding.authorityEpoch },
     source: input.source,
-    endpoint: binding.endpoint,
+    endpoint: input.replyContext !== undefined && 'threadId' in input.replyContext && binding.endpoint.kind !== 'thread'
+      ? { kind: 'thread', audience: binding.endpoint.audience, id: input.replyContext.threadId, parentId: binding.endpoint.id }
+      : binding.endpoint,
     content: { text: input.content },
     ...(input.replyContext === undefined ? {} : { replyContext: input.replyContext }),
     // The persistent identity deliberately excludes this derived public key.
     deliveryKey: 'channels:delivery:v1:pending',
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: binding.linkPreviewPolicy,
   };
   const custodyId = await deriveConversationOutwardDeliveryCustodyId({
@@ -529,8 +550,6 @@ export async function reconcileConversationOutwardDeliveryAttemptThroughProvider
   actions: ActionsService;
   store: ConversationOutwardDeliveryStore;
   record: ConversationOutwardDeliveryRecord;
-  recoveryAttemptId: string;
-  staleAfterMs: number;
   now: () => number;
   signal: AbortSignal;
 }>): Promise<ConversationOutwardDeliveryRecoveryResult> {
@@ -543,8 +562,6 @@ export async function reconcileConversationOutwardDeliveryAttemptThroughProvider
   return await reconcileConversationOutwardDeliveryAttempt({
     store: input.store,
     record: input.record,
-    recoveryAttemptId: input.recoveryAttemptId,
-    staleAfterMs: input.staleAfterMs,
     now: input.now,
     signal: input.signal,
     authority: boundary.authority,

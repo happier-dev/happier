@@ -39,7 +39,7 @@ import {
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
-import { parseHostEventPayloadV1, type HostEventEnvelopeV1 } from '@happier-dev/protocol/plugins/events/hostV1';
+import { HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1, parseHostEventPayloadV1, type HostEventEnvelopeV1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -1902,6 +1902,15 @@ export async function bootstrapMachineSyncRuntime(
         scope: { kind: 'account' },
         payload,
       }, params.isShuttingDown);
+    });
+    connectedApiMachine.onSessionFollowRulesChanged(change => {
+      for (const discussionId of new Set(change?.discussionIds ?? [])) {
+        publishDaemonHostEvent({
+          eventId: HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
+          scope: { kind: 'account' },
+          payload: { discussionId },
+        }, params.isShuttingDown);
+      }
     });
     connectedApiMachine.onUpdate((update) => {
       const body = UpdateBodySchema.safeParse(update?.body);

@@ -36,6 +36,7 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { hasPluginSessionAccess, projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
+import { readPluginSessionDestination } from './pluginSessionDestination';
 export type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
 
 const CURSOR_PREFIX = 'plugin_sessions_v1_';
@@ -98,6 +99,8 @@ export function readPluginSessionsSubagentObservation(
 
 export type PluginSessionsInventoryParams = Readonly<{
   credentials: StoredCredentials;
+  /** Captured public Home URL; never a process-local HTTP carrier. */
+  serverUrl?: string;
   signal: AbortSignal;
   readCredentials?: () => Promise<StoredCredentials | null>;
   currentSessionId: string | null;
@@ -401,16 +404,17 @@ export function createPluginSessionsInventory(
     ]);
     assertNotAborted(signal);
     assertGenerationCurrent();
+    const address = raw ? readPluginSessionDestination({ sessionId: raw.id, serverUrl: params.serverUrl, serverFeaturesSnapshot }) : null;
     return Object.freeze({
       credentials,
       raw,
       summary: raw
-        ? projectSessionSummary({
+        ? Object.freeze({ ...projectSessionSummary({
           credentials,
           raw,
           storagePolicy,
           accountEncryptionMode: accountEncryptionCurrentness.mode,
-        })
+        }), ...(address ? { address } : {}) })
         : null,
     });
   };

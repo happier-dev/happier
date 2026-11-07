@@ -7,6 +7,8 @@ export type StoredRow<TValue extends Record<string, unknown> = Record<string, un
   value: TValue;
   deleted?: boolean;
 }>;
+type WatchQuery = Readonly<{ kind: 'collection' }> | Readonly<{ kind: 'row'; rowId: string }>
+  | Readonly<{ index?: string; prefix?: readonly unknown[]; prefixes?: readonly (readonly unknown[])[] }>;
 
 function compareCanonicalText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
@@ -55,8 +57,34 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
   private conflictNextDelete: boolean;
   private conflictNextBatch: boolean;
   private forgetCount = 0;
+  private changeCursor = 0;
+  private readonly listeners = new Set<Readonly<{ query: WatchQuery; next: (event: { kind: 'changed' | 'reset'; changeCursor: number }) => void }>>();
 
-  watch() { return { dispose() {} }; }
+  watch(query: WatchQuery, next: (event: { kind: 'changed' | 'reset'; changeCursor: number }) => void) {
+    const listener = { query, next };
+    this.listeners.add(listener);
+    return { dispose: () => { this.listeners.delete(listener); } };
+  }
+
+  resetObservation() {
+    this.changeCursor += 1;
+    for (const listener of [...this.listeners]) listener.next({ kind: 'reset', changeCursor: this.changeCursor });
+  }
+
+  private changed(previous: readonly StoredRow[], current: readonly StoredRow[]) {
+    this.changeCursor += 1;
+    for (const { query, next } of [...this.listeners]) {
+      if (('kind' in query ? query.kind === 'collection'
+        || [...previous, ...current].some(row => row.rowId === query.rowId) : [...previous, ...current].some(row => {
+        if (row.deleted) return false;
+        const index = [...CHANNEL_STATE_COLLECTION.indexes, ...CHANNEL_DELIVERIES_COLLECTION.indexes]
+          .find(index => index.id === query.index);
+        if (index === undefined) throw new Error(`Undeclared watched index '${query.index}'`);
+        return (query.prefixes ?? [query.prefix ?? []]).some(prefix =>
+          prefix.every((value, position) => (row.value[index.fields[position]!.field] ?? null) === value));
+      }))) next({ kind: 'changed', changeCursor: this.changeCursor });
+    }
+  }
 
   constructor(private readonly options: Readonly<{
     /** Mirrors the host Collection request invariant for this boundary test. */
@@ -90,6 +118,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     }
     const row = { rowId, revision: (current?.revision ?? 0) + 1, value, deleted: false };
     this.rows.set(rowId, row);
+    this.changed(current === undefined ? [] : [current], [row]);
     return row;
   }
 
@@ -110,6 +139,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     }
     const row = { ...current, revision: current.revision + 1, deleted: true as const };
     this.rows.set(rowId, row);
+    this.changed([current], []);
     return { rowId, revision: row.revision, deleted: true as const };
   }
 
@@ -205,8 +235,13 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
       next.set(rowId, row);
       results.push({ rowId, revision: row.revision, deleted: true });
     }
+    const previous = results.flatMap(result => {
+      const row = this.rows.get(result.rowId);
+      return row === undefined ? [] : [row];
+    });
     this.rows.clear();
     for (const [rowId, row] of next) this.rows.set(rowId, row);
+    if (results.length > 0) this.changed(previous, results.map(result => next.get(result.rowId)!));
     return { status: 'updated' as const, results };
   }
 

@@ -62,6 +62,26 @@ function services(params: Readonly<{
 }
 
 describe('stable invocation events service', () => {
+    it('delivers the Account Discussion invalidation through the public SDK Host Events service and retires it with the occurrence', async () => {
+        const broker = createStablePluginEventsBroker();
+        const controller = new AbortController();
+        const service = createPluginInvocationHostEventsService({ seed: seed('acme.subscriber', controller), broker });
+        const events: unknown[] = [];
+        const subscription = service.subscribe({ eventId: '@happier/session/discussion-invalidated', scope: { kind: 'account' } },
+            event => { events.push(event); });
+        broker.publishHostEventEnvelope({ eventId: '@happier/session/discussion-invalidated', scope: { kind: 'account' },
+            payload: { discussionId: 'discussion-a', revision: 9 } });
+        await vi.waitFor(() => expect(events).toHaveLength(1));
+        expect(events).toEqual([{ eventId: '@happier/session/discussion-invalidated', scope: { kind: 'account' },
+            payload: { discussionId: 'discussion-a', revision: 9 } }]);
+        broker.publishHostEventEnvelope({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload: {} });
+        expect(events).toHaveLength(1);
+        controller.abort();
+        broker.publishHostEventEnvelope({ eventId: '@happier/session/discussion-invalidated', scope: { kind: 'account' },
+            payload: { discussionId: 'discussion-a', revision: 10 } });
+        expect(events).toHaveLength(1);
+        subscription.dispose();
+    });
     it('carries host event origin into nested Actions without trusting payload claims or leaking it to later events', async () => {
         const broker = createStablePluginEventsBroker();
         const declarationsByPluginId = new Map([

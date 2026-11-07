@@ -32,12 +32,14 @@ export const ConversationPollInputV1ProtocolSchema = defineProtocolObject({
     ...ConversationProviderConnectionInputV1Fields,
     bindings: defineProtocolArray(defineProtocolObject({
         endpoint: ConversationResolvedEndpointV1ProtocolSchema,
-        /** Replays preserve the endpoint context frozen by their first census. */
+        /** Native birth messages keep their initial full-history presentation. */
         excludedMessageIds: defineProtocolArray(defineProtocolUtf8String({
             minLength: 1,
             maxUtf8Bytes: MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES,
         })).optional(),
         scopedTriggerKind: defineProtocolUnion([defineProtocolLiteral('prComment'), defineProtocolLiteral('ciFailed')]).optional(),
+        /** Reactive evidence demand; retained links without it still refresh terminal native state. */
+        pullRequestUpdates: defineProtocolLiteral(true).optional(),
     }, { policy: 'closed' })).optional(),
     checkpoint: ConversationCheckpointV1ProtocolSchema.nullable(),
     limit: defineProtocolNumber({
@@ -75,6 +77,7 @@ const conversationPollBatchResultV1 = defineProtocolObject({
     pullRequestEndpoints: defineProtocolArray(ConversationResolvedEndpointV1ProtocolSchema).optional(),
     checkpointAfterBatch: ConversationCheckpointV1ProtocolSchema,
     retryHint: retryHintV1.optional(),
+    notice: ConversationProviderDiagnosticV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 
 const conversationPollCheckpointOnlyResultV1 = defineProtocolObject({
@@ -82,6 +85,7 @@ const conversationPollCheckpointOnlyResultV1 = defineProtocolObject({
     pullRequestEndpoints: defineProtocolArray(ConversationResolvedEndpointV1ProtocolSchema).optional(),
     checkpointAfterBatch: ConversationCheckpointV1ProtocolSchema,
     retryHint: retryHintV1.optional(),
+    notice: ConversationProviderDiagnosticV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 
 const conversationPollHistoryGapResultV1 = defineProtocolObject({

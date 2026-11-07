@@ -3,7 +3,6 @@ import type {
   PluginDynamicResourceInvocationOptionsV1,
   PluginDynamicResourceRuntime,
 } from '@happier-dev/plugin-sdk/resources';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import {
   ComposerControlStateV1Schema,
   type ComposerControlStateV1,
@@ -12,7 +11,7 @@ import {
 import {
   isChannelStateJsonRecord,
   readConversationBindingManagementRows,
-  readConversationConnectionManagementRows,
+  readConversationConnectionManagementPage,
   type ConversationBindingManagementRow,
 } from './accountLocalBindingPolicy.js';
 import {
@@ -22,21 +21,21 @@ import {
 import {
   CHANNEL_DELIVERIES_COLLECTION,
   CHANNEL_STATE_COLLECTION,
-  CHANNEL_STATE_INDEX_ID,
-  CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import {
   readConversationOutwardDeliveryTranscriptActivities,
   readConversationOutwardDeliveryLastDeliveries,
 } from './outwardDelivery.js';
 import {
+  type ConversationExternalConversationV1,
   ConversationSessionLastDeliveriesV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import {
   requireChannelsResourceAccountStorage,
   requireChannelsResourceSessionId,
 } from './requiredAccountStorage.js';
-import { readConversationSessionProjectionHistoryGap } from './sessionProjection.js';
+import { createConversationSessionProjectionFrontierRowId, readConversationSessionProjectionHistoryGap } from './sessionProjection.js';
+import { observeConversationSessionCollections } from './sessionCollectionObservation.js';
 
 
 /**
@@ -56,6 +55,7 @@ async function readChannelsSessionConversationsProjection(
 ): Promise<Readonly<{
   bindings: readonly ConversationBindingManagementRow[];
   attention: readonly ConversationSessionBindingAttentionV1[];
+  externalConversations: readonly ConversationExternalConversationV1[];
 }>> {
   const accountStorage = requireChannelsResourceAccountStorage(options, 'sessionConversations');
   const sessionId = requireChannelsResourceSessionId(options, 'sessionConversations');
@@ -82,23 +82,17 @@ async function readChannelsSessionConversationsProjection(
     }
     throw cause;
   }
-  if (bindings.length === 0) return { bindings, attention: [] };
-  const { connections } = await readConversationConnectionManagementRows({
-    collection,
-    signal: options.signal,
-  });
+  if (bindings.length === 0) return { bindings, attention: [], externalConversations: [] };
+  const connections = (await Promise.all([...new Set(bindings.map(binding => binding.connectionId))]
+    .map(connectionId => readConversationConnectionManagementPage({ collection, connectionId, signal: options.signal }))))
+    .flatMap(page => page.connections);
+  const connectionsById = new Map(connections.map(connection => [connection.connectionId, connection]));
   const transcriptHistoryGapBindingIds = new Set<string>();
   const transcriptHistoryGapFrontierRevisions = new Map<string, number>();
-  let frontierCursor: string | undefined;
-  do {
-    const frontierPage = await collection.query({
-      index: CHANNEL_STATE_INDEX_ID.byKind,
-      prefix: [CHANNEL_STATE_RECORD_KIND.projectionFrontier],
-      order: 'asc',
-      limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-      ...(frontierCursor === undefined ? {} : { cursor: frontierCursor }),
-    }, { signal: options.signal });
-    for (const row of frontierPage.rows) {
+    for (const row of await Promise.all(bindings.map(binding => collection.get(
+      createConversationSessionProjectionFrontierRowId(binding.bindingId), { signal: options.signal },
+    )))) {
+      if (row === null) continue;
       const value = row.value;
       if (!isChannelStateJsonRecord(value)) continue;
       const payload = value.payload;
@@ -110,13 +104,19 @@ async function readChannelsSessionConversationsProjection(
         transcriptHistoryGapFrontierRevisions.set(bindingId, row.revision);
       }
     }
-    frontierCursor = frontierPage.nextCursor;
-  } while (frontierCursor !== undefined);
   return {
     bindings,
+    externalConversations: bindings.flatMap(binding => {
+      const connection = connectionsById.get(binding.connectionId);
+      return connection === undefined ? [] : [{
+        bindingId: binding.bindingId,
+        providerPluginId: connection.providerPluginId,
+        conversationDisplayName: binding.endpoint.label || 'External conversation',
+      } satisfies ConversationExternalConversationV1];
+    }),
     attention: projectConversationSessionBindingAttentions({
       bindings,
-      connectionsById: new Map(connections.map((connection) => [connection.connectionId, connection])),
+      connectionsById,
       transcriptHistoryGapBindingIds,
       transcriptHistoryGapFrontierRevisions,
     }),
@@ -244,30 +244,10 @@ function observeChannelsSessionBindings(
   options: PluginDynamicResourceInvocationOptionsV1,
 ) {
   const accountStorage = requireChannelsResourceAccountStorage(options, 'sessionConversations');
-  requireChannelsResourceSessionId(options, 'sessionConversations');
-  const state = accountStorage.collection(CHANNEL_STATE_COLLECTION);
-  const bindingObservation = state.watch({
-    index: CHANNEL_STATE_INDEX_ID.byKind,
-    prefix: [CHANNEL_STATE_RECORD_KIND.binding],
-    order: 'asc',
-  }, () => { invalidate(); });
-  const connectionObservation = state.watch({
-    index: CHANNEL_STATE_INDEX_ID.byKind,
-    prefix: [CHANNEL_STATE_RECORD_KIND.connection],
-    order: 'asc',
-  }, () => { invalidate(); });
-  const frontierObservation = state.watch({
-    index: CHANNEL_STATE_INDEX_ID.byKind,
-    prefix: [CHANNEL_STATE_RECORD_KIND.projectionFrontier],
-    order: 'asc',
-  }, () => { invalidate(); });
-  return {
-    dispose() {
-      bindingObservation.dispose();
-      connectionObservation.dispose();
-      frontierObservation.dispose();
-    },
-  };
+  const sessionId = requireChannelsResourceSessionId(options, 'sessionConversations');
+  return observeConversationSessionCollections(invalidate, {
+    accountStorage, sessionId, signal: options.signal, scope: 'conversations',
+  });
 }
 
 /**
@@ -278,16 +258,7 @@ function observeChannelsSessionConversations(
   invalidate: () => void,
   options: PluginDynamicResourceInvocationOptionsV1,
 ) {
-  const bindingObservation = observeChannelsSessionBindings(invalidate, options);
-  const deliveriesObservation = requireChannelsResourceAccountStorage(options, 'sessionConversations')
-    .collection(CHANNEL_DELIVERIES_COLLECTION)
-    .watch({ kind: 'collection' }, () => { invalidate(); });
-  return {
-    dispose() {
-      bindingObservation.dispose();
-      deliveriesObservation.dispose();
-    },
-  };
+  return observeChannelsSessionBindings(invalidate, options);
 }
 
 /** The Session destination's read-only list of this Session's external conversations. */

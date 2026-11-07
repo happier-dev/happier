@@ -88,8 +88,12 @@ describe('Channels V1 provider setup outcomes', () => {
         }).success).toBe(true);
         expect(ConversationProviderSetupResultV1Schema.safeParse({
             ...durablePush,
-            overlapSafety: 'destructive',
+            overlapSafety: 'providerExclusive',
         }).success).toBe(true);
+        expect(ConversationProviderSetupResultV1Schema.safeParse({
+            ...durablePush,
+            overlapSafety: 'destructive',
+        }).success).toBe(false);
         expect(ConversationProviderSetupResultV1Schema.safeParse({
             ...durablePush,
             webhookEndpointSetup: { kind: 'legacy-owner' },

@@ -92,11 +92,6 @@ export const CONNECTIONS_RESOURCE_RUNTIME: PluginDynamicResourceRuntime = {
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
     }, () => { invalidate(); });
-    const ingressConflictObservation = accountStorage.collection(CHANNEL_STATE_COLLECTION).watch({
-      index: CHANNEL_STATE_INDEX_ID.byAttention,
-      prefix: [true],
-      order: 'asc',
-    }, () => { invalidate(); });
     // Delivery custody is the existing status source for retry/partial/unknown
     // attention. Watch its Collection directly; the Resource host still owns
     // coalescing, currentness, and the subsequent snapshot reread.
@@ -107,7 +102,6 @@ export const CONNECTIONS_RESOURCE_RUNTIME: PluginDynamicResourceRuntime = {
     return {
       dispose() {
         stateObservation.dispose();
-        ingressConflictObservation.dispose();
         deliveriesObservation.dispose();
       },
     };

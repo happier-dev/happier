@@ -42,9 +42,6 @@ export type ConversationBindingTransitionResultV1 =
   | Readonly<{
     kind: 'updated';
     binding: ConversationBindingStateV1;
-    authorityChanged: boolean;
-    /** The caller must disclose/reconfirm a future broader Session policy. */
-    policyClamped: boolean;
   }>
   | Readonly<{
     kind: 'rejected';
@@ -70,21 +67,6 @@ function sameEndpoint(
   return areConversationEndpointIdentitiesEqual(left, right)
     && left.label === right.label
     && left.parentLabel === right.parentLabel;
-}
-
-function sameTargetIdentity(
-  left: ConversationBindingTargetV1,
-  right: ConversationBindingTargetV1,
-): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === 'session' && right.kind === 'session') {
-    return left.sessionId === right.sessionId && pluginJsonValuesEqual(left.pullRequestLink ?? null, right.pullRequestLink ?? null);
-  }
-  if (left.kind === 'automation' && right.kind === 'automation') {
-    return left.automationId === right.automationId && pluginJsonValuesEqual(left.scopedTrigger ?? null, right.scopedTrigger ?? null);
-  }
-  if (left.kind === 'threadRouter' && right.kind === 'threadRouter') return pluginJsonValuesEqual(left, right);
-  return false;
 }
 
 function sameOptionalStringMembership(
@@ -125,6 +107,7 @@ function sameTargetAuthority(
   if (left.kind === 'session' && right.kind === 'session') {
     return left.sessionId === right.sessionId
       && pluginJsonValuesEqual(left.pullRequestLink ?? null, right.pullRequestLink ?? null)
+      && pluginJsonValuesEqual(left.pullRequestWatch?.policy ?? null, right.pullRequestWatch?.policy ?? null)
       && left.policy.deliveryMode === right.policy.deliveryMode
       && left.policy.permissionCeiling === right.policy.permissionCeiling
       && sameSessionApprovals(left.policy.approvals, right.policy.approvals)
@@ -136,6 +119,7 @@ function sameTargetAuthority(
       && left.policy.resultDelivery === right.policy.resultDelivery;
   }
   if (left.kind === 'threadRouter' && right.kind === 'threadRouter') return pluginJsonValuesEqual(left, right);
+  if (left.kind === 'discussion' && right.kind === 'discussion') return left.discussionId === right.discussionId;
   return false;
 }
 
@@ -187,22 +171,6 @@ export function hasConversationApprovalPolicyEnabled(
   return target.kind === 'session' && target.policy.approvals.kind === 'enabled';
 }
 
-function hasAddedPrincipal(current: readonly string[], requested: readonly string[]): boolean {
-  const currentMembers = new Set(current);
-  return requested.some((principalId) => !currentMembers.has(principalId));
-}
-
-function clampSessionPolicy(target: ConversationSessionBindingTargetV1): ConversationSessionBindingTargetV1 {
-  return {
-    ...target,
-    policy: {
-      ...target.policy,
-      permissionCeiling: 'read-only',
-      approvals: { kind: 'off' },
-    },
-  };
-}
-
 function sameBinding(
   left: ConversationBindingStateV1,
   right: ConversationBindingStateV1,
@@ -210,7 +178,7 @@ function sameBinding(
   return left.connectionId === right.connectionId
     && left.parentBindingId === right.parentBindingId
     && sameEndpoint(left.endpoint, right.endpoint)
-    && sameTargetAuthority(left.target, right.target)
+    && pluginJsonValuesEqual(left.target, right.target)
     && sameStringSequence(left.allowedPrincipalIds, right.allowedPrincipalIds)
     && left.allowBotSenders === right.allowBotSenders
     && left.inputMode === right.inputMode
@@ -221,8 +189,23 @@ function sameBinding(
     && left.enabled === right.enabled;
 }
 
+/** Retained routing relations, shared by reads and authoring admission. */
+export function conversationThreadRouterPolicyError(input: Readonly<{
+  target: Extract<ConversationBindingTargetV1, { kind: 'threadRouter' }>;
+  allowedPrincipalIds: readonly string[];
+}>): 'routerDuplicateId' | 'routerGroupNotFound' | 'routerAudienceEmpty' | 'policyPrincipalNotAllowed' | null {
+  const { target, allowedPrincipalIds } = input;
+  const groups = new Set(target.principalGroups.map((group) => group.id));
+  const routes = new Set(target.routes.map((route) => route.id));
+  if (groups.size !== target.principalGroups.length || routes.size !== target.routes.length) return 'routerDuplicateId';
+  if (target.routes.some((route) => route.when.group !== 'any' && !groups.has(route.when.group))) return 'routerGroupNotFound';
+  if (allowedPrincipalIds.length === 0) return 'routerAudienceEmpty';
+  if (target.routes.some((route) => hasPolicyPrincipalOutsideAllowlist(route.policy, allowedPrincipalIds))) return 'policyPrincipalNotAllowed';
+  return null;
+}
+
 /**
- * Applies the Packet 01 §4.1 field-sensitive authority and clamp rules without
+ * Applies the binding's field-sensitive policy rules without
  * owning a Collection revision/CAS or making any provider call.
  */
 export function transitionConversationBinding(input: Readonly<{
@@ -242,12 +225,8 @@ export function transitionConversationBinding(input: Readonly<{
   }
   if (current.parentBindingId !== requested.parentBindingId) return { kind: 'rejected', code: 'parentBindingImmutable' };
   if (requested.target.kind === 'threadRouter') {
-    const groups = new Set(requested.target.principalGroups.map((group) => group.id));
-    const routes = new Set(requested.target.routes.map((route) => route.id));
-    if (groups.size !== requested.target.principalGroups.length || routes.size !== requested.target.routes.length) return { kind: 'rejected', code: 'routerDuplicateId' };
-    if (requested.target.routes.some((route) => route.when.group !== 'any' && !groups.has(route.when.group))) return { kind: 'rejected', code: 'routerGroupNotFound' };
-    if (requested.allowedPrincipalIds.length === 0) return { kind: 'rejected', code: 'routerAudienceEmpty' };
-    if (requested.target.routes.some((route) => hasPolicyPrincipalOutsideAllowlist(route.policy, requested.allowedPrincipalIds))) return { kind: 'rejected', code: 'policyPrincipalNotAllowed' };
+    const code = conversationThreadRouterPolicyError({ target: requested.target, allowedPrincipalIds: requested.allowedPrincipalIds });
+    if (code !== null) return { kind: 'rejected', code };
   }
   const pullRequest = requested.target.kind === 'session' ? requested.target.pullRequestLink : requested.target.kind === 'automation' ? requested.target.scopedTrigger?.pullRequest : undefined;
   if (pullRequest !== undefined && (requested.endpoint.kind !== 'githubPullRequest'
@@ -266,21 +245,12 @@ export function transitionConversationBinding(input: Readonly<{
   }
 
   const endpointIdentityChanged = !areConversationEndpointIdentitiesEqual(current.endpoint, requested.endpoint);
-  const targetChangedToSession = requested.target.kind === 'session'
-    && !sameTargetIdentity(current.target, requested.target);
-  const policyClamped = hasAddedPrincipal(current.allowedPrincipalIds, requested.allowedPrincipalIds)
-    || endpointIdentityChanged
-    || targetChangedToSession;
-  const target = policyClamped && requested.target.kind === 'session'
-    ? clampSessionPolicy(requested.target)
-    : requested.target;
+  const target = requested.target;
   const authorityChanged = endpointIdentityChanged
     || !sameTargetAuthority(current.target, target)
     || !sameStringMembership(current.allowedPrincipalIds, requested.allowedPrincipalIds)
     || current.allowBotSenders !== requested.allowBotSenders
     || current.inputMode !== requested.inputMode
-    || current.inboundDebounceMs !== requested.inboundDebounceMs
-    || current.linkPreviewPolicy !== requested.linkPreviewPolicy
     || current.enabled !== requested.enabled;
 
   if (authorityChanged && current.authorityEpoch >= MAX_SAFE_INTEGER) {
@@ -304,7 +274,7 @@ export function transitionConversationBinding(input: Readonly<{
   if (sameBinding(current, next)) {
     return { kind: 'unchanged', binding: current };
   }
-  return { kind: 'updated', binding: next, authorityChanged, policyClamped };
+  return { kind: 'updated', binding: next };
 }
 
 export type ConversationBindingPrincipalRevocationV1 =

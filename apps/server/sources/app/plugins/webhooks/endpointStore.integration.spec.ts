@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import {
     normalizePluginReleaseFactsV1,
+    PluginWebhookEndpointConvergeTargetInputV1Schema,
     PluginWebhookEndpointEnsureInputV1Schema,
     type PluginWebhookEndpointEnsureInputV1,
 } from "@happier-dev/protocol";
@@ -487,6 +488,82 @@ describe("plugin webhook endpoint lifecycle store", () => {
                 observedAt: new Date(),
             },
         });
+        const routingEndpoint = await actions.ensure({
+            accountId: ACCOUNT_ID,
+            input: ensureInput({ sourceInstanceId: "source-routing", idempotencyKey: "ensure-routing-endpoint-0001" }),
+        });
+        const routingInput = PluginWebhookEndpointConvergeTargetInputV1Schema.parse({
+            webhookEndpointId: routingEndpoint.webhookEndpointId,
+            webhookContribution: ensureInput().webhookContribution,
+            sourceInstanceId: "source-routing",
+            setup: ensureInput().setup,
+            desiredTargetRouting: { serverIdentityId: "srv_endpointStoreCurrent1", machineId: nextTarget.machineId },
+            targetIntentEpoch: 2,
+        });
+        await expect(actions.convergeTarget({ accountId: ACCOUNT_ID, callerPluginId: CONTRIBUTION.pluginId, input: routingInput }))
+            .resolves.toMatchObject({ kind: "converged", revision: 2, targetMaterialization: nextTarget });
+        const routingChange = await readWebhookChange();
+        await expect(actions.convergeTarget({ accountId: ACCOUNT_ID, callerPluginId: CONTRIBUTION.pluginId, input: routingInput }))
+            .resolves.toMatchObject({ kind: "converged", revision: 2, targetMaterialization: nextTarget });
+        expect(await readWebhookChange()).toEqual(routingChange);
+        // Full-ref callers keep the original equal-epoch correspondence rule.
+        await expect(actions.convergeTarget({ accountId: ACCOUNT_ID, callerPluginId: CONTRIBUTION.pluginId,
+            input: PluginWebhookEndpointConvergeTargetInputV1Schema.parse({
+                webhookEndpointId: routingEndpoint.webhookEndpointId,
+                webhookContribution: ensureInput().webhookContribution,
+                sourceInstanceId: "source-routing",
+                setup: ensureInput().setup,
+                desiredTargetMaterialization: TARGET.materialization,
+                targetIntentEpoch: 2,
+            }),
+        })).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+
+        const foreignAccountId = "account-webhook-foreign-target";
+        await db.account.create({ data: { id: foreignAccountId, encryptionMode: "plain" } });
+        await db.accountPluginIntent.create({ data: { accountId: foreignAccountId, pluginId: "acme.github",
+            desiredVersion: "1.0.0", enabled: true, writableCollections: [] } });
+        await db.accountPluginRelease.create({ data: {
+            accountId: foreignAccountId, pluginId: "acme.github", version: "1.0.0",
+            archiveDigestSha256: releaseFacts.archiveDigestSha256,
+            normalizedManifest: releaseFacts.normalizedManifest,
+            collectionContracts: [], uiSlots: [], packageAssetArchive: releaseFacts.packageAssetArchive,
+        } });
+        await db.machine.create({ data: { id: "machine-foreign", accountId: foreignAccountId, metadata: "{}",
+            installationId: "installation-foreign", pluginMaterializationRevision: 1n,
+            operationProtocolCapabilities: { pluginWebhookClaim: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        await db.pluginMachineMaterialization.create({ data: {
+            accountId: foreignAccountId, serverIdentityId: "srv_endpointStoreCurrent1", machineId: "machine-foreign",
+            materializationId: "materialization-foreign", pluginId: "acme.github", version: "1.0.0",
+            sourceClass: "registryPackage", portableRelease: true,
+            archiveDigestSha256: releaseFacts.archiveDigestSha256,
+            uiArtifacts: [], enabled: true, trustState: "trusted", observedAt: new Date(),
+        } });
+        for (const desiredTargetRouting of [
+            { serverIdentityId: "srv_otherHome", machineId: nextTarget.machineId },
+            { serverIdentityId: "srv_endpointStoreCurrent1", machineId: "missing-machine" },
+            { serverIdentityId: "srv_endpointStoreCurrent1", machineId: "machine-foreign" },
+        ]) {
+            await expect(actions.convergeTarget({ accountId: ACCOUNT_ID, callerPluginId: CONTRIBUTION.pluginId,
+                input: PluginWebhookEndpointConvergeTargetInputV1Schema.parse({ ...routingInput, desiredTargetRouting }),
+            })).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        }
+        await db.pluginMachineMaterialization.update({
+            where: { machineId_materializationId: { machineId: nextTarget.machineId, materializationId: nextTarget.materializationId } },
+            data: { enabled: false },
+        });
+        await expect(actions.convergeTarget({ accountId: ACCOUNT_ID, callerPluginId: CONTRIBUTION.pluginId, input: routingInput }))
+            .resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        // A daemon's new installed occurrence does not change the controller's
+        // desired Machine or intent epoch. The endpoint follows current facts.
+        await db.pluginMachineMaterialization.update({
+            where: { machineId_materializationId: { machineId: nextTarget.machineId, materializationId: nextTarget.materializationId } },
+            data: { enabled: true, materializationId: "materialization-reinstalled" },
+        });
+        await expect(actions.convergeTarget({ accountId: ACCOUNT_ID, callerPluginId: CONTRIBUTION.pluginId, input: routingInput }))
+            .resolves.toMatchObject({ kind: "converged", revision: 3,
+                targetMaterialization: { ...nextTarget, materializationId: "materialization-reinstalled" } });
         const retiredFacts = normalizePluginReleaseFactsV1({
             ref: { pluginId: "acme.github", version: "1.0.0" },
             archiveDigestSha256: `sha256:${"a".repeat(64)}`,
@@ -514,7 +591,7 @@ describe("plugin webhook endpoint lifecycle store", () => {
             input: {
                 webhookEndpointId: created.webhookEndpointId,
                 expectedRevision: 1,
-                targetMaterialization: nextTarget,
+                targetMaterialization: { ...nextTarget, materializationId: "materialization-reinstalled" },
                 idempotencyKey: "retarget-retired-contribution-0001",
             },
         })).resolves.toEqual({ kind: "incompatible", currentRevision: 1 });

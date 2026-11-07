@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { recommendConversationConnectionRecovery } from '../recoveryRecommendation.js';
 
 import {
   buildChannelsConversationIndex,
@@ -61,6 +62,15 @@ function connection(attention: Partial<ChannelsConnection['attention']> = {}): C
 
 const DELIVERY = connection().attention.outwardDelivery;
 
+it('accepts a retained conflict snapshot without reviving its attention latch', () => {
+  const retained = connection({ ingressConflict: { kind: 'occurrenceEvidenceMismatch' }, pollFailure: {
+    phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null, evidence: { kind: 'provider', reason: 'network' },
+  } });
+  const parsed = parseConnection(retained);
+  expect(parsed?.attention.ingressConflict).toBeNull();
+  expect(parsed?.attention.pollFailure).toEqual(retained.attention.pollFailure);
+});
+
 it('preserves the canonical recovery Action through the shared UI row parsers and rejects malformed recommendations', () => {
   const recommendedRecovery = { action: { pluginId: 'happier.channels', localId: 'connection/retest-v1' },
     input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 }, reason: 'providerPermissionMissing' };
@@ -77,10 +87,57 @@ it('preserves the canonical recovery Action through the shared UI row parsers an
 });
 
 describe('connectionStatus', () => {
+  it('keeps a history gap visible as a quiet notice without asking the owner to resume', () => {
+    const historyGap = {
+      reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable',
+    } as const;
+    const status = connectionStatus(connection({ historyGap }), t);
+    expect(status.tone).toBe('neutral');
+    expect(channelsStatusNeedsYou(status.tone)).toBe(false);
+    expect(status).not.toEqual(connectionStatus(connection(), t));
+    // FIN step 9 retires stop/retarget machinery, not retained rows or history notices.
+    expect(connectionStatus(connection({ historyGap, oldTransportStopUnconfirmed: true, endpointRetargetOwed: true }), t))
+      .toEqual(status);
+  });
+
+  it.each<Partial<ChannelsConnection['attention']>>([
+    { providerReadiness: { code: 'providerCredentialInvalid' } },
+    { outwardDelivery: { ...DELIVERY, outcomeUnknown: true } },
+    { outwardDelivery: { ...DELIVERY, partial: true } },
+    { pollFailure: { phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null,
+      evidence: { kind: 'provider', reason: 'providerConflict' } } },
+  ])('preserves the real blocker when a history notice coexists with %o', (attention) => {
+    expect(connectionStatus(connection({ ...attention, historyGap: {
+      reportedAt: 1_700_000_000_000, reason: 'applicationAdmissionLost',
+    } }), t)).toEqual(connectionStatus(connection(attention), t));
+  });
+
+  it('preserves deletion progress when a history notice remains recorded', () => {
+    const row = connection({ historyGap: {
+      reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable',
+    } });
+    expect(connectionStatus({ ...row, deletionState: 'finalizingDelete' }, t))
+      .toEqual(connectionStatus({ ...connection(), deletionState: 'finalizingDelete' }, t));
+  });
+
+  it.each<Partial<ChannelsConnection['attention']>>([
+    { pollFailure: { phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null,
+      evidence: { kind: 'provider', reason: 'providerConflict' } } },
+    { outwardDelivery: { ...DELIVERY, outcomeUnknown: true } },
+  ])('keeps the actual recovery Action ahead of history dismissal for %o', (attention) => {
+    const row = { ...connection(attention), selectedTransport: 'checkpointedPull' as const };
+    const recovery = recommendConversationConnectionRecovery(row);
+    expect(recovery).not.toBeNull();
+    expect(recommendConversationConnectionRecovery({ ...row, attention: { ...row.attention, historyGap: {
+      reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable',
+    } } })).toEqual(recovery);
+  });
+
   it('says nothing for a healthy bot, asks for you in the attention tone, and keeps rose for failure', () => {
     expect(connectionStatus(connection(), t).tone).toBe('secondary');
     expect(connectionStatus(connection({ providerReadiness: { code: 'providerCredentialInvalid' } }), t).tone).toBe('attention');
-    expect(connectionStatus(connection({ oldTransportStopUnconfirmed: true, endpointRetargetOwed: true }), t).tone).toBe('attention');
+    expect(connectionStatus(connection({ oldTransportStopUnconfirmed: true, endpointRetargetOwed: true }), t))
+      .toEqual(connectionStatus(connection(), t));
     expect(connectionStatus(connection({ outwardDelivery: { ...DELIVERY, notDelivered: true } }), t).tone).toBe('attention');
     expect(connectionStatus(connection({ outwardDelivery: { ...DELIVERY, outcomeUnknown: true } }), t).tone).toBe('danger');
     // A retry the system owns is a caution, not a request of the reader.

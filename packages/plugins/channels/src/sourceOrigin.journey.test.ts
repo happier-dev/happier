@@ -1,7 +1,9 @@
+import { createPluginHttpFixture, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 // @vitest-environment jsdom
 
 import { act, cloneElement, type ReactElement } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError, type JsonValue, type PluginInvocationContext, type PluginServices } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type ActionHandler, type PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
@@ -36,6 +38,9 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
   const providerActions: string[] = [];
   let pollNetworkUnavailable = false;
   let generation = 'a';
+  let coreMachineId = 'journey-machine';
+  let pollGate: Readonly<{ entered(): void; released: Promise<void> }> | undefined;
+  let nextUpdates: JsonValue[] = [];
   const materializationRef = () => ({ pluginId, machineId: 'journey-machine', materializationId: `telegram-${generation}` });
   const currentOrigin = (): PluginMachineExecutionOriginV1 => kind !== 'materialization'
     ? { serverIdentityId: 'srv_plugin_testkit', sourceRef: { pluginId, machineId: 'journey-machine',
@@ -43,14 +48,20 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
         ? { kind: 'development', registeredRootId: `/source-bundle/${generation}` }
         : { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: `cli-root-${generation}` } } } }
     : { serverIdentityId: 'srv_plugin_testkit', materializationRef: materializationRef() };
-  const http: PluginServices['http'] = {
+  const http: PluginServices['http'] = createPluginHttpFixture({
     async openWebSocket() { throw new Error('Telegram uses HTTP'); },
     async request(request) {
       const operation = new URL(request.url).pathname.split('/').at(-1)!;
       effects.push(operation);
+      if (operation === 'getUpdates' && pollGate !== undefined) {
+        const gate = pollGate;
+        pollGate = undefined;
+        gate.entered();
+        await gate.released;
+      }
       if (operation === 'getUpdates' && pollNetworkUnavailable) throw new Error('The fixture network is unavailable.');
       const result = operation === 'getWebhookInfo' ? { url: '', pending_update_count: 0 }
-        : operation === 'getUpdates' ? []
+        : operation === 'getUpdates' ? nextUpdates.splice(0)
           : operation === 'getChat' ? { id: 456, type: 'private', first_name: 'Journey recipient' }
           : operation === 'sendMessage' ? { message_id: 101 }
             : operation === 'getMe' ? { id: 123, is_bot: true, first_name: 'Journey Bot', username: 'JourneyBot', can_read_all_group_messages: true }
@@ -59,7 +70,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
       return { status: 200, finalUrl: request.url, headers: { 'content-type': 'application/json' },
         body: new TextEncoder().encode(JSON.stringify({ ok: true, result })) };
     },
-  };
+  });
   // Credentials and HTTP are external system boundaries. Telegram codecs,
   // setup, test, polling and delivery remain the actual provider handlers.
   const connectedAccounts = { async materialize() {
@@ -128,15 +139,22 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
       } },
     'journey/poll': { title: 'Poll the retained connection', surfaces: ['plugin'], dangerLevel: 'safe',
       async run(_input, context) {
-        await runConversationCheckpointedPollForInvocation({ connectionId, waitMs: 0 }, contextWithOrigin(context));
+        return await runConversationCheckpointedPollForInvocation({ connectionId, waitMs: 0 }, contextWithOrigin(context));
+      } },
+    'journey/supervise': { title: 'Run the activated ingress supervisor', surfaces: ['plugin'], dangerLevel: 'safe',
+      async run(_input, context) {
+        const handler = kit.registration('backgroundServices', 'ingress-supervisor');
+        if (!handler) throw new Error('Missing ingress supervisor registration');
+        await handler({ ...contextWithOrigin(context), surface: 'background', session: undefined, contribution: {
+          id: 'ingress-supervisor', qualifiedId: 'happier.channels/backgroundServices/ingress-supervisor',
+        } } satisfies BackgroundServiceContext);
         return null;
       } },
     'journey/retest': { title: 'Test the retained connection', surfaces: ['plugin'], dangerLevel: 'safe',
       async run(_input, context) {
-        const subject = await currentConnectionSubject(context);
         const handler = kit.registration('actions', CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionRetest);
         if (!handler) throw new Error('Missing retest registration');
-        return await handler({ connectionId, expectedRevision: subject.revision, authorityEpoch: subject.authorityEpoch }, contextWithOrigin(context));
+        return await handler({ connectionId }, contextWithOrigin(context));
       } },
     'journey/resolve': { title: 'Resolve a retained provider endpoint', surfaces: ['plugin'], dangerLevel: 'safe',
       async run(_input, context) {
@@ -153,7 +171,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
         await recordConversationCheckpointedPollHistoryGapForInvocation({ connectionId, expectedRevision: before.revision,
           authorityEpoch: 1, executionOrigin: currentOrigin(), fact: { reason: 'providerHistoryUnavailable' } }, context);
         const subject = await currentConnectionSubject(context);
-        const handler = kit.registration('actions', CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept);
+        const handler = kit.registration('actions', CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamNoticeDismiss);
         if (!handler) throw new Error('Missing baseline registration');
         return await handler({ connectionId, expectedRevision: subject.revision }, context);
       } },
@@ -210,7 +228,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
           obligation: { connectionId, routeAuthority: { connectionAuthorityEpoch: 1 },
             source: { kind: 'controlResponse', controlId: `journey-control-${deliverySequence}`, controlKind: 'recovery' },
             endpoint: { kind: 'direct', audience: 'direct', id: '456' }, content: { text: 'Hello from the journey' },
-            deliveryKey: `journey-delivery-${deliverySequence}`, mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress' } });
+            deliveryKey: `journey-delivery-${deliverySequence}`,  linkPreviewPolicy: 'suppress' } });
         return null;
       } },
   } });
@@ -229,30 +247,67 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
       await driver.activate(api);
       return dispose;
     } },
-      targetedContributionContributors: [provider], services: { storage },
+      targetedContributionContributors: [provider], services: { storage,
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), diagnostic: vi.fn() },
+        // Event publication is the host transport boundary; Collection watches
+        // below are real and drive the activated ingress supervisor.
+        events: {
+          plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }),
+            subscribe: () => ({ dispose() {} }) },
+          host: { subscribe: () => ({ dispose() {} }) },
+        },
+      },
       resolveCurrentPluginMaterializationRef: () => ({ pluginId: PLUGIN_MANIFEST.id,
-        machineId: 'journey-machine', materializationId: 'journey-core' }) });
+        machineId: coreMachineId, materializationId: 'journey-core' }) });
   } catch (error) {
     await provider.dispose();
     throw error;
   }
-  const invoke = (id: string, input: JsonValue) => kit.invokeAction(id, input, {
-    surface: id.startsWith('journey/') ? 'plugin' : 'cli', services: channelsTargetedContributionServices(kit) });
+  const invoke = (id: string, input: JsonValue, signal?: AbortSignal) => kit.invokeAction(id, input, {
+    surface: id.startsWith('journey/') ? 'plugin' : 'cli', services: channelsTargetedContributionServices(kit), signal });
   const snapshot = kit.readTargetedContributionFixture(CHANNELS_PROVIDER_POINT_REF);
   const contribution = snapshot.contributions[0]!;
-  const create = () => invoke('journey/create', { providerSelection: {
+  const setupInput = { providerSelection: {
     target: { pluginId: PLUGIN_MANIFEST.id, sourceCustody: snapshot.sourceCustody },
     point: { pointId: CHANNELS_PROVIDER_POINT_REF.id, protocol: CHANNELS_PROVIDER_POINT_REF.protocol },
     contributor: { pluginId, contributionId: contribution.contributor.contributionId, sourceCustody: contribution.contributor.sourceCustody },
-  }, providerSetupInput: { credentialRef }, credentialRef, selectedTransport: 'checkpointedPull', maximumObservationAgeMs: 60_000 });
+  }, providerSetupInput: { credentialRef }, credentialRef, selectedTransport: 'checkpointedPull', maximumObservationAgeMs: 60_000 } as const;
+  const create = () => invoke('journey/create', setupInput);
   return { state, deliveries, effects, providerActions, create, currentOrigin, invoke,
+    placeCoreOn(machineId: string) { coreMachineId = machineId; },
+    seedPollCheckpoint() {
+      // An irrelevant Bot API update advances the real provider/core cursor
+      // without requiring a binding or Session admission in this journey.
+      nextUpdates = [{ update_id: 1, poll: { id: 'journey-ignored-poll' } }];
+    },
+    async transfer() {
+      const subject = ConversationConnectionListResultV1Schema.parse(JSON.parse(await resourceText(
+        await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
+          signal: new AbortController().signal, context: { kind: 'global' }, accountStorage: storage.account,
+        })),
+      ))).connections.find(row => row.connectionId === connectionId)!;
+      const replacementCredential = { ...credentialRef, accountId: 'journey-replacement-account' };
+      return await invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer, {
+        providerSelection: setupInput.providerSelection, selectedTransport: setupInput.selectedTransport,
+        connectionId, expectedRevision: subject.revision,
+        credentialRef: replacementCredential, providerSetupInput: { credentialRef: replacementCredential },
+      });
+    },
+    holdNextPoll() {
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const released = new Promise<void>(resolve => { release = resolve; });
+      pollGate = { entered, released };
+      return { started, release };
+    },
     failPoll(error: Error) { pollFailure = error; },
     clearPollFailure() { pollFailure = undefined; },
     setPollNetworkUnavailable(value: boolean) { pollNetworkUnavailable = value; },
     async connectionsResource() {
-      return resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read({
+      return resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
         signal: new AbortController().signal, context: { kind: 'global' }, accountStorage: storage.account,
-      }));
+      })));
     },
     deliveryResult: () => deliveryResult,
     setConnectionId(id: string) { connectionId = id; },
@@ -261,6 +316,112 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
 }
 
 describe('Channels connection creation to registered provider journey', () => {
+  it('preserves a valid provider cursor across a compatible transfer with a retained history notice', async () => {
+    const fixture = await journey('materialization');
+    try {
+      const created = await fixture.create();
+      if (created === null || typeof created !== 'object' || !('connectionId' in created)
+        || typeof created.connectionId !== 'string') throw new Error('Expected a created connection.');
+      fixture.setConnectionId(created.connectionId);
+      fixture.seedPollCheckpoint();
+      await fixture.invoke('journey/poll', {});
+      const checkpoint = [...fixture.state.rows.values()].find(row => row.value['record-kind'] === 'checkpoint');
+      const payload = checkpoint?.value.payload;
+      if (payload === null || typeof payload !== 'object' || Array.isArray(payload) || !('opaqueToken' in payload)) throw new Error('Expected the committed provider cursor.');
+      await fixture.invoke('journey/gap', {});
+      expect(await fixture.transfer()).toMatchObject({ kind: 'transferred', authorityEpoch: 2 });
+      expect(checkpoint === undefined ? undefined : await fixture.state.get(checkpoint.rowId)).toMatchObject({
+        value: { payload: { authorityEpoch: 2, opaqueToken: payload.opaqueToken } },
+      });
+      expect((await fixture.state.get(created.connectionId))?.value).toMatchObject({
+        payload: { historyGap: { reason: 'providerHistoryUnavailable' } },
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it.each(['running', 'not-started', 'restart', 'foreign'] as const)(
+    'starts the transferred checkpointed pull at the next supervisor boundary with an old pull %s', async mode => {
+      vi.useFakeTimers();
+      const fixture = await journey('materialization');
+      const generation = new AbortController();
+      let running: Promise<JsonValue | null> | undefined;
+      let gate: ReturnType<typeof fixture.holdNextPoll> | undefined;
+      let successor: ReturnType<typeof fixture.holdNextPoll> | undefined;
+      try {
+        const created = await fixture.create();
+        if (created === null || typeof created !== 'object' || !('connectionId' in created)
+          || typeof created.connectionId !== 'string') throw new Error('Expected a created connection.');
+        fixture.setConnectionId(created.connectionId);
+        fixture.seedPollCheckpoint();
+        await expect(fixture.invoke('journey/poll', {})).resolves.toMatchObject({ kind: 'committed' });
+        // A held provider HTTP receive is the real in-flight boundary. A
+        // same-epoch policy revision during it must not delay the transfer.
+        if (mode === 'running') {
+          gate = fixture.holdNextPoll();
+          running = fixture.invoke('journey/supervise', {}, generation.signal);
+          await vi.advanceTimersByTimeAsync(0);
+          await gate.started;
+          const subject = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0]!;
+          await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
+            connectionId: created.connectionId, expectedRevision: subject.revision,
+            enabled: true, maximumObservationAgeMs: subject.maximumObservationAgeMs + 1,
+          });
+        } else if (mode === 'not-started') {
+          await fixture.invoke('journey/gap', {});
+          running = fixture.invoke('journey/supervise', {}, generation.signal);
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        const beforeTransfer = fixture.effects.filter(effect => effect === 'getUpdates').length;
+        const retainedHistoryNotice = ConversationConnectionListResultV1Schema.parse(
+          JSON.parse(await fixture.connectionsResource()),
+        ).connections[0]!.attention.historyGap;
+        expect(await fixture.transfer()).toMatchObject({ kind: 'transferred', authorityEpoch: 2 });
+        if (mode === 'running' || mode === 'restart') successor = fixture.holdNextPoll();
+        if (mode === 'foreign') fixture.placeCoreOn('unrelated-machine');
+        if (mode === 'restart' || mode === 'foreign') running = fixture.invoke('journey/supervise', {}, generation.signal);
+        await vi.advanceTimersByTimeAsync(0);
+        if (gate !== undefined) {
+          expect((await fixture.state.get(created.connectionId))?.value).toMatchObject({
+            payload: { pendingOldTransportStop: null },
+          });
+          expect(fixture.effects.filter(effect => effect === 'getUpdates')).toHaveLength(beforeTransfer);
+          gate.release();
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        // Wait on the external HTTP boundary, not elapsed polling/retry time.
+        await successor?.started;
+        successor?.release();
+        const subject = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0]!;
+        expect(subject.authorityEpoch).toBe(2);
+        expect(subject.attention.oldTransportStopUnconfirmed).toBe(false);
+        if (mode === 'foreign') {
+          expect(fixture.effects.filter(effect => effect === 'getUpdates')).toHaveLength(beforeTransfer);
+          return;
+        }
+        expect((await fixture.state.get(created.connectionId))?.value).toMatchObject({ payload: { pendingOldTransportStop: null } });
+        // No elapsed timer, manual retry, second transfer or provider stop is
+        // needed. The compatible new epoch receives exactly one initial poll.
+        // Compatible transfer preserves the existing notice (including a
+        // first-connect baseline notice) without blocking successor polling.
+        expect(subject.attention.historyGap).toEqual(retainedHistoryNotice);
+        expect(fixture.effects.filter(effect => effect === 'getUpdates')).toHaveLength(beforeTransfer + 1);
+        expect(fixture.providerActions.some(action => action.includes('stop'))).toBe(false);
+        for (const row of fixture.state.rows.values()) expect(isValidPluginJsonSchemaValue(compiledState, row.value)).toBe(true);
+      } finally {
+        gate?.release();
+        successor?.release();
+        generation.abort();
+        await running?.catch(error => {
+          if (!(error instanceof PluginError) || error.code !== 'plugin_action_aborted') throw error;
+        });
+        await fixture.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('honors an approved poll Retry when the same connection has moved from blocked to automatic backoff', async () => {
     const fixture = await journey('materialization');
     try {
@@ -274,23 +435,14 @@ describe('Channels connection creation to registered provider journey', () => {
       const approved = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0]!;
       expect(approved.attention.pollFailure?.phase).toBe('blocked');
       fixture.clearPollFailure();
-      const request = { connectionId: created.connectionId, expectedRevision: approved.revision, authorityEpoch: approved.authorityEpoch };
+      const request = { connectionId: created.connectionId };
       await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, request);
       fixture.setPollNetworkUnavailable(true);
       await fixture.invoke('journey/poll', {});
       const automatic = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0]!;
       expect(automatic.attention.pollFailure?.phase).toBe('retryDue');
       expect(automatic.revision).toBe(approved.revision);
-      const retained = await fixture.state.get(created.connectionId);
-      const beforeRejected = JSON.stringify([...fixture.state.rows.values()]);
       const effectsBeforeRetry = [...fixture.effects];
-      for (const stale of [{ ...request, expectedRevision: request.expectedRevision + 1 },
-        { ...request, authorityEpoch: request.authorityEpoch + 1 }]) {
-        await expect(fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, stale))
-          .rejects.toMatchObject({ code: 'channels_connection_poll_retry_conflict' });
-      }
-      expect(JSON.stringify([...fixture.state.rows.values()])).toBe(beforeRejected);
-      expect(await fixture.state.get(created.connectionId)).toEqual(retained);
       fixture.setPollNetworkUnavailable(false);
       await expect(fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, request))
         .resolves.toMatchObject({ kind: 'retryScheduled', revision: approved.revision });
@@ -341,13 +493,13 @@ describe('Channels connection creation to registered provider journey', () => {
         expect((await fixture.state.get(connectionId))?.revision).toBeGreaterThan(before!.revision);
         const result = await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1[consumer], consumer === 'bindingResolve'
           ? { kind: 'endpoint', connectionId, expectedConnectionRevision: original.revision, query: '456' }
-          : { connectionId, expectedRevision: original.revision, authorityEpoch: original.authorityEpoch });
+          : { connectionId });
         expect(result).toMatchObject(consumer === 'bindingResolve'
           ? { kind: 'endpointCandidates', candidates: [{ kind: 'direct', id: '456' }] }
           : consumer === 'connectionRetest' ? { kind: 'ready' } : { kind: 'retryScheduled' });
         if (consumer === 'connectionPollRetry') {
           await expect(fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, {
-            connectionId, expectedRevision: original.revision, authorityEpoch: original.authorityEpoch,
+            connectionId,
           })).resolves.toMatchObject({ kind: 'retryScheduled' });
         }
         const current = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0];
@@ -358,7 +510,7 @@ describe('Channels connection creation to registered provider journey', () => {
   );
 
   it.each(['bindingResolve', 'connectionRetest'] as const)(
-    'refuses an old %s connection subject after a real observation-age policy edit', async consumer => {
+    'uses the current %s contract after a real observation-age policy edit', async consumer => {
       const fixture = await journey('materialization');
       try {
         const created = await fixture.create();
@@ -377,14 +529,14 @@ describe('Channels connection creation to registered provider journey', () => {
         expect(current?.revision).toBeGreaterThan(original.revision);
         const pending = fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1[consumer], consumer === 'bindingResolve'
           ? { kind: 'endpoint', connectionId, expectedConnectionRevision: original.revision, query: '456' }
-          : { connectionId, expectedRevision: original.revision, authorityEpoch: original.authorityEpoch });
+          : { connectionId });
         if (consumer === 'bindingResolve') await expect(pending).resolves.toMatchObject({ kind: 'stale' });
-        else await expect(pending).rejects.toMatchObject({ code: 'channels_connection_retest_conflict' });
+        else await expect(pending).resolves.toMatchObject({ kind: 'ready' });
       } finally { await fixture.dispose(); }
     },
   );
 
-  it('refuses a baseline approval whose original history gap was settled and replaced', async () => {
+  it('dismisses a connection notice through its registered Action and refuses a replaced notice subject', async () => {
     const fixture = await journey('materialization');
     try {
       const created = await fixture.create();
@@ -392,21 +544,36 @@ describe('Channels connection creation to registered provider journey', () => {
         || typeof created.connectionId !== 'string') throw new Error('Expected a created connection.');
       const connectionId = created.connectionId;
       fixture.setConnectionId(connectionId);
+      fixture.seedPollCheckpoint();
+      await fixture.invoke('journey/poll', {});
+      const checkpoint = [...fixture.state.rows.values()].find(row => row.value['record-kind'] === 'checkpoint');
+      if (!checkpoint) throw new Error('Expected the current provider cursor.');
       await fixture.invoke('journey/gap', {});
       const original = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0];
       if (!original) throw new Error('Expected the original history-gap subject.');
       expect(original.attention.historyGap).not.toBeNull();
-      await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept, { connectionId, expectedRevision: original.revision });
+      const effectsBeforeDismiss = [...fixture.effects];
+      await expect(fixture.invoke('stream/notice-dismiss-v1', { connectionId, expectedRevision: original.revision }))
+        .resolves.toMatchObject({ kind: 'noticeDismissed', connectionId, authorityEpoch: original.authorityEpoch });
+      expect(fixture.effects).toEqual(effectsBeforeDismiss);
+      const dismissed = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0];
+      expect(dismissed?.attention.historyGap).toBeNull();
+      expect(await fixture.state.get(checkpoint.rowId)).toEqual(checkpoint);
+      if (!dismissed) throw new Error('Expected the dismissed connection subject.');
+      const connectionAfterDismiss = await fixture.state.get(connectionId);
+      await expect(fixture.invoke('stream/notice-dismiss-v1', { connectionId, expectedRevision: dismissed.revision }))
+        .resolves.toMatchObject({ kind: 'noticeDismissed', revision: dismissed.revision });
+      expect(await fixture.state.get(connectionId)).toEqual(connectionAfterDismiss);
       await fixture.invoke('journey/gap', {});
       const replacement = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0];
       expect(replacement?.attention.historyGap).not.toBeNull();
       expect(replacement?.revision).toBeGreaterThan(original.revision);
-      await expect(fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept,
+      await expect(fixture.invoke('stream/notice-dismiss-v1',
         { connectionId, expectedRevision: original.revision })).rejects.toMatchObject({ code: 'channels_stream_baseline_conflict' });
     } finally { await fixture.dispose(); }
   });
 
-  it('carries a redacted poll refusal from real ingress through management into mounted attention', async () => {
+  it('carries a redacted transient poll refusal from real ingress through management into automatic retry attention', async () => {
     const fixture = await journey('materialization');
     let ui: PluginUiTestkit | undefined;
     const actionable = 'The integration caller is no longer current. Reload the integration, then retry polling.';
@@ -430,6 +597,8 @@ describe('Channels connection creation to registered provider journey', () => {
       const resource = await fixture.connectionsResource();
       const projected = ConversationConnectionListResultV1Schema.parse(JSON.parse(resource));
       expect(projected.connections[0]?.attention.pollFailure).toMatchObject({
+        phase: 'retryDue',
+        retryNotBeforeMs: expect.any(Number),
         evidence: { kind: 'action', code: 'plugin_action_caller_unavailable', message: expect.stringContaining(actionable) },
       });
       const dataClient = {
@@ -457,9 +626,9 @@ describe('Channels connection creation to registered provider journey', () => {
           },
         },
       });
-      expect(document.querySelector(`[data-testid="channels-connection-${connectionId}"]`)?.getAttribute('aria-label')).toContain(actionable);
       await act(async () => { document.querySelector<HTMLElement>(`[data-testid="channels-connection-${connectionId}"]`)?.click(); });
-      expect(document.querySelector('[data-testid="channels-poll-blocked-disclosure"]')?.textContent).toContain(actionable);
+      expect(document.querySelector('[data-testid="channels-poll-retry-due-disclosure"]')).not.toBeNull();
+      expect(document.querySelector('[data-testid="channels-poll-blocked-disclosure"]')).toBeNull();
       expect(document.body.textContent).not.toContain('poll-secret-canary');
       expect(document.body.textContent).not.toContain('/private/poll-canary');
     } finally { await ui?.dispose(); await fixture.dispose(); }
@@ -514,7 +683,7 @@ describe('Channels connection creation to registered provider journey', () => {
       expect(fixture.effects.length).toBeGreaterThan(effectsBeforeReplacement);
       await fixture.invoke('journey/deliver', {});
       expect(fixture.deliveryResult()).toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
-      expect(await fixture.invoke('journey/baseline', {})).toMatchObject({ kind: 'updated', authorityEpoch: 1 });
+      expect(await fixture.invoke('journey/baseline', {})).toMatchObject({ kind: 'noticeDismissed', authorityEpoch: 1 });
       expect((await fixture.state.get(connectionId))?.value.payload).toMatchObject({ authorityEpoch: 1, pendingOldTransportStop: null });
       expect(setupCount()).toBe(setupsAfterExplicitTest);
     } finally { await fixture.dispose(); }

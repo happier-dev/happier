@@ -17,40 +17,32 @@ import { renderConversationPairingDeepLink } from './pairingLink.js';
 
 export const CONVERSATION_PAIRING_EXPIRY_MS = 10 * 60 * 1_000;
 export const MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER = 5;
-/**
- * Incumbent memory-safety bound, scoped to the one live connection challenge
- * it protects so one Account's traffic cannot exhaust another Account's
- * pairing state.
- */
-export const MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS = 128;
 
 type PairingIdKind = 'challenge' | 'proposal' | 'binding';
 
 /**
  * Whether a repeated create matches the frozen content of the challenge its
- * request key created: revision, execution origin, destination label, selected
- * endpoint, proof endpoint, target, and the deep link rendered for this exact challenge
- * token. Callers reach this comparison only after the request keys matched.
+ * request key created: authority epoch, execution origin, selected endpoint identity,
+ * proof endpoint identity and target. Presentation can change without replacing
+ * the first challenge handoff. Callers reach this only after request keys match.
  */
 function isSameChallengeRequest(
   challenge: Challenge,
   input: Readonly<{
-    expectedConnectionRevision: number;
+    expectedConnectionAuthorityEpoch: number;
     executionOrigin: PluginMachineExecutionRoutingV1;
     destinationLabel: string;
     endpoint: ConversationResolvedEndpointV1;
     proofEndpoint?: ConversationResolvedEndpointV1;
     target: ConversationBindingTargetV1;
   }>,
-  requestedDeepLinkUrl: string | null,
 ): boolean {
-  return challenge.expectedConnectionRevision === input.expectedConnectionRevision
+  return challenge.expectedConnectionAuthorityEpoch === input.expectedConnectionAuthorityEpoch
     && arePluginMachineExecutionRoutingsEqual(challenge.executionOrigin, input.executionOrigin)
-    && challenge.destinationLabel === input.destinationLabel
     && areConversationEndpointIdentitiesEqual(challenge.endpoint, input.endpoint)
-    && challenge.endpoint.label === input.endpoint.label
-    && pluginJsonValuesEqual(challenge.proofEndpoint ?? null, input.proofEndpoint ?? null)
-    && challenge.deepLinkUrl === requestedDeepLinkUrl
+    && (challenge.proofEndpoint === undefined || input.proofEndpoint === undefined
+      ? challenge.proofEndpoint === input.proofEndpoint
+      : areConversationEndpointIdentitiesEqual(challenge.proofEndpoint, input.proofEndpoint))
     && pluginJsonValuesEqual(challenge.target, input.target);
 }
 
@@ -68,8 +60,8 @@ export type ConversationPairingBindingWriteInput = Readonly<{
   endpoint: ConversationResolvedEndpointV1;
   principalId: string;
   target: ConversationBindingTargetV1;
-  enabled: false;
-  expectedConnectionRevision: number;
+  enabled: boolean;
+  expectedConnectionAuthorityEpoch: number;
   finalizeIdempotencyKey: string;
 }>;
 
@@ -89,7 +81,7 @@ type Challenge = Readonly<{
   challengeId: string;
   token: string;
   connectionId: string;
-  expectedConnectionRevision: number;
+  expectedConnectionAuthorityEpoch: number;
   /** The client-generated opaque create-request key this challenge answers. */
   pairingRequestId: string;
   executionOrigin: PluginMachineExecutionRoutingV1;
@@ -121,7 +113,7 @@ type Proposal = Readonly<{
   proofEndpoint: ConversationResolvedEndpointV1;
   principalId: string;
   target: ConversationBindingTargetV1;
-  expectedConnectionRevision: number;
+  expectedConnectionAuthorityEpoch: number;
   expiresAt: number;
 }> & {
   state: 'proposed' | 'finalizing' | 'finalized';
@@ -160,7 +152,7 @@ type ConversationPreBindingPairingPreparation =
   }>
   | Readonly<{
     kind: 'silent';
-    ownerReason: 'attemptLimitReached' | 'attemptCapacityReached';
+    ownerReason: 'attemptLimitReached';
     attemptsRemaining: 0;
   }>
   | Readonly<{
@@ -379,7 +371,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
      */
     createChallenge(input: Readonly<{
       connectionId: string;
-      expectedConnectionRevision: number;
+      expectedConnectionAuthorityEpoch: number;
       pairingRequestId: string;
       executionOrigin: PluginMachineExecutionRoutingV1;
       destinationLabel: string;
@@ -388,8 +380,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
       proofEndpoint?: ConversationResolvedEndpointV1;
       target: ConversationBindingTargetV1;
     }>) {
-      if (!Number.isSafeInteger(input.expectedConnectionRevision) || input.expectedConnectionRevision < 1) {
-        throw new Error('Pairing challenge must freeze a valid connection revision.');
+      if (!Number.isSafeInteger(input.expectedConnectionAuthorityEpoch) || input.expectedConnectionAuthorityEpoch < 1) {
+        throw new Error('Pairing challenge must freeze a valid connection authority epoch.');
       }
       if (input.proofEndpoint !== undefined && input.proofEndpoint.audience !== 'shared') {
         throw new Error('Pairing proof endpoint must have a shared audience.');
@@ -401,14 +393,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
         ? undefined
         : challengesById.get(previousChallengeId);
       if (previousChallenge !== undefined) {
-        const requestedDeepLinkUrl = input.proofEndpoint !== undefined || input.pairingDeepLinkTemplate === undefined
-          ? null
-          : renderConversationPairingDeepLink({
-            template: input.pairingDeepLinkTemplate,
-            normalizedToken: previousChallenge.token,
-          });
         if (previousChallenge.pairingRequestId === input.pairingRequestId) {
-          if (!isSameChallengeRequest(previousChallenge, input, requestedDeepLinkUrl)) {
+          if (!isSameChallengeRequest(previousChallenge, input)) {
             // One request id represents exactly one request. Repeating it
             // with different content is a caller bug: refuse without
             // rejoining, superseding, or disturbing the live challenge.
@@ -422,7 +408,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
             generationId: dependencies.generationId,
             challengeId: previousChallenge.challengeId,
             expiresAt: previousChallenge.expiresAt,
-            attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
+
             destinationLabel: previousChallenge.destinationLabel,
             ...(previousChallenge.proofEndpoint === undefined ? {} : { proofEndpoint: previousChallenge.proofEndpoint }),
             manualToken: previousChallenge.token,
@@ -441,7 +427,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
         challengeId,
         token,
         connectionId: input.connectionId,
-        expectedConnectionRevision: input.expectedConnectionRevision,
+
+        expectedConnectionAuthorityEpoch: input.expectedConnectionAuthorityEpoch,
         pairingRequestId: input.pairingRequestId,
         executionOrigin: input.executionOrigin,
         destinationLabel: input.destinationLabel,
@@ -469,7 +456,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
         generationId: dependencies.generationId,
         challengeId,
         expiresAt: challenge.expiresAt,
-        attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
+
         destinationLabel: challenge.destinationLabel,
         ...(challenge.proofEndpoint === undefined ? {} : { proofEndpoint: challenge.proofEndpoint }),
         manualToken: token,
@@ -486,7 +473,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
           kind: 'active',
           challengeId: challenge.challengeId,
           expiresAt: challenge.expiresAt,
-          attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
+
           destinationLabel: challenge.destinationLabel,
           ...(challenge.proofEndpoint === undefined ? {} : { proofEndpoint: challenge.proofEndpoint }),
           manualToken: challenge.token,
@@ -596,18 +583,6 @@ export function createConversationPairingManager(dependencies: Readonly<{
             attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER - requesterAttempts,
           } as const;
         }
-        if (
-          requesterAttempts === 0
-          && !failureState.failedAttemptsByRequester.has(input.actor.principalId)
-          && failureState.failedAttemptsByRequester.size
-            >= MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS
-        ) {
-          return {
-            kind: 'silent',
-            ownerReason: 'attemptCapacityReached',
-            attemptsRemaining: 0,
-          } as const;
-        }
         const attempts = requesterAttempts + 1;
         failureState.failedAttemptsByRequester.set(input.actor.principalId, attempts);
         failureState.chargedFailureCensusIds.add(input.censusId);
@@ -677,7 +652,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
         proofEndpoint: reservation.endpoint,
         principalId: reservation.principalId,
         target: challenge.target,
-        expectedConnectionRevision: challenge.expectedConnectionRevision,
+
+        expectedConnectionAuthorityEpoch: challenge.expectedConnectionAuthorityEpoch,
         expiresAt: challenge.expiresAt,
         state: 'proposed',
       };
@@ -751,7 +727,6 @@ export function createConversationPairingManager(dependencies: Readonly<{
         generationId: string;
         proposalId: string;
         connectionId: string;
-        expectedConnectionRevision: number;
         finalizeIdempotencyKey: string;
       }>,
       writeBinding: ConversationPairingBindingWriter,
@@ -771,9 +746,6 @@ export function createConversationPairingManager(dependencies: Readonly<{
         return { kind: 'expired' };
       }
       if (proposal.connectionId !== input.connectionId) return { kind: 'wrongConnection' };
-      if (proposal.expectedConnectionRevision !== input.expectedConnectionRevision) {
-        return { kind: 'staleConnectionRevision' };
-      }
 
       const existingProposalId = proposalByFinalizeKey.get(input.finalizeIdempotencyKey);
       if (existingProposalId !== undefined && existingProposalId !== proposal.proposalId) {
@@ -798,8 +770,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
             endpoint: proposal.endpoint,
             principalId: proposal.principalId,
             target: proposal.target,
-            enabled: false,
-            expectedConnectionRevision: proposal.expectedConnectionRevision,
+            enabled: proposal.endpoint.audience === 'direct' && proposal.proofEndpoint.audience === 'direct',
+            expectedConnectionAuthorityEpoch: proposal.expectedConnectionAuthorityEpoch,
             finalizeIdempotencyKey: input.finalizeIdempotencyKey,
           });
           if (result.kind === 'created' || result.kind === 'rejoined') {
@@ -839,6 +811,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
      */
     readManagementProjection(
       accountConnectionIds?: ReadonlySet<string>,
+      challengeId?: string,
     ): ConversationPairingResourceV1 {
       const observedAt = dependencies.now();
       pruneExpiredAndPublish(observedAt);
@@ -849,26 +822,26 @@ export function createConversationPairingManager(dependencies: Readonly<{
         generationId: dependencies.generationId,
         observedAt,
         challenges: [...challengesById.values()].filter((challenge) => (
-          inPartition(challenge.connectionId)
+          inPartition(challenge.connectionId) && (challengeId === undefined || challenge.challengeId === challengeId)
         )).map((challenge) => ({
           challengeId: challenge.challengeId,
           connectionId: challenge.connectionId,
-          expectedConnectionRevision: challenge.expectedConnectionRevision,
+
           pairingRequestId: challenge.pairingRequestId,
           expiresAt: challenge.expiresAt,
-          attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
+
           destinationLabel: challenge.destinationLabel,
           ...(challenge.proofEndpoint === undefined ? {} : { proofEndpoint: challenge.proofEndpoint }),
           manualToken: challenge.token,
           deepLinkUrl: challenge.deepLinkUrl,
         })),
         proposals: [...proposals.values()].filter((proposal) => (
-          inPartition(proposal.connectionId)
+          inPartition(proposal.connectionId) && (challengeId === undefined || proposal.challengeId === challengeId)
         )).map((proposal) => ({
           challengeId: proposal.challengeId,
           proposalId: proposal.proposalId,
           connectionId: proposal.connectionId,
-          expectedConnectionRevision: proposal.expectedConnectionRevision,
+
           expiresAt: proposal.expiresAt,
           // These authenticated proof facts let the owner review the actual
           // sender even when every contender shares the same proof location.
@@ -878,6 +851,13 @@ export function createConversationPairingManager(dependencies: Readonly<{
           state: proposal.state,
         })),
       };
+    },
+    /** Unfinished shared proof needs message text before any binding exists. */
+    requiresFullSharedMessageContent(connectionId: string): boolean {
+      if (disposed) return false;
+      const challengeId = challengeIdByConnection.get(connectionId);
+      const challenge = challengeId === undefined ? undefined : challengesById.get(challengeId);
+      return challenge?.proofEndpoint?.audience === 'shared' && dependencies.now() < challenge.expiresAt;
     },
     subscribe(listener: () => void) {
       if (disposed) return { dispose() {} };

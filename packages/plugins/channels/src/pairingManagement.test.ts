@@ -21,7 +21,7 @@ import {
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 
-import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
+import { MemoryCollection } from './testkit/memoryCollection.js';
 type StateValue = Readonly<Record<string, unknown>>
   & Readonly<{ id: string; payload: Readonly<Record<string, unknown>> }>;
 type StateRow = Readonly<{ rowId: string; revision: number; value: StateValue }>;
@@ -294,6 +294,7 @@ function pairingManagementContext(input: Readonly<{
     // This fixture crosses only the Account-storage, Action-execution, and
     // targeted-contribution host boundaries.
     services: {
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), diagnostic: vi.fn() },
       actions: {
         getCurrentExecutionRouting: async () => ({ serverIdentityId: 'srv_pairing_test', machineId: 'machine-1', pluginId: 'happier.channels' }),
         executeAdmittedTargetedOperationWithExecutionOrigin: endpointResolutionExecutor(
@@ -308,7 +309,9 @@ function pairingManagementContext(input: Readonly<{
 }
 
 function createCollection(initial: readonly StateRow[]) {
-  const rows = new Map(initial.map((row) => [row.rowId, row]));
+  const collection = new MemoryCollection<StateValue>();
+  const rows = collection.rows;
+  for (const row of initial) rows.set(row.rowId, row);
   const batches: StateMutation[][] = [];
   let loseNextUpdatedBatchResponse = false;
   return {
@@ -324,34 +327,9 @@ function createCollection(initial: readonly StateRow[]) {
       index: string;
       prefix?: readonly unknown[];
       order?: 'asc' | 'desc';
-      limit?: number;
+      limit: number;
     }>) {
-      assertChannelsTestCollectionQueryLimit(request.limit);
-      if (request.index === 'by-kind') {
-        if (request.order !== 'asc' || request.prefix?.length !== 1 || request.prefix[0] !== 'binding') {
-          throw new Error('Expected the canonical ascending binding query before checkpointed polling.');
-        }
-        return {
-          rows: [...rows.values()]
-            .filter((row) => row.value['record-kind'] === 'binding')
-            .sort((left, right) => left.rowId.localeCompare(right.rowId))
-            .slice(0, request.limit ?? 50),
-          changeCursor: 1,
-        };
-      }
-      if (request.index !== 'by-connection-binding-v2') {
-        throw new Error(`Unexpected Collection query index '${request.index}'.`);
-      }
-      const [connectionId, bindingId, recordKind, attention] = request.prefix ?? [];
-      return {
-        rows: [...rows.values()].filter((row) => (
-          row.value['connection-id'] === connectionId
-            && (row.value['binding-id'] ?? null) === bindingId
-            && row.value['record-kind'] === recordKind
-            && row.value.attention === attention
-        )).slice(0, request.limit ?? 50),
-        changeCursor: 1,
-      };
+      return collection.query(request);
     },
     async batch(operations: readonly StateMutation[]) {
       batches.push([...operations]);
@@ -419,6 +397,60 @@ function checkpointedPullConnectionRow(): StateRow {
 }
 
 describe('Channels pairing management writer', () => {
+  it('rejoins the same Discussion pairing after its committed response is lost', async () => {
+    const collection = createCollection([connectionRow()]);
+    const discussionTarget = { kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' } } as const;
+    const context = pairingManagementContext({ collection, actions: { execute: vi.fn(async () => ({
+      v: 1, serverId: 'home-1', discussionId: 'discussion-1', messages: [], messageSeq: 0,
+      hasMoreOlder: false, incomplete: false,
+    })) } });
+    const manager = createConversationPairingManager({ generationId: 'generation-1', now: () => 1_000,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]), createId: kind => `${kind}-1` });
+    try {
+      const handlers = management.createConversationPairingManagementHandlers(manager);
+      const challenge = await handlers.create({ connectionId: 'connection-1', expectedConnectionRevision: 4,
+        pairingRequestId: 'discussion-pair', endpointSelection: directEndpointSelection, target: discussionTarget }, context);
+      if (challenge.kind !== 'created') throw new Error('Expected pairing challenge');
+      const proposal = completePreBindingMessage(manager, { connectionId: 'connection-1',
+        executionOrigin: getPluginMachineExecutionRouting(pairingConnectionAuthority.transportOrigin),
+        endpoint: directDestinationEndpoint, actor: { principalId: 'actual-human', kind: 'human', isIntegrationSelf: false },
+        contentProvenance: 'original', command: classifyConversationCommand(`/pair ${challenge.manualToken}`) });
+      if (proposal.kind !== 'matched') throw new Error('Expected pairing proposal');
+      const finalizeInput = { generationId: challenge.generationId, proposalId: proposal.proposalId,
+        connectionId: 'connection-1', finalizeIdempotencyKey: 'discussion-finalize' };
+      collection.loseNextUpdatedBatchResponse();
+      await expect(handlers.finalize(finalizeInput, context)).resolves.toEqual({ kind: 'retryableFailure' });
+      await expect(handlers.finalize(finalizeInput, context)).resolves.toMatchObject({ kind: 'rejoined',
+        binding: { id: 'binding-1', target: discussionTarget, allowedPrincipalIds: ['actual-human'] } });
+      expect([...collection.rows.values()].filter(row => row.value['record-kind'] === 'binding')).toHaveLength(1);
+    } finally { manager.dispose(); }
+  });
+
+  it('reads only the exact live challenge with one Account row read and no inventory query, then refuses expiry', async () => {
+    let now = 1_000;
+    const collection = createCollection([connectionRow()]);
+    const context = pairingManagementContext({ collection });
+    const manager = createConversationPairingManager({ generationId: 'generation-1', now: () => now,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]), createId: kind => `${kind}-1` });
+    const handlers = management.createConversationPairingManagementHandlers(manager);
+    const challenge = await handlers.create({ connectionId: 'connection-1', expectedConnectionRevision: 4,
+      pairingRequestId: 'read-request', endpointSelection: directEndpointSelection, target }, context);
+    if (challenge.kind !== 'created') throw new Error('Expected pairing challenge');
+    const readInput = { connectionId: 'connection-1', generationId: challenge.generationId, challengeId: challenge.challengeId };
+    const get = vi.spyOn(collection, 'get');
+    const query = vi.spyOn(collection, 'query');
+    expect(await handlers.read(readInput, context)).toMatchObject({ kind: 'ready', pairing: {
+      challenges: [{ challengeId: challenge.challengeId, expiresAt: challenge.expiresAt }], proposals: [],
+    } });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(query).not.toHaveBeenCalled();
+    expect(await handlers.read({ ...readInput, challengeId: 'another-challenge' }, context)).toEqual({ kind: 'unavailable' });
+    now = challenge.expiresAt;
+    expect(await handlers.read(readInput, context)).toEqual({ kind: 'unavailable' });
+    expect(manager.readManagementProjection().challenges).toEqual([]);
+    manager.dispose();
+  });
+
   const proofTopic = { kind: 'thread', audience: 'shared', id: 'group-9:7', parentId: 'group-9', label: 'Proof topic' } as const;
   const routerTarget = {
     kind: 'threadRouter',
@@ -426,7 +458,7 @@ describe('Channels pairing management writer', () => {
     routes: [{ id: 'owner-route', when: { group: 'owner', forwarded: 'any' }, recipe: { agentId: 'codex' }, policy: target.policy }],
   } as const;
 
-  it.each([true, false])('finalizes one paused parent router with only the proved principal (shared proof: %s)', async sharedProof => {
+  it.each([true, false])('keeps a shared-destination parent router paused with only the proved principal (shared proof: %s)', async sharedProof => {
     const collection = createCollection([connectionRow()]);
     const context = pairingManagementContext({ collection, endpointCandidates: [sharedDestinationEndpoint, proofTopic] });
     const manager = createConversationPairingManager({ generationId: 'generation-1', now: () => 1_000,
@@ -445,7 +477,7 @@ describe('Channels pairing management writer', () => {
       contentProvenance: 'original', command: classifyConversationCommand(`/pair ${challenge.manualToken}`) });
     if (proposal.kind !== 'matched') throw new Error('Expected pairing proposal');
     const finalizeInput = { generationId: challenge.generationId, proposalId: proposal.proposalId,
-      connectionId: 'connection-1', expectedConnectionRevision: 4, finalizeIdempotencyKey: 'router-finalize' };
+      connectionId: 'connection-1',  finalizeIdempotencyKey: 'router-finalize' };
     collection.loseNextUpdatedBatchResponse();
     await expect(handlers.finalize(finalizeInput, context)).resolves.toEqual({ kind: 'retryableFailure' });
     const result = await handlers.finalize(finalizeInput, context);
@@ -485,20 +517,20 @@ describe('Channels pairing management writer', () => {
     expect(manager.readManagementProjection().challenges).toHaveLength(0);
   });
 
-  it('refuses a shared proof resolved on a replacement provider occurrence without creating a challenge', async () => {
+  it('retains the exact shared proof endpoint across same-ID provider replacement', async () => {
     const collection = createCollection([connectionRow()]);
     let providerReads = 0;
     const context = pairingManagementContext({ collection,
-      endpointCandidates: [sharedDestinationEndpoint, proofTopic],
+      endpointCandidates: [sharedDestinationEndpoint],
       targetedContributions: targetedPairingContribution(() => ++providerReads <= 2 ? 'original' : 'replacement'),
     });
     const manager = createConversationPairingManager({ generationId: 'generation-1', now: () => 1_000,
       randomBytes: () => Uint8Array.from([0, 0, 0, 0, 1]), createId: kind => `${kind}-1` });
     await expect(management.createConversationPairingManagementHandlers(manager).create({
       connectionId: 'connection-1', expectedConnectionRevision: 4, pairingRequestId: 'replaced-provider',
-      endpointSelection: endpointSelectionFor(sharedDestinationEndpoint), proofEndpointSelection: endpointSelectionFor(proofTopic), target,
-    }, context)).rejects.toMatchObject({ code: 'channels_pairing_proof_endpoint_unavailable' });
-    expect(manager.readManagementProjection().challenges).toHaveLength(0);
+      endpointSelection: endpointSelectionFor(sharedDestinationEndpoint), proofEndpointSelection: endpointSelectionFor(sharedDestinationEndpoint), target,
+    }, context)).resolves.toMatchObject({ kind: 'created' });
+    expect(manager.readManagementProjection().challenges).toHaveLength(1);
   });
 
   it.each([
@@ -521,7 +553,7 @@ describe('Channels pairing management writer', () => {
       command: classifyConversationCommand(`/pair ${challenge.manualToken}`) });
     if (proposal.kind !== 'matched') throw new Error('Expected pairing proposal');
     const finalization = handlers.finalize({ generationId: challenge.generationId, proposalId: proposal.proposalId,
-      connectionId: 'connection-1', expectedConnectionRevision: 4, finalizeIdempotencyKey: 'invalid-finalize' }, context);
+      connectionId: 'connection-1',  finalizeIdempotencyKey: 'invalid-finalize' }, context);
     if ('when' in routeOverride) await expect(finalization).resolves.toEqual({ kind: 'retryableFailure' });
     else await expect(finalization).rejects.toMatchObject({ code: 'channels_binding_create_corrupt' });
     expect([...collection.rows.values()].filter(row => row.value['record-kind'] === 'binding')).toHaveLength(0);
@@ -558,14 +590,14 @@ describe('Channels pairing management writer', () => {
       generationId: 'generation-1',
       challengeId: 'challenge-1',
       expiresAt: 601_000,
-      attemptsRemaining: 5,
+
       destinationLabel: 'Test bot',
       manualToken: '00000001',
       deepLinkUrl: 'https://example.test/pair?token=00000001',
     });
   });
 
-  it('persists final-result delivery after pairing revalidates the Automation target', async () => {
+  it('enables a private-DM binding after pairing revalidates the Automation target', async () => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
     if (typeof createHandlers !== 'function') return;
@@ -602,11 +634,12 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     }, context)).resolves.toMatchObject({
       kind: 'created',
       binding: {
+        enabled: true,
         target: {
           kind: 'automation',
           automationId: 'automation-1',
@@ -646,7 +679,7 @@ describe('Channels pairing management writer', () => {
     });
   });
 
-  it('clears only the exact blocked poll failure and recovers a lost write response by rereading the connection', async () => {
+  it('retries the current poll failure after bookkeeping and recovers a lost write response', async () => {
     const retry = Reflect.get(management, 'retryConversationConnectionPollForInvocation');
     expect(retry).toEqual(expect.any(Function));
     if (typeof retry !== 'function') return;
@@ -654,6 +687,7 @@ describe('Channels pairing management writer', () => {
     const initial = connectionRow();
     const collection = createCollection([{
       ...initial,
+      revision: initial.revision + 1,
       value: {
         ...initial.value,
         payload: {
@@ -672,8 +706,6 @@ describe('Channels pairing management writer', () => {
 
     await expect(retry({
       connectionId: 'connection-1',
-      expectedRevision: 4,
-      authorityEpoch: 1,
     }, context)).resolves.toEqual({
       kind: 'retryScheduled',
       connectionId: 'connection-1',
@@ -683,23 +715,21 @@ describe('Channels pairing management writer', () => {
 
     expect(collection.batches).toHaveLength(1);
     expect(collection.rows.get('connection-1')).toMatchObject({
-      revision: 5,
+      revision: 6,
       value: { payload: { pollFailure: null } },
     });
     await expect(retry({
       connectionId: 'connection-1',
-      expectedRevision: 4,
-      authorityEpoch: 1,
     }, context)).resolves.toMatchObject({ kind: 'retryScheduled', revision: 4 });
     expect(collection.batches).toHaveLength(1);
     await management.updateConversationConnectionForInvocation({
       connectionId: 'connection-1', expectedRevision: 4, enabled: true, maximumObservationAgeMs: 120_000,
     }, context);
-    await expect(retry({ connectionId: 'connection-1', expectedRevision: 4, authorityEpoch: 1 }, context))
-      .rejects.toMatchObject({ code: 'channels_connection_poll_retry_conflict', retryable: true });
+    await expect(retry({ connectionId: 'connection-1' }, context))
+      .resolves.toMatchObject({ kind: 'retryScheduled', revision: 5 });
   });
 
-  it('refuses a poll retry when its otherwise-current authority epoch is stale', async () => {
+  it('retries the current connection generation without a caller version witness', async () => {
     const retry = Reflect.get(management, 'retryConversationConnectionPollForInvocation');
     expect(retry).toEqual(expect.any(Function));
     if (typeof retry !== 'function') return;
@@ -724,17 +754,10 @@ describe('Channels pairing management writer', () => {
 
     await expect(retry({
       connectionId: 'connection-1',
-      expectedRevision: 4,
-      authorityEpoch: 2,
-    }, context)).rejects.toMatchObject({ code: 'channels_connection_poll_retry_conflict', retryable: true });
+    }, context)).resolves.toMatchObject({ kind: 'retryScheduled', authorityEpoch: 1 });
 
-    expect(collection.batches).toHaveLength(0);
-    expect(collection.rows.get('connection-1')?.value.payload.pollFailure).toEqual({
-      phase: 'blocked',
-      attemptCount: 1,
-      retryNotBeforeMs: null,
-      evidence: { kind: 'provider', reason: 'permissionMissing' },
-    });
+    expect(collection.batches).toHaveLength(1);
+    expect(collection.rows.get('connection-1')?.value.payload.pollFailure).toBeNull();
   });
 
   it('rejects a pairing target whose /new principal is outside the pairing binding allowlist without consuming its proposal', async () => {
@@ -782,7 +805,7 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     }, context)).rejects.toMatchObject({ code: 'channels_binding_create_corrupt' });
 
@@ -879,7 +902,7 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     }, context)).resolves.toMatchObject({ kind: 'created' });
 
@@ -893,7 +916,7 @@ describe('Channels pairing management writer', () => {
     });
   });
 
-  it('withholds a checkpointed-pull pairing challenge until the core commits its first no-history poll token', async () => {
+  it('requires the first poll baseline but not dismissal of a later history-gap notice for pairing', async () => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
     if (typeof createHandlers !== 'function') return;
@@ -958,14 +981,23 @@ describe('Channels pairing management writer', () => {
       payload: { opaqueToken: { offset: '43' } },
     });
 
-    await expect(handlers.create(createInput, context)).resolves.toMatchObject({
+    const baselineConnection = collection.rows.get('connection-1');
+    if (baselineConnection === undefined) throw new Error('Expected the current baseline connection.');
+    const expectedConnectionRevision = baselineConnection.value.payload.configurationRevision;
+    if (typeof expectedConnectionRevision !== 'number') throw new Error('Expected the current connection configuration revision.');
+    collection.rows.set('connection-1', { ...baselineConnection, revision: baselineConnection.revision + 1,
+      value: { ...baselineConnection.value, payload: { ...baselineConnection.value.payload,
+        historyGap: { reportedAt: 1_000, reason: 'providerHistoryUnavailable' } } } });
+
+    await expect(handlers.create({ ...createInput, expectedConnectionRevision }, context)).resolves.toMatchObject({
       generationId: 'generation-1',
       challengeId: 'challenge-1',
       manualToken: '00000001',
     });
+    expect(collection.rows.get('connection-1')?.value.payload.historyGap).toMatchObject({ reason: 'providerHistoryUnavailable' });
   });
 
-  it.each(['none', 'bookkeeping', 'configuration'] as const)('guards the selected shared destination with poll bookkeeping during pairing frontier read: %s', async change => {
+  it.each(['none', 'bookkeeping', 'configuration', 'authority'] as const)('preserves the selected shared destination through non-authority connection edits during pairing: %s', async change => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
     if (typeof createHandlers !== 'function') return;
@@ -980,7 +1012,9 @@ describe('Channels pairing management writer', () => {
             const current = collection.rows.get('connection-1')!;
             collection.rows.set('connection-1', { ...current, revision: current.revision + 1,
               value: { ...current.value, payload: { ...current.value.payload,
-                ...(change === 'configuration'
+                ...(change === 'authority'
+                  ? { configurationRevision: 5, authorityEpoch: 2 }
+                  : change === 'configuration'
                   ? { configurationRevision: 5, maximumObservationAgeMs: 120_000 }
                   : { providerReadiness: { code: 'providerCredentialInvalid' } }),
               } } });
@@ -1043,13 +1077,12 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     }, context);
-    if (change === 'configuration') {
+    if (change === 'authority') {
       expect(result).toEqual({ kind: 'staleConnectionRevision' });
       expect(collection.rows.has('binding-1')).toBe(false);
-      expect(collection.rows.has('projection-frontier:binding-1')).toBe(false);
       return;
     }
     expect(result).toMatchObject({
@@ -1069,7 +1102,7 @@ describe('Channels pairing management writer', () => {
     });
   });
 
-  it('creates one paused Session binding from the authenticated proposal facts', async () => {
+  it('creates one enabled private-DM Session binding from the authenticated proposal facts', async () => {
     const createHandlers = Reflect.get(management, 'createConversationPairingManagementHandlers');
     expect(createHandlers).toEqual(expect.any(Function));
     if (typeof createHandlers !== 'function') return;
@@ -1114,7 +1147,7 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     }, context)).resolves.toEqual({
       kind: 'created',
@@ -1131,7 +1164,7 @@ describe('Channels pairing management writer', () => {
         linkPreviewPolicy: 'suppress',
         senderFeedback: 'off',
         authorityEpoch: 1,
-        enabled: false,
+        enabled: true,
         deletionState: 'none',
         createdAt: expect.any(Number),
         updatedAt: expect.any(Number),
@@ -1142,14 +1175,14 @@ describe('Channels pairing management writer', () => {
       'record-kind': 'binding',
       'connection-id': 'connection-1',
       'binding-id': 'binding-1',
-      payload: { target, enabled: false, deletionState: 'none' },
+      payload: { target, enabled: true, deletionState: 'none' },
     });
     expect(execute).toHaveBeenCalledWith(
       'session.transcript.get',
       {
         sessionId: 'session-1',
         projection: 'externalShareableV1',
-        cursor: null,
+        cursor: 'tail',
         limit: 100,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1205,7 +1238,7 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     }, context)).resolves.toEqual({ kind: 'notVerified', reason: 'notFound' });
 
@@ -1269,7 +1302,7 @@ describe('Channels pairing management writer', () => {
       generationId: challenge.generationId,
       proposalId: proposal.proposalId,
       connectionId: 'connection-1',
-      expectedConnectionRevision: 4,
+
       finalizeIdempotencyKey: 'finalize-1',
     } as const;
     collection.loseNextUpdatedBatchResponse();

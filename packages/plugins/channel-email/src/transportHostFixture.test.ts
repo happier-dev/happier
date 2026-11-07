@@ -179,7 +179,7 @@ describe('email core with an external contributed raw transport', () => {
       expect(parsed.to).toMatchObject({ value: [{ address: 'alice@example.com' }] });
       expect(parsed.cc).toBeUndefined();
       f.replaceFetched(Buffer.from(incoming.toString().replace('<incoming@example.com>', '<different@example.com>')));
-      await expect(f.invoke(ids.messageDeliver, delivery)).resolves.toMatchObject({ kind: 'notDelivered', retry: 'never', code: 'replyMessageMismatch' });
+      await expect(f.invoke(ids.messageDeliver, delivery)).resolves.toMatchObject({ kind: 'notDelivered', retry: 'never' });
       expect(f.sent.size).toBe(1);
     } finally { await f.dispose(); }
   });
@@ -196,7 +196,7 @@ describe('email core with an external contributed raw transport', () => {
       const html = `<h1>${'a'.repeat(120_000)}</h1>`;
       const start = { ...connection, endpoint: { kind: 'direct', audience: 'direct', id: mailbox },
         content: { text: 'Brief', html }, deliveryKey: 'fixture-start',
-        newThread: { recipients: resolved.candidates.map(principal => principal.id), subject: 'Brief' }, mentionPolicy: 'suppress', linkPreviewPolicy: 'providerDefault' };
+        newThread: { recipients: resolved.candidates.map(principal => principal.id), subject: 'Brief' }, linkPreviewPolicy: 'providerDefault' };
       await expect(f.invoke(ids.messageDeliver, start)).resolves.toMatchObject({ kind: 'outcomeUnknown' });
       const [messageId, raw] = [...f.sent.entries()][0]!;
       expect((await simpleParser(Buffer.from(raw))).html).toBe(html);
@@ -210,7 +210,7 @@ describe('email core with an external contributed raw transport', () => {
         .resolves.toMatchObject({ kind: 'delivered', endpoint: { kind: 'thread', audience: 'direct', parentId: mailbox } });
       f.setNotFound();
       await expect(f.invoke(ids.deliveryReconcile, { ...connection, endpoint: start.endpoint, deliveryKey: start.deliveryKey }))
-        .resolves.toEqual({ kind: 'outcomeUnknown', code: 'reconciliationNotFound' });
+        .resolves.toEqual({ kind: 'outcomeUnknown' });
       expect(f.submissions).toHaveLength(2);
     } finally { await f.dispose(); }
   });
@@ -335,7 +335,7 @@ describe('email core with an external contributed raw transport', () => {
     const f = await fixture({ findSent: false });
     try {
       await expect(f.invoke(ids.deliveryReconcile, { ...connection, endpoint: thread, deliveryKey: 'unknown' }))
-        .resolves.toEqual({ kind: 'outcomeUnknown', code: 'reconciliationUnsupported' });
+        .resolves.toEqual({ kind: 'outcomeUnknown' });
       const snapshot = f.retainCatalog();
       expect(snapshot.contributions[0]!.operations.connectionTest!.identity.contributor.pluginId).toBe('acme.email.fixture');
       await expect(f.invoke(ids.connectionTest, { ...connection, selectedTransport: 'checkpointedPull' })).resolves.toMatchObject({ kind: 'ready' });

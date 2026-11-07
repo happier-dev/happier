@@ -31,6 +31,7 @@ import {
     ConversationResolvedEndpointV1ProtocolSchema,
 } from '../provider/resolution.js';
 import { ConversationMessageAttachmentV1Schema } from '../provider/attachments.js';
+import { ConversationPullRequestUpdateObservationV1Schema } from '../management/sessionPullRequestUpdates.js';
 
 const conversationOccurrenceIdV1 = defineProtocolUtf8String({
     maxUtf8Bytes: MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES,
@@ -228,6 +229,7 @@ const conversationAuthenticatedObservationEnvelopeFields = {
 /** @internal Relative-only input for composed Channels protocol schemas. */
 export const ConversationObservationV1ProtocolSchema = defineProtocolObject({
     ...conversationAuthenticatedObservationEnvelopeFields,
+    pullRequestUpdate: ConversationPullRequestUpdateObservationV1Schema.optional(),
     message: conversationFullTextMessageV1,
 }, { policy: 'closed' });
 

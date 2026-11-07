@@ -35,6 +35,8 @@ import {
     ConversationConnectionTransferResultV1Schema,
     ConversationConnectionUpdateInputV1Schema,
     ConversationConnectionUpdateResultV1Schema,
+    ConversationStreamNoticeDismissInputV1Schema,
+    ConversationStreamNoticeDismissResultV1Schema,
 } from './connections.js';
 import {
     ConversationPairingCancelInputV1Schema,
@@ -43,13 +45,15 @@ import {
     ConversationPairingCreateResultV1Schema,
     ConversationPairingFinalizeInputV1Schema,
     ConversationPairingFinalizeResultV1Schema,
+    ConversationPairingReadInputV1Schema,
+    ConversationPairingReadResultV1Schema,
 } from './pairing.js';
 import {
     ConversationConnectionPollRetryManagementActionDeclarationV1,
 } from './pollRetry.js';
 import {
-    ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
-} from './projectionBaseline.js';
+    ConversationSessionProjectionNoticeDismissManagementActionDeclarationV1,
+} from './projectionNotice.js';
 import {
     ConversationConnectionPrepareInputV1Schema,
     ConversationConnectionPrepareResultV1Schema,
@@ -71,6 +75,8 @@ import type {
 } from '../actionDeclarations.js';
 
 export {
+    ConversationExternalConversationV1Schema,
+    ConversationExternalConversationV1JsonSchema,
     ConversationSessionLastDeliveryOutcomeV1Schema,
     ConversationSessionLastDeliveryOutcomeV1JsonSchema,
     ConversationSessionLastDeliveryV1Schema,
@@ -79,6 +85,7 @@ export {
     ConversationSessionLastDeliveriesV1JsonSchema,
 } from './sessionConversations.js';
 export type {
+    ConversationExternalConversationV1,
     ConversationSessionLastDeliveryV1,
     ConversationSessionLastDeliveryOutcomeV1,
     ConversationSessionLastDeliveriesV1,
@@ -164,6 +171,10 @@ export {
     ConversationConnectionUpdateInputV1Schema,
     ConversationConnectionUpdateResultV1JsonSchema,
     ConversationConnectionUpdateResultV1Schema,
+    ConversationStreamNoticeDismissInputV1JsonSchema,
+    ConversationStreamNoticeDismissInputV1Schema,
+    ConversationStreamNoticeDismissResultV1JsonSchema,
+    ConversationStreamNoticeDismissResultV1Schema,
     conversationConnectionWebhookSourceInstanceIdV1,
     isConversationConnectionCreateSelectableTransportV1,
     isConversationConnectionSelectableTransportV1,
@@ -181,6 +192,8 @@ export type {
     ConversationConnectionTransferResultV1,
     ConversationConnectionUpdateInputV1,
     ConversationConnectionUpdateResultV1,
+    ConversationStreamNoticeDismissInputV1,
+    ConversationStreamNoticeDismissResultV1,
 } from './connections.js';
 export {
     ConversationPairingCancelInputV1JsonSchema,
@@ -197,6 +210,10 @@ export {
     ConversationPairingFinalizeResultV1Schema,
     ConversationPairingResourceV1JsonSchema,
     ConversationPairingResourceV1Schema,
+    ConversationPairingReadInputV1Schema,
+    ConversationPairingReadInputV1JsonSchema,
+    ConversationPairingReadResultV1Schema,
+    ConversationPairingReadResultV1JsonSchema,
 } from './pairing.js';
 export type {
     ConversationPairingCancelInputV1,
@@ -206,6 +223,8 @@ export type {
     ConversationPairingFinalizeInputV1,
     ConversationPairingFinalizeResultV1,
     ConversationPairingResourceV1,
+    ConversationPairingReadInputV1,
+    ConversationPairingReadResultV1,
 } from './pairing.js';
 export {
     ConversationConnectionPollRetryInputV1JsonSchema,
@@ -215,16 +234,16 @@ export {
     ConversationConnectionPollRetryResultV1Schema,
 } from './pollRetry.js';
 export {
-    ConversationSessionProjectionBaselineAcceptInputV1JsonSchema,
-    ConversationSessionProjectionBaselineAcceptInputV1Schema,
-    ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
-    ConversationSessionProjectionBaselineAcceptResultV1JsonSchema,
-    ConversationSessionProjectionBaselineAcceptResultV1Schema,
-} from './projectionBaseline.js';
+    ConversationSessionProjectionNoticeDismissInputV1JsonSchema,
+    ConversationSessionProjectionNoticeDismissInputV1Schema,
+    ConversationSessionProjectionNoticeDismissManagementActionDeclarationV1,
+    ConversationSessionProjectionNoticeDismissResultV1JsonSchema,
+    ConversationSessionProjectionNoticeDismissResultV1Schema,
+} from './projectionNotice.js';
 export type {
-    ConversationSessionProjectionBaselineAcceptInputV1,
-    ConversationSessionProjectionBaselineAcceptResultV1,
-} from './projectionBaseline.js';
+    ConversationSessionProjectionNoticeDismissInputV1,
+    ConversationSessionProjectionNoticeDismissResultV1,
+} from './projectionNotice.js';
 export type {
     ConversationConnectionPollRetryInputV1,
     ConversationConnectionPollRetryResultV1,
@@ -276,6 +295,7 @@ export {
     ConversationAllowedPrincipalIdsV1JsonSchema,
     conversationThreadRouterAllowedPrincipalIdsV1,
     isChannelSessionSpawnRecipeAuthorableV1,
+    isConversationBindingTargetKindKnownV1,
     ConversationAllowedPrincipalIdsV1Schema,
     ConversationBindingTargetV1JsonSchema,
     ConversationBindingTargetV1Schema,
@@ -332,16 +352,10 @@ export const ConversationConnectionDeleteManagementActionDeclarationV1: Conversa
     resultSchema: ConversationConnectionDeleteResultV1Schema.jsonSchema,
 });
 
-/** The exact manifest-facing declaration for explicit connection abandonment. */
-export const ConversationConnectionAbandonManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
-    inputSchema: ConversationConnectionDeleteInputV1Schema.jsonSchema,
-    resultSchema: ConversationConnectionDeleteResultV1Schema.jsonSchema,
-});
-
-/** The exact manifest-facing declaration for accepting a stream baseline. */
-export const ConversationStreamBaselineAcceptManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
-    inputSchema: ConversationConnectionDeleteInputV1Schema.jsonSchema,
-    resultSchema: ConversationConnectionUpdateResultV1Schema.jsonSchema,
+/** The exact manifest-facing declaration for dismissing a connection notice. */
+export const ConversationStreamNoticeDismissManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
+    inputSchema: ConversationStreamNoticeDismissInputV1Schema.jsonSchema,
+    resultSchema: ConversationStreamNoticeDismissResultV1Schema.jsonSchema,
 });
 
 /** The exact manifest-facing declaration for pairing creation. */
@@ -432,9 +446,9 @@ export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagem
     connectionRetest: ConversationConnectionRetestManagementActionDeclarationV1,
     connectionUpdate: ConversationConnectionUpdateManagementActionDeclarationV1,
     connectionDelete: ConversationConnectionDeleteManagementActionDeclarationV1,
-    connectionAbandon: ConversationConnectionAbandonManagementActionDeclarationV1,
-    streamBaselineAccept: ConversationStreamBaselineAcceptManagementActionDeclarationV1,
+    streamNoticeDismiss: ConversationStreamNoticeDismissManagementActionDeclarationV1,
     connectionPairingCreate: ConversationPairingCreateManagementActionDeclarationV1,
+    connectionPairingRead: { inputSchema: ConversationPairingReadInputV1Schema.jsonSchema, resultSchema: ConversationPairingReadResultV1Schema.jsonSchema },
     connectionPairingFinalize: ConversationPairingFinalizeManagementActionDeclarationV1,
     connectionPairingCancel: ConversationPairingCancelManagementActionDeclarationV1,
     bindingRead: ConversationBindingReadManagementActionDeclarationV1,
@@ -443,7 +457,7 @@ export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagem
     bindingUpdate: ConversationBindingUpdateManagementActionDeclarationV1,
     bindingSetEnabled: ConversationBindingSetEnabledManagementActionDeclarationV1,
     bindingDelete: ConversationBindingDeleteManagementActionDeclarationV1,
-    sessionProjectionBaselineAccept: ConversationSessionProjectionBaselineAcceptManagementActionDeclarationV1,
+    sessionProjectionNoticeDismiss: ConversationSessionProjectionNoticeDismissManagementActionDeclarationV1,
     ingressRetry: ConversationIngressRetryManagementActionDeclarationV1,
     deliveryResolve: ConversationDeliveryResolveManagementActionDeclarationV1,
     connectionPollRetry: ConversationConnectionPollRetryManagementActionDeclarationV1,

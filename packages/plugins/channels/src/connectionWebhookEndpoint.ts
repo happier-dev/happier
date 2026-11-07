@@ -215,7 +215,7 @@ export async function assertConversationConnectionWebhookEndpointCorrespondence(
 
 /**
  * Converges the already-owned generic Account endpoint onto the target this
- * connection's committed transfer intent names.
+ * connection's current desired placement names.
  *
  * The endpoint stays a generic webhook lifecycle object with its own
  * present-user administration; Channels contributes only the two facts it
@@ -238,21 +238,24 @@ export async function assertConversationConnectionWebhookEndpointCorrespondence(
 export async function convergeConversationConnectionWebhookEndpointTarget(input: Readonly<{
   context: Pick<PluginInvocationContext, 'services' | 'signal'>;
   /**
-   * The replacement authority epoch frozen by the committed transfer. It is
-   * the one durable identity of this attempt, so every resume of the same
-   * committed intent carries the same intent ordering and rejoins rather than
+   * The connection generation advanced by the committed transfer. Every
+   * reconciliation of the same desired placement carries the same ordering
+   * and rejoins rather than
    * writing a second endpoint revision.
    */
   transferAuthorityEpoch: number;
   webhookEndpointId: PluginWebhookEndpointIdV1;
   webhookContribution: Readonly<{ pluginId: string; localId: string }>;
   sourceInstanceId: string;
+}> & (Readonly<{
   nextTargetMaterialization: Readonly<{
     pluginId: string;
     machineId: string;
     materializationId: string;
   }>;
-}>): Promise<void> {
+}> | Readonly<{
+  nextTargetRouting: Readonly<{ serverIdentityId: string; machineId: string }>;
+}>)): Promise<void> {
   let converged: PluginActionResultById['plugin.webhook.endpoint.convergeTarget']
     | ActionApprovalRequestCreatedResult;
   try {
@@ -263,7 +266,9 @@ export async function convergeConversationConnectionWebhookEndpointTarget(input:
         webhookContribution: { ...input.webhookContribution },
         sourceInstanceId: input.sourceInstanceId,
         setup: { ...CONVERSATION_CONNECTION_WEBHOOK_ENDPOINT_ENSURE_SETUP_V1 },
-        desiredTargetMaterialization: { ...input.nextTargetMaterialization },
+        ...('nextTargetRouting' in input
+          ? { desiredTargetRouting: { ...input.nextTargetRouting } }
+          : { desiredTargetMaterialization: { ...input.nextTargetMaterialization } }),
         targetIntentEpoch: input.transferAuthorityEpoch,
       } satisfies PluginActionInputById['plugin.webhook.endpoint.convergeTarget'],
       { signal: input.context.signal },
@@ -277,13 +282,13 @@ export async function convergeConversationConnectionWebhookEndpointTarget(input:
       true,
     );
   }
-  // A policy deferral means the endpoint never moved, so this transfer attempt
-  // is unavailable and retryable rather than superseded or converged.
+  // The present user owns a policy-deferred Action. Network retry would create
+  // another approval rather than advancing that decision.
   if (isPluginActionApprovalRequestCreated(converged)) {
     throw webhookEndpointPluginError(
       'channels_connection_transfer_endpoint_unavailable',
-      'The durable-push endpoint could not be converged for connection transfer.',
-      true,
+      'Review the pending webhook target Action approval before retrying this connection.',
+      false,
     );
   }
   if (converged.kind === 'superseded') {
@@ -295,12 +300,15 @@ export async function convergeConversationConnectionWebhookEndpointTarget(input:
       true,
     );
   }
+  if (converged.kind === 'unavailable') {
+    throw webhookEndpointPluginError(converged.code, 'The durable-push endpoint target is unavailable.', true);
+  }
   if (converged.kind !== 'converged'
     || converged.webhookEndpointId !== input.webhookEndpointId
-    || !arePluginMachineMaterializationRefsEqual(
-      converged.targetMaterialization,
-      input.nextTargetMaterialization,
-    )) {
+    || ('nextTargetMaterialization' in input
+      ? !arePluginMachineMaterializationRefsEqual(converged.targetMaterialization, input.nextTargetMaterialization)
+      : converged.targetMaterialization.machineId !== input.nextTargetRouting.machineId
+        || converged.targetMaterialization.pluginId !== input.webhookContribution.pluginId)) {
     throw webhookEndpointPluginError(
       'channels_connection_transfer_endpoint_unavailable',
       'The durable-push endpoint did not converge on this connection target.',

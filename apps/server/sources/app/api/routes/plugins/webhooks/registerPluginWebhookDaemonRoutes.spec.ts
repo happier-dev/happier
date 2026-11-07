@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { PluginWebhookEndpointConvergeTargetInputV1Schema } from "@happier-dev/protocol/plugins/webhooks/endpointV1";
 
 import { createFakeRouteApp, createReplyStub as createBaseReplyStub, getRouteEntry, getRouteHandler } from "../../../testkit/routeHarness";
 import { registerPluginWebhookDaemonRoutes } from "./registerPluginWebhookDaemonRoutes";
@@ -221,7 +222,10 @@ describe("plugin webhook daemon HTTP routes", () => {
      * caller identity, because the Account bearer alone must never be able to
      * move an endpoint that present-user administration owns.
      */
-    it("authenticates the exact current caller materialization before converging an endpoint target", async () => {
+    it.each([
+        { desiredTargetMaterialization: TARGET.materialization },
+        { desiredTargetRouting: { serverIdentityId: "srv_webhookRouting", machineId: TARGET.materialization.machineId } },
+    ])("authenticates the exact current caller materialization before converging an endpoint target: %j", async (desiredTarget) => {
         const app = createFakeRouteApp();
         const convergeTarget = vi.fn(async () => ({
             kind: "converged" as const,
@@ -247,9 +251,15 @@ describe("plugin webhook daemon HTTP routes", () => {
             webhookContribution: { pluginId: "acme.github", localId: "issues" },
             sourceInstanceId: "source-1",
             setup: CORRESPONDENCE_SETUP,
-            desiredTargetMaterialization: TARGET.materialization,
+            ...desiredTarget,
             targetIntentEpoch: 5,
         };
+        expect(PluginWebhookEndpointConvergeTargetInputV1Schema.parse(input)).toEqual(input);
+        expect(PluginWebhookEndpointConvergeTargetInputV1Schema.safeParse({
+            ...input,
+            desiredTargetMaterialization: TARGET.materialization,
+            desiredTargetRouting: { serverIdentityId: "srv_webhookRouting", machineId: TARGET.materialization.machineId },
+        }).success).toBe(false);
 
         await getRouteHandler(app, "POST", "/v1/plugins/webhooks/endpoints/converge-target")({
             userId: "account-authenticated",

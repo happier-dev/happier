@@ -13,7 +13,7 @@ import {
 import { definePlugin, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { defineProtocolJsonValue, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
-import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import { describe, expect, it } from 'vitest';
 
@@ -78,15 +78,19 @@ function response(value: unknown, finalUrl: string) {
 }
 
 describe('Channels chunk producer to registered native-handler fixture seam', () => {
-  it.each([false, true])('retests an old GitHub row and splits a 70k reply through the refreshed native setup limit (wrong setup handler: %s)', async (wrongSetupHandler) => {
+  it.each([
+    { wrongSetupHandler: false, nativeLogin: false },
+    { wrongSetupHandler: true, nativeLogin: false },
+    { wrongSetupHandler: false, nativeLogin: true },
+  ])('retests an old GitHub row and splits a 70k reply through the refreshed native setup limit (wrong setup handler: $wrongSetupHandler, native login: $nativeLogin)', async ({ wrongSetupHandler, nativeLogin }) => {
     const pluginId = GITHUB_CONNECTED_ACCOUNT_SERVICE.pluginId;
-    const credentialRef = { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'native-github-account' };
+    const credentialRef = nativeLogin ? null : { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'native-github-account' };
     const materialization = { pluginId, machineId: 'seam-machine', materializationId: 'github-native-seam' };
-    const setupInput = { credentialRef, repository: 'acme/widgets' };
+    const setupInput: JsonValue = nativeLogin ? { repository: 'acme/widgets' } : { credentialRef, repository: 'acme/widgets' };
     const comments: string[] = [];
     const consumed: ConversationDeliveryInputV1[] = [];
     let miswired = false;
-    const http: PluginServices['http'] = {
+    const http: PluginServices['http'] = createPluginHttpFixture({
       async openWebSocket() { throw new Error('GitHub Channels uses HTTP'); },
       async request(request) {
         const url = new URL(request.url);
@@ -102,7 +106,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
         }
         throw new Error(`Unexpected GitHub native request ${request.method} ${request.url}`);
       },
-    };
+    });
     const provider = definePlugin({ id: pluginId, version: '0.0.0', actions: {
       setup: { title: 'Native setup', surfaces: ['plugin'], dangerLevel: 'safe',
         resultSchema: operations.setup.declaration.resultSchema.jsonSchema,
@@ -116,9 +120,11 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
     }, contributesTo: { 'happier.channels': { providers: { native: ConversationProvidersContributionProtocolV1.contribute({ descriptor: { v: 1, displayName: 'Native test' }, operations: {
       setup: operations.setup.bind('setup'), connectionTest: operations.connectionTest.bind('test'), messageDeliver: operations.messageDeliver.bind('deliver'),
     } }) } } } });
-    const connectedAccounts = { async materialize() { return { kind: 'httpHeaders', headers: { Authorization: 'Bearer native-fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
+    const connectedAccounts = { async getBinding() { return null; },
+      async materialize() { return { kind: 'httpHeaders', headers: { Authorization: 'Bearer native-fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
     const providerKit = await createPluginTestkit({ manifest: provider.manifest, module: provider,
-      services: { http, connectedAccounts }, resolveCurrentPluginMaterializationRef: () => materialization });
+      services: { http: { ...http, ...createPluginHttpFixture({ request: http.request }) }, connectedAccounts },
+      resolveCurrentPluginMaterializationRef: () => materialization });
     const state = collectionBoundary(CHANNEL_STATE_COLLECTION.schema);
     const deliveries = collectionBoundary(CHANNEL_DELIVERIES_COLLECTION.schema);
     let coreKit: PluginTestkit;
@@ -154,7 +160,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
               source: { kind: 'controlResponse', controlId: 'github-native-seam', controlKind: 'recovery' },
               endpoint: { kind: 'githubIssue', audience: 'shared', id: 'github:repository:77:issue:5:number:1', parentId: '77' },
               content: ConversationDeliveryContentV1Schema.parse(input), deliveryKey: 'github-native-seam-delivery',
-              replyContext: { replyToMessageId: 'original-comment' }, mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress' },
+              replyContext: { replyToMessageId: 'original-comment' },  linkPreviewPolicy: 'suppress' },
           }));
         } },
     } });
@@ -162,6 +168,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
       resolveCurrentPluginMaterializationRef: () => ({ pluginId: 'happier.channels', machineId: 'seam-machine', materializationId: 'core-native-seam' }) });
     try {
       const setup = ConversationProviderSetupResultV1Schema.parse(await coreKit.invokeAction('setup', null));
+      expect(setup.credentialRef).toEqual(credentialRef);
       if (setupOrigin === undefined || !('materializationRef' in setupOrigin)) throw new Error('Native setup must produce materialized transport authority');
       const initial = createCurrentConversationConnectionFixture({ connectionId: 'github-legacy', maximumObservationAgeMs: 60_000,
         authority: { providerPluginId: pluginId, providerContributionSelection: { contributionId: 'native' }, providerSetupInput: setupInput,
@@ -212,7 +219,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
     const consumed: ConversationDeliveryInputV1[] = [];
     const nativeResults: ConversationDeliveryResultV1[] = [];
     const consumerRefusals: unknown[] = [];
-    const http: PluginServices['http'] = {
+    const http: PluginServices['http'] = createPluginHttpFixture({
       async openWebSocket() { throw new Error('Delivery does not open a Gateway'); },
       async request(request) {
         const url = request.url;
@@ -247,7 +254,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
         }
         throw new Error(`Unexpected native request ${request.method} ${url}`);
       },
-    };
+    });
     // Credential materialization is the other genuine external host boundary.
     const materialize: PluginServices['connectedAccounts']['materialize'] = async (_purpose, _request, options): ReturnType<PluginServices['connectedAccounts']['materialize']> => {
       expect(options?.expectedAccount).toEqual(credentialRef);
@@ -334,7 +341,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
                   : { kind: 'thread', audience: 'shared', id: 'discord:channel:thread-1', parentId: 'discord:channel:parent-1' },
                 content: ConversationDeliveryContentV1Schema.parse(input), deliveryKey: 'native-seam-delivery',
                 replyContext: { replyToMessageId: telegram ? '7' : 'original-message', threadId: telegram ? '17' : 'thread-1' },
-                mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress' },
+                 linkPreviewPolicy: 'suppress' },
             }));
           } },
       },

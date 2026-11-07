@@ -10,10 +10,10 @@ export type DocCollaborationActionInputById = {
             kind: 'doc';
             serverId?: string | undefined;
         };
-        revision?: {
+        revision?: undefined | {
             headerVersion: number;
             bodyVersion: number;
-        } | undefined;
+        };
     };
     readonly "doc.comment.reply": {
         target: {
@@ -38,31 +38,6 @@ export type DocCollaborationActionInputById = {
         content: {
             v: 1;
             parts: ({
-                t: 'text';
-                text: string;
-            } | {
-                t: 'mention';
-                participant: {
-                    kind: 'account';
-                    accountId: string;
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                };
-            } | {
-                t: 'reference';
-                reference: {
-                    kind: string;
-                    ref: string;
-                    token: string;
-                    label?: string | undefined;
-                    composerReference?: {
-                        pluginId: string;
-                        localId: string;
-                    } | undefined;
-                    composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                };
-            } | {
                 t: 'attachment';
                 attachment: {
                     kind: 'file';
@@ -89,20 +64,52 @@ export type DocCollaborationActionInputById = {
                     }[];
                     directories: string[];
                 };
+            } | {
+                t: 'mention';
+                participant: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+            } | {
+                t: 'reference';
+                reference: {
+                    kind: string;
+                    ref: string;
+                    token: string;
+                    label?: string | undefined;
+                    composerReference?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                };
+            } | {
+                t: 'text';
+                text: string;
             })[];
+            externalSource?: undefined | {
+                kind: 'channel';
+                providerPluginId: string;
+                conversationDisplayName: string;
+                senderDisplayName?: string | undefined;
+                inputLocalId?: string | undefined;
+            };
         };
-        discussionRef?: {
+        discussionRef?: undefined | {
             serverId: string;
             discussionId: string;
-        } | undefined;
-        parentMessageRef?: {
+        };
+        parentMessageRef?: undefined | {
             kind: 'discussion';
             discussion: {
                 serverId: string;
                 discussionId: string;
             };
             messageId: string;
-        } | undefined;
+        };
     };
     readonly "doc.edit.propose": {
         target: {
@@ -135,14 +142,14 @@ export type DocCollaborationActionInputById = {
             discussionId: string;
         };
         localId: string;
-        replyTo?: {
+        replyTo?: undefined | {
             kind: 'discussion';
             discussion: {
                 serverId: string;
                 discussionId: string;
             };
             messageId: string;
-        } | undefined;
+        };
     };
     readonly "doc.edit.accept": {
         proposalRef: {
@@ -177,50 +184,58 @@ export type DocCollaborationActionResultById = {
             serverId: string;
         };
         artifact: {
+            updatedAt: number;
+            header: Record<string, JsonValue>;
+            access: 'admin' | 'edit' | 'owner' | 'view';
+            createdAt: number;
             artifactId: string;
             ownerAccountId: string;
-            access: 'owner' | 'view' | 'edit' | 'admin';
-            publicAudience: 'unknown' | 'retained' | 'none';
-            header: Record<string, JsonValue>;
             seq: number;
-            createdAt: number;
-            updatedAt: number;
-            body: string | {
+            publicAudience: 'none' | 'retained' | 'unknown';
+            body: null | string | {
                 blobId: string;
                 mime: string;
                 sizeBytes: number;
                 sha256: string;
-            } | null;
+            };
             revision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-            provenance?: {
+            provenance?: undefined | {
                 savedBy: {
-                    kind: 'person';
-                    accountId: string;
-                } | {
                     kind: 'agent';
                     accountId: string;
                     sessionId?: string | undefined;
+                } | {
+                    kind: 'person';
+                    accountId: string;
                 };
-                source?: {
+                skillCreator?: undefined | {
+                    kind: 'agent';
+                    accountId: string;
+                    sessionId?: string | undefined;
+                } | {
+                    kind: 'person';
+                    accountId: string;
+                };
+                source?: undefined | {
+                    rootPath: string;
+                    machineId: string;
+                    path: string;
+                    sha: string;
+                } | {
                     sessionId: string;
                     machineId: string;
                     path: string;
                     sha: string;
                     runId?: string | undefined;
-                } | {
-                    rootPath: string;
-                    machineId: string;
-                    path: string;
-                    sha: string;
-                } | undefined;
+                };
                 restoredFromBodyVersion?: number | undefined;
-            } | undefined;
+            };
             shared?: boolean | undefined;
         };
-        openCommentCount: number | null;
+        openCommentCount: null | number;
     };
     readonly "doc.comment.reply": {
         message: {
@@ -232,147 +247,7 @@ export type DocCollaborationActionResultById = {
                 };
                 messageId: string;
             };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: JsonValue;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
+            content: null | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -401,53 +276,207 @@ export type DocCollaborationActionResultById = {
                     after: string;
                     reason: string;
                 };
-            } | null;
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'workflow_result';
+                value: JsonValue;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
+                };
+            } | {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
             id: string;
             discussionId: string;
-            localId: string | null;
+            localId: null | string;
             seq: number;
-            authorAccountId: string | null;
-            accountActor: {
+            authorAccountId: null | string;
+            accountActor: null | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null;
-            producerV1: {
+            };
+            producerV1: null | {
                 v: 1;
                 kind: 'agent';
                 sessionId: string;
                 runId?: string | undefined;
                 toolCallId?: string | undefined;
-                sourceSession?: {
+                sourceSession?: undefined | {
                     sourceSessionId: string;
                     sourceTurnId: string;
                     via: 'action' | 'mcp';
                     sourceInputId?: string | undefined;
-                    discussionAddressing?: {
+                    discussionAddressing?: undefined | {
                         discussionId: string;
                         messageId: string;
                         throughSeq: number;
                         participantSessionId: string;
-                    } | undefined;
-                } | undefined;
-                actionRequestAttributionV1?: {
+                    };
+                };
+                actionRequestAttributionV1?: undefined | {
                     requestRef: string;
-                    requester: {
+                    requester: null | {
                         serverId: string;
                         accountId: string;
-                    } | null;
+                    };
                     persona: {
                         serverId: string;
                         sessionId: string;
                     };
-                    origin: {
+                    origin: null | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
@@ -461,19 +490,19 @@ export type DocCollaborationActionResultById = {
                             sessionId: string;
                         };
                         messageId: string;
-                    } | null;
-                } | undefined;
-                replyReturn?: {
+                    };
+                };
+                replyReturn?: undefined | {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
-                    workflow?: {
+                    workflow?: undefined | {
                         runId: string;
                         invocationRecordId: string;
                         invocationAttempt: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             } | {
                 v: 1;
                 kind: 'workflow';
@@ -490,36 +519,41 @@ export type DocCollaborationActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-            } | null;
+                outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+            };
             mentionedAccountIds: string[];
             createdAt: number;
-            requesterAccountActor?: {
+            requesterAccountActor?: null | undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null | undefined;
-            addressingV1?: {
+            };
+            addressingV1?: null | undefined | {
                 throughSeq: number;
                 participantSessionIds: string[];
                 watcherSessionIds?: string[] | undefined;
-            } | null | undefined;
-            participantDeliveryV1?: {
+            };
+            participantDeliveryV1?: ({
+                participantSessionId: string;
+                disposition: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            } | {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
-            }[] | undefined;
-            replyTarget?: {
-                kind: 'message';
-                messageId: string;
-            } | {
+            })[] | undefined;
+            replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
                     ref: {
@@ -533,6 +567,9 @@ export type DocCollaborationActionResultById = {
                     };
                 };
             } | {
+                kind: 'message';
+                messageId: string;
+            } | {
                 kind: 'task';
                 entry: Readonly<{
                     source: Readonly<{
@@ -543,10 +580,8 @@ export type DocCollaborationActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
-            } | undefined;
-            docEditProposalDispositionV1?: {
-                state: 'open';
-            } | {
+            };
+            docEditProposalDispositionV1?: undefined | {
                 state: 'accepted';
                 acceptedRevision: {
                     headerVersion: number;
@@ -562,7 +597,9 @@ export type DocCollaborationActionResultById = {
                     accountId: string;
                     atMs: number;
                 };
-            } | undefined;
+            } | {
+                state: 'open';
+            };
         };
         messageSeq: number;
         v: 1;
@@ -578,147 +615,7 @@ export type DocCollaborationActionResultById = {
                 };
                 messageId: string;
             };
-            content: {
-                v: 1;
-                parts: ({
-                    t: 'text';
-                    text: string;
-                } | {
-                    t: 'mention';
-                    participant: {
-                        kind: 'account';
-                        accountId: string;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                    };
-                } | {
-                    t: 'reference';
-                    reference: {
-                        kind: string;
-                        ref: string;
-                        token: string;
-                        label?: string | undefined;
-                        composerReference?: {
-                            pluginId: string;
-                            localId: string;
-                        } | undefined;
-                        composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                    };
-                } | {
-                    t: 'attachment';
-                    attachment: {
-                        kind: 'file';
-                        id: string;
-                        name: string;
-                        file: {
-                            blobId: string;
-                            mime: string;
-                            sizeBytes: number;
-                            sha256: string;
-                        };
-                    } | {
-                        kind: 'folder';
-                        id: string;
-                        name: string;
-                        entries: {
-                            relativePath: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        }[];
-                        directories: string[];
-                    };
-                })[];
-            } | {
-                kind: 'workflow_result';
-                value: JsonValue;
-                summary: string;
-                source: {
-                    runId: string;
-                    invocationRecordId: string;
-                    invocationAttempt: string;
-                };
-            } | {
-                kind: 'doc_passage_comment';
-                passage: {
-                    ref: {
-                        artifactId: string;
-                        kind: 'doc';
-                        serverId?: string | undefined;
-                    };
-                    revision: {
-                        headerVersion: number;
-                        bodyVersion: number;
-                    };
-                    range: {
-                        start: number;
-                        end: number;
-                    };
-                    quote: string;
-                    prefix?: string | undefined;
-                    suffix?: string | undefined;
-                };
-                content: {
-                    v: 1;
-                    parts: ({
-                        t: 'text';
-                        text: string;
-                    } | {
-                        t: 'mention';
-                        participant: {
-                            kind: 'account';
-                            accountId: string;
-                        } | {
-                            kind: 'session';
-                            sessionId: string;
-                        };
-                    } | {
-                        t: 'reference';
-                        reference: {
-                            kind: string;
-                            ref: string;
-                            token: string;
-                            label?: string | undefined;
-                            composerReference?: {
-                                pluginId: string;
-                                localId: string;
-                            } | undefined;
-                            composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                        };
-                    } | {
-                        t: 'attachment';
-                        attachment: {
-                            kind: 'file';
-                            id: string;
-                            name: string;
-                            file: {
-                                blobId: string;
-                                mime: string;
-                                sizeBytes: number;
-                                sha256: string;
-                            };
-                        } | {
-                            kind: 'folder';
-                            id: string;
-                            name: string;
-                            entries: {
-                                relativePath: string;
-                                file: {
-                                    blobId: string;
-                                    mime: string;
-                                    sizeBytes: number;
-                                    sha256: string;
-                                };
-                            }[];
-                            directories: string[];
-                        };
-                    })[];
-                };
-            } | {
+            content: null | {
                 kind: 'doc_edit_proposal';
                 proposal: {
                     target: {
@@ -747,53 +644,207 @@ export type DocCollaborationActionResultById = {
                     after: string;
                     reason: string;
                 };
-            } | null;
+            } | {
+                kind: 'doc_passage_comment';
+                passage: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                content: {
+                    v: 1;
+                    parts: ({
+                        t: 'attachment';
+                        attachment: {
+                            kind: 'file';
+                            id: string;
+                            name: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        } | {
+                            kind: 'folder';
+                            id: string;
+                            name: string;
+                            entries: {
+                                relativePath: string;
+                                file: {
+                                    blobId: string;
+                                    mime: string;
+                                    sizeBytes: number;
+                                    sha256: string;
+                                };
+                            }[];
+                            directories: string[];
+                        };
+                    } | {
+                        t: 'mention';
+                        participant: {
+                            kind: 'account';
+                            accountId: string;
+                        } | {
+                            kind: 'session';
+                            sessionId: string;
+                        };
+                    } | {
+                        t: 'reference';
+                        reference: {
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                            composerReference?: undefined | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                        };
+                    } | {
+                        t: 'text';
+                        text: string;
+                    })[];
+                    externalSource?: undefined | {
+                        kind: 'channel';
+                        providerPluginId: string;
+                        conversationDisplayName: string;
+                        senderDisplayName?: string | undefined;
+                        inputLocalId?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'workflow_result';
+                value: JsonValue;
+                summary: string;
+                source: {
+                    runId: string;
+                    invocationRecordId: string;
+                    invocationAttempt: string;
+                };
+            } | {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
             id: string;
             discussionId: string;
-            localId: string | null;
+            localId: null | string;
             seq: number;
-            authorAccountId: string | null;
-            accountActor: {
+            authorAccountId: null | string;
+            accountActor: null | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null;
-            producerV1: {
+            };
+            producerV1: null | {
                 v: 1;
                 kind: 'agent';
                 sessionId: string;
                 runId?: string | undefined;
                 toolCallId?: string | undefined;
-                sourceSession?: {
+                sourceSession?: undefined | {
                     sourceSessionId: string;
                     sourceTurnId: string;
                     via: 'action' | 'mcp';
                     sourceInputId?: string | undefined;
-                    discussionAddressing?: {
+                    discussionAddressing?: undefined | {
                         discussionId: string;
                         messageId: string;
                         throughSeq: number;
                         participantSessionId: string;
-                    } | undefined;
-                } | undefined;
-                actionRequestAttributionV1?: {
+                    };
+                };
+                actionRequestAttributionV1?: undefined | {
                     requestRef: string;
-                    requester: {
+                    requester: null | {
                         serverId: string;
                         accountId: string;
-                    } | null;
+                    };
                     persona: {
                         serverId: string;
                         sessionId: string;
                     };
-                    origin: {
+                    origin: null | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
@@ -807,19 +858,19 @@ export type DocCollaborationActionResultById = {
                             sessionId: string;
                         };
                         messageId: string;
-                    } | null;
-                } | undefined;
-                replyReturn?: {
+                    };
+                };
+                replyReturn?: undefined | {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
+                    outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
-                    workflow?: {
+                    workflow?: undefined | {
                         runId: string;
                         invocationRecordId: string;
                         invocationAttempt: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             } | {
                 v: 1;
                 kind: 'workflow';
@@ -836,36 +887,41 @@ export type DocCollaborationActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
-            } | null;
+                outcome: 'answer' | 'cancelled' | 'failed' | 'pass' | 'terminal_no_result';
+            };
             mentionedAccountIds: string[];
             createdAt: number;
-            requesterAccountActor?: {
+            requesterAccountActor?: null | undefined | {
                 v: 1;
                 accountId: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
                 accessibility?: 'current' | 'former' | undefined;
-            } | null | undefined;
-            addressingV1?: {
+            };
+            addressingV1?: null | undefined | {
                 throughSeq: number;
                 participantSessionIds: string[];
                 watcherSessionIds?: string[] | undefined;
-            } | null | undefined;
-            participantDeliveryV1?: {
+            };
+            participantDeliveryV1?: ({
+                participantSessionId: string;
+                disposition: 'failed';
+                failure: {
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
+                    retryable: boolean;
+                };
+            } | {
                 participantSessionId: string;
                 disposition: 'held';
                 code: 'session_input_target_unavailable';
-            }[] | undefined;
-            replyTarget?: {
-                kind: 'message';
-                messageId: string;
-            } | {
+            })[] | undefined;
+            replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
                     ref: {
@@ -879,6 +935,9 @@ export type DocCollaborationActionResultById = {
                     };
                 };
             } | {
+                kind: 'message';
+                messageId: string;
+            } | {
                 kind: 'task';
                 entry: Readonly<{
                     source: Readonly<{
@@ -889,10 +948,8 @@ export type DocCollaborationActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
-            } | undefined;
-            docEditProposalDispositionV1?: {
-                state: 'open';
-            } | {
+            };
+            docEditProposalDispositionV1?: undefined | {
                 state: 'accepted';
                 acceptedRevision: {
                     headerVersion: number;
@@ -908,7 +965,9 @@ export type DocCollaborationActionResultById = {
                     accountId: string;
                     atMs: number;
                 };
-            } | undefined;
+            } | {
+                state: 'open';
+            };
         };
         messageSeq: number;
         v: 1;
@@ -924,8 +983,6 @@ export type DocCollaborationActionResultById = {
             messageId: string;
         };
         docEditProposalDispositionV1: {
-            state: 'open';
-        } | {
             state: 'accepted';
             acceptedRevision: {
                 headerVersion: number;
@@ -941,6 +998,8 @@ export type DocCollaborationActionResultById = {
                 accountId: string;
                 atMs: number;
             };
+        } | {
+            state: 'open';
         };
     };
     readonly "doc.edit.decline": {
@@ -953,8 +1012,6 @@ export type DocCollaborationActionResultById = {
             messageId: string;
         };
         docEditProposalDispositionV1: {
-            state: 'open';
-        } | {
             state: 'accepted';
             acceptedRevision: {
                 headerVersion: number;
@@ -970,6 +1027,8 @@ export type DocCollaborationActionResultById = {
                 accountId: string;
                 atMs: number;
             };
+        } | {
+            state: 'open';
         };
     };
 };

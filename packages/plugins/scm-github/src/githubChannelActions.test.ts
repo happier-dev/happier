@@ -1,3 +1,4 @@
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { ConversationProviderSetupOutcomeV1Schema } from '@happier-dev/channels-protocol/v1';
@@ -36,6 +37,62 @@ const GITHUB_CHANNEL_PROVIDER_CONFIG = Object.freeze({
 
 const ARBITRARY_PROVIDER_ACTION_ID = 'unrelated-targeted-role';
 
+describe('headerless GitHub Channel cadence', () => {
+  it.each(['budget', 'malformed', 'denied'] as const)('settles the real provider Action using the account overview: %s', async scenario => {
+    const nowMs = Date.parse('2026-08-10T12:00:00Z');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const reads: string[] = [];
+    const http = createPluginHttpFixture({ request: async request => {
+      const path = new URL(request.url).pathname;
+      reads.push(path);
+      return {
+        status: path === '/rate_limit' && scenario === 'denied' ? 403 : 200,
+        finalUrl: request.url, headers: {},
+        body: new TextEncoder().encode(JSON.stringify(path !== '/rate_limit' ? []
+          : scenario === 'budget' ? { resources: { core: { remaining: 10, reset: nowMs / 1_000 + 600 } } } : {})),
+      };
+    } });
+    try {
+      const result = await pollGithubChannelObservations({ ...githubChannelConnectionInput(), checkpoint: null, limit: 10, waitMs: 0 },
+        coreContext({ connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture' } }) }, http }));
+      expect(result).toMatchObject(scenario === 'budget'
+        ? { kind: 'checkpointOnly', retryHint: { retryAfterMs: 60_000 } }
+        : { kind: 'notReady', reason: scenario === 'denied' ? 'permissionMissing' : 'invalidConfiguration' });
+      expect(reads).toEqual(['/repos/acme/widgets/issues/comments', '/rate_limit']);
+    } finally { clock.mockRestore(); }
+  });
+});
+
+describe('explicit native GitHub Channel credential', () => {
+  it.each(['explicit', 'repository shortcut'] as const)('materializes only the declared machine-native service and performs read-only setup (%s)', async mode => {
+    const materialize = vi.fn(async (_purpose: string, _request: unknown, _options?: unknown) => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-native' } }));
+    const reads: string[] = [];
+    const http = createPluginHttpFixture({ request: async request => {
+      expect(request.method).toBe('GET');
+      const path = new URL(request.url).pathname;
+      reads.push(path);
+      if (path === '/user') return jsonResponse({ id: 99, login: 'native-user' });
+      if (path === '/repos/acme/widgets') return jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } });
+      throw new Error(`Unexpected native setup read ${path}`);
+    } });
+    expect(await setupGithubChannels(mode === 'explicit' ? { repository: 'acme/widgets', credentialRef: null } : { repository: 'acme/widgets' }, coreContext({
+      connectedAccounts: { getBinding: async () => null, materialize }, http,
+    }))).toMatchObject({ credentialRef: null, providerConnectionKey: 'github:repository:77' });
+    expect(materialize.mock.calls[0]?.[2]).toMatchObject({ nativeService: GITHUB_ACCOUNT.service });
+    expect(reads.sort()).toEqual(['/repos/acme/widgets', '/user']);
+  });
+  it('never substitutes a default Connected Account for an explicit native service', async () => {
+    const materialize = vi.fn();
+    const http = { request: vi.fn() };
+    await expect(setupGithubChannels({ repository: 'acme/widgets', credentialRef: null }, coreContext({
+      connectedAccounts: { getBinding: async (purpose) => ({ purpose, account: GITHUB_ACCOUNT,
+        service: GITHUB_ACCOUNT.service, target: { kind: 'account', displayName: 'Selected GitHub' } }), materialize }, http,
+    }))).rejects.toMatchObject({ code: 'github_credential_mismatch' });
+    expect(materialize).not.toHaveBeenCalled();
+    expect(http.request).not.toHaveBeenCalled();
+  });
+});
+
 function githubChannelConnectionInput() {
   return {
     v: 1 as const,
@@ -60,7 +117,7 @@ function githubChannelDeliveryInput(deliveryKey: string) {
     },
     content: { text: 'A reply that must not bypass endpoint revalidation' },
     deliveryKey,
-    mentionPolicy: 'suppress' as const,
+
     linkPreviewPolicy: 'suppress' as const,
   };
 }
@@ -82,7 +139,8 @@ function jsonResponse(
   return Object.freeze({
     status,
     finalUrl: 'https://api.github.com/',
-    headers: Object.freeze({ 'content-type': 'application/json', ...extraHeaders }),
+    headers: Object.freeze({ 'content-type': 'application/json',
+      'x-ratelimit-remaining': '5000', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1_000) + 3_600), ...extraHeaders }),
     body: new TextEncoder().encode(JSON.stringify(value)),
   });
 }
@@ -118,7 +176,10 @@ function coreContext(
       },
     },
     signal,
-    services: services as PluginInvocationContext['services'],
+    services: {
+      ...services,
+      http: services.http.request ? { ...services.http, ...createPluginHttpFixture({ request: services.http.request }) } : services.http,
+    } as PluginInvocationContext['services'],
   };
 }
 
@@ -185,13 +246,13 @@ describe('GitHub Channel Actions', () => {
       credentialRequests.push(request);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/issues/comments')) return jsonResponse([]);
-      if (path.endsWith('/issues/1')) return jsonResponse({ id: 5, number: 1, pull_request: {} });
-      if (path.endsWith('/pulls/1')) return jsonResponse({ number: 1, head: { sha: 'abc123' } });
+      if (path === '/repositories/77/pulls/1') return jsonResponse({ number: 1, base: { repo: { id: 77 } }, head: { sha: 'abc123', ref: 'feature' } });
       if (path.endsWith('/permission')) return jsonResponse({ permission: 'write', user: { id: 99, login: 'happier-bot' } });
-      if (path === '/graphql') return jsonResponse({ data: { repository: { pullRequest: {
+      if (path === '/graphql') return jsonResponse({ data: { row0: { databaseId: 77, pullRequest: {
         headRefOid: 'abc123', commits: { nodes: [{ commit: { oid: 'abc123', statusCheckRollup: {
           contexts: { nodes: [{ __typename: 'CheckRun', id: 'check-1', name: 'Tests', status: 'COMPLETED',
             conclusion: 'FAILURE', detailsUrl: null, startedAt: null, completedAt: '2026-08-10T12:00:01Z',
+            checkSuite: { createdAt: '2026-08-10T11:59:59Z' },
             isRequired: false }], pageInfo: { hasNextPage: false } },
         } } }] },
       } } } });
@@ -208,6 +269,58 @@ describe('GitHub Channel Actions', () => {
       endpoint, scopedTriggerKind: 'ciFailed', actor: { principalId: '99', repositoryWriteAccess: true },
     } } });
     expect(credentialRequests.every((request) => request.headers?.Authorization === 'Bearer exact-account-token')).toBe(true);
+  });
+
+  it('routes active direct PR demand through the real feedback and check readers', async () => {
+    const requests: string[] = [];
+    let inline: unknown[] = [];
+    const endpoint = { ...githubChannelDeliveryInput('unused').endpoint, kind: 'githubPullRequest' as const };
+    const sha = 'a'.repeat(40);
+    const context = coreContext({ connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer fixture' } }) },
+      http: { request: async (request: GithubHttpRequestInput) => {
+        requests.push(request.url);
+        const path = new URL(request.url).pathname;
+        if (path.endsWith('/issues/comments')) return jsonResponse([]);
+        if (path.endsWith('/pulls/comments')) return jsonResponse(inline);
+        if (path.endsWith('/pulls/1/reviews')) return jsonResponse([]);
+        if (path === '/repositories/77/pulls/1') return jsonResponse({ number: 1, base: { repo: { id: 77 } }, state: 'open', head: { sha, ref: 'feature', repo: { id: 77 } }, mergeable: true });
+        if (path.endsWith('/permission')) return jsonResponse({ permission: 'write', user: { id: 99, login: 'happier-bot' } });
+        if (path === '/graphql') return jsonResponse({
+          data: {
+            row0: {
+              databaseId: 77,
+              pullRequest: {
+                headRefOid: sha,
+                commits: { nodes: [{ commit: { oid: sha, statusCheckRollup: null } }] },
+              },
+            },
+          },
+        });
+        throw new Error(`Unexpected request ${request.url}`);
+      } } });
+    const input = { ...githubChannelConnectionInput(), limit: 10, waitMs: 0, checkpoint: null as unknown, bindings: [{ endpoint, pullRequestUpdates: true }] };
+    const baseline = await pollGithubChannelObservations(input, context);
+    if (baseline.kind !== 'checkpointOnly') throw new Error('Expected the exact PR baseline');
+    input.checkpoint = baseline.checkpointAfterBatch;
+    inline = [{ id: 21, body: 'Please keep the full inline body', created_at: '2026-08-10T12:01:00Z', updated_at: '2026-08-10T12:01:00Z', pull_request_url: 'https://api.github.com/repos/acme/widgets/pulls/1', path: 'src/file.ts', line: 4, diff_hunk: '@@ -1 +1 @@', user: { id: 99, login: 'happier-bot', type: 'User' } }];
+    const updated = await pollGithubChannelObservations(input, context);
+    expect(updated).toMatchObject({ kind: 'batch', observations: [{ observation: { kind: 'fullText', observation: { scopedTriggerKind: 'prComment', pullRequestUpdate: { event: { kind: 'inlineComment', id: '21', body: 'Please keep the full inline body', line: 4 } } } } }] });
+    expect(requests.some(url => new URL(url).pathname === '/graphql')).toBe(true);
+  });
+
+  it('keeps a retained Off PR state read free of feedback and CI acquisition', async () => {
+    const requests: string[] = [];
+    const endpoint = { ...githubChannelDeliveryInput('unused').endpoint, kind: 'githubPullRequest' as const };
+    const context = coreContext({ connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer fixture' } }) },
+      http: { request: async (request: GithubHttpRequestInput) => {
+        requests.push(request.url);
+        const path = new URL(request.url).pathname;
+        if (path === '/repositories/77/pulls/1') return jsonResponse({ number: 1, base: { repo: { id: 77 } }, state: 'closed', merged: true });
+        throw new Error(`Off state refresh requested feedback: ${request.url}`);
+      } } });
+    const result = await pollGithubChannelObservations({ ...githubChannelConnectionInput(), limit: 10, waitMs: 0, checkpoint: null, bindings: [{ endpoint }] }, context);
+    expect(result).toMatchObject({ kind: 'checkpointOnly', pullRequestEndpoints: [{ pullRequestState: { state: 'merged' } }] });
+    expect(requests).toHaveLength(1);
   });
 
   it('sets up a native SCM PR link with the selected credential when no Channel connection exists', async () => {
@@ -927,6 +1040,7 @@ describe('GitHub Channel Actions', () => {
     };
     const http = {
       request: vi.fn(async (_request: GithubHttpRequestInput) => jsonResponse([], 429, {
+        'x-ratelimit-remaining': '0',
         'x-ratelimit-reset': String(Math.ceil((Date.now() + 90_000_000) / 1_000)),
       })),
     };
@@ -1036,7 +1150,7 @@ describe('GitHub Channel Actions', () => {
     });
   });
 
-  it('resolves a GitHub pull request as a shared endpoint', async () => {
+  it.each(['#12', 'https://github.com/acme/widgets/pull/12'])('resolves a GitHub pull request reference %s as a shared endpoint', async (query) => {
     const connectedAccounts = {
       materialize: vi.fn(async () => ({
         kind: 'httpHeaders' as const,
@@ -1074,7 +1188,7 @@ describe('GitHub Channel Actions', () => {
       credentialRef: GITHUB_ACCOUNT,
     } as const;
 
-    await expect(resolveGithubChannelEndpoint({ ...connection, query: '#12' }, coreContext({ connectedAccounts, http })))
+    await expect(resolveGithubChannelEndpoint({ ...connection, query }, coreContext({ connectedAccounts, http })))
       .resolves.toEqual({
         kind: 'resolved',
         candidates: [{
@@ -1227,7 +1341,7 @@ describe('GitHub Channel Actions', () => {
       };
       const http = {
         request: vi.fn(async (_request: GithubHttpRequestInput) => {
-          controller.abort();
+          controller.abort(cancellation);
           throw cancellation;
         }),
       };
@@ -1312,7 +1426,7 @@ describe('GitHub Channel Actions', () => {
     };
     const http = {
       request: vi.fn(async (_request: GithubHttpRequestInput) => {
-        controller.abort();
+        controller.abort(cancellation);
         throw cancellation;
       }),
     };
@@ -1399,7 +1513,7 @@ describe('GitHub Channel Actions', () => {
       },
       content: { text: 'Thanks @octocat and @acme/team' },
       deliveryKey: 'delivery-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext({ connectedAccounts, http }))).resolves.toEqual({
       kind: 'delivered',
@@ -1462,7 +1576,7 @@ describe('GitHub Channel Actions', () => {
       content: { text: 'The endpoint, not the comment ID, is GitHub’s reply target.' },
       deliveryKey: 'delivery-unrepresentable-reply-context',
       replyContext: { replyToMessageId: '123' },
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext({ connectedAccounts, http }))).resolves.toEqual({
       kind: 'delivered',
@@ -1517,7 +1631,7 @@ describe('GitHub Channel Actions', () => {
       },
       content: { text: 'A reply that must not bypass endpoint revalidation' },
       deliveryKey: 'delivery-secondary-rate-limit',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext({ connectedAccounts, http }))).resolves.toEqual({
       kind: 'notDelivered',
@@ -1774,7 +1888,7 @@ describe('GitHub Channel Actions', () => {
       },
       content: { text: 'A reply that GitHub rejects before creating a comment' },
       deliveryKey: 'delivery-secondary-rate-limit-after-revalidation',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext({ connectedAccounts, http }))).resolves.toEqual({
       kind: 'notDelivered',
@@ -1834,7 +1948,7 @@ describe('GitHub Channel Actions', () => {
       },
       content: { text: content },
       deliveryKey: 'delivery-chunk-after-formatting',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext({ connectedAccounts, http }))).resolves.toEqual({
       kind: 'delivered',

@@ -6,6 +6,7 @@ import {
   AutomationConversationActionOutputSchemasV1,
 } from './automationEventV1.js';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
+import { AutomationConversationAdmitInputV1Schema, isAutomationConversationAdmitScopedCorrespondenceV1 } from './automationResultDeliveryV1.js';
 
 const input = {
   automationId: 'automation-1',
@@ -40,6 +41,53 @@ const finalReplyHandoff = {
 } as const;
 
 describe('Automation conversation admission HTTP contract', () => {
+  it('binds every composite event to its ordered original sender without author substitution', () => {
+    const actors = ['github:user:7', 'github:user:8'].map((principalId, index) => ({
+      occurrenceId: `github:review:${index}`, sender: { principalId }, observationActorPrincipalId: principalId,
+      actor: { principalId, repositoryWriteAccess: true },
+    }));
+    const aggregate = AutomationConversationAdmitInputV1Schema.parse({ ...input, occurrenceId: actors[0]!.occurrenceId,
+      sender: actors[0]!.sender, resultDelivery: { kind: 'none' },
+      prUpdate: { events: [{ kind: 'check', author: { principalId: null, kind: 'process' } },
+        { kind: 'review', author: { principalId: actors[1]!.actor.principalId, kind: 'person' } }] },
+      hostEvidence: { sessionId: 'session-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind: 'prComment',
+        bindingId: input.bindingId, pullRequest: { repository: 'acme/widgets', number: 1 },
+        observationActorPrincipalId: actors[0]!.observationActorPrincipalId, actor: actors[0]!.actor, eventActors: actors } });
+    expect(isAutomationConversationAdmitScopedCorrespondenceV1(aggregate)).toBe(true);
+    expect(isAutomationConversationAdmitScopedCorrespondenceV1({ ...aggregate, prUpdate: {
+      events: [{ kind: 'check', author: { principalId: null, kind: 'process' } },
+        { kind: 'review', author: { principalId: 'github:stranger', kind: 'person' } }],
+    } })).toBe(false);
+    for (const eventActors of [[], actors.slice(0, 1), [actors[0]!, actors[0]!], [...actors].reverse(),
+      [actors[0]!, { ...actors[1]!, sender: actors[0]!.sender }],
+      [actors[0]!, { ...actors[1]!, observationActorPrincipalId: 'github:stranger' }]]) {
+      expect(isAutomationConversationAdmitScopedCorrespondenceV1({ ...aggregate,
+        hostEvidence: { ...aggregate.hostEvidence!, eventActors } })).toBe(false);
+    }
+  });
+  it('preserves per-occurrence actor evidence in composite plain admissions', () => {
+    const actor = { principalId: 'github:user:7', repositoryWriteAccess: true };
+    const eventActors = [{ occurrenceId: 'github:review:7', sender: { principalId: actor.principalId },
+      observationActorPrincipalId: actor.principalId, actor }];
+    const hostEvidence = { sessionId: 'session-1', triggerId: 'trigger-1', triggerRevision: 0,
+      triggerKind: 'prComment', bindingId: input.bindingId, pullRequest: { repository: 'acme/widgets', number: 1 },
+      observationActorPrincipalId: actor.principalId, actor, eventActors };
+    const caller = { pluginId: 'happier.channels', contributionLocalId: 'provider/observation-ingest-v1',
+      occurrenceId: 'generation-1', sourceCustody: { kind: 'development', registeredRootId: 'channels-root' },
+      materialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'happier.channels' } };
+    const request = { v: 1, caller, input: { ...input, sender: eventActors[0]!.sender,
+      resultDelivery: { kind: 'none' }, hostEvidence } };
+    const schema = AutomationConversationActionHttpRequestSchemasV1['automation.conversation.admit'];
+    expect(schema.parse(request)).toEqual(request);
+    expect(schema.safeParse({ ...request, input: { ...request.input, hostEvidence: { ...hostEvidence,
+      eventActors: [{ ...eventActors[0], actor: { ...actor, unexpectedAuthority: true } }] } } }).success).toBe(false);
+    expect(schema.safeParse({ ...request, input: { ...request.input, hostEvidence: { ...hostEvidence,
+      eventActors: [{ ...eventActors[0], sender: { principalId: actor.principalId, label: 'Private display label' } }] } } }).success).toBe(false);
+    const { eventActors: _actors, ...legacyEvidence } = hostEvidence;
+    expect(schema.parse({ ...request, input: { ...request.input, hostEvidence: legacyEvidence } })).toEqual({
+      ...request, input: { ...request.input, hostEvidence: legacyEvidence },
+    });
+  });
   it('publishes the strict current-Channel target selector route without broad Automation fields', () => {
     const actionId = 'automation.conversation.targets.list';
     const request = {
@@ -500,6 +548,14 @@ describe('Automation conversation admission HTTP contract', () => {
       actor: { principalId: '123', repositoryWriteAccess: true } };
     const scopedRequest = { ...request, hostEvidence: { ...hostEvidence, scopedTrigger } };
     expect(requests[actionId]!.parse(scopedRequest)).toEqual(scopedRequest);
+    const batchedRequest = { ...scopedRequest, hostEvidence: { ...scopedRequest.hostEvidence,
+      scopedTrigger: { ...scopedTrigger, eventActors: [{ occurrenceId: 'github:comment:1',
+        sender: { principalId: '123' }, observationActorPrincipalId: '123', actor: scopedTrigger.actor }] } } };
+    expect(requests[actionId]!.parse(batchedRequest)).toEqual(batchedRequest);
+    expect(requests[actionId]!.safeParse({ ...batchedRequest, hostEvidence: { ...batchedRequest.hostEvidence,
+      scopedTrigger: { ...batchedRequest.hostEvidence.scopedTrigger, eventActors: [{
+        ...batchedRequest.hostEvidence.scopedTrigger.eventActors[0], sender: { principalId: '123', text: 'Private comment' },
+      }] } } }).success).toBe(false);
     expect(requests[actionId]!.safeParse({
       ...scopedRequest,
       hostEvidence: { ...scopedRequest.hostEvidence, scopedTrigger: { ...scopedTrigger,

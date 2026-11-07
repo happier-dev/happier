@@ -236,41 +236,41 @@ export async function deliverEmailMessage(input: unknown, context: PluginInvocat
   assertConversationChannelsCoreCallerV1(context);
   const request = ConversationDeliveryInputV1Schema.parse(input);
   const config = readConfig(request);
-  if ('kind' in config) return { kind: 'notDelivered', retry: 'never', code: 'invalidConfiguration' };
+  if ('kind' in config) return { kind: 'notDelivered', retry: 'never' };
   const transport = await readEmailTransport(config.transport, context);
   let recipients: readonly string[];
   let reply: Parameters<typeof composeEmail>[0]['reply'];
   if (request.newThread !== undefined) {
-    if (request.endpoint.kind !== 'direct' || request.endpoint.id !== config.mailbox) return { kind: 'notDelivered', retry: 'never', code: 'invalidEndpoint' };
+    if (request.endpoint.kind !== 'direct' || request.endpoint.id !== config.mailbox) return { kind: 'notDelivered', retry: 'never' };
     recipients = request.newThread.recipients;
   } else {
     const ref = request.replyContext && 'replyToMessageId' in request.replyContext ? request.replyContext.replyToMessageId : undefined;
-    if (ref === undefined) return { kind: 'notDelivered', retry: 'never', code: 'replyContextMissing' };
-    if (request.endpoint.kind !== 'thread' || request.endpoint.parentId !== config.mailbox) return { kind: 'notDelivered', retry: 'never', code: 'invalidEndpoint' };
+    if (ref === undefined) return { kind: 'notDelivered', retry: 'never' };
+    if (request.endpoint.kind !== 'thread' || request.endpoint.parentId !== config.mailbox) return { kind: 'notDelivered', retry: 'never' };
     const raw = await fetchMail(ref, config, request, transport, context);
     if (raw.kind !== 'raw') return raw.retryAfterMs !== undefined
-      ? { kind: 'notDelivered', retry: 'after', retryAfterMs: raw.retryAfterMs, code: raw.reason }
-      : { kind: 'notDelivered', retry: raw.reason === 'network' || raw.reason === 'rateLimited' ? 'safe' : 'never', code: raw.reason };
+      ? { kind: 'notDelivered', retry: 'after', retryAfterMs: raw.retryAfterMs }
+      : { kind: 'notDelivered', retry: raw.reason === 'network' || raw.reason === 'rateLimited' ? 'safe' : 'never' };
     const mail = await parseProviderEmail(Buffer.from(raw.mimeBase64, 'base64'), { quotedHistory: 'never', stripSignatures: false, bodyFormat: 'text' }, context);
-    if (isPluginError(mail)) return { kind: 'notDelivered', retry: 'safe', code: 'providerInvocationUnavailable' };
+    if (isPluginError(mail)) return { kind: 'notDelivered', retry: 'safe' };
     const trust = evaluateEmailTrust({ ...mail, strategy: config.trustStrategy });
     const actor = classifyEmailActor({ ...mail, mailbox: config.mailbox, trust });
     const candidate = mail.from === null ? null : normalizeEmailAddress(mail.from);
     if (candidate !== null && trust.markersMissing && actor.kind === 'unknown' && !actor.isIntegrationSelf) {
       await reportMissingTrustMarkers(request, context, { endpoint: request.endpoint, principalId: candidate });
     }
-    if (!trust.trusted) return { kind: 'notDelivered', retry: 'never', code: 'senderUntrusted' };
-    if (actor.isIntegrationSelf) return { kind: 'notDelivered', retry: 'never', code: 'integrationSelf' };
-    if (actor.kind !== 'human') return { kind: 'notDelivered', retry: 'never', code: 'senderNotHuman' };
-    if (mail.messageId !== ref) return { kind: 'notDelivered', retry: 'never', code: 'replyMessageMismatch' };
-    if (emailThreadKey(mail) !== request.endpoint.id) return { kind: 'notDelivered', retry: 'never', code: 'replyThreadMismatch' };
-    if (mail.from === null) return { kind: 'notDelivered', retry: 'never', code: 'recipientInvalid' };
+    if (!trust.trusted) return { kind: 'notDelivered', retry: 'never' };
+    if (actor.isIntegrationSelf) return { kind: 'notDelivered', retry: 'never' };
+    if (actor.kind !== 'human') return { kind: 'notDelivered', retry: 'never' };
+    if (mail.messageId !== ref) return { kind: 'notDelivered', retry: 'never' };
+    if (emailThreadKey(mail) !== request.endpoint.id) return { kind: 'notDelivered', retry: 'never' };
+    if (mail.from === null) return { kind: 'notDelivered', retry: 'never' };
     const from = normalizeEmailAddress(mail.from);
-    if (from === null) return { kind: 'notDelivered', retry: 'never', code: 'recipientInvalid' };
+    if (from === null) return { kind: 'notDelivered', retry: 'never' };
     recipients = [from];
     reply = { messageId: mail.messageId, references: mail.references, subject: mail.subject, text: mail.text };
   }
-  if (recipients.length === 0 || recipients.some(address => normalizeEmailAddress(address) !== address)) return { kind: 'notDelivered', retry: 'never', code: 'recipientInvalid' };
+  if (recipients.length === 0 || recipients.some(address => normalizeEmailAddress(address) !== address)) return { kind: 'notDelivered', retry: 'never' };
   const composed = await composeEmail({ mailbox: config.mailbox, recipients, content: request.content,
     deliveryKey: request.deliveryKey, ...(request.newThread === undefined ? {} : { subject: request.newThread.subject }),
     ...(reply === undefined ? {} : { reply }) });
@@ -278,10 +278,6 @@ export async function deliverEmailMessage(input: unknown, context: PluginInvocat
     const { result } = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
       transport.operations.submitRaw, { ...transportInput(config, request), mimeBase64: Buffer.from(composed.mime).toString('base64'),
         messageId: composed.messageId, envelope: composed.envelope }, transportOptions(request, context));
-    // Third-party transports may still return the original V1 effect shape.
-    if (result.kind === 'outcomeUnknown') return { ...result, code: result.code ?? 'submissionOutcomeUnknown' };
-    if (result.kind === 'notDelivered') return { ...result, code: result.code
-      ?? (result.retry === 'never' ? 'submissionRejected' : 'submissionTemporarilyRejected') };
     return result.kind === 'delivered' && request.newThread !== undefined
       ? { ...result, endpoint: { kind: 'thread', audience: 'direct', id: composed.messageId, parentId: config.mailbox } } : result;
   } catch (error) {
@@ -289,8 +285,8 @@ export async function deliverEmailMessage(input: unknown, context: PluginInvocat
     // Only this submit invocation's host refusal proves no SMTP effect began.
     // A failed Sent lookup cannot establish that about an earlier submission.
     return isPluginActionHandlerInvocationNotStartedAdvisory(error)
-      ? { kind: 'notDelivered', retry: 'safe', code: 'submissionNotStarted' }
-      : { kind: 'outcomeUnknown', code: 'submissionOutcomeUnknown' };
+      ? { kind: 'notDelivered', retry: 'safe' }
+      : { kind: 'outcomeUnknown' };
   }
 }
 
@@ -298,15 +294,15 @@ export async function reconcileEmailDelivery(input: unknown, context: PluginInvo
   assertConversationChannelsCoreCallerV1(context);
   const request = ConversationDeliveryReconcileInputV1Schema.parse(input);
   const config = readConfig(request);
-  if ('kind' in config) return { kind: 'outcomeUnknown', code: 'invalidConfiguration' };
+  if ('kind' in config) return { kind: 'outcomeUnknown' };
   const transport = await readEmailTransport(config.transport, context);
-  if (transport.operations.findSent === undefined) return { kind: 'outcomeUnknown', code: 'reconciliationUnsupported' };
+  if (transport.operations.findSent === undefined) return { kind: 'outcomeUnknown' };
   const messageId = emailDeliveryMessageId(request.deliveryKey, config.mailbox);
   const { result } = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
     transport.operations.findSent, { ...transportInput(config, request), messageId }, transportOptions(request, context));
-  if (result.kind === 'notReady') return { kind: 'outcomeUnknown', code: result.reason };
-  if (result.kind !== 'found') return { kind: 'outcomeUnknown', code: 'reconciliationNotFound' };
-  if (result.messageId !== messageId) return { kind: 'outcomeUnknown', code: 'reconciliationMismatch' };
+  if (result.kind === 'notReady') return { kind: 'outcomeUnknown' };
+  if (result.kind !== 'found') return { kind: 'outcomeUnknown' };
+  if (result.messageId !== messageId) return { kind: 'outcomeUnknown' };
   return { kind: 'delivered', providerMessageIds: [messageId],
     ...(request.endpoint.kind === 'direct' ? { endpoint: { kind: 'thread', audience: 'direct', id: messageId, parentId: config.mailbox } } : {}) };
 }

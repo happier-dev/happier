@@ -1,5 +1,5 @@
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { ConversationDeliveryContentV1Schema, ConversationDeliveryInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import type { ConversationDeliveryInputV1, ConversationDeliveryResultV1 } from '@happier-dev/channels-protocol/v1';
@@ -11,6 +11,9 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import type { SessionEvent } from '@happier-dev/plugin-sdk/sessions';
+import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import type { HostEventEnvelope, HostEvents } from '@happier-dev/plugin-sdk/events';
 import { getPluginMachineExecutionRouting, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,9 +22,11 @@ import {
   CHANNEL_DELIVERIES_COLLECTION,
   CHANNEL_DELIVERIES_INDEX_ID,
   CHANNEL_STATE_COLLECTION,
+  CHANNEL_STATE_INDEX_ID,
 } from './collections.js';
 import {
   createConversationOutwardDeliveryCollectionStore,
+  readConversationPermissionWaitMediationSource,
   settleConversationOutwardDeliveriesForBindingDeletion,
   settleConversationOutwardDeliveriesForConnectionDeletion,
   type ConversationOutwardDeliveryObligation,
@@ -43,12 +48,16 @@ import {
   createConversationSessionProjectionFrontierRow,
   createConversationSessionProjectionFrontierRowId,
 } from './sessionProjection.js';
-import { deriveConversationSessionRotationRowId } from './ingress.js';
+import { createConversationDiscussionProjectionFrontierRow } from './discussionProjection.js';
+import { createIngressCensusValue, deriveConversationSessionRotationRowId } from './ingress.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
 import { createChannelsJourneyFixture } from './testkit/channelsJourney.js';
+import { withChannelStateDeleteFinalizationDueAt, withChannelStateSessionIdentity } from './collectionMigrations.js';
+import { activate } from './activate.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 const endpoint = {
   kind: 'direct' as const,
@@ -200,6 +209,7 @@ function bindingRow() {
     v: 1,
     'connection-id': 'connection-1',
     'binding-id': 'binding-1',
+    'session-id': 'session-1',
     'created-at': 0,
     'updated-at': 0,
     payload: {
@@ -313,7 +323,7 @@ function bindingDeleteConnectionRow() {
 
 function finalizingBindingDeleteRow() {
   const binding = finalizingBindingRow(BINDING_DELETE_BINDING_ID);
-  return {
+  const value = {
     ...binding,
     'connection-id': BINDING_DELETE_CONNECTION_ID,
     payload: {
@@ -322,6 +332,7 @@ function finalizingBindingDeleteRow() {
       deletionState: 'finalizingDelete',
     },
   };
+  return { ...withChannelStateDeleteFinalizationDueAt(value), ...value };
 }
 
 function bindingDeleteIngressObligationRow() {
@@ -369,7 +380,7 @@ function bindingDeleteOutwardObligation(bindingId: string, deliveryKey: string):
     endpoint,
     content: { text: 'unattempted direct-delete body' },
     deliveryKey,
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -502,7 +513,7 @@ function finalizingOutwardObligation(): ConversationOutwardDeliveryObligation {
     endpoint,
     content: { text: 'unattempted retained body' },
     deliveryKey: 'channels:delivery:v1:finalizing-custody',
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -515,7 +526,7 @@ function backgroundContext(input: Readonly<{
   logger?: Pick<PluginInvocationContext['services']['logger'], 'warn'> & Partial<Pick<PluginInvocationContext['services']['logger'], 'info'>>;
   collection?: (definition: Readonly<{ id: string }>) => MemoryCollection | undefined;
   targetedContributions?: TargetedContributionsService;
-  watchSession?: (listener: () => void) => { dispose(): void };
+  watchSession?: (listener: (event?: SessionEvent) => void, sessionId: string) => { dispose(): void };
   executionRouting?: PluginMachineExecutionRoutingV1 | null;
 }>): BackgroundServiceContext {
   const collections = new Map<string, MemoryCollection>([
@@ -532,7 +543,12 @@ function backgroundContext(input: Readonly<{
     invokedAtMs: 1_700_000_000_000,
     signal: new AbortController().signal,
     services: {
-      sessions: { get: async () => ({ watch: input.watchSession ?? (() => ({ dispose() {} })) }) },
+      sessions: { get: async (sessionId: string) => ({
+        watch: (listener: (event: SessionEvent) => void) => input.watchSession?.((event = {
+          kind: 'message', sequence: 1,
+          message: { version: 1, messageId: 'changed', sender: 'agent', parts: [{ kind: 'text', text: 'changed' }] },
+        }) => listener(event), sessionId) ?? { dispose() {} },
+      }) },
       storage: {
         account: {
           collection: input.collection ?? ((definition: Readonly<{ id: string }>) => collections.get(definition.id)),
@@ -562,6 +578,44 @@ async function seedProjectionState(state: MemoryCollection): Promise<void> {
     revision: 1,
     now: 0,
   }), { expectedRevision: 'absent' });
+}
+
+async function seedDiscussionProjectionState(state: MemoryCollection): Promise<void> {
+  await state.put(connectionRow(), { expectedRevision: 'absent' });
+  const binding = bindingRow();
+  const { 'session-id': _sessionId, ...row } = binding;
+  await state.put({ ...row, payload: { ...binding.payload, target: {
+    kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' },
+  } } }, { expectedRevision: 'absent' });
+  await state.put(createConversationDiscussionProjectionFrontierRow({ bindingId: 'binding-1',
+    targetDiscussionId: 'discussion-1', lastScannedSeq: 1, now: 0 }), { expectedRevision: 'absent' });
+  const obligationId = 'a'.repeat(43);
+  const censusId = 'd'.repeat(43);
+  await state.put(createIngressCensusValue({ censusId, connectionId: 'connection-1', now: 0, matchedBindings: [],
+    ingress: { kind: 'fullText', observation: { v: 1, occurrenceId: 'discussion-origin', occurredAt: 0,
+      transport: { kind: 'poll' }, endpoint, actor: { principalId: 'principal-1', kind: 'human', isIntegrationSelf: false },
+      message: { id: 'external-message-1', text: 'External input', providerTimestamp: 0, addressingEvidence: 'none', contentProvenance: 'original' } } },
+  }), { expectedRevision: 'absent' });
+  await state.put({ id: obligationId, 'record-kind': 'ingress-obligation', v: 1,
+    'created-at': 0, 'updated-at': 0, attention: false,
+    'connection-id': 'connection-1', 'binding-id': 'binding-1', terminal: true,
+    payload: { occurrenceIds: ['discussion-origin'], censusId,
+      target: { kind: 'discussion', discussionId: 'discussion-1', localId: `channels:9:binding-1:${obligationId}`, providerPluginId: 'example.channel.provider' },
+      sourceAuthority: { connectionAuthorityEpoch: 4 }, lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null },
+      disposition: 'admitted', nonAdmission: null } }, { expectedRevision: 'absent' });
+
+}
+
+type DiscussionMessage = PluginActionResultById['discussion.read']['messages'][number];
+function discussionMessage(id: string, seq: number, text: string, options: Readonly<{
+  localId?: string; replyTo?: string;
+}> = {}): DiscussionMessage {
+  return { id, discussionId: 'discussion-1', seq, localId: options.localId ?? null,
+    authorAccountId: 'human-1', accountActor: null, producerV1: null, mentionedAccountIds: [], createdAt: seq,
+    messageRef: { kind: 'discussion', discussion: { serverId: 'srv_account_one', discussionId: 'discussion-1' }, messageId: id },
+    content: { v: 1, parts: [{ t: 'text', text }] },
+    ...(options.replyTo === undefined ? {} : { replyTarget: { kind: 'message', messageId: options.replyTo } }),
+  };
 }
 
 async function seedFinalizingIngressRelations(input: Readonly<{
@@ -621,7 +675,7 @@ function outwardObligation(): Extract<ConversationOutwardDeliveryObligation, Rea
     endpoint,
     content: { text: 'retained body' },
     deliveryKey: 'channels:delivery:v1:stale-custody',
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -663,6 +717,73 @@ function permissionWaitOutwardObligation(): ConversationOutwardDeliveryObligatio
 }
 
 describe('Channels outward-delivery supervisor', () => {
+  it.each(['channel-state', 'channel-deliveries'] as const)(
+    'settles collection_update_required for %s without later reads, writes or warning loops', async collectionId => {
+      vi.useFakeTimers();
+      const generation = new AbortController();
+      const state = new MemoryCollection();
+      const deliveries = new MemoryCollection();
+      await seedProjectionState(state);
+      const blocked = collectionId === 'channel-state' ? state : deliveries;
+      const reads = vi.spyOn(blocked, 'query').mockRejectedValue(new PluginError({
+        code: 'collection_update_required', retryable: false, message: 'private transport detail',
+      }));
+      const otherReads = vi.spyOn(collectionId === 'channel-state' ? deliveries : state, 'query');
+      const writes = [vi.spyOn(state, 'put'), vi.spyOn(state, 'batch'),
+        vi.spyOn(deliveries, 'put'), vi.spyOn(deliveries, 'batch')];
+      const logger = { warn: vi.fn() };
+      const execute = vi.fn(async () => emptyPendingPermissionPage());
+      const supervisor = createConversationOutwardDeliverySupervisor();
+      const context = { ...backgroundContext({ state, deliveries, logger, execute,
+        executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() }), signal: generation.signal };
+      const running = supervisor.run(context);
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toHaveBeenCalledTimes(1);
+        const initialOtherReads = otherReads.mock.calls.length;
+        for (let pass = 0; pass < 100; pass += 1) {
+          state.resetObservation(); deliveries.resetObservation();
+          await vi.advanceTimersByTimeAsync(1_000);
+        }
+        expect(reads).toHaveBeenCalledTimes(1);
+        expect(otherReads).toHaveBeenCalledTimes(initialOtherReads);
+        for (const write of writes) expect(write).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+        expect(logger.warn.mock.calls).toEqual([['[Channels] Account Collection requires an update', {
+          kind: 'updateRequired', code: 'collection_update_required', collectionId,
+          retryable: false, recovery: 'updateHappierOnThisMachine',
+        }]]);
+        await running;
+        await supervisor.run(context);
+        expect(reads).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+      } finally {
+        generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+      }
+    },
+  );
+
+  it('leaves a final unclaimed when the connection moves during the transcript read', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
+      const connection = connectionRow();
+      await state.put({ ...connection, payload: { ...connection.payload, authorityEpoch: 5,
+        transportOrigin: { serverIdentityId: providerTransportOrigin.serverIdentityId, machineId: 'replacement-machine' },
+      } }, { expectedRevision: 1 });
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 1, nextCursor: '1', hasMore: false,
+        items: [{ kind: 'assistantText', sessionId: 'session-1', seq: 1, itemId: 'moving-final', turnId: 'moving-turn',
+          final: 'completed', text: 'Final after transfer', consumedInputs: [] }] };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['wrong-runtime'] }, executionOrigin: providerTransportOrigin }));
+    await runConversationOutwardDeliveryCycle({ context: backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver }), now: () => 100 });
+    expect(deliveries.rows.size).toBe(0);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(state.rows.get(createConversationSessionProjectionFrontierRowId('binding-1'))?.value.payload).toMatchObject({ lastScannedSeq: 0 });
+  });
   it.each(['relink', 'presentation edit'] as const)('admits a captured Session page only from its original frontier after %s during the transcript read', async change => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
@@ -709,27 +830,6 @@ describe('Channels outward-delivery supervisor', () => {
     expect(state.rows.get(createConversationSessionProjectionFrontierRowId('binding-1'))?.value.payload).toMatchObject({ lastScannedSeq: 1 });
   });
 
-  it('leaves a final unclaimed when the connection moves during the transcript read', async () => {
-    const state = new MemoryCollection();
-    const deliveries = new MemoryCollection();
-    await seedProjectionState(state);
-    const execute = vi.fn(async (action: string) => {
-      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
-      const connection = connectionRow();
-      await state.put({ ...connection, payload: { ...connection.payload, authorityEpoch: 5,
-        transportOrigin: { serverIdentityId: providerTransportOrigin.serverIdentityId, machineId: 'replacement-machine' },
-      } }, { expectedRevision: 1 });
-      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 1, nextCursor: '1', hasMore: false,
-        items: [{ kind: 'assistantText', sessionId: 'session-1', seq: 1, itemId: 'moving-final', turnId: 'moving-turn',
-          final: 'completed', text: 'Final after transfer', consumedInputs: [] }] };
-    });
-    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['wrong-runtime'] }, executionOrigin: providerTransportOrigin }));
-    await runConversationOutwardDeliveryCycle({ context: backgroundContext({ state, deliveries, execute,
-      executeAdmittedTargetedOperationWithExecutionOrigin: deliver }), now: () => 100 });
-    expect(deliveries.rows.size).toBe(0);
-    expect(deliver).not.toHaveBeenCalled();
-    expect(state.rows.get(createConversationSessionProjectionFrontierRowId('binding-1'))?.value.payload).toMatchObject({ lastScannedSeq: 0 });
-  });
   it('refuses foreign manual resolution and terminal retention without mutating custody', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
@@ -756,7 +856,7 @@ describe('Channels outward-delivery supervisor', () => {
     await runConversationOutwardDeliveryCycle({ context: placed, now: () => expiry });
     expect(await deliveries.get(created.record.custodyId)).toBeNull();
   });
-  it('routes an external plugin final through the public host stamp and real Channels journey exactly once', async () => {
+  it.each(['final', 'permission'] as const)('routes an external plugin %s through the public host stamp and real Channels journey exactly once', async output => {
     const pluginId = 'acme.installed.conversation';
     const origin = { serverIdentityId: 'srv_plugin_testkit', materializationRef: {
       pluginId, machineId: 'external-machine', materializationId: 'installed-external-provider',
@@ -778,19 +878,27 @@ describe('Channels outward-delivery supervisor', () => {
     } }) } } } });
     const provider = await createPluginTestkit({ manifest: plugin.manifest, module: plugin,
       resolveCurrentPluginMaterializationRef: () => origin.materializationRef,
-      services: { http: { request: send, async openWebSocket() { throw new Error('No socket'); } } } });
+      services: { http: createPluginHttpFixture({ request: send, async openWebSocket() { throw new Error('No socket'); } }) } });
     const connection = createCurrentConversationConnectionFixture({ connectionId: 'connection-1', authority: {
       ...deliveryConnectionAuthority({ providerConnectionKey: 'external-connection', providerConfig: { account: 'external' },
         routingIdentityKey: 'a'.repeat(43), integrationPrincipal: { id: 'external-principal' }, authorityEpoch: 4 }),
       providerPluginId: pluginId, providerContributionSelection: { contributionId: 'external' }, transportOrigin: origin,
     } });
     const actions = { execute: async (action: string) => action === 'session.permission.remote.pending.list'
-      ? emptyPendingPermissionPage() : { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+      ? output === 'permission'
+        ? { requests: [pendingPermissionRequest({ requestId: 'external-request', turnId: 'external-turn',
+          createdAtMs: 100, allowedScopes: ['request'] })], truncated: false, nextCursor: null }
+        : emptyPendingPermissionPage()
+      : output === 'permission'
+        ? { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+          scannedThroughSeq: 0, hasMore: true, items: [] }
+        : { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
         scannedThroughSeq: 1, nextCursor: '1', hasMore: false, items: [{ kind: 'assistantText', sessionId: 'session-1', seq: 1,
           itemId: 'external-final', turnId: 'external-turn', final: 'completed', text: 'Final answer', consumedInputs: [] }] },
     } as unknown as PluginServices['actions'];
     const sessions = { get: async () => ({ watch: () => ({ dispose() {} }) }) } as unknown as PluginServices['sessions'];
-    const common = { provider, connection, binding: bindingRow(), actions, sessions, resolveCurrentProviderExecutionOrigin: () => origin };
+    const common = { provider, connection, binding: output === 'permission' ? approvalBindingRow() : bindingRow(),
+      actions, sessions, resolveCurrentProviderExecutionOrigin: () => origin };
     const placed = await createChannelsJourneyFixture(common);
     const foreign = await createChannelsJourneyFixture({ ...common, state: placed.state, deliveries: placed.deliveries,
       resolveCurrentPluginMaterializationRef: () => ({ pluginId: 'happier.channels', machineId: 'foreign-machine', materializationId: 'foreign-core' }) });
@@ -803,6 +911,7 @@ describe('Channels outward-delivery supervisor', () => {
       expect(placed.deliveries.rows.size).toBe(0);
       expect(send).not.toHaveBeenCalled();
       await placed.outward();
+      expect(send).toHaveBeenCalledOnce();
       await foreign.outward();
       await placed.outward();
       expect(send).toHaveBeenCalledOnce();
@@ -821,7 +930,7 @@ describe('Channels outward-delivery supervisor', () => {
     }, deliveryKey: 'stale-attempt' });
     if (ready.kind !== 'created' || attempting.kind !== 'created') throw new Error('Expected retained custody');
     const started = await store.compareAndSwap({ custodyId: attempting.record.custodyId, expectedRevision: attempting.record.revision,
-      custody: { ...attempting.record.custody, state: 'attempting', attemptCount: 1, attemptId: 'original-attempt', startedAt: 1 } });
+      custody: { ...attempting.record.custody, state: 'attempting', attemptCount: 1, attemptId: 'original-attempt' } });
     expect(started.kind).toBe('updated');
     const execute = vi.fn(async (action: string) => action === 'session.permission.remote.pending.list'
       ? emptyPendingPermissionPage() : { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
@@ -890,7 +999,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(paused.nextWakeAt).toBeUndefined();
     expect(deliver).not.toHaveBeenCalled();
     expect(deliveries.rows.size).toBe(1);
-    expect(deliveries.rows.get(queued.record.custodyId)?.value.payload).toMatchObject({ state: 'suppressed' });
+    expect(deliveries.rows.get(queued.record.custodyId)?.value.payload).toMatchObject({ state: 'notSent', reason: 'policySuppressed' });
     expect(state.rows.get(createConversationSessionProjectionFrontierRowId('binding-1'))?.value.payload).toMatchObject({ lastScannedSeq: 0 });
     // Stop did not change the child or its frontier. A later enable uses the same normal path.
     await state.put(parent, { expectedRevision: 2 });
@@ -996,13 +1105,13 @@ describe('Channels outward-delivery supervisor', () => {
     expect(await startConversationForInvocation(request, context)).toEqual(accepted);
     expect(deliver).toHaveBeenCalledOnce();
   });
-  it('delivers M1 and M2 replies with their exact retained input relation across a retry and a new supervisor cycle', async () => {
+  it.each([false, true])('delivers M1 and M2 replies on their retained thread across retry (parent binding: %s)', async parentBound => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
-    const threadEndpoint = { kind: 'thread', audience: 'shared', id: 'thread-1' } as const;
+    const threadEndpoint = { kind: 'thread', audience: parentBound ? endpoint.audience : 'shared', id: 'thread-1', parentId: endpoint.id } as const;
     const retainedBinding = bindingRow();
-    await state.put({ ...retainedBinding, payload: { ...retainedBinding.payload, endpoint: threadEndpoint } }, { expectedRevision: 1 });
+    if (!parentBound) await state.put({ ...retainedBinding, payload: { ...retainedBinding.payload, endpoint: threadEndpoint } }, { expectedRevision: 1 });
     for (const ordinal of [1, 2]) {
       const censusId = String(ordinal).repeat(43);
       await state.put({
@@ -1059,6 +1168,7 @@ describe('Channels outward-delivery supervisor', () => {
       ['Answer 2', { replyToMessageId: 'M2', threadId: 'thread-1' }],
       ['Answer 3', undefined],
     ]);
+    expect(deliver.mock.calls.slice(0, 3).map(([, input]) => input.endpoint)).toEqual([threadEndpoint, threadEndpoint, threadEndpoint]);
     const persisted = [...deliveries.rows.values()].map(row => row.value.payload);
     expect(persisted).toEqual(expect.arrayContaining([
       expect.objectContaining({ replyContext: { replyToMessageId: 'M1', threadId: 'thread-1' } }),
@@ -1117,7 +1227,7 @@ describe('Channels outward-delivery supervisor', () => {
       await supervisor.dispose();
       vi.useRealTimers();
     }
-    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(listeners.length);
   });
 
   it('wakes retained work at the next deadline without an intervening periodic cycle', async () => {
@@ -1174,36 +1284,31 @@ describe('Channels outward-delivery supervisor', () => {
     }
   });
 
-  it('parks non-retryable owner unavailability without dropping custody and resumes on Session or binding change', async () => {
+  it('treats an unreachable Session as empty and admits new pending work on its ordinary Session change', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const generation = new AbortController();
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
+    await state.put(approvalBindingRow(), { expectedRevision: 1 });
     let sessionChanged: (() => void) | undefined;
-    let bindingChanged: (() => void) | undefined;
-    let deliveryChanged: (() => void) | undefined;
-    Object.assign(state, { watch: (_query: unknown, listener: () => void) => {
-      bindingChanged = listener; return { dispose() {} };
-    } });
-    Object.assign(deliveries, { watch: (_query: unknown, listener: () => void) => {
-      deliveryChanged = listener; return { dispose() {} };
-    } });
     let available = false;
-    let retryable = false;
     const permissionReads: number[] = [];
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
         permissionReads.push(Date.now());
-        if (!available) throw new PluginError({ code: 'ownerMachineUnavailable', message: 'Owner unavailable', retryable });
-        return emptyPendingPermissionPage();
+        if (!available) throw new PluginError({ code: 'ownerMachineUnavailable', message: 'Owner unavailable', retryable: false });
+        return { requests: [pendingPermissionRequest({ requestId: 'permission-request-2', turnId: 'turn-2',
+          createdAtMs: 1, allowedScopes: ['request'] })], truncated: false, nextCursor: null };
       }
       return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
         scannedThroughSeq: 0, nextCursor: '0', hasMore: false, items: [] };
     });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['notification-2'] },
+      executionOrigin: providerTransportOrigin }));
     const context = { ...backgroundContext({ state, deliveries, execute,
-      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver,
       watchSession: listener => { sessionChanged = listener; return { dispose() {} }; },
     }), signal: generation.signal };
     const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
@@ -1214,29 +1319,255 @@ describe('Channels outward-delivery supervisor', () => {
     const running = supervisor.run(context);
     try {
       await vi.advanceTimersByTimeAsync(0);
-      expect(permissionReads).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(permissionReads).toHaveLength(1);
-      expect(deliveries.rows.get(retained.record.custodyId)?.value.payload).toMatchObject({ state: 'ready', attemptCount: 0 });
-      // Another delivery's activity cannot change this Session's owner.
-      deliveryChanged?.(); await vi.advanceTimersByTimeAsync(0);
-      expect(permissionReads).toHaveLength(1);
-      sessionChanged?.(); await vi.advanceTimersByTimeAsync(0);
-      expect(permissionReads).toHaveLength(2);
-      available = true;
-      bindingChanged?.(); await vi.advanceTimersByTimeAsync(0);
-      expect(permissionReads).toHaveLength(3);
-      // The successful complete negative read, not the prior failure, permits
-      // suppression of this never-attempted permission wait.
       await vi.waitFor(() => expect(deliveries.rows.get(retained.record.custodyId)?.value.payload)
-        .toMatchObject({ state: 'suppressed' }), { interval: 0 });
-      available = false;
-      retryable = true;
-      bindingChanged?.(); await vi.advanceTimersByTimeAsync(0);
-      expect(permissionReads).toHaveLength(4);
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(permissionReads).toHaveLength(5);
+        .toMatchObject({ state: 'notSent', reason: 'policySuppressed' }), { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      const settledReads = permissionReads.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(permissionReads).toHaveLength(settledReads);
+      expect(deliver).not.toHaveBeenCalled();
+      available = true;
+      sessionChanged?.(); await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect([...deliveries.rows.values()].some(row => isChannelStateJsonRecord(row.value.payload)
+        && row.value.payload.state === 'delivered'
+        && isChannelStateJsonRecord(row.value.payload.source)
+        && row.value.payload.source.requestId === 'permission-request-2')).toBe(true), { interval: 0 });
+      expect(deliver).toHaveBeenCalledTimes(1);
     } finally { generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers(); }
+  });
+
+  it('leaves empty unavailable Sessions idle without per-binding availability watches', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const generation = new AbortController();
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    for (let index = 1; index <= 54; index += 1) {
+      const binding = bindingRow();
+      await state.put({ ...binding, id: `binding-${index}`, 'binding-id': `binding-${index}`, 'session-id': `session-${index}`,
+        payload: { ...binding.payload, target: { ...sessionTarget, sessionId: `session-${index}` } },
+      }, { expectedRevision: 'absent' });
+      await state.put(createConversationSessionProjectionFrontierRow({
+        bindingId: `binding-${index}`, targetSessionId: `session-${index}`,
+        transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0,
+      }), { expectedRevision: 'absent' });
+    }
+    const changed = new Map<string, () => void>();
+    const permissionReads: string[] = [];
+    const execute = vi.fn(async (action: string, input: { sessionId: string }) => {
+      if (action === 'session.permission.remote.pending.list') {
+        permissionReads.push(input.sessionId);
+        throw new PluginError({ code: 'ownerMachineUnavailable', message: 'Owner unavailable', retryable: false });
+      }
+      return { ok: true, projection: 'externalShareableV1', sessionId: input.sessionId,
+        scannedThroughSeq: 0, nextCursor: '0', hasMore: false, items: [] };
+    });
+    const context = { ...backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      watchSession: (listener, sessionId) => {
+        changed.set(sessionId, listener);
+        return { dispose() { changed.delete(sessionId); } };
+      },
+    }), signal: generation.signal };
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const running = supervisor.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(permissionReads).toHaveLength(54);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(permissionReads).toHaveLength(54);
+      await state.put({ id: 'checkpoint-1', 'record-kind': 'checkpoint', v: 1, 'connection-id': 'connection-1',
+        'created-at': 0, 'updated-at': 1, payload: { authorityEpoch: 1, opaqueToken: { offset: 1 },
+          lastOccurrenceId: null, revision: 1, nextPollNotBeforeMs: null } }, { expectedRevision: 'absent' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(permissionReads).toHaveLength(54);
+      changed.get('session-1')?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(permissionReads.slice(54)).toEqual(['session-1']);
+      state.resetObservation();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(permissionReads).toHaveLength(109);
+    } finally { generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers(); }
+    expect(changed.size).toBe(0);
+  });
+
+  it('TRI02 scopes Session facts and delivery hints without re-traversing unaffected bindings', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const generation = new AbortController();
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    // Match the existing 54-Session unavailable-owner fixture above.
+    for (let index = 1; index <= 54; index += 1) {
+      const binding = approvalBindingRow();
+      await state.put({ ...binding, id: `binding-${index}`, 'binding-id': `binding-${index}`, 'session-id': `session-${index}`,
+        payload: { ...binding.payload, target: { ...binding.payload.target, sessionId: `session-${index}` } },
+      }, { expectedRevision: 'absent' });
+      await state.put(createConversationSessionProjectionFrontierRow({
+        bindingId: `binding-${index}`, targetSessionId: `session-${index}`,
+        transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0,
+      }), { expectedRevision: 'absent' });
+    }
+    const listeners = new Map<string, (event?: SessionEvent) => void>();
+    let answer = false;
+    let permission = false;
+    let publicationHeld = false;
+    const execute = vi.fn(async (action: string, input: { sessionId: string; cursor?: string | null }) => {
+      if (action === 'session.permission.remote.pending.list') return {
+        requests: permission && input.sessionId === 'session-2'
+          ? [pendingPermissionRequest({ requestId: 'scoped-permission', turnId: 'turn-2', createdAtMs: 1, allowedScopes: ['request'] })]
+          : [], truncated: false, nextCursor: null,
+      };
+      if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
+      const hasAnswer = answer && input.sessionId === 'session-1';
+      return { ok: true, projection: 'externalShareableV1', sessionId: input.sessionId,
+        scannedThroughSeq: hasAnswer ? 1 : 0, nextCursor: hasAnswer ? '1' : '0',
+        hasMore: publicationHeld && input.sessionId === 'session-3',
+        items: hasAnswer && input.cursor !== '1' ? [{ kind: 'assistantText', sessionId: input.sessionId,
+          seq: 1, itemId: 'scoped-answer', turnId: 'turn-1', final: 'completed', text: 'Scoped answer', consumedInputs: [] }] : [],
+      };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['scoped-receipt'] },
+      executionOrigin: providerTransportOrigin }));
+    const context = { ...backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver,
+      watchSession: (listener, sessionId) => {
+        listeners.set(sessionId, listener);
+        return { dispose() { listeners.delete(sessionId); } };
+      },
+    }), signal: generation.signal };
+    const reads = vi.spyOn(state, 'get');
+    const readPage = state.query.bind(state);
+    const queries = vi.spyOn(state, 'query');
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: context.services });
+    const runner = activation.registration('backgroundServices', 'outward-delivery-supervisor');
+    if (!runner) throw new Error('Expected registered outward supervisor');
+    const running = runner(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listeners.size).toBe(54);
+      execute.mockClear(); reads.mockClear(); queries.mockClear();
+      for (const listener of listeners.values()) listener({
+        kind: 'activity', sequence: 1, activity: { state: 'active', observedAtMs: Date.now() },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect.soft(execute).not.toHaveBeenCalled();
+      expect.soft(reads).not.toHaveBeenCalled();
+      expect.soft(queries).not.toHaveBeenCalled();
+      execute.mockClear(); reads.mockClear(); queries.mockClear();
+
+      answer = true;
+      listeners.get('session-1')?.();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1), { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect.soft(execute.mock.calls.map(([action, input]) => [action, input.sessionId])).toEqual([
+        ['session.permission.remote.pending.list', 'session-1'], ['session.transcript.get', 'session-1'],
+      ]);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect.soft(reads.mock.calls.filter(([id]) => /^binding-/.test(id)).every(([id]) => id === 'binding-1')).toBe(true);
+      expect(listeners.size).toBe(54);
+
+      execute.mockClear(); reads.mockClear();
+      permission = true;
+      listeners.get('session-2')?.({ kind: 'changed', sequence: 1, summary: {
+        id: 'session-2', state: 'active', runtimeAvailability: { status: 'available' },
+        storagePolicy: 'optional', encryptionMode: 'plain', updatedAtMs: Date.now(),
+      } });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(2), { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect.soft(execute.mock.calls.map(([action, input]) => [action, input.sessionId])).toEqual([
+        ['session.permission.remote.pending.list', 'session-2'], ['session.transcript.get', 'session-2'],
+      ]);
+      expect(deliver).toHaveBeenCalledTimes(2);
+      expect.soft(reads.mock.calls.filter(([id]) => /^binding-/.test(id)).every(([id]) => id === 'binding-2')).toBe(true);
+
+      execute.mockClear(); reads.mockClear();
+      // A foreign producer adds real ready custody through the same Collection
+      // whose own settlement writes wake the supervisor. Neither may be dropped.
+      const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+        deliveriesCollection: deliveries as never, signal: generation.signal, now: () => Date.now() });
+      const external = await store.ensure({ ...outwardObligation(), deliveryKey: 'external-scoped-delivery',
+        source: { kind: 'sessionProjection', sessionId: 'session-1', semanticItemId: 'external-scoped' } });
+      if (external.kind !== 'created') throw new Error('Expected external ready custody');
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(3), { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deliver).toHaveBeenCalledTimes(3);
+      expect(deliveries.rows.get(external.record.custodyId)?.value.payload).toMatchObject({ state: 'delivered' });
+      expect(execute).not.toHaveBeenCalled();
+      expect(reads.mock.calls.filter(([id]) => /^binding-/.test(id)).every(([id]) => id === 'binding-1')).toBe(true);
+      const settledReads = reads.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads).toHaveBeenCalledTimes(settledReads);
+
+      // A publication deadline carries the same binding demand, even when an
+      // intervening delivery hint makes a separate durable-work pass.
+      execute.mockClear(); reads.mockClear();
+      publicationHeld = true;
+      listeners.get('session-3')?.();
+      await vi.advanceTimersByTimeAsync(0);
+      deliveries.resetObservation();
+      await vi.advanceTimersByTimeAsync(0);
+      publicationHeld = false;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(execute.mock.calls.map(([action, input]) => [action, input.sessionId])).toEqual([
+        ['session.permission.remote.pending.list', 'session-3'], ['session.transcript.get', 'session-3'],
+        ['session.permission.remote.pending.list', 'session-3'], ['session.transcript.get', 'session-3'],
+      ]);
+      expect(reads.mock.calls.filter(([id]) => /^binding-/.test(id)).every(([id]) => id === 'binding-3')).toBe(true);
+
+      execute.mockClear(); reads.mockClear();
+      const input = finalizingIngressObligationRow({ bindingId: 'binding-4', ordinal: 4, phase: 'terminal' });
+      await state.put(withChannelStateSessionIdentity({ ...input, 'connection-id': 'connection-1',
+        payload: { ...input.payload, disposition: 'admitted',
+          sessionInput: { sessionId: 'session-4', localId: 'scoped-input', projectedReplySeq: null } },
+      }, { kind: 'session', sessionId: 'session-4' }), { expectedRevision: 'absent' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(execute.mock.calls.map(([action, input]) => [action, input.sessionId])).toEqual([
+        ['session.permission.remote.pending.list', 'session-4'], ['session.transcript.get', 'session-4'],
+      ]);
+      expect(reads.mock.calls.filter(([id]) => /^binding-/.test(id)).every(([id]) => id === 'binding-4')).toBe(true);
+
+      // A failed structural discovery must retain watches and retry discovery;
+      // retargeting then removes the old Session's subscription membership.
+      const oldListener = listeners.get('session-4');
+      let failDiscovery = true;
+      queries.mockImplementation(async request => {
+        if (failDiscovery && request.index === CHANNEL_STATE_INDEX_ID.byKind && request.prefix?.[0] === 'binding') {
+          failDiscovery = false;
+          throw new Error('Binding discovery temporarily unavailable');
+        }
+        return readPage(request);
+      });
+      const rebound = approvalBindingRow();
+      await state.put({ ...rebound, id: 'binding-4', 'binding-id': 'binding-4', 'session-id': 'session-55',
+        payload: { ...rebound.payload, target: { ...rebound.payload.target, sessionId: 'session-55' } },
+      }, { expectedRevision: 1 });
+      await state.put(createConversationSessionProjectionFrontierRow({ bindingId: 'binding-4', targetSessionId: 'session-55',
+        transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: Date.now() },
+      ), { expectedRevision: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(failDiscovery).toBe(false);
+      expect(listeners.has('session-4')).toBe(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(listeners.has('session-4')).toBe(false), { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listeners.has('session-55')).toBe(true);
+      execute.mockClear();
+      oldListener?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(execute).not.toHaveBeenCalled();
+      listeners.get('session-55')?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(execute.mock.calls.map(([action, input]) => [action, input.sessionId])).toEqual([
+        ['session.permission.remote.pending.list', 'session-55'], ['session.transcript.get', 'session-55'],
+      ]);
+    } finally { generation.abort(); await running; await activation.dispose(); vi.useRealTimers(); }
+    expect(listeners.size).toBe(0);
   });
 
   it('rechecks a held publication page and projects its finalized answer through custody exactly once', async () => {
@@ -1316,9 +1647,10 @@ describe('Channels outward-delivery supervisor', () => {
     const changes = new Set<() => void>();
     // Collection observation and Machine placement are host boundaries. The
     // actual scanner, binding selection, mediation and projection stay real.
-    state.watch = (_query?: unknown, listener?: () => void) => {
-      if (listener) changes.add(listener);
-      return { dispose() { if (listener) changes.delete(listener); } };
+    state.watch = (_query, listener) => {
+      const notify = () => listener({ kind: 'changed', changeCursor: 1 });
+      changes.add(notify);
+      return { dispose() { changes.delete(notify); } };
     };
     const reads = vi.spyOn(state, 'get');
     const execute = vi.fn(async (action: string) => action === 'session.permission.remote.pending.list'
@@ -1360,17 +1692,24 @@ describe('Channels outward-delivery supervisor', () => {
     expect(changes.size).toBe(0);
   });
 
-  it('subscribes before the bound transcript read and wakes on Session changes without a timer', async () => {
+  it.each([1, 2])('subscribes once before the bound transcript read for %i bindings and wakes on Session changes without a timer', async bindingCount => {
     vi.useFakeTimers();
     const generation = new AbortController();
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
+    if (bindingCount === 2) {
+      const binding = bindingRow();
+      await state.put({ ...binding, id: 'binding-2', 'binding-id': 'binding-2' }, { expectedRevision: 'absent' });
+      await state.put(createConversationSessionProjectionFrontierRow({ bindingId: 'binding-2', targetSessionId: 'session-1',
+        transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0 }), { expectedRevision: 'absent' });
+    }
     const stateReads = vi.spyOn(state, 'get');
     const deliveryReads = vi.spyOn(deliveries, 'get');
     let changed: (() => void) | undefined;
     let answer = false;
     const dispose = vi.fn();
+    const watchSession = vi.fn((listener: () => void) => { changed = listener; return { dispose }; });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       expect(changed).toBeTypeOf('function');
@@ -1381,11 +1720,12 @@ describe('Channels outward-delivery supervisor', () => {
     const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['answer'] }, executionOrigin: providerTransportOrigin }));
     const supervisor = createConversationOutwardDeliverySupervisor();
     const running = supervisor.run({ ...backgroundContext({ state, deliveries, execute,
-      executeAdmittedTargetedOperationWithExecutionOrigin: deliver, watchSession: listener => { changed = listener; return { dispose }; } }),
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver, watchSession }),
       signal: generation.signal });
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(changed).toBeTypeOf('function');
+      expect(watchSession).toHaveBeenCalledOnce();
       const initialReads = execute.mock.calls.length;
       const initialStateReads = stateReads.mock.calls.length;
       const initialDeliveryReads = deliveryReads.mock.calls.length;
@@ -1396,8 +1736,8 @@ describe('Channels outward-delivery supervisor', () => {
       expect(deliveryReads).toHaveBeenCalledTimes(initialDeliveryReads);
       answer = true; changed?.();
       await vi.advanceTimersByTimeAsync(0);
-      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1), { interval: 0 });
-      expect(deliver).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(bindingCount), { interval: 0 });
+      expect(deliver).toHaveBeenCalledTimes(bindingCount);
       expect(stateReads.mock.calls.length).toBeGreaterThan(initialStateReads);
     } finally { generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers(); }
     expect(dispose).toHaveBeenCalledTimes(1);
@@ -1441,10 +1781,10 @@ describe('Channels outward-delivery supervisor', () => {
     } });
     // Persistent Collection writes deliver the same level-triggered hint as
     // foreign writes. Keep the real retirement store and page scanner beneath it.
-    const batch = deliveries.batch.bind(deliveries);
-    vi.spyOn(deliveries, 'batch').mockImplementation(async operations => {
-      const result = await batch(operations);
-      if (result.status === 'updated') changed?.();
+    const forget = deliveries.forget.bind(deliveries);
+    vi.spyOn(deliveries, 'forget').mockImplementation(async (rowId, input) => {
+      const result = await forget(rowId, input);
+      changed?.();
       return result;
     });
     const readPage = deliveries.query.bind(deliveries);
@@ -1466,12 +1806,12 @@ describe('Channels outward-delivery supervisor', () => {
       await vi.advanceTimersByTimeAsync(0);
       if (failContinuation) {
         expect(continuationFailed).toBe(true);
-        expect([...deliveries.rows.values()].filter(row => row.deleted)).toHaveLength(0);
+        expect(deliveries.rows.size).toBe(pageSize * 3);
         await vi.advanceTimersByTimeAsync(999);
-        expect([...deliveries.rows.values()].filter(row => row.deleted)).toHaveLength(0);
+        expect(deliveries.rows.size).toBe(pageSize * 3);
         await vi.advanceTimersByTimeAsync(1);
       }
-      await vi.waitFor(() => expect([...deliveries.rows.values()].filter(row => row.deleted)).toHaveLength(pageSize * 2), { interval: 0 });
+      await vi.waitFor(() => expect(deliveries.rows.size).toBe(pageSize), { interval: 0 });
       await vi.advanceTimersByTimeAsync(0);
       const retentionStarts = () => query.mock.calls.filter(([input]) => input.prefix?.[0] === true && input.cursor === undefined).length;
       // One original sweep and one coalesced fresh sweep, not a restart after
@@ -1678,7 +2018,7 @@ describe('Channels outward-delivery supervisor', () => {
     const unsettled = [];
     for (const custody of [
       { state: 'ready', attemptCount: 0, providerMessageIds: [] },
-      { state: 'attempting', attemptId: 'stale-attempt', startedAt: terminalAt, attemptCount: 1, providerMessageIds: [] },
+      { state: 'attempting', attemptId: 'stale-attempt',  attemptCount: 1, providerMessageIds: [] },
       { state: 'outcomeUnknown', attemptCount: 1, providerMessageIds: [] },
     ] as const) {
       const admitted = await store.ensure(retireableControlOutwardObligation(`deleted-connection-${custody.state}`));
@@ -1714,23 +2054,16 @@ describe('Channels outward-delivery supervisor', () => {
     expect(execute).not.toHaveBeenCalled();
     expect(providerOperation).not.toHaveBeenCalled();
     expect(await deliveries.get(terminal.record.custodyId)).toBeNull();
-    // Session projection remains replayable, so the existing retirement owner
-    // preserves its content-free dedupe tombstone rather than forgetting it.
-    expect(deliveries.rows.get(terminal.record.custodyId)).toMatchObject({
-      deleted: true,
-      revision: terminal.record.revision + 1,
-    });
+    expect(deliveries.rows.get(terminal.record.custodyId)).toBeUndefined();
   });
 
-  it('keeps a content-free control-response tombstone until its ingress source row is gone', async () => {
+  it('forgets expired control responses even while their ingress source remains retained', async () => {
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
     let persistedAt = 100;
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await state.put(connectionRow(), { expectedRevision: 'absent' });
-    // The control response's identity is the durable ingress row that produced
-    // it. While that row is still addressable the same provider occurrence can
-    // replay inside its horizon, so only a logical tombstone may remain.
+    // The approved outward window also bounds dedupe, independently of source retention.
     await state.put({
       id: 'ingress-census-1',
       'record-kind': 'ingress-census',
@@ -1772,7 +2105,7 @@ describe('Channels outward-delivery supervisor', () => {
     });
 
     expect(await deliveries.get(retained.custodyId)).toBeNull();
-    expect(deliveries.rows.get(retained.custodyId)?.deleted).toBe(true);
+    expect(deliveries.rows.get(retained.custodyId)).toBeUndefined();
     expect(await deliveries.get(unreachable.custodyId)).toBeNull();
     expect(deliveries.rows.get(unreachable.custodyId)).toBeUndefined();
   });
@@ -1829,7 +2162,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(records.every((record) => !deliveries.rows.has(record.custodyId))).toBe(true);
   });
 
-  it('does not physically forget a terminal permission wait while its exact request is still pending', async () => {
+  it('forgets an expired terminal permission wait while preserving the pending request owner', async () => {
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
     let persistedAt = 0;
     const state = new MemoryCollection();
@@ -1886,21 +2219,12 @@ describe('Channels outward-delivery supervisor', () => {
     persistedAt = THIRTY_DAYS_MS;
     await runConversationOutwardDeliveryCycle({ context, now: () => persistedAt });
 
-    // A complete positive pending projection means the next wake could ensure
-    // this deterministic custody again. The recovery window still removes the
-    // live row and its content, but the producer-proof guard keeps the exact
-    // logical tombstone as dedupe rather than physically forgetting it.
     expect(await deliveries.get(terminal.record.custodyId)).toBeNull();
-    expect(deliveries.rows.get(terminal.record.custodyId)?.deleted).toBe(true);
-
-    // A second/third wake distinguishes retained terminal custody from a
-    // delete→fresh-ensure recreation: the latter would reach provider I/O.
-    await runConversationOutwardDeliveryCycle({ context, now: () => persistedAt + 1 });
-    await runConversationOutwardDeliveryCycle({ context, now: () => persistedAt + 2 });
+    expect(deliveries.rows.get(terminal.record.custodyId)).toBeUndefined();
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
-  it('logically retires Session and Automation custody but preserves its tombstone until producer release', async () => {
+  it('forgets Session and Automation custody at the approved window and retains it before cutoff', async () => {
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
     let persistedAt = 0;
     const state = new MemoryCollection();
@@ -1935,14 +2259,16 @@ describe('Channels outward-delivery supervisor', () => {
       records.push(terminal.record);
     }
 
+    persistedAt = THIRTY_DAYS_MS - 1;
+    await runConversationOutwardDeliveryCycle({ context, now: () => persistedAt });
+    for (const record of records) expect(await deliveries.get(record.custodyId)).not.toBeNull();
+
     persistedAt = THIRTY_DAYS_MS;
     await runConversationOutwardDeliveryCycle({ context, now: () => persistedAt });
 
     for (const record of records) {
       expect(await deliveries.get(record.custodyId)).toBeNull();
-      const tombstone = deliveries.rows.get(record.custodyId);
-      expect(tombstone?.deleted).toBe(true);
-      expect((tombstone?.value.payload as Readonly<Record<string, unknown>>).content).toBeNull();
+      expect(deliveries.rows.get(record.custodyId)).toBeUndefined();
     }
   });
 
@@ -2153,11 +2479,13 @@ describe('Channels outward-delivery supervisor', () => {
     expect(await accountB.deliveries.get(accountB.custodyId)).not.toBeNull();
   });
 
-  it('renders the canonical bounded permission summary before writing custody or provider I/O', async () => {
+  it('delivers a pending permission in the same wake while its turn remains behind the publication barrier', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await state.put(connectionRow(), { expectedRevision: 'absent' });
     await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
+    await state.put(createConversationSessionProjectionFrontierRow({ bindingId: 'binding-1', targetSessionId: 'session-1',
+      transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0 }), { expectedRevision: 'absent' });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
         return {
@@ -2184,13 +2512,16 @@ describe('Channels outward-delivery supervisor', () => {
           projection: 'externalShareableV1',
           sessionId: 'session-1',
           scannedThroughSeq: 0,
-          hasMore: false,
+          hasMore: true,
           items: [],
         };
       }
       throw new Error(`Unexpected Action ${action}`);
     });
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (_operation: unknown, _input: unknown) => ({
+      result: { kind: 'delivered', providerMessageIds: ['permission-prompt-1'] },
+      executionOrigin: providerTransportOrigin,
+    }));
     const context = backgroundContext({
       state,
       deliveries,
@@ -2209,13 +2540,17 @@ describe('Channels outward-delivery supervisor', () => {
       },
       { signal: context.signal },
     );
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin.mock.calls[0]?.[1]).toMatchObject({
+      content: { text: 'Run: git status --short\nCommand: git\n'
+        + 'Reply /allow permission-request-1 or /deny permission-request-1.' },
+    });
     expect([...deliveries.rows.values()]).toEqual([
       expect.objectContaining({
         value: expect.objectContaining({
           'connection-id': 'connection-1',
           'binding-id': 'binding-1',
-          terminal: false,
+          terminal: true,
           attention: false,
           payload: expect.objectContaining({
             source: {
@@ -2224,20 +2559,57 @@ describe('Channels outward-delivery supervisor', () => {
               turnId: 'turn-1',
               requestId: 'permission-request-1',
             },
-            routeAuthority: {
-              connectionAuthorityEpoch: 4,
-              bindingRevision: 1,
-              bindingAuthorityEpoch: 7,
-            },
-            // The summary came from the canonical Session owner; Channels
-            // renders it but does not parse raw tool input or decide scope.
-            content: { text: 'Run: git status --short\nCommand: git\n'
-              + 'Reply /allow permission-request-1 or /deny permission-request-1.' },
-            state: 'ready',
+            routeAuthority: {},
+            // Terminal custody compacts the already-delivered summary.
+            content: null,
+            state: 'delivered',
           }),
         }),
       }),
     ]);
+    await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+  });
+
+  it('delivers a pending permission without waiting for another binding\'s unavailable Session', async () => {
+    vi.useFakeTimers();
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    const binding = approvalBindingRow();
+    await state.put({ ...binding, id: 'binding-0', 'binding-id': 'binding-0', payload: {
+      ...binding.payload, target: { ...binding.payload.target, sessionId: 'unavailable-session' },
+    } }, { expectedRevision: 'absent' });
+    await state.put(binding, { expectedRevision: 'absent' });
+    let releaseUnavailable!: () => void;
+    const unavailable = new Promise<void>(resolve => { releaseUnavailable = resolve; });
+    const execute = vi.fn(async (action: string, input: { sessionId: string }) => {
+      if (action === 'session.permission.remote.pending.list') {
+        if (input.sessionId === 'unavailable-session') {
+          await unavailable;
+          return emptyPendingPermissionPage();
+        }
+        return { requests: [pendingPermissionRequest({ requestId: 'permission-request-1', turnId: 'turn-1',
+          createdAtMs: 100, allowedScopes: ['request'] })], truncated: false, nextCursor: null };
+      }
+      return { ok: true, projection: 'externalShareableV1', sessionId: input.sessionId,
+        scannedThroughSeq: 0, hasMore: true, items: [] };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['prompt-1'] },
+      executionOrigin: providerTransportOrigin }));
+    const context = backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
+    const running = runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    try {
+      await vi.waitFor(() => expect([...deliveries.rows.values()]).toEqual([expect.objectContaining({ value: expect.objectContaining({
+        terminal: true, payload: expect.objectContaining({ state: 'delivered' }),
+      }) })]), { interval: 0 });
+      expect(deliver).toHaveBeenCalledOnce();
+    } finally {
+      releaseUnavailable();
+      await running;
+      vi.useRealTimers();
+    }
   });
 
   it('renders an above-cap question request as a full-form link without inline answers', async () => {
@@ -2260,15 +2632,21 @@ describe('Channels outward-delivery supervisor', () => {
       };
       throw new Error(`Unexpected Action ${action}`);
     });
+    const deliver = vi.fn(async (_operation: unknown, _input: unknown) => ({
+      result: { kind: 'delivered', providerMessageIds: ['question-five'] }, executionOrigin: providerTransportOrigin,
+    }));
     const context = backgroundContext({
       state, deliveries, execute,
-      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver,
     });
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    expect(deliver.mock.calls.map(([, input]) => input)).toEqual([expect.objectContaining({
+      content: { text: `Answer all 5 in Happier\n${url}` },
+    })]);
     expect([...deliveries.rows.values()]).toEqual([
       expect.objectContaining({ value: expect.objectContaining({ payload: expect.objectContaining({
         source: { kind: 'permissionWait', sessionId: 'session-1', requestId: 'question-five', turnId: 'turn-five' },
-        content: { text: `Answer all 5 in Happier\n${url}` },
+        content: null, state: 'delivered',
       }) }) }),
     ]);
   });
@@ -2333,11 +2711,14 @@ describe('Channels outward-delivery supervisor', () => {
       }
       throw new Error(`Unexpected Action ${action}`);
     });
+    const deliver = vi.fn(async (_operation: unknown, _input: unknown) => ({
+      result: { kind: 'delivered', providerMessageIds: ['question-1'] }, executionOrigin: providerTransportOrigin,
+    }));
     const context = backgroundContext({
       state,
       deliveries,
       execute,
-      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver,
     });
     const store = createConversationOutwardDeliveryCollectionStore({
       stateCollection: state as never,
@@ -2352,6 +2733,15 @@ describe('Channels outward-delivery supervisor', () => {
 
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
 
+    expect(deliver.mock.calls.map(([, input]) => input)).toEqual([expect.objectContaining({
+      content: { text: 'This Session needs your input:\n'
+        + '1. Choose a release mode (required; select one; custom text allowed)\n'
+        + '  1. Safe\n'
+        + '  2. Other\n'
+        + '2. Any notes? (optional; write text)\n'
+        + 'Reply /answer user-action-request-1 [{"questionIndex":0,"values":["<answer>"]}] in one message. '
+        + 'Use displayed choice labels, or free text only where allowed; include every required question.' },
+    })]);
     expect([...deliveries.rows.values()]).toHaveLength(2);
     expect([...deliveries.rows.values()]).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -2363,13 +2753,7 @@ describe('Channels outward-delivery supervisor', () => {
               turnId: 'turn-user-action-1',
               requestId: 'user-action-request-1',
             },
-            content: { text: 'This Session needs your input:\n'
-              + '1. Choose a release mode (required; select one; custom text allowed)\n'
-              + '  1. Safe\n'
-              + '  2. Other\n'
-              + '2. Any notes? (optional; write text)\n'
-              + 'Reply /answer user-action-request-1 [{"questionIndex":0,"values":["<answer>"]}] in one message. '
-              + 'Use displayed choice labels, or free text only where allowed; include every required question.' },
+            content: null, state: 'delivered',
           }),
         }),
       }),
@@ -2382,7 +2766,8 @@ describe('Channels outward-delivery supervisor', () => {
               turnId: 'turn-1',
               requestId: 'permission-request-1',
             },
-            state: 'suppressed',
+            state: 'notSent',
+            reason: 'policySuppressed',
           }),
         }),
       }),
@@ -2458,7 +2843,8 @@ describe('Channels outward-delivery supervisor', () => {
         turnId: 'turn-1',
         requestId: 'permission-request-1',
       },
-      state: 'suppressed',
+      state: 'notSent',
+      reason: 'policySuppressed',
     });
   });
 
@@ -2611,7 +2997,9 @@ describe('Channels outward-delivery supervisor', () => {
       }
       throw new Error(`Unexpected Action ${action}`);
     });
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: { kind: 'delivered', providerMessageIds: ['paged-request'] }, executionOrigin: providerTransportOrigin,
+    }));
     const context = backgroundContext({
       state,
       deliveries,
@@ -2633,9 +3021,9 @@ describe('Channels outward-delivery supervisor', () => {
     // The wait is still pending, so it is redriven rather than suppressed. A
     // first-page-only read would find no match, read the complete-looking
     // negative as absence, and retire the prompt without a provider attempt.
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(1);
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(deliveries.rows.get(admitted.record.custodyId)?.value).toMatchObject({
-      payload: { state: 'outcomeUnknown' },
+      payload: { state: 'delivered' },
     });
   });
 
@@ -2682,7 +3070,7 @@ describe('Channels outward-delivery supervisor', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'permission-wait-attempt-1',
-        startedAt: 1,
+
         providerMessageIds: [],
       },
     });
@@ -2701,14 +3089,18 @@ describe('Channels outward-delivery supervisor', () => {
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
-  it('retains permission-wait custody when the generic pending list is unavailable', async () => {
+  it.each([
+    new Error('permission service unavailable'),
+    new PluginError({ code: 'forbidden', message: 'Different Account', retryable: false }),
+    new PluginError({ code: 'rpc_transport_error', message: 'Transient transport failure', retryable: true }),
+  ])('retains permission-wait custody for other pending-list failures (%s)', async failure => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await state.put(connectionRow(), { expectedRevision: 'absent' });
     await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
-        throw new Error('permission service unavailable');
+        throw failure;
       }
       if (action === 'session.transcript.get') {
         return {
@@ -2747,7 +3139,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
-  it('retains permission-wait custody when the current binding source has advanced', async () => {
+  it('suppresses an absent permission wait after a binding policy edit without requiring its retired epoch', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await state.put(connectionRow(), { expectedRevision: 'absent' });
@@ -2794,8 +3186,8 @@ describe('Channels outward-delivery supervisor', () => {
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
 
     expect(deliveries.rows.get(admitted.record.custodyId)?.value).toMatchObject({
-      terminal: false,
-      payload: { state: 'ready', attemptCount: 0 },
+      terminal: true,
+      payload: { state: 'notSent', reason: 'policySuppressed' },
     });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
@@ -2830,7 +3222,9 @@ describe('Channels outward-delivery supervisor', () => {
       }
       throw new Error(`Unexpected Action ${action}`);
     });
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
+      result: { kind: 'delivered', providerMessageIds: ['new-turn-request'] }, executionOrigin: providerTransportOrigin,
+    }));
     const context = backgroundContext({
       state,
       deliveries,
@@ -2856,7 +3250,8 @@ describe('Channels outward-delivery supervisor', () => {
           turnId: 'turn-1',
           requestId: 'permission-request-1',
         },
-        state: 'suppressed',
+        state: 'notSent',
+        reason: 'policySuppressed',
       }),
       expect.objectContaining({
         source: {
@@ -2865,10 +3260,80 @@ describe('Channels outward-delivery supervisor', () => {
           turnId: 'turn-2',
           requestId: 'permission-request-1',
         },
-        state: 'ready',
+        state: 'delivered',
       }),
     ]));
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+    expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+  });
+
+  it('opens no healthy bodies for delete finalization across a thousand connections and bindings', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    for (let index = 0; index < 1_000; index += 1) {
+      const connectionId = `connection-healthy-${index}`;
+      const bindingId = `binding-healthy-${index}`;
+      await state.put({ ...connectionRow(), id: connectionId, 'connection-id': connectionId }, { expectedRevision: 'absent' });
+      await state.put({ ...bindingRow(), id: bindingId, 'binding-id': bindingId, 'connection-id': connectionId }, { expectedRevision: 'absent' });
+    }
+    const query = vi.spyOn(state, 'query');
+    const get = vi.spyOn(state, 'get');
+    const batch = vi.spyOn(state, 'batch');
+    const context = backgroundContext({ state, deliveries, execute: vi.fn(), executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() });
+
+    for (let wake = 0; wake < 3; wake += 1) {
+      await finalizeConversationConnectionDeletesForInvocation(context);
+    }
+
+    const opened = (await Promise.all(query.mock.results.map(result => result.value))).flatMap(page => page.rows);
+    expect(opened).toHaveLength(0);
+    expect(get).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+
+    // Enter through the real deletion writer: a missing selector on new writes
+    // would otherwise make the zero-work assertion pass by stranding cleanup.
+    await deleteConversationBindingForInvocation({ bindingId: 'binding-healthy-500', expectedRevision: 1 }, context as never);
+    query.mockClear();
+    batch.mockClear();
+    const unplaced = backgroundContext({ state, deliveries, execute: vi.fn(), executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
+      executionRouting: { ...getPluginMachineExecutionRouting(providerTransportOrigin), pluginId: 'happier.channels', machineId: 'foreign-machine' } });
+    await finalizeConversationConnectionDeletesForInvocation(unplaced);
+    expect(state.rows.get('binding-healthy-500')?.deleted).not.toBe(true);
+    expect(batch).not.toHaveBeenCalled();
+
+    query.mockClear();
+    await finalizeConversationConnectionDeletesForInvocation(context);
+    // Candidate discovery is distinct from the finalizer's authorized relation
+    // page and fresh exact rereads of the pending binding and its parent.
+    const candidates = (await Promise.all(query.mock.results.filter((_result, index) =>
+      query.mock.calls[index]?.[0].index === CHANNEL_STATE_INDEX_ID.byIngressDue).map(result => result.value))).flatMap(page => page.rows);
+    expect(candidates.map(row => row.rowId)).toEqual(['binding-healthy-500']);
+    expect(state.rows.get('binding-healthy-500')?.deleted).toBe(true);
+    expect(batch.mock.calls.flatMap(([mutations]) => mutations).filter(mutation => mutation.kind === 'delete')).toHaveLength(1);
+
+    query.mockClear();
+    batch.mockClear();
+    await finalizeConversationConnectionDeletesForInvocation(context);
+    expect((await Promise.all(query.mock.results.map(result => result.value))).flatMap(page => page.rows)).toHaveLength(0);
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('continues selected deletion past a deleted page anchor and resumes a conflicted row on the next wake', async () => {
+    const state = new MemoryCollection({ conflictNextBatch: true });
+    const deliveries = new MemoryCollection();
+    await state.put(bindingDeleteConnectionRow(), { expectedRevision: 'absent' });
+    const bindingIds = Array.from({ length: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 + 1 }, (_, index) => `binding-page-${String(index).padStart(6, '0')}`);
+    for (const id of bindingIds) {
+      await state.put({ ...finalizingBindingDeleteRow(), id, 'binding-id': id }, { expectedRevision: 'absent' });
+    }
+    const context = backgroundContext({ state, deliveries, execute: vi.fn(), executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() });
+
+    await finalizeConversationConnectionDeletesForInvocation(context);
+    expect(bindingIds.filter(id => state.rows.get(id)?.deleted === true)).toHaveLength(bindingIds.length - 1);
+    expect(state.rows.get(bindingIds[0]!)?.deleted).not.toBe(true);
+
+    await finalizeConversationConnectionDeletesForInvocation(context);
+    expect(bindingIds.every(id => state.rows.get(id)?.deleted === true)).toBe(true);
+    expect(state.rows.get(BINDING_DELETE_CONNECTION_ID)?.deleted).not.toBe(true);
   });
 
   it('settles only the finalizing binding’s ready custody before direct-delete cleanup', async () => {
@@ -2901,7 +3366,7 @@ describe('Channels outward-delivery supervisor', () => {
     await finalizeConversationConnectionDeletesForInvocation(context as never);
 
     expect(deliveries.rows.get(finalizingCustody.record.custodyId)?.value).toMatchObject({
-      payload: { state: 'suppressed', providerMessageIds: [] },
+      payload: { state: 'notSent', reason: 'policySuppressed', providerMessageIds: [] },
       terminal: true,
       attention: false,
     });
@@ -2936,7 +3401,7 @@ describe('Channels outward-delivery supervisor', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'binding-delete-attempt-1',
-        startedAt: 1,
+
         providerMessageIds: [],
       },
     });
@@ -2957,7 +3422,7 @@ describe('Channels outward-delivery supervisor', () => {
     });
   });
 
-  it('terminalizes direct-delete ingress as stale authority before removing the finalizing binding', async () => {
+  it('terminalizes direct-delete ingress as target unavailable before removing the finalizing binding', async () => {
     const state = new MemoryCollection({ enforceUniqueBatchRows: true });
     const deliveries = new MemoryCollection();
     const obligation = bindingDeleteIngressObligationRow();
@@ -2978,8 +3443,8 @@ describe('Channels outward-delivery supervisor', () => {
       attention: true,
       payload: {
         lifecycle: { phase: 'terminal', attemptCount: 0, dueAt: null },
-        disposition: 'staleAuthority',
-        nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
+        disposition: 'rejected',
+        nonAdmission: { reason: 'targetUnavailable', senderFeedbackEligible: false },
       },
     });
     expect(state.rows.get(BINDING_DELETE_BINDING_ID)?.deleted).not.toBe(true);
@@ -3114,7 +3579,7 @@ describe('Channels outward-delivery supervisor', () => {
 
     await runConversationOutwardDeliveryCycle({ context, now: () => 10 });
     expect(deliveries.rows.get(custody.record.custodyId)?.value).toMatchObject({
-      payload: { state: 'connectionDeleted', providerMessageIds: [] },
+      payload: { state: 'notSent', reason: 'connectionDeleted', providerMessageIds: [] },
       terminal: true,
       attention: false,
     });
@@ -3168,7 +3633,7 @@ describe('Channels outward-delivery supervisor', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'attempt-finalizing',
-        startedAt: 1,
+
         providerMessageIds: [],
       },
     });
@@ -3187,24 +3652,27 @@ describe('Channels outward-delivery supervisor', () => {
     expect(state.rows.get(reservation.id)?.deleted).not.toBe(true);
     expect(state.rows.get(FINALIZING_BINDING_ID)?.deleted).not.toBe(true);
     expect(deliveries.rows.get(custody.record.custodyId)?.value).toMatchObject({
-      payload: { state: 'attempting', attemptId: 'attempt-finalizing' },
-      terminal: false,
+      payload: { state: 'outcomeUnknown', attemptId: null },
+      terminal: true,
     });
     expect(execute).not.toHaveBeenCalled();
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
   });
 
-  it('surfaces a rejected transcript cursor instead of retrying it invisibly forever', async () => {
+  it('surfaces a rejected transcript cursor and automatically rejoins when transcript reads recover', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
     const logger = { warn: vi.fn() };
+    let rejected = true;
     const execute = vi.fn(async (action: string) => {
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
-      throw new PluginError({
+      if (rejected) throw new PluginError({
         code: 'invalid_cursor',
         message: 'secret transcript cursor detail',
       });
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+        scannedThroughSeq: 8, nextCursor: '8', hasMore: false, items: [] };
     });
     const context = backgroundContext({
       state,
@@ -3216,8 +3684,7 @@ describe('Channels outward-delivery supervisor', () => {
 
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
 
-    // A typed history gap never throws, so the cycle looks healthy: this is the
-    // only signal that the binding can no longer advance.
+    // Failed automatic recovery retains visible, content-free evidence.
     expect(logger.warn).toHaveBeenCalledWith(
       '[Channels] outward delivery supervisor work failed',
       { boundary: 'transcript-projection', bindingId: 'binding-1', code: 'channels_projection_cursorRejected', retryable: false },
@@ -3232,14 +3699,16 @@ describe('Channels outward-delivery supervisor', () => {
     });
     execute.mockClear();
     logger.warn.mockClear();
+    rejected = false;
     await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
-    expect(execute).not.toHaveBeenCalledWith(
+    expect(execute).toHaveBeenCalledWith(
       'session.transcript.get',
-      expect.anything(),
+      { sessionId: 'session-1', projection: 'externalShareableV1', cursor: null, limit: 100 },
       expect.anything(),
     );
-    expect(logger.warn).toHaveBeenCalledWith('[Channels] outward delivery supervisor work failed', {
-      boundary: 'transcript-projection', bindingId: 'binding-1', code: 'channels_projection_historyGap', retryable: false,
+    expect(state.rows.get('projection-frontier:binding-1')?.value).toMatchObject({
+      payload: { transcriptCursor: { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100, cursor: '8' },
+        lastScannedSeq: 8 },
     });
   });
 
@@ -3745,10 +4214,10 @@ describe('Channels outward-delivery supervisor', () => {
 
   it.each([
     { state: 'delivered', result: { kind: 'delivered', providerMessageIds: ['private-receipt'] } },
-    { state: 'notDelivered', result: { kind: 'notDelivered', retry: 'never', code: 'senderUntrusted' } },
+    { state: 'notSent', result: { kind: 'notDelivered', retry: 'never' } },
     { state: 'retryDue', result: { kind: 'notDelivered', retry: 'after', retryAfterMs: 5_000 } },
-    { state: 'outcomeUnknown', result: { kind: 'outcomeUnknown', providerMessageIds: ['private-receipt'], code: 'sentCopyUnconfirmed' } },
-    { state: 'partial', result: { kind: 'partial', providerMessageIds: ['private-receipt'], failedChunk: 1, retrySafe: false } },
+    { state: 'outcomeUnknown', result: { kind: 'outcomeUnknown', providerMessageIds: ['private-receipt'] } },
+    { state: 'partial', result: { kind: 'partial', providerMessageIds: ['private-receipt'], failedChunk: 1 } },
     { state: 'retryDue', result: { kind: 'notReady', reason: 'network', diagnostic: 'private provider error and address' } },
   ] satisfies readonly { state: string; result: ConversationDeliveryResultV1 }[])(
     'records a $state attempt settlement once with content-free provider evidence', async ({ state: settledState, result }) => {
@@ -3776,7 +4245,6 @@ describe('Channels outward-delivery supervisor', () => {
       settlementStatus: 'settled', providerOperation: 'deliver', providerResultKind: result.kind,
       ...('retry' in result ? { providerRetry: result.retry } : {}),
       ...('reason' in result ? { providerResultCode: result.reason } : {}),
-      ...('code' in result ? { providerResultCode: result.code } : {}),
       ...(settledState === 'retryDue' ? { retryNotBefore: result.kind === 'notReady' ? 1_100 : 5_100 } : {}),
     }]);
     expect(row?.value.payload).toMatchObject({ state: settledState, attemptCount: 1 });
@@ -3791,13 +4259,23 @@ describe('Channels outward-delivery supervisor', () => {
     await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
     expect(records()).toHaveLength(1);
     expect(deliver).toHaveBeenCalledOnce();
+    if (settledState === 'retryDue') {
+      // Rejoining retained custody before its real deadline is expected work,
+      // not a second provider failure. Keep the original failed attempt visible.
+      expect(logger.warn.mock.calls.map(([, detail]) => detail.code))
+        .not.toContain('channels_projection_notDue');
+      expect(logger.info).toHaveBeenCalledWith('[Channels] outward delivery supervisor work completed', {
+        boundary: 'transcript-projection', bindingId: 'binding-1',
+        code: 'channels_projection_notDue', retryable: false,
+      });
+    }
     const serialized = JSON.stringify([logger.info.mock.calls, logger.warn.mock.calls]);
     for (const secret of ['private answer', 'private-receipt', 'private provider error and address']) {
       expect(serialized).not.toContain(secret);
     }
   });
 
-  it('records provider acceptance even when cancellation prevents durable settlement', async () => {
+  it('settles known provider acceptance after local cancellation while keeping abort diagnostics silent', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
@@ -3814,13 +4292,11 @@ describe('Channels outward-delivery supervisor', () => {
     const admitted = await store.ensure(outwardObligation());
     if (admitted.kind !== 'created') throw new Error('Expected retained custody');
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
-    expect(logger.warn.mock.calls.map(call => call[1])).toEqual([{
-      boundary: 'delivery-operation', connectionId: 'connection-1', bindingId: 'binding-1',
-      code: 'channels_delivery_delivered', retryable: true,
-      custodyId: admitted.record.custodyId, attemptCount: 1, settledState: 'delivered',
-      settlementStatus: 'settlementPending', providerOperation: 'deliver', providerResultKind: 'delivered',
-    }]);
-    expect(deliveries.rows.get(admitted.record.custodyId)?.value.payload).toMatchObject({ state: 'attempting' });
+    expect(context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(deliveries.rows.get(admitted.record.custodyId)?.value.payload).toMatchObject({
+      state: 'delivered', providerMessageIds: ['private-receipt'],
+    });
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('private-receipt');
   });
 
@@ -3844,13 +4320,82 @@ describe('Channels outward-delivery supervisor', () => {
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
     expect(logger.warn.mock.calls).toEqual([['[Channels] outward delivery supervisor work failed', {
       boundary: 'delivery-operation', connectionId: 'connection-1', bindingId: 'binding-1',
-      code: 'channels_delivery_notDelivered', retryable: false,
-      custodyId: admitted.record.custodyId, attemptCount: 1, settledState: 'notDelivered',
+      code: 'channels_delivery_notSent', retryable: false,
+      custodyId: admitted.record.custodyId, attemptCount: 1, settledState: 'notSent',
       settlementStatus: 'settled', providerOperation: 'deliver', providerResultKind: 'notDelivered', providerRetry: 'never',
     }]]);
     expect(deliveries.rows.get(admitted.record.custodyId)?.value).toMatchObject({
-      attention: true, payload: { state: 'notDelivered' },
+      attention: true, payload: { state: 'notSent', reason: 'providerRefused' },
     });
+  });
+
+  it.each(['unavailable', 'publicationBarrier', 'permanentRefusal'] as const)(
+    'uses the existing recovery deadline for a retained notice baseline: %s', async failure => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const rowId = createConversationSessionProjectionFrontierRowId('binding-1');
+    const row = state.rows.get(rowId);
+    if (row === undefined) throw new Error('Expected projection frontier');
+    const notice = { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 50 };
+    await state.put(createConversationSessionProjectionFrontierRow({
+      bindingId: 'binding-1', targetSessionId: 'session-1', transcriptCursor: notice,
+      lastScannedSeq: 0, revision: 2, now: 50,
+    }), { expectedRevision: row.revision });
+    let baselineReads = 0;
+    const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
+      if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
+      baselineReads++;
+      if (failure === 'permanentRefusal') throw new PluginError({
+        code: 'unsupported_action', retryable: false, message: 'private baseline refusal',
+      });
+      if (baselineReads <= 2 && failure === 'unavailable') throw new PluginError({
+        code: 'service_unavailable', retryable: true, message: 'private baseline outage',
+      });
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+        scannedThroughSeq: baselineReads <= 2 && failure === 'publicationBarrier' ? 0 : 5,
+        ...(baselineReads <= 2 && failure === 'publicationBarrier' ? {} : { nextCursor: '5' }),
+        hasMore: baselineReads <= 2 && failure === 'publicationBarrier', items: [] };
+    });
+    // The Account watch boundary delivers no external invalidation in this
+    // scenario. Recovery must use the incumbent deadline, not a later event.
+    const watch = () => ({ dispose() {} });
+    Object.assign(state, { watch });
+    Object.assign(deliveries, { watch });
+    const generation = new AbortController();
+    const logger = { warn: vi.fn() };
+    const context = { ...backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(), logger }), signal: generation.signal };
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const run = supervisor.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(baselineReads).toBe(1);
+      if (failure === 'permanentRefusal') {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(baselineReads).toBe(1);
+        expect(logger.warn).toHaveBeenCalledWith('[Channels] outward delivery supervisor work failed', {
+          boundary: 'transcript-projection', bindingId: 'binding-1', code: 'unsupported_action', retryable: false,
+        });
+      } else {
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(baselineReads).toBe(2);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(baselineReads).toBe(3);
+        expect(state.rows.get(rowId)?.value).toMatchObject({
+          payload: { transcriptCursor: { ...notice, cursor: '5' }, lastScannedSeq: 5 },
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(baselineReads).toBe(3);
+      }
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('private');
+      expect(deliveries.rows.size).toBe(0);
+    } finally {
+      generation.abort(); await run; await supervisor.dispose(); vi.useRealTimers();
+    }
   });
 
   it.each(['transcript', 'custody'] as const)('recovers a failed %s read through projection and custody without a new invalidation or duplicate reply', async (boundary) => {
@@ -4081,6 +4626,188 @@ describe('Channels outward-delivery supervisor', () => {
     expect(state.rows.get(reservationId)?.deleted).toBe(true);
     expect(execute).not.toHaveBeenCalled();
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
+  });
+
+  it('refuses a captured Discussion reply after its frontier advances during the content read', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedDiscussionProjectionState(state);
+    const root = discussionMessage('inbound-1', 1, 'External input', { localId: `channels:9:binding-1:${'a'.repeat(43)}` });
+    const execute = vi.fn(async (_action: string, input: { messageId?: string }) => {
+      if (input.messageId === root.id) return { v: 1, serverId: 'srv_account_one', discussionId: 'discussion-1',
+        messages: [root], messageSeq: 2, incomplete: false, hasMoreOlder: false };
+      await state.put(createConversationDiscussionProjectionFrontierRow({ bindingId: 'binding-1',
+        targetDiscussionId: 'discussion-1', lastScannedSeq: 2, now: 100 }), { expectedRevision: 1 });
+      return { v: 1, serverId: 'srv_account_one', discussionId: 'discussion-1',
+        messages: [discussionMessage('captured-reply', 2, 'Captured reply', { replyTo: root.id })],
+        messageSeq: 2, incomplete: false, hasMoreOlder: false };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['stale-reply'] }, executionOrigin: providerTransportOrigin }));
+    await runConversationOutwardDeliveryCycle({ context: backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver }), now: () => 100 });
+    expect(deliveries.rows.size).toBe(0);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(state.rows.get(createConversationSessionProjectionFrontierRowId('binding-1'))?.value.payload).toMatchObject({ lastScannedSeq: 2 });
+  });
+
+  it('projects only own threaded Discussion replies through outward custody once across replay', async () => {
+    // A lost frontier CAS forces replay of already-delivered persisted custody.
+    const state = new MemoryCollection({ conflictNextBatch: true });
+    const deliveries = new MemoryCollection();
+    await seedDiscussionProjectionState(state);
+    const root = discussionMessage('inbound-1', 1, 'External input', {
+      localId: `channels:9:binding-1:${'a'.repeat(43)}`,
+    });
+    const messages = [
+      discussionMessage('answer-1', 2, 'Human answer', { replyTo: root.id }),
+      { ...discussionMessage('answer-2', 3, 'Nested Agent answer', { replyTo: 'answer-1' }),
+        producerV1: { v: 1 as const, kind: 'agent' as const, sessionId: 'agent-session-1' } },
+      { ...discussionMessage('workflow-answer', 4, 'unused', { replyTo: root.id }),
+        content: { kind: 'workflow_result' as const, summary: 'Workflow answer', value: { result: true },
+          source: { runId: 'run-1', invocationRecordId: 'invocation-1', invocationAttempt: '1' } } },
+      { ...discussionMessage('doc-answer', 5, 'unused', { replyTo: root.id }),
+        content: { kind: 'doc_passage_comment' as const, content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'Passage answer' }] },
+          passage: { ref: { artifactId: 'doc-1', kind: 'doc' as const, serverId: 'srv_account_one' },
+            revision: { headerVersion: 1, bodyVersion: 1 }, range: { start: 0, end: 1 }, quote: 'Q' } } },
+      discussionMessage('other-inbound', 6, 'Other binding input', { localId: `channels:9:binding-2:${'b'.repeat(43)}` }),
+      discussionMessage('other-answer', 7, 'Other answer', { replyTo: 'other-inbound' }),
+      discussionMessage('own-inbound', 8, 'Do not echo', { localId: `channels:9:binding-1:${'c'.repeat(43)}` }),
+      discussionMessage('unthreaded', 9, 'No implicit mirror'),
+    ];
+    const execute = vi.fn(async (action: string, input: { afterSeq?: number; messageId?: string }) => {
+      if (action !== 'discussion.read') throw new Error(`Unexpected Action ${action}`);
+      return { v: 1, serverId: 'srv_account_one', discussionId: 'discussion-1',
+        messages: input.messageId === root.id ? [root] : messages.filter(message => message.seq > (input.afterSeq ?? 0)).slice(0, 4),
+        messageSeq: 9, incomplete: false, hasMoreOlder: false };
+    });
+    const deliver = vi.fn(async (_operation: unknown, _input: ConversationDeliveryInputV1) => ({
+      result: { kind: 'delivered', providerMessageIds: ['reply'] }, executionOrigin: providerTransportOrigin,
+    }));
+    const context = backgroundContext({ state, deliveries, execute, executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    expect(execute.mock.calls.filter(([, input]) => input.messageId === root.id)).toHaveLength(1);
+    for (let wake = 1; wake < 4; wake++) await runConversationOutwardDeliveryCycle({ context, now: () => 100 + wake });
+    expect(deliver.mock.calls.map(([, input]) => input.content.text)).toEqual(['Human answer', 'Nested Agent answer', 'Workflow answer', 'Passage answer']);
+    expect(execute.mock.calls.filter(([, input]) => input.messageId === root.id)).toHaveLength(2);
+    expect([...deliveries.rows.values()]).toMatchObject([
+      { value: { payload: { state: 'delivered', source: { kind: 'discussionProjection', discussionId: 'discussion-1', semanticItemId: 'answer-1' } } } },
+      { value: { payload: { state: 'delivered', source: { kind: 'discussionProjection', semanticItemId: 'answer-2' } } } },
+      { value: { payload: { state: 'delivered', source: { kind: 'discussionProjection', semanticItemId: 'workflow-answer' } } } },
+      { value: { payload: { state: 'delivered', source: { kind: 'discussionProjection', semanticItemId: 'doc-answer' } } } },
+    ]);
+    expect(state.rows.get('projection-frontier:binding-1')?.value.payload).toEqual({ targetDiscussionId: 'discussion-1', lastScannedSeq: 9 });
+  });
+
+  it('settles an unknown future binding target as unavailable without reading a Session or provider', async () => {
+    const state = new MemoryCollection();
+    const binding = bindingRow();
+    await state.put({ ...binding, payload: { ...binding.payload, target: { kind: 'future-target' } } }, { expectedRevision: 'absent' });
+    await expect(readConversationPermissionWaitMediationSource({ stateCollection: state as never,
+      bindingId: 'binding-1', signal: new AbortController().signal })).resolves.toEqual({ kind: 'unavailable', reason: 'bindingUnavailable' });
+    await state.put(connectionRow(), { expectedRevision: 'absent' });
+    const execute = vi.fn();
+    const deliver = vi.fn();
+    const result = await runConversationOutwardDeliveryCycle({ context: backgroundContext({ state,
+      deliveries: new MemoryCollection(), execute, executeAdmittedTargetedOperationWithExecutionOrigin: deliver }), now: () => 100 });
+    expect(result.nextWakeAt).toBeUndefined();
+    expect(result.nextBindingIds).toBeUndefined();
+    expect(execute).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('preserves the Discussion frontier and settles unreadable reply ancestry without a retry loop', async () => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedDiscussionProjectionState(state);
+    const execute = vi.fn(async (_action: string, input: { messageId?: string }) => ({
+      v: 1, serverId: 'srv_account_one', discussionId: 'discussion-1', messageSeq: 2, incomplete: false, hasMoreOlder: false,
+      messages: input.messageId ? [] : [discussionMessage('answer', 2, 'Unreadable ancestor', { replyTo: 'missing-parent' })],
+    }));
+    const deliver = vi.fn();
+    const context = backgroundContext({ state, deliveries, execute, executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
+    const result = await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    expect(context.services.logger.warn).toHaveBeenCalledWith('[Channels] outward delivery supervisor work failed',
+      expect.objectContaining({ code: 'discussion_content_unavailable', retryable: false }));
+    expect(state.rows.get('projection-frontier:binding-1')?.value.payload).toEqual({ targetDiscussionId: 'discussion-1', lastScannedSeq: 1 });
+    expect(result.nextWakeAt).toBeUndefined();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('observes Discussion pushes lazily once and reads only affected bindings without polling', async () => {
+    vi.useFakeTimers();
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedDiscussionProjectionState(state);
+    const firstBinding = state.rows.get('binding-1');
+    if (firstBinding === undefined || !isChannelStateJsonRecord(firstBinding.value.payload)) throw new Error('Expected binding');
+    await state.put({ ...firstBinding.value, id: 'binding-2', 'binding-id': 'binding-2',
+      payload: { ...firstBinding.value.payload, target: { kind: 'discussion', discussionId: 'discussion-2', policy: { deliveryMode: 'repliesOnly' } } } },
+    { expectedRevision: 'absent' });
+    await state.put(createConversationDiscussionProjectionFrontierRow({ bindingId: 'binding-2',
+      targetDiscussionId: 'discussion-2', lastScannedSeq: 0, now: 0 }), { expectedRevision: 'absent' });
+    const generation = new AbortController();
+    const listeners = new Set<(event: HostEventEnvelope) => void>();
+    const dispose = vi.fn();
+    // The host event transport is the system boundary; the supervisor and its cycle remain real.
+    const subscribe: HostEvents['subscribe'] = vi.fn((target, listener) => {
+      expect(target).toEqual({ eventId: '@happier/session/discussion-invalidated', scope: { kind: 'account' } });
+      const relay = (event: HostEventEnvelope) => { void listener(event as never); };
+      listeners.add(relay);
+      return { dispose() { dispose(); listeners.delete(relay); } };
+    });
+    let answer = false;
+    const root = discussionMessage('inbound-1', 1, 'External input', { localId: `channels:9:binding-1:${'a'.repeat(43)}` });
+    const execute = vi.fn(async (action: string, input: { discussionId: string; afterSeq?: number; messageId?: string }) => {
+      if (action !== 'discussion.read') throw new Error(`Unexpected Action ${action}`);
+      expect(listeners.size).toBe(1);
+      if (input.discussionId === 'discussion-2') return { v: 1, serverId: 'srv_account_one', discussionId: 'discussion-2',
+        messageSeq: 0, incomplete: false, hasMoreOlder: false, messages: [] };
+      return { v: 1, serverId: 'srv_account_one', discussionId: 'discussion-1', messageSeq: answer ? 2 : 1,
+        incomplete: false, hasMoreOlder: false,
+        messages: input.messageId ? [root] : answer && (input.afterSeq ?? 0) < 2
+          ? [discussionMessage('pushed-answer', 2, 'Pushed answer', { replyTo: root.id })] : [] };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['push'] }, executionOrigin: providerTransportOrigin }));
+    const context = backgroundContext({ state, deliveries, execute, executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
+    const stateReads = vi.spyOn(state, 'get');
+    const queries = vi.spyOn(state, 'query');
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const running = supervisor.run({ ...context, signal: generation.signal,
+      services: { ...context.services, events: { ...context.services.events, host: { subscribe } } } });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(subscribe).toHaveBeenCalledOnce();
+      const readsBefore = stateReads.mock.calls.length;
+      const queriesBefore = queries.mock.calls.length;
+      const actionsBefore = execute.mock.calls.length;
+      const otherBindingReadsBefore = stateReads.mock.calls.filter(([rowId]) => rowId === 'binding-2').length;
+      for (let ordinal = 0; ordinal < 100; ordinal++) {
+        for (const listener of listeners) listener({ eventId: '@happier/session/discussion-invalidated',
+          scope: { kind: 'account' }, payload: { discussionId: `unrelated-${ordinal}`, revision: ordinal } });
+      }
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(stateReads).toHaveBeenCalledTimes(readsBefore);
+      expect(queries).toHaveBeenCalledTimes(queriesBefore);
+      expect(execute).toHaveBeenCalledTimes(actionsBefore);
+      answer = true;
+      for (const listener of listeners) listener({ eventId: '@happier/session/discussion-invalidated',
+        scope: { kind: 'account' }, payload: { discussionId: 'discussion-1', revision: 101 } });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce(), { interval: 0 });
+      expect(execute.mock.calls.length).toBeGreaterThan(actionsBefore);
+      expect(stateReads.mock.calls.filter(([rowId]) => rowId === 'binding-2')).toHaveLength(otherBindingReadsBefore);
+      const binding = state.rows.get('binding-1');
+      if (binding === undefined || !isChannelStateJsonRecord(binding.value.payload)) throw new Error('Expected binding');
+      await state.put({ ...binding.value, payload: { ...binding.value.payload, enabled: false } }, { expectedRevision: binding.revision });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listeners.size).toBe(1);
+      const remaining = state.rows.get('binding-2');
+      if (remaining === undefined || !isChannelStateJsonRecord(remaining.value.payload)) throw new Error('Expected binding');
+      await state.put({ ...remaining.value, payload: { ...remaining.value.payload, enabled: false } }, { expectedRevision: remaining.revision });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listeners.size).toBe(0);
+    } finally { generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers(); }
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('projects the public Session transcript through custody once and retains the advanced frontier across a later wake', async () => {
@@ -4382,6 +5109,51 @@ describe('Channels outward-delivery supervisor', () => {
     });
   });
 
+  it.each(['delivered', 'partial', 'notDelivered'] as const)('keeps recovered delivery unknown after a retired %s completion without resending', async (outcome) => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    let releaseSend!: () => void;
+    let now = 0;
+    let sendStarted!: () => void;
+    const heldSend = new Promise<void>(resolve => { releaseSend = resolve; });
+    const started = new Promise<void>(resolve => { sendStarted = resolve; });
+    const execute = vi.fn(async () => ({ ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+      scannedThroughSeq: 0, nextCursor: '0', hasMore: false, items: [] }));
+    const provider = vi.fn(async (operation: typeof providerDeliveryAction) => {
+      if (operation === providerDeliveryAction) {
+        sendStarted();
+        await heldSend;
+        const result: ConversationDeliveryResultV1 = outcome === 'delivered'
+          ? { kind: 'delivered', providerMessageIds: ['late-receipt'] }
+          : outcome === 'partial'
+            ? { kind: 'partial', providerMessageIds: ['late-receipt'], failedChunk: 1 }
+            : { kind: 'notDelivered', retry: 'safe' };
+        return { result, executionOrigin: providerTransportOrigin };
+      }
+      return { result: { kind: 'outcomeUnknown' }, executionOrigin: providerTransportOrigin };
+    });
+    const context = backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: provider });
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal: context.signal, now: () => now });
+    await store.ensure(outwardObligation());
+    const original = runConversationOutwardDeliveryCycle({ context, now: () => now,
+      createAttemptId: () => 'original-attempt' });
+    await started;
+    try {
+      now = 30_001;
+      await runConversationOutwardDeliveryCycle({ context, now: () => 30_001 });
+      expect([...deliveries.rows.values()][0]?.value.payload).toMatchObject({ state: 'outcomeUnknown',
+        attemptCount: 1 });
+    } finally { releaseSend(); await original; }
+    await runConversationOutwardDeliveryCycle({ context, now: () => 30_002 });
+    expect([...deliveries.rows.values()][0]?.value.payload).toMatchObject({
+      state: 'outcomeUnknown', providerMessageIds: [], attemptCount: 1, content: null });
+    expect(provider.mock.calls.filter(([operation]) => operation === providerDeliveryAction)).toHaveLength(1);
+    expect(provider.mock.calls.filter(([operation]) => operation === providerDeliveryReconcileAction)).toHaveLength(1);
+  });
+
   it('reconciles a stale retained attempt through the optional provider Action instead of re-sending it after restart', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
@@ -4416,7 +5188,7 @@ describe('Channels outward-delivery supervisor', () => {
         state: 'attempting',
         attemptCount: 1,
         attemptId: 'lost-attempt-1',
-        startedAt: 0,
+
         providerMessageIds: [],
       },
     });
@@ -4424,7 +5196,6 @@ describe('Channels outward-delivery supervisor', () => {
     await runConversationOutwardDeliveryCycle({
       context,
       now: () => 100,
-      staleAttemptAfterMs: 30,
       createAttemptId: () => 'recovery-attempt-1',
     });
 

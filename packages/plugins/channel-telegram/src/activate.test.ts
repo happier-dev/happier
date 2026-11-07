@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { ConversationProvidersContributionProtocolV1, ConversationProviderDescriptorV1Schema } from '@happier-dev/channels-protocol/v1';
 import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -13,9 +15,12 @@ import {
   TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
   TELEGRAM_BOT_CREDENTIAL_PURPOSE,
   TELEGRAM_CHANNEL_ACTION_IDS,
+  TELEGRAM_CHANNEL_PROVIDER_CONTRIBUTION_ID,
 } from './constants.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
-import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST);
+const PACKAGED_UI_TRANSLATION_BUNDLES = Object.entries(PACKAGED_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages }));
 
 const telegramAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
@@ -84,7 +89,7 @@ function coreContext(services: Readonly<{
 
 describe('Telegram Channel plugin activation', () => {
   it('publishes the BotFather guide before setup or Connected Account materialization', () => {
-    const declaration = PLUGIN_MANIFEST.contributes.targetedPluginContributions?.find(entry => entry.target.pointId === 'providers');
+    const declaration = PLUGIN_MANIFEST.contributes.targetedPluginContributions?.find(entry => entry.id === TELEGRAM_CHANNEL_PROVIDER_CONTRIBUTION_ID);
     const descriptor = ConversationProviderDescriptorV1Schema.parse(declaration?.descriptor);
     expect(descriptor).toMatchObject({ setupGuidance: {
       externalUrl: 'https://t.me/BotFather',
@@ -93,6 +98,7 @@ describe('Telegram Channel plugin activation', () => {
         { externalUrl: 'https://core.telegram.org/bots/tutorial#obtain-your-bot-token',
           copyableValues: [{ value: '/newbot' }] },
         { title: expect.any(String) },
+        { title: expect.stringContaining('Manage Topics') },
       ],
     } });
     expect(JSON.stringify(descriptor)).not.toMatch(/credentialRef|providerConfig|integrationPrincipal|pairingDeepLinkTemplate/);
@@ -123,7 +129,8 @@ describe('Telegram Channel plugin activation', () => {
   });
 
   it('publishes the complete plugin-owned UI translation bundles', () => {
-    expect(PLUGIN_MANIFEST.contributes.ui?.translations).toEqual(TELEGRAM_UI_TRANSLATION_BUNDLES);
+    expect(PLUGIN_MANIFEST.contributes.ui?.translations?.map(({ locale }) => locale).sort())
+      .toEqual(PACKAGED_UI_TRANSLATION_BUNDLES.map(({ locale }) => locale).sort());
   });
 
   it('declares remote Telegram delivery and setup remediation as writesRemote', () => {
@@ -368,6 +375,7 @@ describe('Telegram Channel plugin activation', () => {
             { title: expect.any(String), externalUrl: 'https://core.telegram.org/bots/tutorial#obtain-your-bot-token',
               copyableValues: [{ label: expect.any(String), value: '/newbot' }] },
             { title: expect.any(String) },
+            { title: expect.stringContaining('Manage Topics') },
           ],
         },
         pairingDeepLinkTemplate: 'https://t.me/HappierBot?start={{token}}',

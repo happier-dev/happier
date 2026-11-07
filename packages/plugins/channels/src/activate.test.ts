@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import {
   definePlugin,
   PluginError,
@@ -12,6 +13,7 @@ import { PLUGIN_COLLECTION_REVISION_MAX } from '@happier-dev/plugin-sdk/collecti
 import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
+  parsePluginManifest,
   type PluginManifest,
 } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
@@ -26,7 +28,6 @@ import {
   CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
   ConversationConnectionCreateResultV1Schema,
   ConversationConnectionIdV1Schema,
-  ConversationProviderConnectionStopInputV1Schema,
   ConversationProvidersContributionProtocolV1,
   SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
 } from '@happier-dev/channels-protocol/v1';
@@ -36,8 +37,6 @@ import { activate } from './activate.js';
 import {
   CHANNEL_DELIVERIES_COLLECTION,
   CHANNEL_STATE_COLLECTION,
-  CHANNEL_STATE_FIELD,
-  CHANNEL_STATE_FIXED_ROW_ID,
   CHANNEL_STATE_RECORD_KIND,
   type PersistedConversationProviderContributionSelection,
 } from './collections.js';
@@ -552,7 +551,7 @@ function createMutableChannelStateCollection(options: Readonly<{
       return { status: 'updated' as const, results, changeCursor };
     },
     async query(request: Readonly<{
-      index: 'by-kind' | 'by-connection-binding-v2' | 'by-attention';
+      index: 'by-kind' | 'by-connection-binding-v2' | 'by-connection-kind-v1' | 'by-attention';
       prefix?: readonly (string | boolean | null)[];
       cursor?: string;
       limit?: number;
@@ -565,6 +564,10 @@ function createMutableChannelStateCollection(options: Readonly<{
           if (prefix === undefined) return true;
           const value = row.value;
           if (request.index === 'by-kind') return value['record-kind'] === prefix;
+          if (request.index === 'by-connection-kind-v1') {
+            const tuple = [value['connection-id'], value['record-kind']];
+            return (request.prefix ?? []).every((member, index) => tuple[index] === member);
+          }
           if (request.index === 'by-connection-binding-v2') {
             // The exact V2 tuple, not just its first member: a fake that
             // ignored `record-kind`/`attention` answered the bounded
@@ -595,7 +598,7 @@ function createMutableChannelStateCollection(options: Readonly<{
     },
     watch(
       _request: Readonly<{
-        index: 'by-kind' | 'by-connection-binding-v2' | 'by-attention';
+        index: 'by-kind' | 'by-connection-binding-v2' | 'by-connection-kind-v1' | 'by-attention';
         prefix?: readonly string[];
       }>,
       listener: (event: Readonly<{ kind: 'changed'; changeCursor: number }>) => void,
@@ -671,6 +674,7 @@ describe('Channels core activation', () => {
   it('starts a conversation through the registered Action with an owner group and 120KB HTML in one custody row', async () => {
     const state = createMutableChannelStateCollection();
     const deliveries = createMutableChannelStateCollection();
+    const info = vi.fn();
     state.rows.set('connection-start', { rowId: 'connection-start', revision: 4, value: reconciliationConnection('connection-start') });
     state.rows.set('router-start', { rowId: 'router-start', revision: 2, value: {
       id: 'router-start', 'record-kind': 'binding', v: 1, 'connection-id': 'connection-start',
@@ -684,11 +688,15 @@ describe('Channels core activation', () => {
       },
     } });
     const core = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate },
-      services: { sessions: { get: async (id: string) => id === 'missing-session' ? null : ({
+      services: { logger: { info, debug: () => {}, warn: () => {}, error: () => {}, diagnostic: () => {} },
+        sessions: { get: async (id: string) => id === 'missing-session' ? null : ({
         summary: async () => ({ id, state: 'archived', hasAttestedContext: id === 'attested-session' ? true
           : id === 'unknown-attestation-session' ? undefined : false }),
       }) } as unknown as PluginServices['sessions'], actions: { execute: async (_action: unknown, input: unknown) => {
         const sessionId = (input as Readonly<{ sessionId: string }>).sessionId;
+        if (sessionId === 'unreadable-transcript-session') throw new PluginError({
+          code: 'unsupported_action', message: 'PRIVATE_TRANSCRIPT_DIAGNOSTIC', retryable: false,
+        });
         return sessionId !== 'missing-session' ? { ok: true, projection: 'externalShareableV1', sessionId,
           scannedThroughSeq: 0, nextCursor: '0', hasMore: false, items: [] }
           : { ok: false, sessionId, error: 'not_found' };
@@ -698,6 +706,19 @@ describe('Channels core activation', () => {
     });
     const content = { text: 'Brief', html: '<p>' + 'a'.repeat(120 * 1024) + '</p>' };
     try {
+      await expect(core.invokeAction('conversation/start-v1', {
+        routerBindingId: 'router-start', audienceGroupId: 'brief', subject: 'Brief', content, sessionId: 'unreadable-transcript-session',
+      })).rejects.toMatchObject({ code: 'channels_conversation_start_session_unavailable', details: {
+        projectionKind: 'unavailable', projectionReason: 'transcriptUnavailable', actionErrorCode: 'unsupported_action',
+      } });
+      expect(info.mock.calls.filter(([message]) => message === '[Channels] Conversation start baseline unavailable')).toEqual([[
+        '[Channels] Conversation start baseline unavailable', {
+          sessionId: 'unreadable-transcript-session', projectionKind: 'unavailable',
+          projectionReason: 'transcriptUnavailable', actionErrorCode: 'unsupported_action',
+        },
+      ]]);
+      expect(JSON.stringify(info.mock.calls)).not.toContain('PRIVATE_TRANSCRIPT_DIAGNOSTIC');
+      expect(deliveries.rows.size).toBe(0);
       await expect(core.invokeAction('conversation/start-v1', {
         routerBindingId: 'router-start', audienceGroupId: 'unknown', subject: 'Brief', content, sessionId: 'session-brief',
       })).rejects.toMatchObject({ code: 'channels_conversation_start_audience_not_found' });
@@ -786,9 +807,11 @@ describe('Channels core activation', () => {
     // registration the manifest never declared has no declaration to come from.
     // Spelling the ids again here would only restate the manifest a second
     // time — what has to hold is that the two agree, family for family.
-    const contributes = PLUGIN_MANIFEST.contributes ?? {};
+    const parsed = parsePluginManifest(PLUGIN_MANIFEST);
+    if (!parsed.ok) throw new Error(parsed.diagnostics.map(diagnostic => diagnostic.message).join('; '));
+    const contributes = parsed.manifest.contributes;
     const expected = [
-      ...(contributes.actions ?? []).map((action) => ({
+      ...(contributes.actions ?? []).filter((action) => action.execution.target === 'daemon').map((action) => ({
         family: 'actions',
         localId: action.id,
       })),
@@ -800,7 +823,11 @@ describe('Channels core activation', () => {
         family: 'composerAttachments', localId: attachment.id,
       })),
       ...(contributes.resources ?? [])
-        .filter((resource) => resource.source === 'dynamic')
+        .filter((resource) => {
+          const execution = resource.execution;
+          return resource.source === 'dynamic' && !(execution !== null && typeof execution === 'object'
+            && 'target' in execution && execution.target === 'account');
+        })
         .map((resource) => ({ family: 'resources', localId: resource.id })),
     ];
 
@@ -1140,7 +1167,7 @@ describe('Channels core activation', () => {
         endpoint: { kind: 'direct', audience: 'direct', id: 'conversation-private' },
         content: { text: 'The private delivery body stays in custody.' },
         deliveryKey: 'control:delivery-resolution',
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
       });
       if (created.kind !== 'created') throw new Error('Expected retained delivery custody setup.');
@@ -1170,7 +1197,8 @@ describe('Channels core activation', () => {
         revision: partial.record.revision + 1,
         value: {
           payload: {
-            state: 'resolvedAccepted',
+            state: 'resolved',
+            outcome: 'accepted',
             providerMessageIds: ['provider-message-private'],
             failedChunk: 1,
           },
@@ -1405,7 +1433,7 @@ describe('Channels core activation', () => {
     }
   });
 
-  it('updates one retained connection through its guarded row CAS while preserving recovery attention and withholding provider reconciliation', async () => {
+  it('updates one retained connection through its guarded row CAS while preserving recovery attention and provider reconciliation', async () => {
     const connectionId = 'connection-update-1';
     const updatedBatches: Array<readonly MutableChannelStateMutation[]> = [];
     let abortDuringConnectionGet: AbortController | null = null;
@@ -1492,13 +1520,13 @@ describe('Channels core activation', () => {
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
       let invalidations = 0;
-      const observation = resource.observe(
+      const observation = await resource.observe(
         () => { invalidations += 1; },
-        {
+        createTestResourceInvocationContext({
           signal: new AbortController().signal,
           context: { kind: 'global' },
           accountStorage: resourceAccountStorage,
-        },
+        }),
       );
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
@@ -1547,12 +1575,12 @@ describe('Channels core activation', () => {
         maximumObservationAgeMs: 120_000,
         observationAgeExpansionFloorOccurredAt,
       });
-      expect(invalidations).toBe(2);
-      await expect(resource.read({
+      expect(invalidations).toBe(1);
+      await expect(resource.read(createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: resourceAccountStorage,
-      })).resolves.toEqual(JSON.stringify({
+      }))).resolves.toEqual(JSON.stringify({
         connections: [{
           connectionId,
           revision: 5,
@@ -1579,11 +1607,11 @@ describe('Channels core activation', () => {
             input: { connectionId, expectedRevision: 5, enabled: true, maximumObservationAgeMs: 120_000 }, reason: 'connectionDisabled' },
         }],
       }));
-      observation.dispose();
+      await observation.dispose();
 
-      await expect(reconciler.invokeAction('reconcile', {})).resolves.toEqual({
-        list: {},
-        read: {},
+      await expect(reconciler.invokeAction('reconcile', {})).resolves.toMatchObject({
+        list: { [connectionId]: { connectionId, enabled: false, authorityEpoch: 5 } },
+        read: { [connectionId]: { connectionId, enabled: false, authorityEpoch: 5 } },
       });
 
       const writeCountAfterSuccess = updatedBatches.length;
@@ -1673,1022 +1701,14 @@ describe('Channels core activation', () => {
     }
   });
 
-  it('uses the generic routing precondition before stopping an old transport and settles only its returned proof', async () => {
-    const exactConnectionId = 'connection-delete-exact-origin';
-    const mismatchConnectionId = 'connection-delete-mismatch-origin';
-    const collection = createMutableChannelStateCollection();
-    const stopInputs: ReturnType<typeof ConversationProviderConnectionStopInputV1Schema.parse>[] = [];
-    const provider = await createPluginTestkit({
-      manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST,
-      module: {
-        activate(api) {
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.setup, async () => {
-            throw new Error('The old-stop fixture must not set up a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionTest, async () => {
-            throw new Error('The old-stop fixture must not test a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.messageDeliver, async () => ({ kind: 'delivered' }));
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionStop, async (input) => {
-            stopInputs.push(ConversationProviderConnectionStopInputV1Schema.parse(input));
-            return { kind: 'stopped' };
-          });
-          api.backgroundServices.register('socket-supervisor', async () => {});
-        },
-      },
-    });
-    const storage = {
-      account: { collection: () => collection },
-    } as unknown as PluginServices['storage'];
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: {
-        storage,
-      },
-      actionTargets: [provider],
-      targetedContributionContributors: [provider],
-    });
-    const providerContributionSelection = targetedSocketProviderSelection(core).contributor;
-    const exact = socketConnectionForProvider({
-      connectionId: exactConnectionId,
-      providerPluginId: PROVIDER_SOCKET_SETUP_TEST_MANIFEST.id,
-      providerContributionSelection,
-    });
-    const mismatch = socketConnectionForProvider({
-      connectionId: mismatchConnectionId,
-      providerPluginId: PROVIDER_SOCKET_SETUP_TEST_MANIFEST.id,
-      materializationId: 'old-transport-materialization',
-      machineId: 'old-transport-machine',
-      providerContributionSelection,
-    });
-    collection.rows.set(exactConnectionId, { rowId: exactConnectionId, revision: 4, value: exact });
-    collection.rows.set(mismatchConnectionId, { rowId: mismatchConnectionId, revision: 4, value: mismatch });
 
-    try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId: mismatchConnectionId,
-        expectedRevision: 4,
-      }, {
-        services: channelsTargetedContributionServices(core),
-      })).rejects.toMatchObject({ code: 'plugin_action_execution_origin_mismatch' });
-      expect(stopInputs).toEqual([]);
-      expect(collection.rows.get(mismatchConnectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            enabled: false,
-            deletionState: 'pendingStopReconciliation',
-            pendingOldTransportStop: {
-              transportOrigin: mismatch.payload.transportOrigin,
-              acceptedPossibleLoss: false,
-            },
-          },
-        },
-      });
 
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId: exactConnectionId,
-        expectedRevision: 4,
-      }, {
-        services: channelsTargetedContributionServices(core),
-      })).resolves.toEqual({
-        kind: 'deleteFinalizing',
-        connectionId: exactConnectionId,
-        revision: 6,
-        authorityEpoch: 5,
-        acceptedPossibleLoss: false,
-      });
-      expect(stopInputs).toEqual([{
-        v: 1,
-        connectionId: exactConnectionId,
-        providerConnectionKey: `discord:${exactConnectionId}`,
-        providerConfigVersion: 1,
-        providerConfig: { applicationId: 'application-1' },
-        credentialRef: null,
-        authorityEpoch: 5,
-        reason: 'delete',
-      }]);
-      expect(collection.rows.get(exactConnectionId)).toMatchObject({
-        revision: 6,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            enabled: false,
-            deletionState: 'finalizingDelete',
-            pendingOldTransportStop: null,
-          },
-        },
-      });
-    } finally {
-      await core.dispose();
-      await provider.dispose();
-    }
-  });
 
-  it('does not invoke an old delete transport after its retained authority advances', async () => {
-    const connectionId = 'connection-delete-stop-currentness';
-    let stopCalls = 0;
-    let supersedePendingDelete = true;
-    let collection!: ReturnType<typeof createMutableChannelStateCollection>;
-    let connection!: ReturnType<typeof socketConnectionForProvider>;
-    collection = createMutableChannelStateCollection({
-      onUpdatedBatch(operations) {
-        if (!supersedePendingDelete || !operations.some((operation) => (
-          operation.kind === 'put' && operation.value.id === connectionId
-        ))) return;
-        supersedePendingDelete = false;
-        collection.rows.set(connectionId, {
-          rowId: connectionId,
-          revision: 6,
-          value: {
-            ...connection,
-            payload: {
-              ...connection.payload,
-              authorityEpoch: 6,
-              enabled: false,
-              deletionState: 'finalizingDelete',
-              pendingOldTransportStop: {
-                transportOrigin: connection.payload.transportOrigin,
-                providerContributionSelection: connection.payload.providerContributionSelection,
-                overlapSafety: connection.payload.overlapSafety,
-                stopRequest: {
-                  v: 1,
-                  connectionId,
-                  providerConnectionKey: connection.payload.providerConnectionKey,
-                  providerConfigVersion: connection.payload.providerConfigVersion,
-                  providerConfig: connection.payload.providerConfig,
-                  credentialRef: connection.payload.credentialRef,
-                  authorityEpoch: 5,
-                  reason: 'delete',
-                },
-                acceptedPossibleLoss: true,
-              },
-              historyGap: null,
-            },
-          },
-        });
-      },
-    });
-    const provider = await createPluginTestkit({
-      manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST,
-      module: {
-        activate(api) {
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.setup, async () => {
-            throw new Error('The currentness fixture must not set up a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionTest, async () => {
-            throw new Error('The currentness fixture must not test a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.messageDeliver, async () => ({ kind: 'delivered' }));
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionStop, async () => {
-            stopCalls += 1;
-            return { kind: 'stopped' };
-          });
-          api.backgroundServices.register('socket-supervisor', async () => {});
-        },
-      },
-    });
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: {
-        storage: storageWithEmptyChannelDeliveries(collection),
-      },
-      actionTargets: [provider],
-      targetedContributionContributors: [provider],
-    });
-    const socket = socketConnectionForProvider({
-      connectionId,
-      providerPluginId: PROVIDER_SOCKET_SETUP_TEST_MANIFEST.id,
-      providerContributionSelection: targetedSocketProviderSelection(core).contributor,
-    });
-    connection = {
-      ...socket,
-      payload: {
-        ...socket.payload,
-        pollFailure: null,
-      },
-    };
-    collection.rows.set(connectionId, { rowId: connectionId, revision: 4, value: connection });
 
-    try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId,
-        expectedRevision: 4,
-      })).rejects.toMatchObject({
-        code: 'channels_connection_delete_stop_currentness_conflict',
-      });
-      expect(stopCalls).toBe(0);
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 6,
-        value: {
-          payload: {
-            authorityEpoch: 6,
-            deletionState: 'finalizingDelete',
-            pendingOldTransportStop: { acceptedPossibleLoss: true },
-          },
-        },
-      });
-    } finally {
-      await core.dispose();
-      await provider.dispose();
-    }
-  });
 
-  it('leaves a checkpointed deletion pending for core poll quiescence without calling provider connection-stop', async () => {
-    const connectionId = 'connection-delete-checkpointed-core-quiescence';
-    const collection = createMutableChannelStateCollection();
-    const stopInputs: ReturnType<typeof ConversationProviderConnectionStopInputV1Schema.parse>[] = [];
-    const provider = await createPluginTestkit({
-      manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST,
-      module: {
-        activate(api) {
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.setup, async () => {
-            throw new Error('The checkpointed-delete fixture must not set up a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionTest, async () => {
-            throw new Error('The checkpointed-delete fixture must not test a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.messageDeliver, async () => ({ kind: 'delivered' }));
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionStop, async (input) => {
-            stopInputs.push(ConversationProviderConnectionStopInputV1Schema.parse(input));
-            return { kind: 'stopped' };
-          });
-          api.backgroundServices.register('socket-supervisor', async () => {});
-        },
-      },
-    });
-    const storage = {
-      account: { collection: () => collection },
-    } as unknown as PluginServices['storage'];
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: {
-        storage,
-      },
-      actionTargets: [provider],
-      targetedContributionContributors: [provider],
-    });
-    const socket = socketConnectionForProvider({
-      connectionId,
-      providerPluginId: PROVIDER_SOCKET_SETUP_TEST_MANIFEST.id,
-      providerContributionSelection: targetedSocketProviderSelection(core).contributor,
-    });
-    const connection = {
-      ...socket,
-      payload: {
-        ...socket.payload,
-        transport: { kind: 'checkpointedPull' as const },
-        replayContinuity: 'checkpointed' as const,
-      },
-    };
-    collection.rows.set(connectionId, { rowId: connectionId, revision: 4, value: connection });
 
-    try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId,
-        expectedRevision: 4,
-      })).resolves.toEqual({
-        kind: 'deletePending',
-        connectionId,
-        revision: 5,
-        authorityEpoch: 5,
-        acceptedPossibleLoss: false,
-      });
-      expect(stopInputs).toEqual([]);
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            enabled: false,
-            deletionState: 'pendingStopReconciliation',
-            pendingOldTransportStop: expect.objectContaining({
-              transportOrigin: connection.payload.transportOrigin,
-              acceptedPossibleLoss: false,
-            }),
-          },
-        },
-      });
-    } finally {
-      await core.dispose();
-      await provider.dispose();
-    }
-  });
 
-  it('keeps a response-lost old-stop slot through reload until explicit accepted-loss abandonment', async () => {
-    const connectionId = 'connection-delete-response-loss';
-    const collection = createMutableChannelStateCollection();
-    let stopCalls = 0;
-    const provider = await createPluginTestkit({
-      manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST,
-      module: {
-        activate(api) {
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.setup, async () => {
-            throw new Error('The response-loss fixture must not set up a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionTest, async () => {
-            throw new Error('The response-loss fixture must not test a connection.');
-          });
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.messageDeliver, async () => ({ kind: 'delivered' }));
-          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionStop, async () => {
-            stopCalls += 1;
-            throw new PluginError({
-              code: 'provider_stop_response_lost',
-              message: 'The old transport may already have received the stop request.',
-              retryable: true,
-            });
-          });
-          api.backgroundServices.register('socket-supervisor', async () => {});
-        },
-      },
-    });
-    const storage = storageWithEmptyChannelDeliveries(collection);
-    let core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: {
-        storage,
-      },
-      actionTargets: [provider],
-      targetedContributionContributors: [provider],
-    });
-    const connection = socketConnectionForProvider({
-      connectionId,
-      providerPluginId: PROVIDER_SOCKET_SETUP_TEST_MANIFEST.id,
-      providerContributionSelection: targetedSocketProviderSelection(core).contributor,
-    });
-    collection.rows.set(connectionId, { rowId: connectionId, revision: 4, value: connection });
 
-    try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId,
-        expectedRevision: 4,
-      }, {
-        services: channelsTargetedContributionServices(core),
-      })).rejects.toMatchObject({ code: 'provider_stop_response_lost' });
-      expect(stopCalls).toBe(1);
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            deletionState: 'pendingStopReconciliation',
-            pendingOldTransportStop: { acceptedPossibleLoss: false },
-          },
-        },
-      });
-
-      await core.dispose();
-      core = await createPluginTestkit({
-        manifest: PLUGIN_MANIFEST,
-        module: { activate },
-        services: {
-          storage,
-        },
-        actionTargets: [provider],
-        targetedContributionContributors: [provider],
-      });
-
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId,
-        expectedRevision: 5,
-      })).resolves.toEqual({
-        kind: 'rejoined',
-        connectionId,
-        revision: 5,
-        authorityEpoch: 5,
-        acceptedPossibleLoss: false,
-      });
-      expect(stopCalls).toBe(1);
-
-      const resource = core.registration('resources', 'connections-v1');
-      if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const pendingResource = resourceText(await resource.read({
-        signal: new AbortController().signal,
-        context: { kind: 'global' },
-        accountStorage: storage.account as PluginAccountStorageScope,
-      }));
-      expect(JSON.parse(pendingResource)).toEqual({
-        connections: [expect.objectContaining({
-          connectionId,
-          authorityEpoch: 5,
-          attention: {
-            historyGap: null,
-            providerReadiness: null,
-            pollFailure: null,
-            ingressConflict: null,
-            bestEffortBeforeDurableAdmission: false,
-            oldTransportStopUnconfirmed: true,
-            endpointRetargetOwed: false,
-            acceptedPossibleLoss: false,
-            outwardDelivery: NO_OUTWARD_DELIVERY_ATTENTION,
-          },
-        })],
-      });
-
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-        connectionId,
-        expectedRevision: 5,
-      })).resolves.toEqual({
-        kind: 'deleteFinalizing',
-        connectionId,
-        revision: 6,
-        authorityEpoch: 6,
-        acceptedPossibleLoss: true,
-      });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 6,
-        value: {
-          payload: {
-            deletionState: 'finalizingDelete',
-            pendingOldTransportStop: { acceptedPossibleLoss: true },
-          },
-        },
-      });
-      const acceptedResource = resourceText(await resource.read({
-        signal: new AbortController().signal,
-        context: { kind: 'global' },
-        accountStorage: storage.account as PluginAccountStorageScope,
-      }));
-      expect(JSON.parse(acceptedResource)).toEqual({
-        connections: [expect.objectContaining({
-          connectionId,
-          authorityEpoch: 6,
-          attention: {
-            historyGap: null,
-            providerReadiness: null,
-            pollFailure: null,
-            ingressConflict: null,
-            bestEffortBeforeDurableAdmission: false,
-            oldTransportStopUnconfirmed: true,
-            endpointRetargetOwed: false,
-            acceptedPossibleLoss: true,
-            outwardDelivery: NO_OUTWARD_DELIVERY_ATTENTION,
-          },
-        })],
-      });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId,
-        expectedRevision: 6,
-      })).resolves.toEqual({
-        kind: 'rejoined',
-        connectionId,
-        revision: 6,
-        authorityEpoch: 6,
-        acceptedPossibleLoss: true,
-      });
-      expect(stopCalls).toBe(1);
-    } finally {
-      await core.dispose();
-      await provider.dispose();
-    }
-  });
-
-  it('retains an accepted transfer slot through reload, rejoins exact retries without writes, and permits a later delete replacement', async () => {
-    const connectionId = 'connection-transfer-accepted-loss';
-    const updatedBatches: Array<readonly MutableChannelStateMutation[]> = [];
-    const collection = createMutableChannelStateCollection({
-      onUpdatedBatch(operations) {
-        updatedBatches.push(operations);
-      },
-    });
-    const pending = connectionWithPendingTransfer({
-      connectionId,
-      acceptedPossibleLoss: false,
-      authorityEpoch: 4,
-      stopAuthorityEpoch: 4,
-    });
-    const frozenStop = pending.payload.pendingOldTransportStop;
-    collection.rows.set(connectionId, { rowId: connectionId, revision: 4, value: pending });
-    const storage = storageWithEmptyChannelDeliveries(collection);
-    let core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: { storage },
-    });
-
-    try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-        connectionId,
-        expectedRevision: 4,
-      })).resolves.toEqual({
-        kind: 'rejoined',
-        connectionId,
-        revision: 5,
-        authorityEpoch: 5,
-        acceptedPossibleLoss: true,
-      });
-      expect(updatedBatches).toHaveLength(1);
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            deletionState: 'none',
-            pendingOldTransportStop: {
-              ...frozenStop,
-              acceptedPossibleLoss: true,
-            },
-          },
-        },
-      });
-
-      await core.dispose();
-      core = await createPluginTestkit({
-        manifest: PLUGIN_MANIFEST,
-        module: { activate },
-        services: { storage },
-      });
-
-      const resource = core.registration('resources', 'connections-v1');
-      if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const acceptedResource = resourceText(await resource.read({
-        signal: new AbortController().signal,
-        context: { kind: 'global' },
-        accountStorage: storage.account as PluginAccountStorageScope,
-      }));
-      expect(JSON.parse(acceptedResource)).toEqual({
-        connections: [expect.objectContaining({
-          connectionId,
-          revision: 5,
-          authorityEpoch: 5,
-          deletionState: 'none',
-          attention: expect.objectContaining({
-            oldTransportStopUnconfirmed: true,
-            endpointRetargetOwed: false,
-            acceptedPossibleLoss: true,
-          }),
-        })],
-      });
-
-      for (const expectedRevision of [4, 5]) {
-        await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-          connectionId,
-          expectedRevision,
-        })).resolves.toEqual({
-          kind: 'rejoined',
-          connectionId,
-          revision: 5,
-          authorityEpoch: 5,
-          acceptedPossibleLoss: true,
-        });
-      }
-      expect(updatedBatches).toHaveLength(1);
-
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
-        connectionId,
-        expectedRevision: 5,
-        enabled: true,
-        maximumObservationAgeMs: 120_000,
-      })).resolves.toEqual({
-        kind: 'updated',
-        connectionId,
-        revision: 6,
-        authorityEpoch: 5,
-      });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 6,
-        value: {
-          payload: {
-            pendingOldTransportStop: {
-              ...frozenStop,
-              acceptedPossibleLoss: true,
-            },
-          },
-        },
-      });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-        connectionId,
-        expectedRevision: 4,
-      })).rejects.toMatchObject({ code: 'channels_connection_abandon_conflict' });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-        connectionId,
-        expectedRevision: 6,
-      })).resolves.toEqual({
-        kind: 'rejoined',
-        connectionId,
-        revision: 6,
-        authorityEpoch: 5,
-        acceptedPossibleLoss: true,
-      });
-      expect(updatedBatches).toHaveLength(2);
-
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete, {
-        connectionId,
-        expectedRevision: 6,
-      })).resolves.toEqual({
-        kind: 'deletePending',
-        connectionId,
-        revision: 7,
-        authorityEpoch: 6,
-        acceptedPossibleLoss: false,
-      });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 7,
-        value: {
-          payload: {
-            authorityEpoch: 6,
-            deletionState: 'pendingStopReconciliation',
-            pendingOldTransportStop: {
-              stopRequest: { reason: 'delete', authorityEpoch: 6 },
-              acceptedPossibleLoss: false,
-            },
-          },
-        },
-      });
-      expect(updatedBatches).toHaveLength(3);
-    } finally {
-      await core.dispose();
-    }
-  });
-
-  it('rejects stale accepted-loss retries unless the retained transfer marker is the exact immediate successor', async () => {
-    const collection = createMutableChannelStateCollection();
-    const immediate = connectionWithPendingTransfer({
-      connectionId: 'connection-transfer-stale-r-plus-two',
-      configurationRevision: 6,
-      acceptedPossibleLoss: true,
-      authorityEpoch: 5,
-      stopAuthorityEpoch: 4,
-    });
-    collection.rows.set(immediate.id, { rowId: immediate.id, revision: 6, value: immediate });
-
-    const malformed = connectionWithPendingTransfer({
-      connectionId: 'connection-transfer-stale-malformed',
-      configurationRevision: 5,
-      acceptedPossibleLoss: true,
-      authorityEpoch: 4,
-      stopAuthorityEpoch: 4,
-    });
-    collection.rows.set(malformed.id, { rowId: malformed.id, revision: 5, value: malformed });
-
-    const differentBase = connectionWithPendingTransfer({
-      connectionId: 'connection-transfer-stale-different',
-      configurationRevision: 5,
-      acceptedPossibleLoss: true,
-      authorityEpoch: 5,
-      stopAuthorityEpoch: 4,
-    });
-    const differentBaseStop = differentBase.payload.pendingOldTransportStop;
-    if (differentBaseStop === null || 'kind' in differentBaseStop) {
-      throw new Error('Expected the pending-transfer fixture to carry an accepted stop marker.');
-    }
-    const different = {
-      ...differentBase,
-      payload: {
-        ...differentBase.payload,
-        pendingOldTransportStop: {
-          ...differentBaseStop,
-          stopRequest: {
-            ...differentBaseStop.stopRequest,
-            connectionId: 'connection-other',
-          },
-        },
-      },
-    };
-    collection.rows.set(different.id, { rowId: different.id, revision: 5, value: different });
-
-    const deletingBase = reconciliationConnection('connection-transfer-stale-deleting');
-    const deleting = {
-      ...deletingBase,
-      payload: {
-        ...deletingBase.payload,
-        configurationRevision: 5,
-        authorityEpoch: 5,
-        enabled: false,
-        deletionState: 'finalizingDelete' as const,
-        pendingOldTransportStop: {
-          predecessorCheckpointedPollInvocation: {
-            connectionRevision: 3,
-            authorityEpoch: 3,
-            transportOrigin: deletingBase.payload.transportOrigin,
-          },
-          transportOrigin: deletingBase.payload.transportOrigin,
-          providerContributionSelection: deletingBase.payload.providerContributionSelection,
-          predecessorTransportKind: 'checkpointedPull' as const,
-          endpointRetarget: 'notRequired' as const,
-          overlapSafety: deletingBase.payload.overlapSafety,
-          stopRequest: {
-            v: 1 as const,
-            connectionId: deletingBase.id,
-            providerConnectionKey: deletingBase.payload.providerConnectionKey,
-            providerConfigVersion: deletingBase.payload.providerConfigVersion,
-            providerConfig: deletingBase.payload.providerConfig,
-            credentialRef: deletingBase.payload.credentialRef,
-            authorityEpoch: 4,
-            reason: 'delete' as const,
-          },
-          acceptedPossibleLoss: true,
-        },
-      },
-    };
-    collection.rows.set(deleting.id, { rowId: deleting.id, revision: 5, value: deleting });
-
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: { storage: storageWithEmptyChannelDeliveries(collection) },
-    });
-    try {
-      for (const connectionId of [immediate.id, malformed.id, different.id, deleting.id]) {
-        await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-          connectionId,
-          expectedRevision: 4,
-        })).rejects.toMatchObject({ code: 'channels_connection_abandon_conflict' });
-      }
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-        connectionId: malformed.id,
-        expectedRevision: 5,
-      })).rejects.toMatchObject({ code: 'channels_connection_abandon_conflict' });
-    } finally {
-      await core.dispose();
-    }
-  });
-
-  it('lets concurrent abandon retries produce exactly one accepted transfer-marker write', async () => {
-    const connectionId = 'connection-transfer-abandon-race';
-    const updatedBatches: Array<readonly MutableChannelStateMutation[]> = [];
-    const collection = createMutableChannelStateCollection({
-      onUpdatedBatch(operations) {
-        updatedBatches.push(operations);
-      },
-    });
-    const pending = connectionWithPendingTransfer({
-      connectionId,
-      acceptedPossibleLoss: false,
-      authorityEpoch: 4,
-      stopAuthorityEpoch: 4,
-    });
-    collection.rows.set(connectionId, { rowId: connectionId, revision: 4, value: pending });
-
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: { storage: storageWithEmptyChannelDeliveries(collection) },
-    });
-    try {
-      const outcomes = await Promise.allSettled([
-        core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-          connectionId,
-          expectedRevision: 4,
-        }),
-        core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon, {
-          connectionId,
-          expectedRevision: 4,
-        }),
-      ]);
-      const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
-      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
-      expect(fulfilled.length).toBeGreaterThanOrEqual(1);
-      expect(fulfilled.every((outcome) => (
-        outcome.status === 'fulfilled'
-        && JSON.stringify(outcome.value) === JSON.stringify({
-          kind: 'rejoined',
-          connectionId,
-          revision: 5,
-          authorityEpoch: 5,
-          acceptedPossibleLoss: true,
-        })
-      ))).toBe(true);
-      expect(rejected.every((outcome) => (
-        outcome.status === 'rejected'
-        && typeof outcome.reason === 'object'
-        && outcome.reason !== null
-        && 'code' in outcome.reason
-        && outcome.reason.code === 'channels_connection_abandon_conflict'
-      ))).toBe(true);
-      expect(updatedBatches).toHaveLength(1);
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            pendingOldTransportStop: { acceptedPossibleLoss: true },
-          },
-        },
-      });
-    } finally {
-      await core.dispose();
-    }
-  });
-
-  it('settles a retained old-stop slot only from the selected host-stamped transport route', async () => {
-    const connectionId = 'connection-delete-reported-stop';
-    const collection = createMutableChannelStateCollection();
-    const current = socketConnectionForProvider({
-      connectionId,
-      providerPluginId: PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST.id,
-    });
-    const stopRequest = {
-      v: 1 as const,
-      connectionId,
-      providerConnectionKey: current.payload.providerConnectionKey,
-      providerConfigVersion: current.payload.providerConfigVersion,
-      providerConfig: current.payload.providerConfig,
-      credentialRef: current.payload.credentialRef,
-      authorityEpoch: 5,
-      reason: 'delete' as const,
-    };
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 4,
-      value: {
-        ...current,
-        payload: {
-          ...current.payload,
-          authorityEpoch: 5,
-          enabled: false,
-          deletionState: 'pendingStopReconciliation',
-          historyGap: null,
-          pendingOldTransportStop: {
-            predecessorCheckpointedPollInvocation: {
-              connectionRevision: 3,
-              authorityEpoch: 4,
-              transportOrigin: current.payload.transportOrigin,
-            },
-            transportOrigin: current.payload.transportOrigin,
-            providerContributionSelection: current.payload.providerContributionSelection,
-            predecessorTransportKind: 'checkpointedPull' as const,
-            endpointRetarget: 'notRequired' as const,
-            overlapSafety: current.payload.overlapSafety,
-            stopRequest,
-            acceptedPossibleLoss: false,
-          },
-        },
-      },
-    });
-    const storage = {
-      account: { collection: () => collection },
-    } as unknown as PluginServices['storage'];
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: { storage },
-    });
-    const materializationId = 'replacement-materialization';
-    let machineId = 'wrong-machine';
-    const reporter = await createPluginTestkit({
-      manifest: PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST,
-      actionTargets: [core],
-      resolveCurrentPluginMaterializationRef() {
-        return {
-          pluginId: PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST.id,
-          machineId,
-          materializationId,
-        };
-      },
-      module: {
-        activate(api) {
-          api.actions.register('report-stop', async (input, context) => await context.services.actions.execute(
-            {
-              pluginId: PLUGIN_MANIFEST.id,
-              localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
-            },
-            input,
-          ));
-        },
-      },
-    });
-    const report = {
-      connectionId,
-      authorityEpoch: 5,
-      fact: { kind: 'stopConfirmed' as const, reason: 'notRunningOnReconcile' as const },
-    };
-
-    try {
-      await expect(reporter.invokeAction('report-stop', report)).resolves.toEqual({ kind: 'staleAuthority' });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 4,
-        value: { payload: { deletionState: 'pendingStopReconciliation' } },
-      });
-
-      machineId = 'plugin-testkit-machine';
-      await expect(reporter.invokeAction('report-stop', report)).resolves.toEqual({ kind: 'deleteFinalizing' });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 5,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            deletionState: 'finalizingDelete',
-            pendingOldTransportStop: null,
-          },
-        },
-      });
-    } finally {
-      await reporter.dispose();
-      await core.dispose();
-    }
-  });
-
-  it('authenticates a transfer stop report against the frozen old origin after replacement commits', async () => {
-    const connectionId = 'connection-transfer-reported-old-stop';
-    const oldMaterializationId = 'transfer-old-materialization';
-    const newMachineId = 'transfer-new-machine';
-    const collection = createMutableChannelStateCollection();
-    const old = socketConnectionForProvider({
-      connectionId,
-      providerPluginId: PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST.id,
-      materializationId: oldMaterializationId,
-    });
-    const stopRequest = {
-      v: 1 as const,
-      connectionId,
-      providerConnectionKey: old.payload.providerConnectionKey,
-      providerConfigVersion: old.payload.providerConfigVersion,
-      providerConfig: old.payload.providerConfig,
-      credentialRef: old.payload.credentialRef,
-      authorityEpoch: 5,
-      reason: 'transfer' as const,
-    };
-    collection.rows.set(connectionId, {
-      rowId: connectionId,
-      revision: 5,
-      value: {
-        ...old,
-        payload: {
-          ...old.payload,
-          transportOrigin: {
-            ...old.payload.transportOrigin,
-            machineId: newMachineId,
-          },
-          providerConfig: { applicationId: 'application-after-transfer' },
-          authorityEpoch: 5,
-          pendingOldTransportStop: {
-            predecessorCheckpointedPollInvocation: {
-              connectionRevision: 4,
-              authorityEpoch: 4,
-              transportOrigin: old.payload.transportOrigin,
-            },
-            transportOrigin: old.payload.transportOrigin,
-            providerContributionSelection: old.payload.providerContributionSelection,
-            predecessorTransportKind: 'checkpointedPull' as const,
-            endpointRetarget: 'notRequired' as const,
-            overlapSafety: old.payload.overlapSafety,
-            stopRequest,
-            acceptedPossibleLoss: false,
-          },
-        },
-      },
-    });
-    const storage = {
-      account: { collection: () => collection },
-    } as unknown as PluginServices['storage'];
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: { storage },
-    });
-    const reporter = await createPluginTestkit({
-      manifest: PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST,
-      actionTargets: [core],
-      resolveCurrentPluginMaterializationRef() {
-        return {
-          pluginId: PROVIDER_TRANSPORT_REPORT_TEST_MANIFEST.id,
-          machineId: 'plugin-testkit-machine',
-          materializationId: oldMaterializationId,
-        };
-      },
-      module: {
-        activate(api) {
-          api.actions.register('report-stop', async (input, context) => await context.services.actions.execute(
-            {
-              pluginId: PLUGIN_MANIFEST.id,
-              localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
-            },
-            input,
-          ));
-        },
-      },
-    });
-
-    try {
-      await expect(reporter.invokeAction('report-stop', {
-        connectionId,
-        authorityEpoch: 5,
-        fact: { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' },
-      })).resolves.toEqual({ kind: 'recorded' });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        revision: 6,
-        value: {
-          payload: {
-            transportOrigin: {
-              machineId: newMachineId,
-            },
-            providerConfig: { applicationId: 'application-after-transfer' },
-            authorityEpoch: 5,
-            pendingOldTransportStop: null,
-          },
-        },
-      });
-    } finally {
-      await reporter.dispose();
-      await core.dispose();
-    }
-  });
   it('changes connection enablement through the canonical policy update Action', async () => {
     const connectionId = 'connection-set-enabled-1';
     const updatedBatches: Array<readonly MutableChannelStateMutation[]> = [];
@@ -2790,84 +1810,6 @@ describe('Channels core activation', () => {
     }
   });
 
-  it('rejects online connection policy writes while transfer stop custody retains the authority epoch', async () => {
-    const connectionId = 'connection-policy-transfer-stop-pending';
-    const old = reconciliationConnection(connectionId);
-    const pending = {
-      ...old,
-      payload: {
-        ...old.payload,
-        configurationRevision: 5,
-        authorityEpoch: 5,
-        pendingOldTransportStop: {
-          predecessorCheckpointedPollInvocation: {
-            connectionRevision: 4,
-            authorityEpoch: 4,
-            transportOrigin: old.payload.transportOrigin,
-          },
-          transportOrigin: old.payload.transportOrigin,
-          providerContributionSelection: old.payload.providerContributionSelection,
-          predecessorTransportKind: 'checkpointedPull' as const,
-          endpointRetarget: 'notRequired' as const,
-          overlapSafety: old.payload.overlapSafety,
-          stopRequest: {
-            v: 1,
-            connectionId,
-            providerConnectionKey: old.payload.providerConnectionKey,
-            providerConfigVersion: old.payload.providerConfigVersion,
-            providerConfig: old.payload.providerConfig,
-            credentialRef: old.payload.credentialRef,
-            authorityEpoch: 5,
-            reason: 'transfer',
-          },
-          acceptedPossibleLoss: false,
-        },
-      },
-    };
-    const collection = createMutableChannelStateCollection();
-    collection.rows.set(connectionId, { rowId: connectionId, revision: 5, value: pending });
-    const core = await createPluginTestkit({
-      manifest: PLUGIN_MANIFEST,
-      module: { activate },
-      services: { storage: storageWithEmptyChannelDeliveries(collection) },
-    });
-
-    try {
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
-        connectionId,
-        expectedRevision: 5,
-        enabled: false,
-        maximumObservationAgeMs: 120_000,
-      })).rejects.toMatchObject({
-        code: 'channels_connection_update_old_transport_stop_pending',
-      });
-      await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
-        connectionId,
-        expectedRevision: 5,
-        enabled: true,
-        maximumObservationAgeMs: 120_000,
-      })).resolves.toEqual({
-        kind: 'updated',
-        connectionId,
-        revision: 6,
-        authorityEpoch: 5,
-      });
-      expect(collection.rows.get(connectionId)).toMatchObject({
-        rowId: connectionId,
-        revision: 6,
-        value: {
-          payload: {
-            authorityEpoch: 5,
-            enabled: true,
-            maximumObservationAgeMs: 120_000,
-            pendingOldTransportStop: pending.payload.pendingOldTransportStop,
-          },
-        },
-      });
-    } finally {
-      await core.dispose();
-    }
-  });
 
   it('sets binding enablement through its guarded binding CAS and immediately changes provider demand', async () => {
     const connectionId = 'connection-binding-set-enabled-1';
@@ -3086,16 +2028,16 @@ describe('Channels core activation', () => {
       if (resource === undefined) throw new Error('Expected the bindings-v1 dynamic Resource registration.');
       const accountStorage = storage.account as PluginAccountStorageScope;
       const invalidation = vi.fn();
-      const observation = resource.observe(invalidation, {
+      const observation = await resource.observe(invalidation, createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage,
-      });
-      await expect(resource.read({
+      }));
+      await expect(resource.read(createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage,
-      })).resolves.toBe(JSON.stringify({
+      }))).resolves.toBe(JSON.stringify({
         bindings: [{
           bindingId,
           revision: 6,
@@ -3121,11 +2063,11 @@ describe('Channels core activation', () => {
         authorityEpoch: 7,
       });
       expect(invalidation).toHaveBeenCalledOnce();
-      await expect(resource.read({
+      await expect(resource.read(createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage,
-      })).resolves.toBe(JSON.stringify({
+      }))).resolves.toBe(JSON.stringify({
         bindings: [{
           bindingId,
           revision: 7,
@@ -3141,7 +2083,7 @@ describe('Channels core activation', () => {
             input: { bindingId, expectedRevision: 7, enabled: true }, reason: 'bindingDisabled' },
         }],
       }));
-      observation.dispose();
+      await observation.dispose();
     } finally {
       await core.dispose();
     }
@@ -3190,11 +2132,11 @@ describe('Channels core activation', () => {
     try {
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const serialized = resourceText(await resource.read({
+      const serialized = resourceText(await resource.read(createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      }));
+      })));
       expect(JSON.parse(serialized)).toEqual({
         connections: [
           {
@@ -3337,11 +2279,11 @@ describe('Channels core activation', () => {
     try {
       const resource = core.registration('resources', 'connections-v1');
       if (resource === undefined) throw new Error('Expected the connections-v1 dynamic Resource registration.');
-      const serialized = resourceText(await resource.read({
+      const serialized = resourceText(await resource.read(createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage: storage.account as PluginAccountStorageScope,
-      }));
+      })));
       expect(JSON.parse(serialized)).toEqual({
         connections: connectionsInResourceOrder.map((connection) => ({
           connectionId: connection.id,
@@ -3475,14 +2417,15 @@ describe('Channels core activation', () => {
       ) {
         assertChannelsTestCollectionQueryLimit(request.limit);
         if (options?.signal !== undefined) querySignals.push(options.signal);
-        const kind = request.prefix?.[0];
+        const kind = request.index === 'by-connection-kind-v1' ? request.prefix?.[1] : request.prefix?.[0];
         if (kind === 'connection') connectionQueryCount += 1;
         if (kind === 'binding') bindingQueryCount += 1;
         return {
           rows: stateRows
             .filter((row) => request.index === 'by-connection-binding-v2'
               ? row['connection-id'] === request.prefix?.[0]
-              : row['record-kind'] === kind)
+              : row['record-kind'] === kind && (request.index !== 'by-connection-kind-v1'
+                || row['connection-id'] === request.prefix?.[0]))
             .map((value, index) => ({ rowId: value.id, revision: index + 1, value })),
           changeCursor: forceSnapshotDrift
             ? (kind === 'connection' ? connectionQueryCount * 2 : bindingQueryCount * 2 + 1)
@@ -3550,21 +2493,17 @@ describe('Channels core activation', () => {
       expect(await list({}, context)).toEqual(expected);
       expect(await read({ connectionId: exactConnection.id }, context)).toEqual(expected);
       expect(await read({ connectionId: samePluginDifferentMachine.id }, context)).toEqual({});
-      expect(connectionQueryCount).toBe(1);
-      expect(bindingQueryCount).toBe(1);
-      expect(querySignals).toHaveLength(4);
+      expect(connectionQueryCount).toBe(3);
+      expect(bindingQueryCount).toBe(3);
+      expect(querySignals).toHaveLength(6);
       expect(querySignals.every((signal) => signal === context.signal)).toBe(true);
 
       forceSnapshotDrift = true;
-      await expect(list({}, context)).rejects.toMatchObject({
-        code: 'channels_reconciliation_snapshot_changed',
-        retryable: true,
-      });
-      // One authoritative pass owns the answer: cursor movement surfaces the
-      // existing retryable outcome instead of quietly re-scanning the whole
-      // Account behind an unowned local attempt count.
-      expect(connectionQueryCount).toBe(2);
-      expect(bindingQueryCount).toBe(2);
+      await expect(list({}, context)).resolves.toEqual(expected);
+      // Unrelated Account changes neither invalidate this projection nor add
+      // another read pass. Per-admission authority remains independently fresh.
+      expect(connectionQueryCount).toBe(4);
+      expect(bindingQueryCount).toBe(4);
     } finally {
       await activation.dispose();
     }
@@ -3695,9 +2634,10 @@ describe('Channels core activation', () => {
       async query(request: Readonly<{ index: string; prefix?: readonly unknown[]; limit?: number }>) {
         assertChannelsTestCollectionQueryLimit(request.limit);
         return {
-          rows: (request.index === 'by-connection-binding-v2'
-            ? request.prefix?.[0] === connection.id
-            : request.prefix?.[0] === 'connection')
+          rows: (request.index === 'by-connection-kind-v1'
+            ? request.prefix?.[0] === connection.id && request.prefix?.[1] === 'connection'
+            : request.index === 'by-connection-binding-v2' ? request.prefix?.[0] === connection.id
+              : request.prefix?.[0] === 'connection')
             ? [{ rowId: connection.id, revision: 1, value: connection }]
             : [],
           changeCursor: 1,

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ResourceContent } from '@happier-dev/plugin-sdk/ui';
 import {
   createPluginUiTestkit,
@@ -212,6 +213,36 @@ describe('the Channels column', () => {
 });
 
 describe('the Channels Home widget', () => {
+  it.each(['connections-v1', 'bindings-v1'])('settles a completed %s refusal while the other Resource is still pending', async (refusedResource) => {
+    let refuse!: (cause: unknown) => void;
+    let finishOther!: (value: ResourceContent) => void;
+    const refused = new Promise<ResourceContent>((_resolve, reject) => { refuse = reject; });
+    const pending = new Promise<ResourceContent>((resolve) => { finishOther = resolve; });
+    let refusedReads = 0;
+    const widget = await mountGlance({ view: 'widget', openSurface: () => undefined,
+      readResource: async ({ resource }) => {
+        const localId = typeof resource === 'string' ? resource : 'localId' in resource ? resource.localId : '';
+        if (localId === refusedResource) { refusedReads += 1; return await refused; }
+        return await pending;
+      },
+    });
+    expect(document.querySelector('[data-testid="channels-widget-loading"]')).not.toBeNull();
+    await act(async () => { refuse(new PluginError({ code: 'collection_update_required',
+      message: 'The saved Collection requires an updated declaration.', retryable: false })); });
+    await vi.waitFor(async () => { await widget.getByText('Conversations can’t be read right now.'); });
+    expect(document.querySelector('[data-testid="channels-widget-loading"]')).toBeNull();
+    expect(refusedReads).toBe(1);
+    await act(async () => { finishOther(refusedResource === 'connections-v1' ? BINDINGS : CONNECTIONS); });
+    await widget.getByText('Conversations can’t be read right now.');
+  });
+
+  it('settles an empty linked-conversation read without retaining its loading skeleton', async () => {
+    const widget = await mountGlance({ view: 'widget', bindings: jsonResource({ bindings: [] }, 'e'),
+      openSurface: () => undefined });
+    await vi.waitFor(async () => { await widget.getByText('Link a conversation to a session.'); });
+    expect(document.querySelector('[data-testid="channels-widget-loading"]')).toBeNull();
+  });
+
   it('puts a bot that needs you first, then paused conversations, then the rest, four rows in all', async () => {
     const opened: PluginUiTestkitOpenSurfaceInput[] = [];
     const widget = await mountGlance({ view: 'widget', openSurface: (open) => { opened.push(open); } });
@@ -227,7 +258,7 @@ describe('the Channels Home widget', () => {
       'channels-widget-row-dev',
       'channels-widget-row-release',
     ]);
-    await expect(widget.getByText('Polling needs attention')).resolves.toBeDefined();
+    await expect(widget.getByText('Connection needs attention')).resolves.toBeDefined();
 
     const support = document.querySelector<HTMLElement>('[data-testid="channels-widget-row-support"]');
     await act(async () => { support?.click(); });

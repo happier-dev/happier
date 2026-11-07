@@ -19,6 +19,14 @@ import {
 } from './hostV1.js';
 
 describe('Host Events V1 catalog', () => {
+  it('admits only an Account-scoped content-free Discussion invalidation', () => {
+    const eventId = '@happier/session/discussion-invalidated';
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'session', sessionId: 's' } }).success).toBe(false);
+    expect(parseHostEventPayloadV1(eventId, { discussionId: 'discussion-a', revision: 1 })).toEqual({ discussionId: 'discussion-a', revision: 1 });
+    expect(() => parseHostEventPayloadV1(eventId, { discussionId: 'discussion-a', content: 'private' })).toThrow();
+    expect(() => parseHostEventPayloadV1(eventId, { discussionId: 'discussion-a', revision: -1 })).toThrow();
+  });
   it('admits content-free Account entity identities for retained-fact observers', () => {
     const eventId = '@happier/account/entities-invalidated';
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
@@ -45,11 +53,12 @@ describe('Host Events V1 catalog', () => {
       ...expected,
       HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
       '@happier/automation/event-sources-invalidated',
+      '@happier/session/discussion-invalidated',
       HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
       '@happier/account/entities-invalidated',
     ]);
-    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 4);
-    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 4);
+    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 5);
+    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 5);
     const runtimeEntries = HOST_EVENT_CATALOG_V1.filter((entry) => entry.id.startsWith('@happier/runtime/'));
     expect(runtimeEntries.every((entry) => (
       entry.canonicalProducer === 'centralized-host-session-runtime'

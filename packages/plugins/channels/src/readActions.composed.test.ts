@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { JsonValue, PluginServices } from '@happier-dev/plugin-sdk';
 import { CHANNELS_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION } from './collections.js';
@@ -10,6 +11,7 @@ import { ConversationBindingV1Schema, ConversationDeliveryAttentionResultV1Schem
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
 import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 function connection(connectionId: string) {
   return createCurrentConversationConnectionFixture({ connectionId, authority: {
@@ -23,7 +25,6 @@ function connection(connectionId: string) {
 }
 
 async function readerKit() {
-  const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
   const state = new MemoryCollection<Record<string, JsonValue>>();
   const deliveries = new MemoryCollection<Record<string, JsonValue>>();
   await state.put(connection('connection-1'), { expectedRevision: 'absent' });
@@ -39,6 +40,67 @@ async function readerKit() {
 }
 
 describe('registered Channels Account read Actions', () => {
+  it.each<Readonly<{ name: string; recipe: Record<string, JsonValue>; newSession?: JsonValue }>>([
+    { name: 'ordinary opaque recipe', recipe: { agentId: 'codex', model: null,
+      options: { enabled: true, count: 1, values: ['a', null] } } },
+    { name: 'historical opaque host field', recipe: { agentId: 'codex', attestedContext: null } },
+    { name: 'historical nested new-Session recipe', recipe: { agentId: 'codex' },
+      newSession: { kind: 'enabled', recipe: { agentId: 'codex', attestedContext: null } } },
+  ])('reads a provenance-pinned retained router through list and exact read without rewriting it ($name)', async ({ recipe, newSession }) => {
+    // Public bundled declaration at d1ecc1c1c0b71960a8001cd80588895c9636e0bd;
+    // this explicit synthetic row contains no retained Account data.
+    const historical = JSON.parse(readFileSync(new URL('./testkit/fixtures/channelStateV14.json', import.meta.url), 'utf8'));
+    const row = {
+      id: 'retained-router', 'record-kind': 'binding', v: 1,
+      'connection-id': 'connection-1', 'binding-id': 'retained-router',
+      'created-at': 1, 'updated-at': 1,
+      payload: {
+        endpoint: { kind: 'shared', audience: 'shared', id: 'mailbox' },
+        target: { kind: 'threadRouter',
+          principalGroups: [{ id: 'people', principalIds: ['person@example.test'] }],
+          routes: [{ id: 'intake', when: { group: 'people', forwarded: 'any' },
+            recipe,
+            policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'read-only',
+              approvals: { kind: 'off' }, newSession: newSession ?? { kind: 'off' } } }] },
+        inboundBirthMessageId: 'retained-inbound-message',
+        allowedPrincipalIds: ['person@example.test'], allowBotSenders: false,
+        inputMode: 'allAllowedMessages', inboundDebounceMs: 0,
+        linkPreviewPolicy: 'suppress', senderFeedback: 'off', authorityEpoch: 1,
+        enabled: true, deletionState: 'none',
+      },
+    };
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(historical.collection.schema), row)).toBe(true);
+    const { kit, state } = await readerKit();
+    try {
+      await state.put(row, { expectedRevision: 'absent' });
+      const before = structuredClone(await state.get(row.id));
+      await expect.soft(kit.invokeAction('binding/list-v1', { limit: 1 }, { surface: 'agent' }))
+        .resolves.toMatchObject({ bindings: [{ bindingId: row.id, target: { kind: 'threadRouter' } }] });
+      await expect.soft(kit.invokeAction('binding/read-v1', { bindingId: row.id }, { surface: 'mcp' }))
+        .resolves.toMatchObject({ kind: 'ready', binding: { target: row.payload.target } });
+      expect(await state.get(row.id)).toEqual(before);
+      // Reading retained data must not drop the router's authority relations.
+      await state.put({ ...row, payload: { ...row.payload, target: { ...row.payload.target,
+        routes: [{ ...row.payload.target.routes[0]!, when: { group: 'missing', forwarded: 'any' } }],
+      } } }, { expectedRevision: 1 });
+      const invalid = structuredClone(await state.get(row.id));
+      await expect(kit.invokeAction('binding/list-v1', {}, { surface: 'agent' }))
+        .rejects.toMatchObject({ code: 'channels_binding_management_row_invalid' });
+      await expect(kit.invokeAction('binding/read-v1', { bindingId: row.id }, { surface: 'mcp' }))
+        .rejects.toMatchObject({ code: 'channels_binding_read_corrupt' });
+      expect(await state.get(row.id)).toEqual(invalid);
+    } finally { await kit.dispose(); }
+  });
+  it('deletes through the registered Action without contacting an offline provider', async () => {
+    const { kit, state } = await readerKit();
+    try {
+      await expect(kit.invokeAction('connection/delete-v1', { connectionId: 'connection-1', expectedRevision: 1 }, { surface: 'agent' }))
+        .resolves.toMatchObject({ kind: 'deleteFinalizing', authorityEpoch: 2 });
+      expect((await state.get('connection-1'))?.value.payload).toMatchObject({
+        enabled: false, authorityEpoch: 2, deletionState: 'finalizingDelete', pendingOldTransportStop: null,
+      });
+    } finally { await kit.dispose(); }
+  });
   it('recommends the Account reconnect Action for an expired saved credential without returning provider setup', async () => {
     const { kit, state } = await readerKit();
     try {
@@ -57,11 +119,11 @@ describe('registered Channels Account read Actions', () => {
   });
   it.each<Readonly<{ name: string; payload: Readonly<Record<string, JsonValue>>; action: string; input: JsonValue }>>([
     { name: 'paused', payload: { enabled: false }, action: 'connection/update-v1', input: { connectionId: 'connection-1', expectedRevision: 1, enabled: true, maximumObservationAgeMs: 60_000 } },
-    { name: 'permission loss', payload: { providerReadiness: { code: 'providerPermissionMissing' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 } },
-    { name: 'expired credential', payload: { providerReadiness: { code: 'providerCredentialInvalid' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 } },
-    { name: 'blocked poll', payload: { pollFailure: { phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null, evidence: { kind: 'provider', reason: 'permissionMissing' } } }, action: 'connection/poll-retry-v1', input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 } },
-    { name: 'history gap', payload: { historyGap: { reportedAt: 100, reason: 'providerHistoryUnavailable' } }, action: 'stream/baseline-accept-v1', input: { connectionId: 'connection-1', expectedRevision: 1 } },
-    { name: 'provider configuration loss', payload: { providerReadiness: { code: 'providerConfigurationInvalid' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 } },
+    { name: 'permission loss', payload: { providerReadiness: { code: 'providerPermissionMissing' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1' } },
+    { name: 'expired credential', payload: { providerReadiness: { code: 'providerCredentialInvalid' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1' } },
+    { name: 'blocked poll', payload: { pollFailure: { phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null, evidence: { kind: 'provider', reason: 'permissionMissing' } } }, action: 'connection/poll-retry-v1', input: { connectionId: 'connection-1' } },
+    { name: 'history gap', payload: { historyGap: { reportedAt: 100, reason: 'providerHistoryUnavailable' } }, action: 'stream/notice-dismiss-v1', input: { connectionId: 'connection-1', expectedRevision: 1 } },
+    { name: 'provider configuration loss', payload: { providerReadiness: { code: 'providerConfigurationInvalid' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1' } },
   ])('recommends one registered recovery Action for $name from the canonical read', async ({ payload, action, input }) => {
     const { kit, state } = await readerKit();
     try {
@@ -125,15 +187,11 @@ describe('registered Channels Account read Actions', () => {
       expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema), census)).toBe(true);
       await state.put(census, { expectedRevision: 'absent' });
       expect(await kit.invokeAction('connection/list-v1', {}, { surface: 'agent' })).toMatchObject({ connections: [{
-        recommendedRecovery: { action: { pluginId: 'happier.channels', localId: 'connection/poll-retry-v1' },
-          input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 }, reason: 'occurrenceEvidenceMismatch' },
+        attention: { ingressConflict: null },
       }] });
       const ingress = await kit.invokeAction('ingress/attention-v1', { limit: 1 }, { surface: 'agent' });
       expect(ingress)
-        .toMatchObject({ obligations: [{ kind: 'occurrenceConflict', censusId, connectionId: 'connection-1', revision: 1 }] });
-      expect(ingress).toMatchObject({ obligations: [{ recommendedRecovery: {
-        action: { pluginId: 'happier.channels', localId: 'connection/list-v1' }, input: {},
-      } }] });
+        .toMatchObject({ obligations: [] });
       expect(JSON.stringify(ingress)).not.toMatch(/private-body|private@example|private-mailbox/);
     } finally { await kit.dispose(); }
   });
@@ -148,7 +206,7 @@ describe('registered Channels Account read Actions', () => {
         routeAuthority: { connectionAuthorityEpoch: 1, bindingRevision: 1, bindingAuthorityEpoch: 1 },
         source: { kind: 'controlResponse', controlId: 'control-1', controlKind: 'newSession' },
         endpoint: { kind: 'direct', audience: 'direct', id: 'private-endpoint' },
-        content: { text: 'private-body' }, deliveryKey: 'private-delivery-key', mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+        content: { text: 'private-body' }, deliveryKey: 'private-delivery-key',  linkPreviewPolicy: 'suppress',
       });
       if (accepted.kind !== 'created') throw new Error(`Expected custody, got ${accepted.kind}`);
       const custodyId = accepted.record.custodyId;

@@ -1,6 +1,7 @@
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import { getConversationConnectionTransportOrigin, type ConversationPendingProviderStopV1 } from '../connectionLifecycle.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { withChannelStateDeleteFinalizationDueAt } from '../collectionMigrations.js';
 import type {
   ConversationBindingInputModeV1,
   ConversationOutboundTextLimitV1,
@@ -88,7 +89,6 @@ export type CurrentConversationConnectionFixture<
     historyGap: ConversationConnectionHistoryGapV1 | null;
     providerReadiness: ConversationConnectionProviderReadinessV1;
     pollFailure: ConversationConnectionPollFailureV1 | null;
-    maximumObservationAgeMs: number;
   }>;
 }>;
 
@@ -109,7 +109,6 @@ export function createCurrentConversationConnectionFixture<TOrigin extends Conve
   historyGap?: ConversationConnectionHistoryGapV1 | null;
   providerReadiness?: ConversationConnectionProviderReadinessV1;
   pollFailure?: ConversationConnectionPollFailureV1 | null;
-  maximumObservationAgeMs?: number;
   configurationRevision?: number;
 }>): CurrentConversationConnectionFixture<ConversationConnectionTransportOriginV1> {
   const updatedAt = input.updatedAt ?? input.createdAt ?? 1;
@@ -127,7 +126,7 @@ export function createCurrentConversationConnectionFixture<TOrigin extends Conve
         targetMaterialization: origin.materializationRef, transferAuthorityEpoch: input.authority.authorityEpoch };
     })()
     : pending ?? null;
-  return {
+  const value: CurrentConversationConnectionFixture<ConversationConnectionTransportOriginV1> = {
     id: input.connectionId,
     'record-kind': CHANNEL_STATE_RECORD_KIND.connection,
     v: 1,
@@ -163,20 +162,14 @@ export function createCurrentConversationConnectionFixture<TOrigin extends Conve
       historyGap: input.historyGap ?? null,
       providerReadiness: input.providerReadiness ?? null,
       pollFailure: input.pollFailure ?? null,
-      maximumObservationAgeMs: input.maximumObservationAgeMs ?? 60_000,
     },
   };
+  return { ...withChannelStateDeleteFinalizationDueAt(value), ...value };
 }
 
 /**
- * A frozen old-transport custody fixture. The caller supplies the exact old
- * authority and must name the exact predecessor poll basis and authority epoch
- * at which its request was frozen.
- */
-/**
- * Threads the caller's exact stop reason through the result. Transfer and
- * delete transitions each accept only their own reason, so widening it here
- * would hand every caller a value none of those owners can consume.
+ * Models retained predecessor rows using the exact original authority, poll
+ * basis and request reason. Current delete and transfer producers omit it.
  */
 export function createCurrentConversationPendingOldTransportStopFixture<
   TReason extends 'transfer' | 'delete',
@@ -188,7 +181,7 @@ export function createCurrentConversationPendingOldTransportStopFixture<
   reason: TReason;
   predecessorTransportKind: ConversationTransportKindV1;
   endpointRetarget?: ConversationPendingEndpointRetargetV1;
-  overlapSafety: ConversationConnectionOverlapSafetyV1;
+  overlapSafety: ConversationPendingProviderStopV1['overlapSafety'];
   acceptedPossibleLoss?: boolean;
 }>): Omit<ConversationPendingProviderStopV1, 'stopRequest'> & Readonly<{
   stopRequest: Omit<ConversationPendingProviderStopV1['stopRequest'], 'reason'>

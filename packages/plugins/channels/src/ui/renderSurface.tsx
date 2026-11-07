@@ -491,7 +491,7 @@ type IngressAttentionReadState = Readonly<{
 }>;
 
 function ingressAttentionRowId(row: ConversationIngressAttentionRow): string {
-  return row.kind === 'occurrenceConflict' ? row.censusId : row.obligationId;
+  return row.obligationId;
 }
 
 function ingressTerminalAttentionLabel(
@@ -1316,6 +1316,7 @@ function bindingAudienceLabel(audience: BindingEndpointAudience, t: Translate): 
 
 function bindingTargetKindLabel(kind: BindingTargetKind, t: Translate): string {
   if (kind === 'threadRouter') return t('plugins.channels.surface.bindingTargetThreadRouter', 'New sessions per thread');
+  if (kind === 'discussion') return t('plugins.channels.surface.bindingTargetDiscussion', 'Discussion');
   return kind === 'session'
     ? t('plugins.channels.surface.bindingTargetSession', 'Session')
     : t('plugins.channels.surface.bindingTargetAutomation', 'Automation');
@@ -3681,7 +3682,8 @@ type BindingEditorAutomationTarget = Readonly<{
 }>;
 /** The router arm is edited whole: its groups and ordered routes are one precedence contract. */
 type BindingEditorThreadRouterTarget = ConversationThreadRouterBindingTargetV1;
-type BindingEditorTarget = BindingEditorSessionTarget | BindingEditorAutomationTarget | BindingEditorThreadRouterTarget;
+type BindingEditorDiscussionTarget = Extract<ConversationBindingTargetV1, Readonly<{ kind: 'discussion' }>>;
+type BindingEditorTarget = BindingEditorSessionTarget | BindingEditorAutomationTarget | BindingEditorThreadRouterTarget | BindingEditorDiscussionTarget;
 type BindingEditorDraft = Readonly<{
   target: BindingEditorTarget;
   targetChanged: boolean;
@@ -3715,7 +3717,7 @@ function bindingEditorTargetFromBinding(binding: ConversationBindingV1): Binding
       },
     };
   }
-  if (binding.target.kind === 'threadRouter') return binding.target;
+  if (binding.target.kind === 'threadRouter' || binding.target.kind === 'discussion') return binding.target;
   return {
     kind: 'automation',
     automationId: binding.target.automationId,
@@ -3750,6 +3752,11 @@ function BindingEditConfirmationSummary(props: Readonly<{
             {
               label: t('plugins.channels.surface.bindingCreatePermissionCeiling', 'Permission ceiling'),
               value: bindingPermissionIntentLabel(draft.target.policy.permissionCeiling, t),
+            },
+          ] : draft.target.kind === 'discussion' ? [
+            {
+              label: t('plugins.channels.surface.bindingDiscussionDelivery', 'Discussion delivery'),
+              value: bindingDeliveryModeLabel(draft.target.policy.deliveryMode, t),
             },
           ] : draft.target.kind === 'automation' ? [
             {
@@ -4668,6 +4675,8 @@ function bindingEditorTargetLabel(target: BindingEditorTarget, t: Translate): st
   }
   return target.kind === 'session'
     ? `${bindingTargetKindLabel(target.kind, t)}: ${target.sessionId}`
+    : target.kind === 'discussion'
+      ? `${bindingTargetKindLabel(target.kind, t)}: ${target.discussionId}`
     : `${bindingTargetKindLabel(target.kind, t)}: ${target.automationId}`;
 }
 
@@ -5185,7 +5194,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
       generationId: pairing.generationId,
       proposalId: proposal.proposalId,
       connectionId: proposal.connectionId,
-      expectedConnectionRevision: proposal.expectedConnectionRevision,
+
       // The daemon owns this opaque proposal identifier. Reusing it is the
       // stable idempotency key; the UI never invents a second pairing key.
       finalizeIdempotencyKey: proposal.proposalId,
@@ -5510,10 +5519,6 @@ function BindingCreatePairingHandoff(props: Readonly<{
               label: props.t('plugins.channels.surface.bindingCreateProofPlace', 'Send the code in'),
               value: place,
             },
-            {
-              label: props.t('plugins.channels.surface.bindingCreatePairingAttempts', 'Attempts remaining'),
-              value: String(challenge.attemptsRemaining),
-            },
           ]}
         />
         <Banner
@@ -5574,10 +5579,6 @@ function BindingCreatePairingHandoff(props: Readonly<{
             {
               label: props.t('plugins.channels.surface.bindingCreatePairingToken', 'Pairing token'),
               value: challenge.manualToken,
-            },
-            {
-              label: props.t('plugins.channels.surface.bindingCreatePairingAttempts', 'Attempts remaining'),
-              value: String(challenge.attemptsRemaining),
             },
             ...(challenge.deepLinkUrl === null ? [] : [{
               label: props.t('plugins.channels.surface.bindingCreatePairingLink', 'Pairing link'),
@@ -8285,7 +8286,7 @@ function BindingEditJourney(props: Readonly<{
               onRecipeUnavailable={() => setFeedback('newSessionUnavailable')}
               t={props.t}
             />
-          ) : (
+          ) : draft.target.kind === 'discussion' ? null : (
             <Stack gap="small">
               <Heading
                 level={3}
@@ -9544,7 +9545,7 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
             'Sender groups must be checked with the integration before they are saved, so routes stay read-only until the selected machine is reachable.',
           )}
         />
-      ) : (
+      ) : draft.target.kind === 'discussion' ? null : (
         <Banner
           testID="channels-account-local-binding-automation-target-unavailable"
           tone="secondary"
@@ -10374,7 +10375,7 @@ function ConnectionPolicyEditor(props: Readonly<{
         />
       ) : null}
       {props.providerDependentOperationsAvailable ? (
-        <ConnectionHistoryGapBaselineControls
+        <ConnectionHistoryGapNoticeControls
           connection={props.connection}
           resource={props.resource}
           onRefresh={props.onRefresh}
@@ -10545,22 +10546,20 @@ function ConnectionPolicyEditor(props: Readonly<{
 }
 
 /**
- * A history gap is durable source evidence, not something this surface can
- * repair. The registered Action owns the fresh row read, gap clearing, and
- * any provider baseline work; this control only submits its exact Resource
- * revision after an explicit owner decision.
+ * The registered Action dismisses the notice without changing the provider
+ * cursor or retained input. Polling owns automatic cursor recovery.
  */
-function ConnectionHistoryGapBaselineControls(props: Readonly<{
+function ConnectionHistoryGapNoticeControls(props: Readonly<{
   connection: ChannelsConnection;
   resource: ResourcePresentation;
   onRefresh: () => void;
   t: Translate;
 }>): React.ReactElement | null {
-  const baselineAction = useExecutePluginAction(
-    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamBaselineAccept,
+  const noticeAction = useExecutePluginAction(
+    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.streamNoticeDismiss,
   );
   const historyGap = props.connection.attention.historyGap;
-  const outcomeUnknown = baselineAction.execution.status === 'outcomeUnknown';
+  const outcomeUnknown = noticeAction.execution.status === 'outcomeUnknown';
   const resourceCurrent = props.resource.pending === 'idle'
     && props.resource.freshness === 'fresh'
     && props.resource.error === undefined;
@@ -10568,23 +10567,23 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
     outcomeUnknown,
     resource: props.resource,
     onRefresh: props.onRefresh,
-    onReconciled: baselineAction.reset,
+    onReconciled: noticeAction.reset,
   });
 
-  const acceptBaseline = React.useCallback(async () => {
+  const dismissNotice = React.useCallback(async () => {
     if (historyGap === null
       || !resourceCurrent
-      || baselineAction.execution.status === 'pending'
-      || baselineAction.execution.status === 'outcomeUnknown') {
+      || noticeAction.execution.status === 'pending'
+      || noticeAction.execution.status === 'outcomeUnknown') {
       return;
     }
-    const settled = await baselineAction.execute({
+    const settled = await noticeAction.execute({
       connectionId: props.connection.connectionId,
       expectedRevision: props.connection.revision,
     });
     if (settled.status === 'success') props.onRefresh();
   }, [
-    baselineAction,
+    noticeAction,
     historyGap,
     props.connection.connectionId,
     props.connection.revision,
@@ -10594,34 +10593,34 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
 
   if (historyGap === null) return null;
 
-  const busy = baselineAction.execution.status === 'pending';
+  const busy = noticeAction.execution.status === 'pending';
   const unavailable = !resourceCurrent || busy || outcomeUnknown;
   return (
-    <Stack testID="channels-history-gap-baseline-controls" gap="small">
+    <Stack testID="channels-history-gap-notice-controls" gap="small">
       <Button
-        testID="channels-history-gap-baseline-accept"
+        testID="channels-history-gap-notice-dismiss"
         title={busy
-          ? props.t('plugins.channels.surface.historyGapBaselineAccepting', 'Accepting new baseline…')
-          : props.t('plugins.channels.surface.historyGapBaselineAccept', 'Accept new history baseline')}
+          ? props.t('plugins.channels.surface.historyGapBaselineAccepting', 'Dismissing notice…')
+          : props.t('plugins.channels.surface.historyGapBaselineAccept', 'Dismiss notice')}
         accessibilityLabel={props.t(
           'plugins.channels.surface.historyGapBaselineAccept',
-          'Accept new history baseline',
+          'Dismiss notice',
         )}
         busy={busy}
         disabled={unavailable}
-        onPress={() => { void acceptBaseline(); }}
+        onPress={() => { void dismissNotice(); }}
       />
-      {baselineAction.execution.status === 'error' ? (
+      {noticeAction.execution.status === 'error' ? (
         <Banner
-          testID="channels-history-gap-baseline-error"
+          testID="channels-history-gap-notice-error"
           tone="danger"
           title={props.t(
             'plugins.channels.surface.historyGapBaselineFailedTitle',
-            'Could not accept a new history baseline',
+            'Could not dismiss the notice',
           )}
           description={props.t(
             'plugins.channels.surface.historyGapBaselineFailedDescription',
-            'The history gap remains. Refresh the current connection before deciding what to do next.',
+            'The history notice remains. Refresh the connection before trying again.',
           )}
           action={(
             <Action.Refresh
@@ -10633,11 +10632,11 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
       ) : null}
       {outcomeUnknown ? (
         <Banner
-          testID="channels-history-gap-baseline-outcome-unknown"
+          testID="channels-history-gap-notice-outcome-unknown"
           tone="warning"
           title={props.t(
             'plugins.channels.surface.historyGapBaselineUnknownTitle',
-            'Could not confirm the history baseline request',
+            'Could not confirm notice dismissal',
           )}
           description={props.t(
             'plugins.channels.surface.historyGapBaselineUnknownDescription',
@@ -10645,7 +10644,7 @@ function ConnectionHistoryGapBaselineControls(props: Readonly<{
           )}
           action={(
             <Action.Refresh
-              testID="channels-history-gap-baseline-outcome-unknown-reconcile"
+              testID="channels-history-gap-notice-outcome-unknown-reconcile"
               title={props.t('plugins.channels.surface.refresh', 'Refresh')}
               onRefresh={requestRefresh}
             />
@@ -10671,36 +10670,23 @@ function ConnectionLifecycleControls(props: Readonly<{
   const deleteAction = useExecutePluginAction(
     CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionDelete,
   );
-  const abandonAction = useExecutePluginAction(
-    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionAbandon,
-  );
-  // An owed durable-push target move is repaired, never accepted as a loss:
-  // the endpoint is still ours to move, and deleting the connection drops it
-  // altogether, so both remain honest offers while it waits.
-  const mayRepairEndpointRetarget = props.connection.attention.endpointRetargetOwed;
-  const mayAbandon = props.connection.attention.oldTransportStopUnconfirmed
-    && !props.connection.attention.acceptedPossibleLoss
-    && !mayRepairEndpointRetarget;
-  const mayDelete = props.connection.deletionState === 'none'
-    && (!props.connection.attention.oldTransportStopUnconfirmed
-      || props.connection.attention.acceptedPossibleLoss
-      || mayRepairEndpointRetarget);
-  const activeAction = mayAbandon ? abandonAction : deleteAction;
-  const outcomeUnknown = activeAction.execution.status === 'outcomeUnknown';
+  // A retained predecessor pending row is recovered only by explicit Delete.
+  const mayDelete = props.connection.deletionState !== 'finalizingDelete';
+  const outcomeUnknown = deleteAction.execution.status === 'outcomeUnknown';
   const requestRefresh = useExplicitFreshRereadAfterUnknownOutcome({
     outcomeUnknown,
     resource: props.resource,
     onRefresh: props.onRefresh,
-    onReconciled: activeAction.reset,
+    onReconciled: deleteAction.reset,
   });
 
   const execute = React.useCallback(async () => {
-    if ((!mayAbandon && !mayDelete)
-      || activeAction.execution.status === 'pending'
-      || activeAction.execution.status === 'outcomeUnknown') {
+    if (!mayDelete
+      || deleteAction.execution.status === 'pending'
+      || deleteAction.execution.status === 'outcomeUnknown') {
       return;
     }
-    const settled = await activeAction.execute({
+    const settled = await deleteAction.execute({
       connectionId: props.connection.connectionId,
       expectedRevision: props.connection.revision,
     });
@@ -10710,90 +10696,32 @@ function ConnectionLifecycleControls(props: Readonly<{
     if (settled.status !== 'pending' && settled.status !== 'outcomeUnknown') {
       props.onRefresh();
     }
-  }, [activeAction, mayAbandon, mayDelete, props.connection, props.onRefresh, props.onSettled]);
+  }, [deleteAction, mayDelete, props.connection, props.onRefresh, props.onSettled]);
 
-  const repairBusy = abandonAction.execution.status === 'pending';
-  const repairEndpointRetarget = React.useCallback(async () => {
-    if (!mayRepairEndpointRetarget
-      || abandonAction.execution.status === 'pending'
-      || abandonAction.execution.status === 'outcomeUnknown') {
-      return;
-    }
-    const settled = await abandonAction.execute({
-      connectionId: props.connection.connectionId,
-      expectedRevision: props.connection.revision,
-    });
-    if (settled.status !== 'pending' && settled.status !== 'outcomeUnknown') {
-      props.onRefresh();
-    }
-  }, [abandonAction, mayRepairEndpointRetarget, props.connection, props.onRefresh]);
+  if (!mayDelete) return null;
 
-  if (!mayAbandon && !mayDelete && !mayRepairEndpointRetarget) return null;
-
-  const repairTitle = props.t(
-    'plugins.channels.surface.repairEndpointRetarget',
-    'Repair delivery target',
-  );
-
-  const busy = activeAction.execution.status === 'pending';
-  const title = mayAbandon
-    ? props.t('plugins.channels.surface.acceptPossibleLoss', 'Accept possible loss')
-    : props.t('plugins.channels.surface.delete', 'Delete connection');
+  const busy = deleteAction.execution.status === 'pending';
+  const title = props.t('plugins.channels.surface.delete', 'Delete connection');
   return (
     <Stack testID="channels-connection-lifecycle-controls" gap="small">
-      {mayRepairEndpointRetarget ? (
-        <Button
-          testID="channels-connection-repair-endpoint"
-          title={repairBusy
-            ? props.t('plugins.channels.surface.repairingEndpointRetarget', 'Repairing…')
-            : repairTitle}
-          accessibilityLabel={repairTitle}
-          busy={repairBusy}
-          disabled={repairBusy
-            || abandonAction.execution.status === 'outcomeUnknown'}
-          onPress={() => { void repairEndpointRetarget(); }}
-        />
-      ) : null}
-      {mayRepairEndpointRetarget && abandonAction.execution.status === 'error' ? (
-        <Banner
-          testID="channels-connection-endpoint-repair-error"
-          tone="warning"
-          title={props.t(
-            'plugins.channels.surface.endpointRepairFailedTitle',
-            'Could not move the delivery target yet',
-          )}
-          description={endpointRetargetOwedDescription(props.t)}
-          action={(
-            <Action.Refresh
-              title={props.t('plugins.channels.surface.refresh', 'Refresh')}
-              onRefresh={props.onRefresh}
-            />
-          )}
-        />
-      ) : null}
       <Button
-        testID={mayAbandon ? 'channels-connection-accept-loss' : 'channels-connection-delete'}
-        // Both end something for good, so neither may read as the detail's primary action.
+        testID="channels-connection-delete"
         variant="destructive"
         title={busy
-          ? mayAbandon
-            ? props.t('plugins.channels.surface.acceptingPossibleLoss', 'Accepting…')
-            : props.t('plugins.channels.surface.deleting', 'Deleting…')
+          ? props.t('plugins.channels.surface.deleting', 'Deleting…')
           : title}
         accessibilityLabel={title}
         busy={busy}
         disabled={busy || outcomeUnknown}
         onPress={() => { void execute(); }}
       />
-      {activeAction.execution.status === 'error' ? (
+      {deleteAction.execution.status === 'error' ? (
         <Banner
           testID="channels-connection-lifecycle-error"
           tone="danger"
           title={props.t(
-            mayAbandon
-              ? 'plugins.channels.surface.acceptLossFailedTitle'
-              : 'plugins.channels.surface.deleteFailedTitle',
-            mayAbandon ? 'Could not accept possible loss' : 'Could not start connection deletion',
+            'plugins.channels.surface.deleteFailedTitle',
+            'Could not start connection deletion',
           )}
           description={props.t(
             'plugins.channels.surface.deleteFailedDescription',
@@ -11874,7 +11802,7 @@ function ingressAttentionConversationName(
   connections: readonly ChannelsConnection[],
   t: Translate,
 ): string {
-  const bindingId = row.kind === 'occurrenceConflict' ? undefined : row.bindingId;
+  const bindingId = row.bindingId;
   // Until the binding read settles, a linked conversation is not yet known to be missing.
   if (bindingId !== undefined && bindings === undefined) {
     return t('plugins.channels.surface.bindingEndpointFallback', 'External conversation');
@@ -11987,12 +11915,7 @@ function IngressAttentionControls(props: Readonly<{
           const busy = row.kind === 'blocked'
             && retryAction.execution.status === 'pending'
             && activeObligationId === row.obligationId;
-          const happened = row.kind === 'occurrenceConflict'
-            ? props.t(
-              'plugins.channels.surface.ingressAttentionOccurrenceConflict',
-              'An incoming occurrence has contradictory evidence.',
-            )
-            : row.kind === 'terminal'
+          const happened = row.kind === 'terminal'
               ? ingressTerminalAttentionLabel(row, props.t)
               : `${props.t(
                 'plugins.channels.surface.ingressAttentionAttemptCountPrefix',
@@ -12016,7 +11939,7 @@ function IngressAttentionControls(props: Readonly<{
               testID={`channels-ingress-attention-${rowId}`}
               title={conversation}
               subtitle={happened}
-              {...(row.kind === 'occurrenceConflict' ? {} : { detail: formatEventTime(row.updatedAt, props.t) })}
+              detail={formatEventTime(row.updatedAt, props.t)}
               {...(row.kind === 'blocked' && retryRecommended ? {
                 accessoryOutsidePressable: true,
                 accessory: (
@@ -12422,25 +12345,7 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
                 {row.state === 'archiveRecoverable' || row.acceptedPartCount > 0 ? null : (
                   <Text tone="secondary" value={acceptedFact} />
                 )}
-                {recommendation === undefined ? null : row.state === 'archiveRecoverable' ? (
-                  // Not ambiguous: the provider proved no effect, so the recovery is to send again
-                  // once the owner unarchived the destination.
-                  <Row gap="small" wrap>
-                    <Button
-                      testID={`channels-delivery-resolution-retry-${row.custodyId}`}
-                      title={busy
-                        ? props.t('plugins.channels.surface.deliveryResolutionRetrying', 'Retrying…')
-                        : props.t('plugins.channels.surface.deliveryResolutionRetryAfterUnarchive', 'Unarchived it — send again')}
-                      accessibilityLabel={`${props.t(
-                        'plugins.channels.surface.deliveryResolutionRetryAfterUnarchive',
-                        'Unarchived it — send again',
-                      )} (${deliveryRowName(row)})`}
-                      busy={busy}
-                      disabled={actionUnavailable}
-                      onPress={() => resolve(row, 'retryAfterUnarchive')}
-                    />
-                  </Row>
-                ) : (
+                {recommendation === undefined || row.state === 'archiveRecoverable' ? null : (
                   <Stack gap="small">
                     {row.createdThreadEndpointRequired === undefined ? null : (
                       <Text
@@ -14439,13 +14344,13 @@ function OpenInChannelsAction(props: Readonly<{
   );
 }
 
-function SessionProjectionGapRecoveryAction(props: Readonly<{
+function SessionProjectionNoticeDismissAction(props: Readonly<{
   attention: ConversationSessionBindingAttentionV1;
   onRefresh: () => void;
   t: Translate;
 }>): React.ReactElement {
   const action = useExecutePluginAction(
-    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionBaselineAccept,
+    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionNoticeDismiss,
   );
   const busy = action.execution.status === 'pending';
   const accept = React.useCallback(async () => {
@@ -14463,14 +14368,14 @@ function SessionProjectionGapRecoveryAction(props: Readonly<{
   return (
     <Stack gap="small">
       <Button
-        testID={`channels-session-transcript-baseline-accept:${props.attention.bindingId}`}
+        testID={`channels-session-transcript-notice-dismiss:${props.attention.bindingId}`}
         variant="secondary"
         title={busy
-          ? props.t('plugins.channels.session.transcriptBaselineAccepting', 'Accepting baseline…')
-          : props.t('plugins.channels.session.continueFromHere', 'Continue from here')}
+          ? props.t('plugins.channels.surface.historyGapBaselineAccepting', 'Dismissing notice…')
+          : props.t('plugins.channels.surface.historyGapBaselineAccept', 'Dismiss notice')}
         accessibilityLabel={props.t(
-          'plugins.channels.session.transcriptBaselineAccept',
-          'Continue from current transcript',
+          'plugins.channels.surface.historyGapBaselineAccept',
+          'Dismiss notice',
         )}
         busy={busy}
         disabled={busy || action.execution.status === 'outcomeUnknown'}
@@ -14480,8 +14385,8 @@ function SessionProjectionGapRecoveryAction(props: Readonly<{
         <Status
           tone="warning"
           label={props.t(
-            'plugins.channels.session.transcriptBaselineUnconfirmed',
-            'Could not confirm the new transcript baseline',
+            'plugins.channels.surface.historyGapBaselineUnknownTitle',
+            'Could not confirm notice dismissal',
           )}
           action={<Action.Refresh title={props.t('plugins.channels.surface.refresh', 'Refresh')} onRefresh={props.onRefresh} />}
         />
@@ -14707,7 +14612,7 @@ function SessionConversationRow(props: Readonly<{
             <Text variant="micro" tone="warning" value={sessionBindingAttentionTitle(attention.reason, t)} />
           </Row>
           {attention.reason === 'transcriptHistoryGap'
-            ? <SessionProjectionGapRecoveryAction attention={attention} onRefresh={props.onRefresh} t={t} />
+            ? <SessionProjectionNoticeDismissAction attention={attention} onRefresh={props.onRefresh} t={t} />
             : <OpenInChannelsAction bindingId={binding.bindingId} variant="secondary" t={t} />}
         </Stack>
       )}

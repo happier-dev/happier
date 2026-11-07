@@ -8,7 +8,6 @@ import * as root from './index.js';
 import * as testingV1 from './testing/v1/index.js';
 import * as v1 from './v1/index.js';
 import {
-    MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES,
     MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS,
     MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES,
     MAX_CONVERSATION_PROVIDER_CONFIG_UTF8_BYTES,
@@ -113,7 +112,7 @@ const deliveryInput = {
     endpoint,
     content: { text: 'An outbound message.' },
     deliveryKey: 'delivery-key-1',
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
 } as const;
 
@@ -442,16 +441,15 @@ describe('Channels V1 bounded contract edges', () => {
             providerConfig: providerConfigAboveLimit,
         }).success).toBe(false);
 
-        const checkpointAtLimit = 'x'.repeat(MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES - 2);
-        const checkpointAboveLimit = 'x'.repeat(MAX_CONVERSATION_CHECKPOINT_UTF8_BYTES - 1);
-        expect(ConversationPollInputV1Schema.safeParse({
-            ...pollInput,
-            checkpoint: checkpointAtLimit,
-        }).success).toBe(true);
-        expect(ConversationPollInputV1Schema.safeParse({
-            ...pollInput,
-            checkpoint: checkpointAboveLimit,
-        }).success).toBe(false);
+        const checkpointBeyondFormerLimit = { revisions: 'x'.repeat(48 * 1024) };
+        for (const [schema, value] of [
+            [ConversationPollInputV1Schema, { ...pollInput, checkpoint: checkpointBeyondFormerLimit }],
+            [v1.ConversationPollResultV1Schema, { kind: 'batch', observations: [], checkpointAfterBatch: checkpointBeyondFormerLimit }],
+            [v1.ConversationPollResultV1Schema, { kind: 'checkpointOnly', checkpointAfterBatch: checkpointBeyondFormerLimit }],
+        ] as const) {
+            expect(schema.parse(value)).toEqual(value);
+            expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(schema.jsonSchema), value)).toBe(true);
+        }
 
         const deliveryAtLimit = 'x'.repeat(196608);
         const deliveryAboveLimit = `${deliveryAtLimit}x`;

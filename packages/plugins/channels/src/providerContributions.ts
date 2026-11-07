@@ -5,6 +5,7 @@ import {
   type TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
+import { CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/channels-protocol/v1';
 
 import type { ChannelsProviderContributionV1 } from './manifest.js';
 import type { PersistedConversationProviderContributionSelection } from './collections.js';
@@ -14,26 +15,8 @@ type ProviderContributionReadContext = Readonly<{
   signal: AbortSignal;
 }>;
 
-/**
- * Daemon provider discovery reads the live point from the one `definePlugin`
- * composition. Invocation-time loading keeps the manifest ↔ handler import
- * cycle initialization-safe. Browser surfaces consume portable declarations
- * and delivery projections without reaching this daemon selection owner.
- */
-type ChannelsManifestModule = typeof import('./manifest.js');
-
-let channelsManifestModulePromise: Promise<ChannelsManifestModule> | undefined;
-
-async function readChannelsProviderPointRef(): Promise<ChannelsManifestModule['CHANNELS_PROVIDER_POINT_REF']> {
-  channelsManifestModulePromise ??= import('./manifest.js');
-  return (await channelsManifestModulePromise).CHANNELS_PROVIDER_POINT_REF;
-}
-
-
 type ProviderContributionUnavailableReason =
   | 'selectionInvalid'
-  | 'targetSourceChanged'
-  | 'selectedContributorMissing'
   | 'persistedProviderMissing'
   | 'persistedProviderAmbiguous';
 
@@ -54,31 +37,9 @@ function unavailableProviderContribution(
   });
 }
 
-function unavailableSelectedProviderContribution(
-  reason: 'selection_invalid' | 'target_source_stale' | 'contributor_unavailable',
-): PluginError {
-  switch (reason) {
-    case 'selection_invalid':
-      return unavailableProviderContribution(
-        'selectionInvalid',
-        'Conversation provider selection does not address the Channels provider contribution point.',
-      );
-    case 'target_source_stale':
-      return unavailableProviderContribution(
-        'targetSourceChanged',
-        'Conversation provider selection was made for a retired Channels target source.',
-      );
-    case 'contributor_unavailable':
-      return unavailableProviderContribution(
-        'selectedContributorMissing',
-        'The selected conversation provider contribution is no longer admitted from its selected source.',
-      );
-  }
-}
-
 function hasCurrentPointProtocol(
   contribution: ChannelsProviderContributionV1,
-  point: ChannelsManifestModule['CHANNELS_PROVIDER_POINT_REF'],
+  point: typeof CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1,
 ): boolean {
   return contribution.protocol.id === point.protocol.id
     && contribution.protocol.version === point.protocol.version;
@@ -88,7 +49,7 @@ async function readCurrentProviderSnapshot(
   context: ProviderContributionReadContext,
 ): Promise<TargetedContributionSnapshot<ChannelsProviderContributionV1>> {
   const observation = context.targetedContributions.observeForSelf(
-    await readChannelsProviderPointRef(),
+    CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1,
     { onInvalidated: () => {} },
   );
   try {
@@ -99,9 +60,9 @@ async function readCurrentProviderSnapshot(
 }
 
 /**
- * Resolves exactly the contributor chosen by a current caller selection. The
- * host admission snapshot owns contributor currentness; this owner never
- * broadens a missing selection into a plugin-wide fallback.
+ * Resolves the exact stable contributor chosen by the caller through current
+ * admission, including same-ID reload/source replacement. No plugin-wide
+ * fallback can substitute a missing contributor.
  */
 export async function readSelectedCurrentProviderContribution(input: Readonly<{
   context: ProviderContributionReadContext;
@@ -109,18 +70,27 @@ export async function readSelectedCurrentProviderContribution(input: Readonly<{
 }>): Promise<ChannelsProviderContributionV1> {
   const result = await selectCurrentTargetedContribution({
     service: input.context.targetedContributions,
-    point: await readChannelsProviderPointRef(),
+    point: CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1,
     selection: input.selection,
     signal: input.context.signal,
   });
   if (result.kind === 'selected') return result.contribution;
-
-  throw unavailableSelectedProviderContribution(result.reason);
+  if (result.reason === 'selection_invalid') throw unavailableProviderContribution(
+    'selectionInvalid',
+    'Conversation provider selection does not address the Channels provider contribution point.',
+  );
+  // A same-ID reload replaces selection provenance, not the selected provider.
+  // Resolve that exact stable contributor through the existing admission owner.
+  return readCurrentProviderContributionForPersistedSelection({
+    context: input.context,
+    providerPluginId: input.selection.contributor.pluginId,
+    providerContributionSelection: { contributionId: input.selection.contributor.contributionId },
+  });
 }
 
-/** The PR-link feature selects the single admitted GitHub Channels contributor. */
+/** PR links consume the single admitted contributor declaring native PR support. */
 export async function readSessionPullRequestProvider(context: ProviderContributionReadContext) {
-  const point = await readChannelsProviderPointRef();
+  const point = CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1;
   const snapshot = await readCurrentProviderSnapshot(context);
   const matches = snapshot.contributions.filter((entry) => hasCurrentPointProtocol(entry, point)
     && entry.descriptor?.pullRequests !== undefined);
@@ -144,7 +114,7 @@ export async function readCurrentProviderContributionForPersistedSelection(input
   providerPluginId: string;
   providerContributionSelection: PersistedConversationProviderContributionSelection;
 }>): Promise<ChannelsProviderContributionV1> {
-  const point = await readChannelsProviderPointRef();
+  const point = CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_REF_V1;
   const snapshot = await readCurrentProviderSnapshot(input.context);
   const matches = snapshot.contributions.filter((contribution) => (
     hasCurrentPointProtocol(contribution, point)
