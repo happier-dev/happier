@@ -7,6 +7,8 @@ import { DeploymentIdentifierV1Schema } from './ids.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from './health.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
 
+const collectionCoverage = z.optional(z.enum(['complete', 'partial']));
+
 /** Labels come from admitted Source metadata and private Artifact headers, never their bodies. */
 export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
     items: z.array(z.strictObject({ environment: DeploymentEnvironmentHeaderV1Schema, title: z.string(),
@@ -19,7 +21,7 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
             steps: z.optional(z.nullable(z.array(DeploymentStepV1Schema))),
         }))) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),
-    coverage: z.optional(z.enum(['complete', 'partial'])),
+    coverage: collectionCoverage,
 });
 export type DeploymentEnvironmentCollectionV1 = z.infer<typeof DeploymentEnvironmentCollectionV1Schema>;
 
@@ -28,6 +30,7 @@ export const DeploymentReceiptHistoryV1Schema = z.strictObject({
     ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()),
         source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+    coverage: collectionCoverage,
 });
 export type DeploymentReceiptHistoryV1 = z.infer<typeof DeploymentReceiptHistoryV1Schema>;
 

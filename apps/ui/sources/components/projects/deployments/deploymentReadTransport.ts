@@ -1,10 +1,12 @@
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
+    DeploymentDomainListResultV1Schema,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1,
     readDeploymentReceiptArtifactV1,
+    readDeploymentDomainArtifactV1,
     type DeploymentArtifactHeaderV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type {
@@ -20,6 +22,13 @@ import { projectDeploymentReceiptHistoryEntryV1 } from '@happier-dev/deployments
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
     return { ok: false, failure: { code, retryable } };
+}
+
+async function readArtifactsByRow<T>(artifactIds: readonly string[], read: (ids: string[]) => Promise<T[]>): Promise<(T | undefined)[]> {
+    const ids = [...new Set(artifactIds)];
+    const results = await read(ids);
+    const byId = new Map(ids.map((id, index) => [id, results[index]]));
+    return artifactIds.map(id => byId.get(id));
 }
 
 /** The shared controller consumes the existing Action and mode-aware Account Artifact owners. */
@@ -52,6 +61,29 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
     }
     const home = { serverId: lifetime.scope.serverId };
     return {
+        listDomains: (scope, environmentId, query, options) => scoped(scope, options, async account => {
+            const parsed = DeploymentDomainListResultV1Schema.safeParse(await execute('deployments.domains.list',
+                { ...home, environmentId, ...query }, { signal: options.signal }));
+            if (!parsed.success) return failure('invalid_response');
+            const page = parsed.data;
+            if (!page.ok) return failure(page.error);
+            if (page.environmentId !== environmentId || page.domains.some(domain => domain.environmentId !== environmentId)) {
+                return failure('invalid_response');
+            }
+            const contents = await readArtifactsByRow(page.domains.map(domain => domain.contentArtifactId),
+                ids => account.readArtifactContents(ids, { signal: options.signal }));
+            const items = [];
+            let coverage: DeploymentEnvironmentCollectionV1['coverage'];
+            for (const [index, domain] of page.domains.entries()) {
+                const artifact = contents[index];
+                if (!artifact || artifact.status === 'rejected') { coverage = 'partial'; continue; }
+                const opened = readDeploymentDomainArtifactV1(domain, artifact.value);
+                if (!opened.ok) { coverage = 'partial'; continue; }
+                items.push({ domain, title: opened.title, content: opened.content });
+            }
+            return { ok: true, value: { items, nextCursor: page.nextCursor,
+                ...(coverage === undefined ? {} : { coverage }) } };
+        }),
         // [] is internal zero demand, never serialized as an omitted selector.
         // Public Actions require a nonempty exact vector; All omits it.
         listEnvironments: (scope, query, options) => query.environmentIds?.length === 0 || query.previewPullRequestIds?.length === 0
@@ -138,15 +170,16 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             // Open this one page in a batch through the mode-aware Account owner, never one request per row.
             const contents = await account.readArtifactContents(page.items.map(row => row.contentArtifactId), { signal: options.signal });
             const items = [];
+            let coverage: DeploymentEnvironmentCollectionV1['coverage'];
             for (const [index, receipt] of page.items.entries()) {
                 const read = contents[index];
-                if (!read || read.status !== 'fulfilled') return failure('deployment_content_unavailable');
+                if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
                 const opened = readDeploymentReceiptArtifactV1(receipt, read.value);
-                if (!opened.ok) return failure(opened.error);
+                if (!opened.ok) { coverage = 'partial'; continue; }
                 const facts = projectDeploymentReceiptHistoryEntryV1({ deployment: receipt, content: opened.content });
                 items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source });
             }
-            return { ok: true, value: { ...page, items } };
+            return { ok: true, value: { ...page, items, ...(coverage === undefined ? {} : { coverage }) } };
         }),
         readReceipt: (scope, environmentId, deploymentId, options) => scoped(scope, options, async account => {
             const parsed = DeploymentReceiptGetResultV1Schema.safeParse(await execute('deployments.receipts.get',

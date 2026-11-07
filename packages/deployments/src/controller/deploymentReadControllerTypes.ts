@@ -81,7 +81,8 @@ export type DeploymentHistoryQueryV1 = Readonly<{ cursor?: string }>;
 export type DeploymentDomainReadItemV1 = Readonly<{
     domain: DeploymentDomainHeaderV1; title: string; content: DeploymentDomainContentV1;
 }>;
-export type DeploymentDomainPageV1 = Readonly<{ items: readonly DeploymentDomainReadItemV1[]; nextCursor: string | null }>;
+export type DeploymentDomainPageV1 = Readonly<{ items: readonly DeploymentDomainReadItemV1[]; nextCursor: string | null }>
+    & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
 export type DeploymentDomainReadPageV1 = Omit<DeploymentDomainPageV1, 'nextCursor'> & DeploymentReadPageFactsV1;
 /** Continuation tokens are request state, never part of a published page's identity. */
 export type DeploymentReadPageFactsV1 = Readonly<{ hasNextPage: boolean; hasPreviousPage: boolean }>;
