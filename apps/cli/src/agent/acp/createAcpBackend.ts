@@ -44,6 +44,9 @@ export interface CreateAcpBackendOptions {
   /** The host Exec owner supplied the complete process tuple. */
   hostFinalizedLaunch?: true;
 
+  /** Opaque host launch frame, written before any ACP protocol bytes. */
+  stdinPreamble?: AcpBackendOptions['stdinPreamble'];
+
   windowsVerbatimArguments?: boolean;
 
   transformAgentChildLaunchEnvironment?:
@@ -134,6 +137,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     env: options.env,
     ...(options.unsetEnv ? { unsetEnv: options.unsetEnv } : {}),
     ...(options.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
+    ...(options.stdinPreamble === undefined ? {} : { stdinPreamble: options.stdinPreamble }),
     ...(options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
     ...(options.transformAgentChildLaunchEnvironment
       ? {

@@ -649,7 +649,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     if (finalizedRelease) await finalizedRelease();
     else releaseResolvedTransport();
   };
-  let launch: PublicAcpResolvedTransport & Readonly<{ cwd?: string; hostFinalizedLaunch?: true; windowsVerbatimArguments?: boolean }> = resolvedLaunch;
+  let launch: PublicAcpResolvedTransport & Readonly<{ cwd?: string; hostFinalizedLaunch?: true;
+    windowsVerbatimArguments?: boolean; stdinPreamble?: HostAuthorizedPluginExecLaunch['stdinPreamble'] }> = resolvedLaunch;
   try {
     const nativeSessionConfig = options.definition?.mcp.nativeSessionConfig;
     const skillsDeclaration = request.skills ? options.definition?.skills?.sessionDelivery : undefined;
@@ -709,6 +710,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       assertComposerCurrent(dependencies);
       launch = Object.freeze({ ...launch, command: finalized.command, args: finalized.args,
         cwd: finalized.cwd, env: finalized.env,
+        stdinPreamble: finalized.stdinPreamble,
         unsetEnv: Object.freeze([]), hostFinalizedLaunch: true,
         windowsVerbatimArguments: finalized.windowsVerbatimArguments,
       });
@@ -1393,6 +1395,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           args: [...launch.args],
           env: { ...launch.env },
           unsetEnv: launch.unsetEnv,
+          ...(launch.stdinPreamble === undefined ? {} : { stdinPreamble: launch.stdinPreamble }),
           ...(launch.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
           ...(launch.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
           ...(dependencies.transformAgentChildLaunchEnvironment

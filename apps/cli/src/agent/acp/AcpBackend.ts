@@ -299,6 +299,9 @@ export interface AcpBackendOptions {
   /** The host Exec owner supplied the complete process tuple. */
   hostFinalizedLaunch?: true;
 
+  /** Opaque host launch frame, not ACP data and never included in IO capture. */
+  stdinPreamble?: Uint8Array;
+
   windowsVerbatimArguments?: boolean;
 
   /** Runner-private final child-launch substitution seam. */
@@ -924,6 +927,16 @@ export class AcpBackend implements CatalogAcpBackend {
     );
     const writable = streams.writable;
     const readable = streams.readable;
+
+    if (this.options.stdinPreamble !== undefined) {
+      // The existing bridge already observes stdin errors. Write directly so
+      // selected launch material never enters its ACP raw-IO capture, and join
+      // the write before installing the peer that can send initialize.
+      await new Promise<void>((resolve, reject) => {
+        if (!this.process?.stdin) return reject(new Error('Failed to create stdio pipes'));
+        this.process.stdin.write(this.options.stdinPreamble!, error => error ? reject(error) : resolve());
+      });
+    }
 
     const transport = this.transport;
 
