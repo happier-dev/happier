@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ProjectDefinitionInspectRead } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { ProjectManifestFileSnapshotSchema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPageHeader, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
@@ -7,7 +9,6 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 import type { ProjectExecutionChoiceV1, WorkspaceWorkerPreferenceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { resolveProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { resolveProjectMemoryDemandV1, type ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
-import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import type {
   ProjectDefinitionDetectionV1,
   ProjectManifestV1,
@@ -18,6 +19,7 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
@@ -38,7 +40,7 @@ import { Typography } from '@/constants/Typography';
 import { useLayoutMaxWidth, useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { renderPageHeaderText } from '@/components/ui/layout/PageHeader';
 import { projectSetupReadinessLine } from './projectSetupReadinessLine';
-import { describeScriptEnvironmentRefusal, nativeEnvironmentNameFor } from './projectEnvironmentPresentation';
+import { describeScriptToolchainRefusal, nativeToolchainNameFor } from './projectToolchainPresentation';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -57,7 +59,7 @@ import { WorkspaceWorkerSettings, useWorkspaceWorkerPreference } from '@/compone
 import { useWorkerDestinationLabel } from '@/components/projects/workers/useWorkerDestinationLabel';
 import {
   describeProjectCommandSource,
-  describeProjectEnvironment,
+  describeProjectToolchain,
   describeProjectToolVersions,
   findProjectInvocation,
   describeProjectTool,
@@ -70,12 +72,15 @@ import {
   useProjectSetupRun,
 } from './projectScriptRuns';
 import { ProjectScriptRow } from './ProjectScriptRow';
+import { ProjectEnvironmentBindings } from './ProjectEnvironmentBindings';
+import { DetectedRow, FoundScriptReferenceRow } from './ProjectDetectedScriptRow';
 import { ProjectSetupReview } from './ProjectSetupReview';
 import { ProjectSetupReviewPage, useProjectSetupReviewDecision } from './ProjectSetupReviewPage';
 import { useRestoreFocusToTrigger, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { ProjectSetupAuthoredLine } from './ProjectSetupReturn';
+import { InlineCode } from '@/components/ui/text/InlineCode';
 import { WorkspaceAdHocCommandsItem } from '@/components/projects/workers/WorkspaceAdHocCommandsItem';
-import { ProjectAgentGuidanceDisclosure } from '@/components/projects/workers/ProjectAgentGuidanceDisclosure';
+import { ProjectAgentGuidanceDisclosure, PROJECT_SCRIPT_RUN_COMMAND } from '@/components/projects/workers/ProjectAgentGuidanceDisclosure';
 import {
   projectDefinitionInspectionKey,
   useProjectDefinitionInspection,
@@ -97,6 +102,8 @@ export type ProjectScriptsBodyProps = Readonly<{
   presentation?: 'page' | 'rail' | 'widget';
   /** Services found here are reviewed on the Services page, never appended to the finite list. */
   onOpenServices?: () => void;
+  /** The Overview widget's Review: opens the Scripts page, where found scripts are read and run. */
+  onOpenScripts?: () => void;
   /** The host's pane scope whose bottom terminal shows script output; absent where the host has none. */
   outputScopeId?: string | null;
   testID?: string;
@@ -121,6 +128,7 @@ export function ProjectScriptsBody({
   workspace: workspaceInput,
   presentation = 'page',
   onOpenServices,
+  onOpenScripts,
   outputScopeId,
   initialManagedConfiguration,
   testID = 'project-scripts',
@@ -132,7 +140,13 @@ export function ProjectScriptsBody({
   const binding = bindings.get(serverId) ?? null;
   const accountId = binding?.isCurrent() ? binding.accountId : null;
   const key = projectDefinitionInspectionKey(workspace);
-  const { read, retry } = useProjectDefinitionInspection(workspace, binding);
+  const [editor, setEditor] = React.useState<EditorState>(null);
+  const frameRows = React.useContext(WidgetFrameBodyRowsContext);
+  const detectedRows = Math.max(WIDGET_SCRIPT_ROWS, frameRows ?? 0);
+  const selection = React.useMemo<ProjectDefinitionInspectRead>(() => presentation === 'page'
+    ? { kind: editor?.key === key ? editor.seed ? 'create' : 'editor' : 'scripts' }
+    : { kind: presentation === 'widget' ? 'overview' : 'rail', detectedRows }, [detectedRows, editor?.key, editor?.seed, key, presentation]);
+  const { read, retry } = useProjectDefinitionInspection(workspace, binding, selection);
   const runChoiceKeys = React.useMemo(() => {
     if (!read || !('value' in read)) return undefined;
     const document = read.value.definition.document;
@@ -140,9 +154,8 @@ export function ProjectScriptsBody({
       .filter(([, declaration]) => declaration.execution === 'portable')
       .map(([name]) => projectScriptRowKey(workspace, name)) : [];
   }, [read, workspace]);
-  const controller = useProjectScriptsController(workspace, retry, binding, { runChoiceKeys });
+  const controller = useProjectScriptsController(workspace, retry, binding, { runChoiceKeys, environmentBindingsEnabled: presentation !== 'widget' });
   const router = useRouter();
-  const [editor, setEditor] = React.useState<EditorState>(null);
   // Workers settings open in place, like the editor: Scripts › Workers and Run on › Worker settings….
   const [workersKey, setWorkersKey] = React.useState<string | null>(null);
   const page = presentation === 'page';
@@ -237,7 +250,7 @@ export function ProjectScriptsBody({
         workspace={workspace}
         accountId={accountId}
         client={controller.client!}
-        definition={read.value.definition}
+        definition={ProjectManifestFileSnapshotSchema.parse(read.value.definition)}
         detection={read.value.detection}
         importCandidates={read.value.importCandidates}
         commands={read.value.commands}
@@ -264,6 +277,7 @@ export function ProjectScriptsBody({
         onOpenWorkers={page ? () => setWorkersKey(key) : null}
         phoneReview={page && phone ? { open: () => setReviewPageOpen(true), entryTarget: reviewEntryTarget } : null}
         onOpenServices={onOpenServices}
+        onOpenScripts={glance ? onOpenScripts : undefined}
         onRetry={retry}
       />
     );
@@ -342,6 +356,7 @@ export function ProjectScriptsContent(
     onOpenWorkers?: (() => void) | null;
     phoneReview?: PhoneSetupReview | null;
     onOpenServices?: () => void;
+    onOpenScripts?: () => void;
     onRetry: () => void;
   }>,
 ) {
@@ -368,7 +383,7 @@ export function ProjectScriptsContent(
         <AttentionBanner
           testID={`${props.testID}.unevaluated`}
           tone="neutral"
-          title={t('projects.scripts.environment.unevaluated')}
+          title={t('projects.scripts.toolchain.unevaluated')}
         />
       ) : null}
     </>
@@ -400,7 +415,9 @@ export function ProjectScriptsContent(
               : null
           }
         />
-        <DetectedGroups {...props} detection={detection} manifest={null} />
+        <DetectedGroups {...props} detection={detection} />
+        {props.page ? <ServicesFound testID={props.testID} detection={detection}
+          summary={props.inspection.detectionSummary} onOpenServices={props.onOpenServices} /> : null}
         {partial}
       </>
     );
@@ -412,13 +429,12 @@ export function ProjectScriptsContent(
         {partial}
         <FoundMore
           {...props}
-          manifest={document.manifest}
           detection={detection}
         />
         <ServicesFound
           testID={props.testID}
           detection={detection}
-          manifest={document.manifest}
+          summary={props.page ? props.inspection.detectionSummary : undefined}
           onOpenServices={props.onOpenServices}
         />
       </DeclaredScripts>
@@ -459,8 +475,8 @@ function DeclaredScripts(
   const preference = workers.state.kind === 'ready' ? workers.state.value.preference : null;
   const hasSetup =
     (props.manifest.workspace?.setup?.length ?? 0) > 0 ||
-    (props.manifest.environment !== undefined &&
-      props.manifest.environment.kind !== 'host');
+    (props.manifest.toolchain !== undefined &&
+      props.manifest.toolchain.kind !== 'host');
   const setupRun = useProjectSetupRun(props.workspace, props.controller.accountId);
   const setupPresentation = presentProjectRun(setupRun, machineName, '');
   const setupReadiness = setupPresentation.live || props.controller.consent || props.controller.pendingKeys.setup
@@ -471,16 +487,16 @@ function DeclaredScripts(
     props.workspace.rootPath;
   const { theme } = useUnistyles();
   const columnMaxWidth = useLayoutMaxWidth();
-  const environment = describeProjectEnvironment(props.manifest.environment ?? { kind: 'host' });
-  const managed = props.manifest.environment !== undefined && props.manifest.environment.kind !== 'host';
+  const toolchain = describeProjectToolchain(props.manifest.toolchain ?? { kind: 'host' });
+  const managed = props.manifest.toolchain !== undefined && props.manifest.toolchain.kind !== 'host';
   // Installed versions are inspection facts; without them the configuration file names the source.
   const versions = describeProjectToolVersions(props.inspection.tools).join(' · ');
   const meta = React.useMemo(() => [
     { key: 'file', text: '.happier/project.json', icon: <Icon name="file-text" size={14} color={theme.colors.text.secondary} /> },
-    ...(managed || versions ? [{ key: 'environment',
-      text: [environment.title, versions || environment.config].filter(Boolean).join(' · '),
+    ...(managed || versions ? [{ key: 'toolchain',
+      text: [toolchain.title, versions || toolchain.config].filter(Boolean).join(' · '),
       icon: <Icon name="wrench" size={14} color={theme.colors.text.secondary} /> }] : []),
-  ], [environment.config, environment.title, managed, versions, theme.colors.text.secondary]);
+  ], [toolchain.config, toolchain.title, managed, versions, theme.colors.text.secondary]);
   const phone = useDeviceType() === 'phone';
   const editButton = props.onEdit ? (
     <RoundButton
@@ -541,7 +557,7 @@ function DeclaredScripts(
             name={name}
             manifest={props.manifest}
             declaration={declaration}
-            invocation={findProjectInvocation(props.inspection, declaration.source)}
+            invocation={props.glance ? findProjectInvocation(props.inspection, declaration.source) : undefined}
             controller={props.controller}
             compact
             glance
@@ -582,7 +598,7 @@ function DeclaredScripts(
             name={name}
             manifest={props.manifest}
             declaration={declaration}
-            invocation={findProjectInvocation(props.inspection, declaration.source)}
+            invocation={props.glance ? findProjectInvocation(props.inspection, declaration.source) : undefined}
             controller={props.controller}
             compact={!props.page}
             glance={false}
@@ -598,6 +614,8 @@ function DeclaredScripts(
     </ItemGroup>
     )}
     {props.children}
+    {props.page ? <ProjectEnvironmentBindings testID={`${props.testID}.environment`}
+      manifest={props.manifest} controller={props.controller.environmentBindings} /> : null}
     {props.page && hasPortable && props.onOpenWorkers ? (
       <WorkersSummarySection
         testID={`${props.testID}.workers`}
@@ -608,7 +626,13 @@ function DeclaredScripts(
     ) : null}
     {props.page ? (
       // What agents in Sessions on this checkout may do here (lab `s-agent` GUIDE, plan 30s3).
-      <ItemGroup title={t('projects.scripts.agentsTitle')} description={t('projects.scripts.agentsDescription')}>
+      <ItemGroup title={t('projects.scripts.agentsTitle')} description={(
+        <>
+          {t('projects.scripts.agentsDescriptionBefore')}
+          <InlineCode>{PROJECT_SCRIPT_RUN_COMMAND}</InlineCode>
+          {t('projects.scripts.agentsDescriptionAfter')}
+        </>
+      )}>
         <WorkspaceAdHocCommandsItem
           testID={`${props.testID}.agents.adHoc`}
           preference={preference}
@@ -699,6 +723,7 @@ function DeclaredScriptRow(
       ? props.controller.failure.code
       : null;
   return (
+    <>
     <ProjectScriptRow
       testID={props.testID}
       workspace={props.workspace}
@@ -706,13 +731,16 @@ function DeclaredScriptRow(
       badge={props.glance ? null : source.badge}
       glance={props.glance}
       command={source.command ?? (source.target === props.name ? null : source.target)}
+      nativeSource={props.declaration.source.kind === 'command' ? undefined : props.declaration.source}
+      accountId={props.controller.accountId}
       portable={props.declaration.execution === 'portable'}
       operation={operation}
       idleText={props.idleText}
       pending={props.controller.pendingKeys[rowKey] === true}
       failureCode={failure}
-      failureText={describeScriptEnvironmentRefusal(failure, props.manifest, props.declaration.source)}
-      environmentName={nativeEnvironmentNameFor(props.manifest)}
+      failureText={failure === 'project_environment_binding_unavailable' ? t('projects.scripts.environment.refused')
+        : describeScriptToolchainRefusal(failure, props.manifest, props.declaration.source)}
+      toolchainName={nativeToolchainNameFor(props.manifest)}
       compact={props.compact}
       showDivider={props.showDivider}
       defaultChoice={resolvedChoice.status === 'resolved' ? resolvedChoice.choice : null}
@@ -732,6 +760,12 @@ function DeclaredScriptRow(
         void props.controller.run(rowKey, { kind: 'named', name: props.name }, choice, managed);
       }}
     />
+    {!props.glance && (failure === 'project_environment_binding_unavailable'
+      || operation?.snapshot.error?.errorCode === 'project_environment_binding_unavailable') ? (
+      <ProjectEnvironmentBindings recovery testID={`${props.testID}.environment`}
+        manifest={props.manifest} controller={props.controller.environmentBindings} />
+    ) : null}
+    </>
   );
 }
 
@@ -759,12 +793,12 @@ function SetupRow(
   const reviewMachine = review.machine;
   const stop = props.controller.setupStop;
   const output = useProjectCommandOutputOpener();
-  const environmentName = nativeEnvironmentNameFor(props.manifest);
+  const toolchainName = nativeToolchainNameFor(props.manifest);
   const presentation = presentProjectRun(
     props.operation,
     reviewMachine.machineName,
     t('projects.scripts.setup.steps', { count: steps }),
-    environmentName,
+    toolchainName,
   );
   const reviewing = review.reviewing;
   const failed = props.operation?.snapshot.state === 'failed';
@@ -779,8 +813,8 @@ function SetupRow(
   // While the review is on screen it owns Run: the row keeps only its disclosure caret, never a second Run.
   const inReview = reviewing || (expanded && !showsOutput && !presentation.live);
   const subtitle = inReview
-    ? environmentName
-      ? t('projects.scripts.environment.pending')
+    ? toolchainName
+      ? t('projects.scripts.toolchain.pending')
       : t('projects.scripts.setup.pending')
     : stopping
       ? t('projects.scripts.run.stopping')
@@ -789,7 +823,7 @@ function SetupRow(
         : props.readiness?.kind === 'current'
           ? `${projectSetupReadinessLine(props.readiness)} · ${stepCount}`
           // Setup states once what the script rows below wait for; the rows themselves stay quiet.
-          : projectSetupReadinessLine(props.readiness ?? null, environmentName) ?? presentation.text;
+          : projectSetupReadinessLine(props.readiness ?? null, toolchainName) ?? presentation.text;
   const pending = review.pending;
   const attachment = props.operation?.snapshot.domainRef?.kind === 'projectCommand' ? props.operation.snapshot.domainRef : null;
   const openOutput = () => {
@@ -865,10 +899,10 @@ function SetupRow(
             onPress={phoneReview.open}
           />
         ) : inReview ? (
-          <Icon name={expanded ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />
+          <DisclosureCaret expanded={expanded} size={14} />
         ) : (
           <View style={styles.setupTail}>
-            {props.compact ? null : <Icon name={expanded ? 'caret-down' : 'caret-right'} size={14} color={theme.colors.text.tertiary} />}
+            {props.compact || phone ? null : <DisclosureCaret expanded={expanded} size={14} />}
             {control}
           </View>
         )
@@ -914,6 +948,7 @@ function SetupRow(
             manifest={props.manifest}
             machineName={reviewMachine.machineName}
             sharedRunAs={reviewMachine.sharedRunAs}
+            sharedTrustDetail={reviewMachine.sharedTrustDetail}
             pending={pending}
             reviewedEffect={review.reviewedEffect}
             scope={review.scope}
@@ -942,29 +977,10 @@ function SetupRow(
   );
 }
 
-function isDeclared(
-  manifest: ProjectManifestV1 | null,
-  source: ProjectNativeRefV1,
-): boolean {
-  if (!manifest) return false;
-  return (
-    [
-      ...Object.values(manifest.scripts ?? {}),
-      ...Object.values(manifest.services ?? {}),
-    ].some((declaration) =>
-      isSameInputOptionValue(declaration.source, source),
-    ) ||
-    (manifest.workspace?.setup ?? []).some((step) =>
-      isSameInputOptionValue(step, source),
-    )
-  );
-}
-
 /** Scripts found in the repository but not in the project file: one quiet disclosure, each one Add away. */
 function FoundMore(
   props: Readonly<{
     workspace: WorkspaceAddressV1;
-    manifest: ProjectManifestV1;
     detection: ProjectDefinitionDetectionV1;
     inspection: ProjectDefinitionInspection;
     page: boolean;
@@ -974,11 +990,14 @@ function FoundMore(
 ) {
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(false);
-  const found = props.detection.entries.filter(
-    (entry) =>
-      entry.usage === 'script' && !isDeclared(props.manifest, entry.source),
-  );
-  if (found.length === 0 || !props.page) return null;
+  const page = useFoundRowPage();
+  const found = React.useMemo(() => {
+    const rows = props.detection.entries.filter(entry => entry.usage === 'script')
+      .map(entry => ({ source: entry.source, id: JSON.stringify(entry.source) }));
+    return { rows, files: joinProjectFiles(rows.map(row => row.source.file)) };
+  }, [props.detection.entries]);
+  const disabled = Object.keys(props.controller.pendingKeys).length > 0;
+  if (found.rows.length === 0 || !props.page) return null;
   return (
     <ItemGroup surface="none">
       <ExpandableItem
@@ -1000,65 +1019,31 @@ function FoundMore(
             title={(
               <Text numberOfLines={2} style={[styles.inlineTitle, { color: theme.colors.text.secondary }]}>
                 <Text style={[styles.inlineTitle, styles.strong, { color: theme.colors.text.primary }]}>
-                  {t('projects.scripts.foundMore', { count: found.length })}
+                  {t('projects.scripts.foundMore', { count: found.rows.length })}
                 </Text>
-                {' '}{t('projects.scripts.foundIn', { files: joinProjectFiles(found.map((entry) => entry.source.file)) })}
+                {' '}{t('projects.scripts.foundIn', { files: found.files })}
               </Text>
             )}
-            rightElement={<Icon name={expanded ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />}
-            showChevron={false}
           />
         )}
       >
-        {found.map((entry, index) => {
-          const id = JSON.stringify(entry.source);
-          return (
-            <Item
-              key={id}
+        {found.rows.slice(0, page.rows).map((row, index, shown) => (
+            <FoundScriptReferenceRow
+              key={row.id}
+              workspace={props.workspace}
+              accountId={props.controller.accountId}
+              source={row.source}
+              id={row.id}
               testID={`${props.testID}.detected:${index}`}
-              mode="info"
-              showChevron={false}
-              showDivider={index < found.length - 1}
-              icon={
-                <Icon
-                  name="circle"
-                  size={18}
-                  color={theme.colors.text.tertiary}
-                />
-              }
-              title={entry.source.target}
-              subtitle={(() => {
-                const command = describeProjectCommandSource(entry.source, findProjectInvocation(props.inspection, entry.source)).command;
-                return command ? (
-                  <Text testID={`${props.testID}.detected:${index}.command`} numberOfLines={1} style={[styles.inlineMeta, styles.mono, { color: theme.colors.text.secondary }]}>{command}</Text>
-                ) : undefined;
-              })()}
-              titleAccessory={
-                <StatusPill
-                  variant="neutral"
-                  hideDot
-                  label={describeProjectCommandSource(entry.source).badge ?? entry.source.file}
-                  labelStyle={styles.mono}
-                  style={styles.badge}
-                />
-              }
-              rightElement={
-                <RoundButton
-                  size="small"
-                  display="secondary"
-                  title={t('projects.scripts.addToProjectFile')}
-                  testID={`${props.testID}.detected:${index}.add`}
-                  loading={props.controller.pendingKeys[`add:${id}`] === true}
-                  disabled={Object.keys(props.controller.pendingKeys).length > 0}
-                  onPress={() => {
-                    void props.controller.add(`add:${id}`, props.inspection.definition, entry.source);
-                  }}
-                />
-              }
-              rightElementOutsidePressable
+              showDivider={index < shown.length - 1}
+              pending={props.controller.pendingKeys[`add:${row.id}`] === true}
+              disabled={disabled}
+              add={props.controller.add}
             />
-          );
-        })}
+        ))}
+        {found.rows.length > page.rows ? (
+          <FoundShowMore testID={`${props.testID}.found.showMore`} hidden={found.rows.length - page.rows} onPress={page.more} />
+        ) : null}
         <Text style={[styles.note, { color: theme.colors.text.tertiary }]}>
           {t('projects.scripts.foundNote')}
         </Text>
@@ -1071,16 +1056,20 @@ function ServicesFound(
   props: Readonly<{
     testID: string;
     detection: ProjectDefinitionDetectionV1;
-    manifest: ProjectManifestV1 | null;
+    summary?: ProjectDefinitionInspection['detectionSummary'];
     onOpenServices?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const services = props.detection.entries.filter(
-    (entry) =>
-      entry.usage === 'service' && !isDeclared(props.manifest, entry.source),
-  );
-  if (services.length === 0 || !props.onOpenServices) return null;
+  const { count, files } = React.useMemo(() => {
+    if (props.summary) return {
+      count: props.summary.services,
+      files: joinProjectFiles(props.summary.files.filter(file => file.services > 0).map(file => file.file)),
+    };
+    const services = props.detection.entries.filter(entry => entry.usage === 'service');
+    return { count: services.length, files: joinProjectFiles(services.map(entry => entry.source.file)) };
+  }, [props.detection.entries, props.summary]);
+  if (count === 0 || !props.onOpenServices) return null;
   return (
     <ItemGroup surface="none">
       <Item
@@ -1096,9 +1085,9 @@ function ServicesFound(
         title={(
           <Text numberOfLines={2} style={[styles.inlineTitle, { color: theme.colors.text.secondary }]}>
             <Text style={[styles.inlineTitle, styles.strong, { color: theme.colors.text.primary }]}>
-              {t('projects.scripts.servicesFound', { count: services.length })}
+              {t('projects.scripts.servicesFound', { count })}
             </Text>
-            {' '}{t('projects.scripts.foundIn', { files: joinProjectFiles(services.map((entry) => entry.source.file)) })}
+            {' '}{t('projects.scripts.foundIn', { files })}
           </Text>
         )}
         detail={t('projects.scripts.reviewInServices')}
@@ -1115,9 +1104,12 @@ function FirstRun(
     inspection: ProjectDefinitionInspection;
     controller: ScriptsController;
     page: boolean;
+    /** The Overview widget: a summary of what was found and the ways forward, never the runnable list. */
+    glance?: boolean;
     testID: string;
     onEdit: ((seed: boolean, mode?: 'form' | 'raw') => void) | null;
     onOpenServices?: () => void;
+    onOpenScripts?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1132,11 +1124,15 @@ function FirstRun(
     projectDefinitionInspectionKey(props.workspace),
   );
   const detected = props.inspection.detection.entries;
-  const runnable = detected.filter((entry) => entry.usage === 'script');
+  const summary = props.inspection.detectionSummary;
+  const { runnableCount, hasDetected, files } = React.useMemo(() => ({
+    runnableCount: summary?.scripts ?? detected.filter(entry => entry.usage === 'script').length,
+    hasDetected: summary ? summary.total > 0 || (summary.sourceFiles?.length ?? summary.files.length) > 0 : detected.length > 0,
+    files: joinProjectFiles(summary ? summary.sourceFiles ?? summary.files.map(file => file.file) : detected.map(entry => entry.source.file)),
+  }), [detected, summary]);
   // The hero and groups share the page's reading column with every section below it.
   const column = useLayoutMaxWidthStyle();
   const columnMaxWidth = useLayoutMaxWidth();
-  const files = joinProjectFiles(detected.map((entry) => entry.source.file));
   const setupButton = authoring.hasQualifiedCheckout ? (
     <RoundButton
       testID={`${props.testID}.setup`}
@@ -1155,6 +1151,16 @@ function FirstRun(
     />
   ) : null;
   // The refusal reads beside the button that failed, with the reason's own words (never one generic error).
+  // The widget reads like its siblings (lab p-overview HIDDEN): what was found, Review, Set up with an agent.
+  const reviewButton = props.glance && props.onOpenScripts ? (
+    <RoundButton
+      testID={`${props.testID}.review`}
+      size="small"
+      display="secondary"
+      title={t('projects.widgets.scriptsReview')}
+      onPress={props.onOpenScripts}
+    />
+  ) : null;
   const setupFailure = setup.reason ? (
     <SurfaceStateCard
       testID={`${props.testID}.setup.failure`}
@@ -1169,7 +1175,7 @@ function FirstRun(
       {props.page ? (
         <HappierPageHeader
           title={t('projects.widgets.noProjectFile')}
-          description={t('projects.widgets.noProjectFileBody', { count: runnable.length })}
+          description={t('projects.widgets.noProjectFileBody', { count: runnableCount })}
           // An identity-mark slot centres on the whole text block; on a phone that indents the hero
           // and floats the glyph mid-block, so the title leads at the column edge (lab FIRSTp) and the
           // selected Scripts tab carries the glyph.
@@ -1194,21 +1200,25 @@ function FirstRun(
           renderText={renderPageHeaderText}
           testID={`${props.testID}.noProjectFile`}
         />
-      ) : runnable.length > 0 ? (
+      ) : runnableCount > 0 || (props.glance && hasDetected) ? (
         <View testID={`${props.testID}.found`} style={styles.found}>
-          <Text
-            style={[styles.foundText, { color: theme.colors.text.secondary }]}
-          >
-            {t('projects.widgets.scriptsFound', {
-              count: runnable.length,
-              files,
-            })}
-          </Text>
-          <View style={styles.actions}>{setupButton}</View>
+          {runnableCount > 0 ? (
+            <Text
+              style={[styles.foundText, { color: theme.colors.text.secondary }]}
+            >
+              {t('projects.widgets.scriptsFound', {
+                count: runnableCount,
+                files,
+              })}
+            </Text>
+          ) : null}
+          <View style={styles.actions}>{reviewButton}{setupButton}</View>
           {setupFailure}
         </View>
       ) : null}
-      {detected.length === 0 ? (
+      {/* Provenance only: which Session last wrote toward this checkout. It never says the setup is ready. */}
+      <ProjectSetupAuthoredLine workspace={props.workspace} compact={!props.page} />
+      {!hasDetected ? (
         // On the page the hero above already says nothing was found and offers the next step.
         props.page ? null : (
           <SurfaceStateCard
@@ -1217,18 +1227,19 @@ function FirstRun(
             title={t('projects.widgets.scriptsEmpty')}
           />
         )
-      ) : (
+      ) : props.glance ? null : (
         <DetectedGroups
           {...props}
           detection={props.inspection.detection}
-          manifest={null}
         />
       )}
-      {props.page && detected.length > 0 ? (
+      {props.page && hasDetected ? (
         <Text style={[styles.note, { color: theme.colors.text.tertiary }]}>
           {t('projects.widgets.scriptsFoundBy', { files })}
         </Text>
       ) : null}
+      {props.page ? <ServicesFound testID={props.testID} detection={props.inspection.detection}
+        summary={props.inspection.detectionSummary} onOpenServices={props.onOpenServices} /> : null}
     </View>
   );
 }
@@ -1245,7 +1256,6 @@ function DetectedGroups(
     workspace: WorkspaceAddressV1;
     inspection: ProjectDefinitionInspection;
     detection: ProjectDefinitionDetectionV1;
-    manifest: ProjectManifestV1 | null;
     controller: ScriptsController;
     page: boolean;
     testID: string;
@@ -1258,30 +1268,44 @@ function DetectedGroups(
       ProjectDefinitionDetectionV1['entries'][number][]
     >();
     for (const entry of props.detection.entries) {
-      if (entry.usage === 'setup' || isDeclared(props.manifest, entry.source))
+      if (entry.usage === 'setup')
         continue;
-      byFile.set(entry.source.file, [
-        ...(byFile.get(entry.source.file) ?? []),
-        entry,
-      ]);
+      const group = byFile.get(entry.source.file);
+      if (group) group.push(entry);
+      else byFile.set(entry.source.file, [entry]);
     }
-    return [...byFile.entries()];
-  }, [props.detection.entries, props.manifest]);
+    let index = 0;
+    return [...byFile.entries()].map(([file, entries]) => [file, entries.map(entry => ({
+      entry,
+      service: entry.usage === 'service',
+      id: JSON.stringify(entry.source),
+      index: index++,
+      rowKey: projectScriptRowKey(props.workspace, `native:${JSON.stringify(entry.source)}`),
+    }))] as const);
+  }, [props.detection.entries, props.workspace]);
+  const listed = React.useMemo(() => groups.reduce((sum, [, entries]) => sum + entries.length, 0), [groups]);
   const { theme } = useUnistyles();
   // A widget keeps its card's footprint (lab p-overview HOME: a few rows, never the whole list); the
   // Scripts page lists everything. The rest is counted once under the rows.
   const frameRows = React.useContext(WidgetFrameBodyRowsContext);
-  const rowBudget = props.page ? Number.POSITIVE_INFINITY : Math.max(WIDGET_SCRIPT_ROWS, frameRows ?? 0);
-  const total = groups.reduce((sum, [, entries]) => sum + entries.length, 0);
+  const page = useFoundRowPage();
+  const rowBudget = props.page ? page.rows : Math.max(WIDGET_SCRIPT_ROWS, frameRows ?? 0);
+  const summary = props.inspection.detectionSummary;
+  const fileTotals = React.useMemo(
+    () => new Map((summary?.files ?? []).map(group => [group.file, group.total] as const)),
+    [summary],
+  );
+  // The page holds every found reference and mounts them a page at a time; a widget's read is already narrowed,
+  // so its count comes from the summary.
+  const total = props.page ? listed : summary?.total ?? listed;
   let remaining = rowBudget;
   const shownGroups = groups.flatMap(([file, entries]) => {
     if (remaining <= 0) return [];
     const shown = entries.slice(0, remaining);
     remaining -= shown.length;
-    return [[file, shown, entries.length] as const];
+    return [[file, shown, fileTotals.get(file) ?? entries.length] as const];
   });
   const hiddenCount = total - shownGroups.reduce((sum, [, shown]) => sum + shown.length, 0);
-  let index = 0;
   const rendered = shownGroups.map(([file, entries, fileTotal]) => (
     <ItemGroupColumn key={file}>
       <ItemGroup
@@ -1294,23 +1318,26 @@ function DetectedGroups(
               labelStyle={styles.mono}
             />
             <Text style={styles.groupMeta}>
-              {groupToolLabel(entries[0]!.source, file)
-                ? t('projects.scripts.foundCount', { count: fileTotal, tool: groupToolLabel(entries[0]!.source, file)! })
+              {groupToolLabel(entries[0]!.entry.source, file)
+                ? t('projects.scripts.foundCount', { count: fileTotal, tool: groupToolLabel(entries[0]!.entry.source, file)! })
                 : String(fileTotal)}
             </Text>
           </View>
         }
       >
-        {entries.map((entry, position) => (
+        {entries.map((row, position) => (
           <DetectedRow
-            key={JSON.stringify(entry.source)}
-            testID={`${props.testID}.detected:${index++}`}
+            key={row.id}
+            testID={`${props.testID}.detected:${row.index}`}
             workspace={props.workspace}
-            entry={entry}
-            invocation={findProjectInvocation(props.inspection, entry.source)}
-            controller={props.controller}
+            entry={row.entry}
+            rowKey={row.rowKey}
+            accountId={props.controller.accountId}
+            pending={props.controller.pendingKeys[row.rowKey] === true}
+            failureCode={props.controller.failure?.key === row.rowKey ? props.controller.failure.code : null}
+            run={props.controller.run}
             compact={!props.page}
-            onOpenServices={props.onOpenServices}
+            onOpenServices={row.service ? props.onOpenServices : undefined}
             showDivider={position < entries.length - 1}
           />
         ))}
@@ -1319,8 +1346,11 @@ function DetectedGroups(
   ));
   return (
     <>
-      <ItemGroupColumns columns={props.page ? 2 : 1} paddingHorizontal={0} paddingVertical={0}>{rendered}</ItemGroupColumns>
-      {hiddenCount > 0 ? (
+      {/* Files sit side by side on the page (lab s-scripts FIRST); one file takes the whole column rather than leaving the second empty. */}
+      <ItemGroupColumns columns={props.page && shownGroups.length > 1 ? 2 : 1} paddingHorizontal={0} paddingVertical={0}>{rendered}</ItemGroupColumns>
+      {hiddenCount > 0 && props.page ? (
+        <FoundShowMore testID={`${props.testID}.detected.showMore`} hidden={hiddenCount} onPress={page.more} />
+      ) : hiddenCount > 0 ? (
         <Text testID={`${props.testID}.detected.more`} style={[styles.note, { color: theme.colors.text.tertiary }]}>
           {t('projects.scripts.foundMore', { count: hiddenCount })}
         </Text>
@@ -1332,83 +1362,30 @@ function DetectedGroups(
 /** The fewest rows a Scripts widget shows (lab p-overview HOME: three scripts), more when its frame has room. */
 const WIDGET_SCRIPT_ROWS = 3;
 
-function DetectedRow(
-  props: Readonly<{
-    testID: string;
-    workspace: WorkspaceAddressV1;
-    entry: ProjectDefinitionDetectionV1['entries'][number];
-    invocation: ReturnType<typeof findProjectInvocation>;
-    controller: ScriptsController;
-    compact: boolean;
-    showDivider: boolean;
-    onOpenServices?: () => void;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const rowKey = projectScriptRowKey(
-    props.workspace,
-    `native:${JSON.stringify(props.entry.source)}`,
-  );
-  const operation = useProjectScriptRun(props.workspace, { kind: 'native', source: props.entry.source }, props.controller.accountId);
-  if (props.entry.usage === 'service') {
-    return (
-      <Item
-        testID={props.testID}
-        showDivider={props.showDivider}
-        icon={
-          <Icon
-            name="hard-drives"
-            size={18}
-            color={theme.colors.text.secondary}
-          />
-        }
-        title={props.entry.source.target}
-        titleAccessory={
-          <Text
-            style={[
-              styles.groupMeta,
-              styles.badge,
-              { color: theme.colors.text.tertiary },
-            ]}
-          >
-            {t('projects.scripts.service')}
-          </Text>
-        }
-        detail={
-          props.onOpenServices ? t('projects.scripts.openServices') : undefined
-        }
-        mode={props.onOpenServices ? 'interactive' : 'info'}
-        showChevron={Boolean(props.onOpenServices)}
-        {...(props.onOpenServices ? { onPress: props.onOpenServices } : {})}
-      />
-    );
-  }
-  const failure =
-    props.controller.failure?.key === rowKey
-      ? props.controller.failure.code
-      : null;
+/**
+ * Found references mount a page at a time: a checkout can declare thousands (happier-dev: 6,230), and mounting
+ * them all froze the tab. A page is a few screens of rows; every reference stays one Show more away.
+ */
+const FOUND_PAGE_ROWS = 120;
+
+function useFoundRowPage() {
+  const [rows, setRows] = React.useState(FOUND_PAGE_ROWS);
+  const more = React.useCallback(() => setRows((current) => current + FOUND_PAGE_ROWS), []);
+  return { rows, more };
+}
+
+/** The way to the next page of found references, under the rows it continues. */
+function FoundShowMore(props: Readonly<{ testID: string; hidden: number; onPress: () => void }>) {
   return (
-    <ProjectScriptRow
-      testID={props.testID}
-      workspace={props.workspace}
-      name={props.entry.source.target}
-      badge={null}
-      command={describeProjectCommandSource(props.entry.source, props.invocation).command}
-      portable={false}
-      operation={operation}
-      // Found-by-reading rows say nothing about runs; the page footnote says once that nothing has run.
-      idleText=""
-      pending={props.controller.pendingKeys[rowKey] === true}
-      failureCode={failure}
-      compact={props.compact}
-      showDivider={props.showDivider}
-      onRun={() => {
-        void props.controller.run(rowKey, {
-          kind: 'native',
-          source: props.entry.source,
-        });
-      }}
-    />
+    <View style={styles.showMore}>
+      <RoundButton
+        testID={props.testID}
+        size="small"
+        display="secondary"
+        title={t('projects.scripts.showMore', { count: Math.min(props.hidden, FOUND_PAGE_ROWS) })}
+        onPress={props.onPress}
+      />
+    </View>
   );
 }
 
@@ -1492,7 +1469,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.s8,
   },
   mono: { ...Typography.mono() },
-  badge: { marginLeft: theme.space.s8 },
+  showMore: { flexDirection: 'row', paddingHorizontal: PAGE_LIST_METRICS.pageTextInsetPx, paddingTop: theme.space.s8 },
   groupMeta: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),

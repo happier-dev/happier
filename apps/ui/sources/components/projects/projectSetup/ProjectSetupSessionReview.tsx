@@ -146,7 +146,7 @@ export const ProjectSetupConsentReviewCard = React.memo(
         : null;
     const review = operation.snapshot.setupReview ?? null;
     // Setup runs on the actual target the operation was admitted to.
-    const { machineName, sharedRunAs } = useProjectSetupMachine(
+    const { machineName, sharedRunAs, sharedTrustDetail } = useProjectSetupMachine(
       attachment?.serverId ?? null,
       attachment?.machineId ?? null,
     );
@@ -268,6 +268,7 @@ export const ProjectSetupConsentReviewCard = React.memo(
           reviewedEffect={review.reviewedEffect}
           machineName={machineName}
           sharedRunAs={sharedRunAs}
+          sharedTrustDetail={sharedTrustDetail}
         />
         <ProjectSetupScopeChoice testID={testID} scope={decision} onChange={setDecision} />
       </ApprovalPromptChrome>

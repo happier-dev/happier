@@ -47,18 +47,18 @@ export function listProjectSetupEffect(
   reviewedEffect?: unknown,
 ): readonly EffectLine[] {
   const lines: EffectLine[] = [];
-  const environment = manifest.environment;
-  if (environment && environment.kind !== 'host') {
+  const toolchain = manifest.toolchain;
+  if (toolchain && toolchain.kind !== 'host') {
     const tool =
-      environment.kind === 'toolchain'
-        ? environment.tool
-        : environment.adapter.localId;
+      toolchain.kind === 'toolchain'
+        ? toolchain.tool
+        : toolchain.adapter.localId;
     lines.push({
       key: 'tools',
       label: t('projects.scripts.setup.tools'),
       value: tool,
       mono: true,
-      ...(environment.configPath ? { note: environment.configPath } : {}),
+      ...(toolchain.configPath ? { note: toolchain.configPath } : {}),
     });
   }
   // The producer's resolved effect (B9 `reviewedEffect`) wins over the declared anatomy when present:
@@ -145,6 +145,7 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
     machineName: string;
     /** A teammate's shared Machine: name the OS user it runs as (D6/D24). */
     sharedRunAs: string | null;
+    sharedTrustDetail?: string | null;
     /** Safe resolved effect from the D18 review, when the producer supplied it. */
     reviewedEffect?: unknown;
     /** The effect rows on a sheet of their own (the pushed page); on a card they sit on the card. */
@@ -230,7 +231,7 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
           onPress={props.onViewFile}
         /> : null}
       </View>
-      {props.sharedRunAs ? (
+      {props.sharedRunAs || props.sharedTrustDetail ? (
         <View
           testID={`${props.testID}.shared`}
           style={[
@@ -250,11 +251,11 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
               { color: theme.colors.text.secondary },
             ]}
           >
-            {t('projects.scripts.setup.sharedScope', {
+            {props.sharedRunAs ? t('projects.scripts.setup.sharedScope', {
               osUser: props.sharedRunAs,
               machine: props.machineName,
-            })}
-            {' '}{t('machines.terminals.sharedOsDetail', { machine: props.machineName })}
+            }) : null}
+            {' '}{props.sharedTrustDetail ?? t('machines.terminals.sharedOsDetail', { machine: props.machineName })}
           </Text>
         </View>
       ) : null}
@@ -303,6 +304,7 @@ type ProjectSetupReviewBodyProps = Readonly<{
   manifest: ProjectManifestV1;
   machineName: string;
   sharedRunAs: string | null;
+  sharedTrustDetail?: string | null;
   reviewedEffect?: unknown;
   framed?: boolean;
   scope: ProjectSetupScope;
@@ -374,6 +376,7 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
     manifest: ProjectManifestV1;
     machineName: string;
     sharedRunAs: string | null;
+    sharedTrustDetail?: string | null;
     pending: boolean;
     onRun: (scope: ProjectSetupScope) => void;
     reviewedEffect?: unknown;

@@ -1,5 +1,19 @@
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ManagedControllerRequestFailureDetailsV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
+
+/** The control Details disclosure accepts only the Protocol's code-only transport cause. */
+export function describeManagedActionFailureDiagnostic(code: string, details?: unknown): string {
+    const controller = ManagedControllerRequestFailureDetailsV1Schema.safeParse(details);
+    if (controller.success) return [code, controller.data.category,
+        controller.data.status ? `HTTP ${controller.data.status}` : undefined,
+        controller.data.code === code ? undefined : controller.data.code].filter(Boolean).join(' · ');
+    const parsed = ExternalActionHttpErrorSchema.safeParse(details);
+    if (!parsed.success || !('code' in parsed.data) || parsed.data.code !== 'action_outcome_unknown'
+        || parsed.data.code !== code || !('diagnostic' in parsed.data)) return code;
+    const cause = parsed.data.diagnostic;
+    return [code, cause.reason, 'errorCode' in cause ? cause.errorCode : undefined].filter(Boolean).join(' · ');
+}
 
 /** Technical facts and privacy-projected command stderr for the existing Details disclosure. */
 export function describeManagedNativeCause(cause: MachineProvisionerNativeCauseV1): string {

@@ -5,8 +5,10 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ManagedControllerRequestFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SavedSecretResourceActionErrorV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { PluginSecretSourceFailureV1Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
 import {
     HomeGovernanceErrorCodeV1Schema,
     homeGovernanceErrorHttpStatusV1,
@@ -123,10 +125,14 @@ export function homeDomainFailureFromActionFailure(
     })();
     const parsedDetails = readHomeDomainActionErrorV1(domainDetails);
     const externalDetails = ExternalActionHttpErrorSchema.safeParse(domainDetails);
+    const controllerDetails = ManagedControllerRequestFailureDetailsV1Schema.safeParse(domainDetails);
     const availability = code === 'target_unavailable' ? MachineAvailabilityDiagnosticV1Schema.safeParse(domainDetails) : null;
+    const sourceFailure = actionId?.startsWith('secrets.') && typeof domainDetails === 'object' && domainDetails !== null && 'repair' in domainDetails
+        ? PluginSecretSourceFailureV1Schema.safeParse({ ok: false, code, repair: domainDetails.repair }) : null;
     const details = parsedDetails?.code === code ? parsedDetails.details
         : externalDetails.success && 'code' in externalDetails.data && externalDetails.data.code === code
-            ? externalDetails.data : availability?.success ? availability.data : undefined;
+            ? externalDetails.data : controllerDetails.success ? controllerDetails.data : availability?.success ? availability.data
+                : sourceFailure?.success ? { repair: sourceFailure.data.repair } : undefined;
     const withDetails = (value: HomeDomainFailure<string>): HomeDomainFailure<string> => Object.freeze({
         ...value,
         ...(details === undefined ? {} : { details }),

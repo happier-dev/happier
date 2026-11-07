@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
@@ -247,7 +247,7 @@ describe('Project setup review inside a Session', () => {
     } finally { finishDecision?.(); await screen.unmount(); decisionObservation.mockRestore(); alert.mockRestore(); await connection.dispose(); }
   });
 
-  it('asks for the held invocation with its exact effect and remembers the reviewed effect for this Project only', async () => {
+  it.each([false, true])('remembers the exact held effect through projects.prepare admission (disabled: %s)', async disabled => {
     const mutations: unknown[] = [];
     const connection = await restoreServerAccountForTest({
       serverUrl: 'https://setup-session-review.test',
@@ -263,7 +263,8 @@ describe('Project setup review inside a Session', () => {
           );
         if (path === '/v2/account/settings')
           return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
-            approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } } } }, version: 1 });
+            actions: disabled ? { 'projects.prepare': { disabledSurfaces: ['ui'] } } : {},
+            approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'], 'projects.prepare': ['ui'] } } } }, version: 1 });
         if (path === '/v1/account/project-rows/list')
           return Response.json(createPlainProjectAccountRowListFixture({
             workspaceRefs: [{ id: 'checkout', serverId: 'srv_setup_session_review', machineId: 'devbox',
@@ -318,9 +319,14 @@ describe('Project setup review inside a Session', () => {
           workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace } });
       const target = held.domainRef;
       if (target?.kind !== 'projectCommand') throw new Error('Expected retained Project target');
-      machineTransport.read.mockResolvedValueOnce({ kind: 'found', operation: held })
-        .mockResolvedValueOnce({ kind: 'found', operation: { ...held, revision: 2, setupReview: undefined,
-          domainRef: { ...target, sourceWorkspace: undefined } } });
+      let refreshes = 0;
+      machineTransport.read.mockImplementation(async ({ payload }) => {
+        if (payload.refreshSetupReview) refreshes += 1;
+        return { kind: 'found', operation: refreshes < 2 ? held : { ...held, revision: 2, setupReview: undefined,
+          domainRef: { ...target, sourceWorkspace: undefined } } };
+      });
+      const decisionOwner = await import('./projectSetupConsentDecision');
+      const decisionObservation = vi.spyOn(decisionOwner, 'decideProjectSetupConsent');
       actionOperationStore.mergeSnapshots({
         serverId,
         snapshots: [
@@ -361,6 +367,14 @@ describe('Project setup review inside a Session', () => {
       await act(async () => {
         screen.pressByTestId('project-setup-session-review:held-test-approve');
       });
+      if (disabled) {
+        await vi.waitFor(async () => expect(await decisionObservation.mock.results.at(-1)?.value)
+          .toEqual({ kind: 'unavailable', code: 'action_disabled' }));
+        expect(mutations).toEqual([]);
+        expect(machineTransport.read).not.toHaveBeenCalled();
+        await screen.unmount();
+        return;
+      }
       await vi.waitFor(() =>
         expect(
           screen.findByTestId('project-setup-session-review:held-test.settled'),
@@ -402,7 +416,7 @@ describe('Project setup review inside a Session', () => {
       expect(screen.getTextContent()).toContain('r7');
       expect(screen.getTextContent()).toContain('secretsSettings.keepShared');
       expect(screen.getTextContent()).toContain('projects.scripts.setup.provenanceModified');
-      expect(screen.getTextContent()).toContain('machines.terminals.sharedOsDetail');
+      expect(screen.getTextContent()).toContain('machines.sharing.fallback.lead');
       expect(screen.getTextContent()).not.toContain('NEVER-DISCLOSE');
 
       // Retire the Account binding, then return to the same Account: old settled lines stay gone.

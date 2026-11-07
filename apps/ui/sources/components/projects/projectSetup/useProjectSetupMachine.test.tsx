@@ -35,4 +35,18 @@ describe('useProjectSetupMachine', () => {
     expect(hook.getCurrent().machineName).toBe(t('machine.thisMachineInSentence'));
     await hook.unmount();
   });
+
+  it.each([
+    [{ enabled: false }, 'machines.sharing.fallback.lead', 'owner'],
+    [{ enabled: true }, 'machines.sharing.trustedOsDetail', 'happier-agent'],
+    [{ enabled: true, memberProvisioning: 'linuxUsersV1' }, 'machines.sharing.memberUsersDetail', null],
+  ] as const)('projects the shared Machine policy into the setup disclosure: %s', async (agentIsolation, detailKey, sharedRunAs) => {
+    const base = createMachineFixture({ id: 'devbox', isShared: true });
+    seedMachines({ ...base, metadata: { ...base.metadata!, username: 'owner', platform: 'linux', agentIsolation },
+      daemonState: { ...base.daemonState!, agentIsolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } } });
+    const hook = await renderHook(() => useProjectSetupMachine(serverId, 'devbox'));
+    expect(hook.getCurrent()).toMatchObject({ sharedRunAs,
+      sharedTrustDetail: expect.stringContaining(t(detailKey, { machine: hook.getCurrent().machineName })) });
+    await hook.unmount();
+  });
 });

@@ -89,6 +89,7 @@ export function ProjectSetupReviewPage(
               manifest={props.manifest}
               machineName={review.machine.machineName}
               sharedRunAs={review.machine.sharedRunAs}
+              sharedTrustDetail={review.machine.sharedTrustDetail}
               reviewedEffect={review.reviewedEffect}
               framed
               scope={scope}
