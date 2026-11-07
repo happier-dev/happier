@@ -210,6 +210,8 @@ export type ProviderGatewayCollectionRow = Readonly<{
     revision: number;
     /** The vendor services whose slot is set, in the contribution's order: what the gateway draws on. */
     slotServices: readonly PluginContributionIdentityV1[];
+    /** On for the Account: the grant its header switch writes. */
+    enabled: boolean;
 }>;
 
 /** Immutable vendor declarations distinguish a gateway from other managed sources such as Ollama. */
@@ -245,6 +247,7 @@ export function areProviderGatewayDeclarationsKnown(input: Readonly<{
 export function buildProviderGatewayCollection(input: Readonly<{
     connections: readonly ProviderConnectionV1[];
     declarationContext: ProviderDeclarationContext;
+    accountGrants: readonly Readonly<{ connectionId: string }>[];
 }>): readonly ProviderGatewayCollectionRow[] {
     return input.connections.flatMap(connection => {
         const purposes = readProviderGatewayPurposeDeclarations(connection, input.declarationContext) ?? [];
@@ -252,7 +255,8 @@ export function buildProviderGatewayCollection(input: Readonly<{
         const bound = connection.purposeBindingDefaults ?? {};
         return [{ connectionId: connection.id, title: connection.displayName,
             detailRoute: providerConnectionDetailRoute(connection.id), revision: connection.revision,
-            slotServices: purposes.filter(({ purpose }) => bound[purpose]).map(({ service }) => service) }];
+            slotServices: purposes.filter(({ purpose }) => bound[purpose]).map(({ service }) => service),
+            enabled: input.accountGrants.some(grant => grant.connectionId === connection.id) }];
     });
 }
 

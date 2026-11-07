@@ -37,7 +37,8 @@ export function usePoolGatewayChoices(input: Readonly<{
         readAccountProviderDeclarations({ kind: 'account' }), { service: input.target.service }), [input.target.service]);
     const newGatewayAvailable = React.useMemo(() => {
         if (!accountMatchesTarget || !catalog?.data) return false;
-        const saved = { connections: catalog.data.connections, declarationContext: { kind: 'account' as const } };
+        const saved = { connections: catalog.data.connections, declarationContext: { kind: 'account' as const },
+            accountGrants: catalog.data.accountGrants };
         return areProviderGatewayDeclarationsKnown(saved) && buildProviderGatewayCollection(saved).length === 0;
     }, [accountMatchesTarget, catalog?.data]);
     // No gateway yet (D19): the switch stays, and turning it on creates the first one with this pool.

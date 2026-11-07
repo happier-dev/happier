@@ -243,6 +243,18 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
         expect(screen.findByTestId('connected-services-rail:account-draft:happier.agent.claude/claude-subscription')).toBeNull();
     });
 
+    it('keeps the draft row of a first account while the agents that use its service are still unknown', async () => {
+        // Agent uses resolve after the accounts: the rail lists an unclassified service with Code and tools, and a
+        // draft for a service with nothing added yet must stay where its group is drawn, not vanish until they load.
+        const service = { pluginId: 'happier.scm.forge.linear', localId: 'linear-account' };
+        const serviceKey = 'happier.scm.forge.linear/linear-account';
+        const model = { ...MODEL, connectable: [...MODEL.connectable, {
+            serviceKey, service, entry: MODEL.sheets[0]!.entry!, label: 'Linear', usedBy: [], usedByAgentIds: [], section: 'unknown' as const,
+        }] };
+        const screen = await render({ model, selection: { kind: 'accountDraft', serviceKey } });
+        expect(screen.findByTestId(`connected-services-rail:account-draft:${serviceKey}`)).not.toBeNull();
+    });
+
     it('lists the pools with the member each uses now, and opens the pressed pool', async () => {
         const onOpenPool = vi.fn();
         const screen = await render({ onOpenPool });

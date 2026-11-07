@@ -49,6 +49,7 @@ export const CredentialsSecretsGroup = React.memo(function CredentialsSecretsGro
   return (
     <ItemGroup
       testID="credentials-secrets"
+      surface="none"
       title={t('connectedServicesCollection.secretsGroup')}
       description={t('connectedServicesCollection.secretsDescription')}
       action={(

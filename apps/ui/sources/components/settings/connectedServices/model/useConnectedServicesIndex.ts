@@ -60,7 +60,8 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         if (!gatewayCatalog?.data) return null;
         const connections = gatewayCatalog.data.connections;
         if (!connections.some(connection => connection.deployment.kind === 'managedLocal')) return NO_GATEWAYS;
-        return buildProviderGatewayCollection({ connections, declarationContext: { kind: 'account' } });
+        return buildProviderGatewayCollection({ connections, declarationContext: { kind: 'account' },
+            accountGrants: gatewayCatalog.data.accountGrants });
     }, [gatewayCatalog?.data]);
     const gatewayCatalogCurrent = gatewayCatalog?.status === 'ready' && !gatewayCatalog.stale;
     const gatewaysKnown = gatewayRows !== null && gatewayCatalogCurrent && areProviderGatewayDeclarationsKnown({

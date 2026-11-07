@@ -4,6 +4,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
 
+import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
@@ -25,6 +26,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionApprovalNotice';
 import type { QualifiedAcknowledgementSubject } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { ConnectedMetadataCatalogSnapshot } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 
 import {
     ConnectedServicesDefaultAuthRow,
@@ -38,6 +41,9 @@ import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
  * a session starts, and what connected-account sessions share with the agent's own sign-in. Defaults
  * are per agent; the ★ on accounts and pools writes the same defaults.
  */
+const NO_DISMISSED_GUIDANCE: readonly never[] = Object.freeze([]);
+const selectAcknowledgementsRecord = (snapshot: ConnectedMetadataCatalogSnapshot) => snapshot.acknowledgements;
+
 export const ConnectedServicesAgentSignInView = React.memo(function ConnectedServicesAgentSignInView() {
     const router = useRouter();
     const activeServer = useActiveServerSnapshot();
@@ -49,6 +55,18 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     const settings = useSettingsValues(['connectedServicesDefaultProfileByServiceId']);
     const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
     const poolAdoptionDismissedByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataAcknowledgements);
+    const acknowledgements = useConnectedMetadataCatalog(activeAccountScope, selectAcknowledgementsRecord);
+    const dismissedGuidance = React.useMemo(() => acknowledgements.status === 'ready' || acknowledgements.status === 'partial'
+        ? acknowledgements.entries.filter(entry => entry.acknowledged) : NO_DISMISSED_GUIDANCE, [acknowledgements]);
+    // One reset per dismissed subject, in turn: each is a revisioned write to the same Account row.
+    const showGuidanceAgain = React.useCallback(() => {
+        fireAndForget((async () => {
+            for (const entry of dismissedGuidance) {
+                const result = await acknowledgementExecution.execute('connectedServices.acknowledgements.reset', { subject: entry.subject });
+                if (!result.ok) return;
+            }
+        })(), { tag: 'ConnectedServicesAgentSignInView.showGuidanceAgain' });
+    }, [acknowledgementExecution.execute, dismissedGuidance]);
     const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults();
     const providerStateSharingSettings = useSetting('connectedServicesProviderStateSharingSettingsV1');
     const normalizedProviderStateSharingSettings = React.useMemo(
@@ -138,6 +156,14 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                             onDismissPoolAdoptionSuggestion={dismissPoolAdoptionSuggestion}
                         />
                     ))}
+                    {dismissedGuidance.length > 0 ? (
+                        <Item
+                            testID="connected-services-agent-sign-in:show-guidance-again"
+                            title={t('connectedServicesCollection.showGuidanceAgain')}
+                            showChevron={false}
+                            onPress={showGuidanceAgain}
+                        />
+                    ) : null}
                 </ItemGroup>
                 <ItemGroup title={t('connectedServicesSettings.sharingTitle')}>
                     <ConnectedServicesProviderStateSharingDisclosure

@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroup, type ItemGroupProps } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { teamsUnavailableHomeReason } from '../teamsDirectoryViewState';
@@ -29,6 +29,8 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
     renderMark?: (resource: TeamCredentialResourceCatalogEntryV1) => React.ReactNode;
     /** `group`: a titled section of a page. `rail`: a labelled group of rows in a collection rail. */
     variant?: 'group' | 'rail';
+    /** The page section's material: an index of entities is flat (`none`), as the page around it. */
+    surface?: ItemGroupProps['surface'];
     sourceKind: 'connected_service' | 'provider';
     catalog: HomeTeamCredentialModelCatalog;
     onOpen: (resource: TeamCredentialResourceCatalogEntryV1) => void;
@@ -140,7 +142,7 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         );
     }
     return (
-        <ItemGroup title={props.title} description={props.description}>
+        <ItemGroup title={props.title} description={props.description} surface={props.surface}>
             {rows}
             {state}
         </ItemGroup>

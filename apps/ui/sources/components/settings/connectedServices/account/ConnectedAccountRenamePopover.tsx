@@ -29,8 +29,7 @@ export const ConnectedAccountRenamePopover = React.memo(function ConnectedAccoun
         if (props.open) setValue(props.currentLabel);
     }, [props.currentLabel, props.open]);
     if (!props.open) return null;
-    const save = async () => {
-        const next = value.trim();
+    const save = async (next = value.trim()) => {
         if (saving) return;
         setSaving(true);
         try { await props.onSave(next); }
@@ -59,10 +58,21 @@ export const ConnectedAccountRenamePopover = React.memo(function ConnectedAccoun
                             accessibilityLabel={t('connectedServicesCollection.renameTitle')}
                             autoFocus
                             returnKeyType="done"
-                            onSubmitEditing={save}
+                            onSubmitEditing={() => { void save(); }}
                         />
                         <Text style={styles.note}>{t('connectedServicesCollection.renameBody', { service: props.serviceLabel })}</Text>
                         <View style={styles.actions}>
+                            {props.currentLabel.trim() !== '' ? (
+                                <RoundButton
+                                    testID={`${props.testID}:reset`}
+                                    size="small"
+                                    display="inverted"
+                                    title={t('connectedServicesCollection.renameReset')}
+                                    disabled={saving}
+                                    onPress={() => { void save(''); }}
+                                    style={styles.reset}
+                                />
+                            ) : null}
                             <RoundButton
                                 testID={`${props.testID}:cancel`}
                                 size="small"
@@ -75,7 +85,7 @@ export const ConnectedAccountRenamePopover = React.memo(function ConnectedAccoun
                                 size="small"
                                 title={t('common.save')}
                                 disabled={saving}
-                                onPress={save}
+                                onPress={() => { void save(); }}
                             />
                         </View>
                     </View>
@@ -104,5 +114,8 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         gap: theme.space.s8,
+    },
+    reset: {
+        marginRight: 'auto',
     },
 }));

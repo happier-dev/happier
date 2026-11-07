@@ -110,6 +110,8 @@ describe('pool deletion through its shared Action owner', () => {
             const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
             expect(getActiveServerAccountScope()).toMatchObject({ accountId: 'adoption-owner' });
             await waitForHomeGovernance(() => expect(screen.findAllByType(ConnectedServicesDefaultAuthRow).length).toBeGreaterThan(0));
+            // Nothing dismissed yet: no Show guidance again.
+            expect(screen.findByTestId('connected-services-agent-sign-in:show-guidance-again')).toBeNull();
             const row = screen.findAllByType(ConnectedServicesDefaultAuthRow)[0];
             // Exercise the real collection's dismissal callback, exposed to its mounted presentation row.
             const dismiss = row!.props.onDismissPoolAdoptionSuggestion as NonNullable<React.ComponentProps<typeof ConnectedServicesDefaultAuthRow>['onDismissPoolAdoptionSuggestion']>;
@@ -126,6 +128,35 @@ describe('pool deletion through its shared Action owner', () => {
             expect(home.requestsFor('/v1/artifacts').some(request => request.input !== null)).toBe(true);
             await screen.unmount();
             expect(await dismissal).toBe(false);
+        } finally { await screen.unmount(); await restoreMountedHome(); await home.reset(); }
+    });
+    it('offers Show guidance again only for dismissed guidance and resets it through the acknowledgement Action', async () => {
+        const home = createHomeGovernanceHarness();
+        await prepareMountedHomeBoundary(home);
+        const serverId = await home.addHome({ name: 'Guidance reset', serverUrl: 'https://guidance-reset.test',
+            accountId: 'guidance-owner', currentAccount: true });
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const subject = { kind: 'adoption' as const, agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), service, groupId: 'work' };
+        home.answer(serverId, 'GET /v1/account/profile', { body: { ...profileDefaults, id: 'guidance-owner' } });
+        home.answer(serverId, 'GET /v1/account/entity-rows/connected-metadata/presentation', { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { v: 1, entries: [] } } } });
+        home.answer(serverId, `GET ${CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1}`, { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { v: 1, entries: [{ v: 1, subject, acknowledged: true }] } } } });
+        home.answer(serverId, `POST ${CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1}`, { body: { status: 'updated', revision: 2, cursor: 2 } });
+        home.answer(serverId, 'GET /v1/account/entity-rows/connected-accounts/purposes', { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } });
+        await home.requireUiApproval(serverId, 'connectedServices.acknowledgements.reset');
+        const restoreMountedHome = await publishMountedHomeFixture(home);
+        const { ConnectedServicesAgentSignInView } = await import('@/components/settings/connectedServices/collection/ConnectedServicesAgentSignInView');
+        const { ActionApprovalPendingNotice } = await import('@/components/approvals/ActionApprovalPendingNotice');
+        const screen = await renderScreen(<ConnectedServicesAgentSignInView />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('connected-services-agent-sign-in:show-guidance-again')).not.toBeNull());
+            await act(async () => { screen.pressByTestId('connected-services-agent-sign-in:show-guidance-again'); });
+            // The reset is the canonical acknowledgement Action: held at its approval, nothing written yet.
+            await waitForHomeGovernance(() => expect(screen.findAllByType(ActionApprovalPendingNotice).length).toBeGreaterThan(0));
+            expect(home.requestsFor(CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1).filter(request => request.input !== null)).toEqual([]);
         } finally { await screen.unmount(); await restoreMountedHome(); await home.reset(); }
     });
     it('holds a mounted Agent own-login default at Action approval without writing the purpose catalog', async () => {

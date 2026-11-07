@@ -226,12 +226,12 @@ describe('buildProviderCollection', () => {
       },
     });
     const rows = buildProviderGatewayCollection({ declarationContext: { kind: 'account' },
-      connections: [managed, external, ollama],
+      connections: [managed, external, ollama], accountGrants: [],
     });
     expect(resolveProviderConnectionIcon(managed, { kind: 'account' })).toBe(PROVIDER_GATEWAY_ICON);
     expect(resolveProviderConnectionIcon(managed, { kind: 'machine', projection: null })).toBeNull();
     expect(buildProviderGatewayCollection({ declarationContext: { kind: 'machine', projection: null },
-      connections: [managed],
+      connections: [managed], accountGrants: [],
     })).toEqual([]);
     expect(rows).toEqual([
       expect.objectContaining({
@@ -288,12 +288,24 @@ describe('buildProviderCollection', () => {
     });
 
     const rows = buildProviderGatewayCollection({ declarationContext: { kind: 'account' },
-      connections: [gateway, unset],
+      connections: [gateway, unset], accountGrants: [],
     });
     expect(rows.map((row) => [row.connectionId, row.slotServices])).toEqual([
       ['pc_gateway', [codex]],
       ['pc_unset', []],
     ]);
+  });
+  it('says whether each gateway is on from the Account grant its header switch writes', () => {
+    const gateway = ProviderConnectionV1Schema.parse({
+      v: 1, id: 'pc_on', source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+      role: 'named', displayName: 'Main gateway', displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
+      revision: 1, createdAt: 1, updatedAt: 1,
+    });
+    const off = ProviderConnectionV1Schema.parse({ ...gateway, id: 'pc_off', displayName: 'Second gateway' });
+    const rows = buildProviderGatewayCollection({ declarationContext: { kind: 'account' },
+      connections: [gateway, off], accountGrants: [{ connectionId: 'pc_on' }],
+    });
+    expect(rows.map((row) => [row.connectionId, row.enabled])).toEqual([['pc_on', true], ['pc_off', false]]);
   });
   it('lists found servers that are not connections yet, once per contribution', () => {
     const data = createProviderConnectionsDescribeFixture({

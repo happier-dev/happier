@@ -23,6 +23,7 @@ import type { PoolGatewayChoice } from './poolGatewayChoices';
 
 import { useAgentDefaultChoices } from '../defaults/useAgentDefaultChoices';
 import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionApprovalNotice';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import {
     QualifiedPoolDetailView,
     type PoolMemberQuota,
@@ -87,6 +88,12 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
     }, [router]);
 
     const service = group.ref.service;
+    const labelExecution = useMountedActionExecution(scope);
+    const resetLabel = React.useCallback(() => {
+        fireAndForget(labelExecution.execute('connectedServices.labels.reset', {
+            subject: { kind: 'group', service, groupId: group.ref.groupId },
+        }), { tag: 'QualifiedPoolDetail.resetLabel' });
+    }, [group.ref.groupId, labelExecution.execute, service]);
     const openAccount = React.useCallback((account: QualifiedConnectedAccountRef) => {
         router.push(buildConnectedAccountSettingsRoute(service, { kind: 'account', accountId: account.accountId }));
     }, [router, service]);
@@ -94,6 +101,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
     return (
         <>
         <ConnectedAccountActionApprovalNotice execution={agentDefaults.execution} testID="connected-pool-default-approval-pending" />
+        <ConnectedAccountActionApprovalNotice execution={labelExecution} testID="connected-pool-label-approval-pending" />
         <QualifiedPoolDetailView
             {...props}
             settled={settled ? <PoolConnectedAccountSettled account={settled} onDismiss={() => setSettled(null)} /> : null}
@@ -104,6 +112,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             presentGatewayTarget={presentGatewayTarget}
             onOpenGateway={openGateway}
             onOpenAccount={openAccount}
+            onResetLabel={resetLabel}
             legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
             onConnectAccount={() => {
                 fireAndForget(presentConnectSheet({ scope, service }).then(result => {
