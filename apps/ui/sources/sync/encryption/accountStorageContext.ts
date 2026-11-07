@@ -6,6 +6,7 @@ import { resolveCurrentAccountScopedCryptoMaterialSnapshot } from '@/sync/domain
 import type { ServerFetch } from '@/sync/http/client';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { HappyError } from '@/utils/errors/errors';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, isAccountModeDowngradeUnverifiedError, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 export type RawAccountStorageDecryption = Readonly<{
     decryptRaw: (value: string) => Promise<unknown>;
@@ -63,6 +64,7 @@ export function classifyAccountStorageReadFailure(error: unknown, signal?: Abort
         case 'invalid-stored-content': return code;
         case 'account_storage_currentness_unavailable': case 'account_encryption_currentness_unavailable':
         case 'account-encryption-recovery-required': case 'account_settings_encryption_material_unavailable':
+        case ACCOUNT_MODE_DOWNGRADE_UNVERIFIED:
             return 'encryption-material-unavailable';
         case 'account_settings_content_invalid': case 'account_settings_content_unreadable':
             return 'invalid-stored-content';
@@ -76,14 +78,33 @@ export function isRawAccountStorageEncryption(
     return value !== null && 'encryptRaw' in value;
 }
 
-/** Capture the cipher before awaiting the authoritative Account-mode/fingerprint read. */
+/**
+ * The one cheap still-active check a read-only catalog or row read makes before disclosing what it
+ * read to the same Account. It borrows the connection's already-admitted observation (identity
+ * usage): socket delivery withdraws or changes that observation, and an unsettled or withdrawn
+ * observation, another credential or a retired Account re-admits over the operation's own HTTP
+ * read. A mode change committed but not yet delivered takes effect at the next read (the next
+ * natural boundary). Sealing, mutation, cleanup-before-write and cursor witnesses keep
+ * `usage: 'fresh-authority'`.
+ */
+export function resolveAccountStorageContextForDisclosure(
+    credentials: AuthCredentials,
+    options: Readonly<{ encryption?: AccountStorageContext['encryption']; request?: ServerFetch }>,
+): Promise<AccountStorageContext> {
+    return resolveAccountStorageContext(credentials, { ...options, usage: 'identity' });
+}
+
+/** Capture the cipher before reading identity; effect callers request fresh authority explicitly. */
 export async function resolveAccountStorageContext(
     credentials: AuthCredentials,
     options: Readonly<{
         encryption?: AccountStorageContext['encryption'];
         request?: ServerFetch;
-        usage?: AccountEncryptionReadUsage;
-    }> = {},
+        /** Required: identity borrows the admitted observation; fresh-authority is an HTTP authority point. */
+        usage: AccountEncryptionReadUsage;
+        /** A containing finite read may supply its canonical Account identity. Writes still admit fresh authority. */
+        readIdentity?: () => Promise<AccountEncryptionIdentity>;
+    }>,
 ): Promise<AccountStorageContext> {
     const sync = options.encryption === undefined ? getSyncSingleton() : null;
     const encryption = sync ? sync.encryption : options.encryption;
@@ -91,7 +112,8 @@ export async function resolveAccountStorageContext(
     try {
         const currentness = await fetchAccountEncryptionIdentity(credentials, {
             ...(options.request ? { request: options.request } : {}),
-            usage: options.usage ?? 'fresh-authority',
+            ...(options.readIdentity ? { readIdentity: options.readIdentity } : {}),
+            usage: options.usage,
         });
         if (currentness.mode === 'plain') return { mode: 'plain', encryption: null };
         if (!encryption || !currentness.contentKeyFingerprint) {
@@ -119,6 +141,7 @@ export async function resolveAccountStorageContext(
                 : error instanceof AccountEncryptionCurrentnessReadinessError
                     || (error instanceof HappyError && error.status === 200 && error.kind === 'server'
                         && error.code === 'account-encryption-currentness-unavailable')
+                    || isAccountModeDowngradeUnverifiedError(error)
                     ? 'encryption-material-unavailable'
                     : classifyAccountStorageReadFailure(error) === 'scope-retired' ? 'scope-retired' : 'unreachable');
         throw new AccountStorageCurrentnessUnavailableError(error, reason);

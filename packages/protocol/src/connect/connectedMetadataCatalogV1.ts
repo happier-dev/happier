@@ -3,13 +3,24 @@ export { ConnectedMetadataCleanupV1Schema } from "./connectedAccountPresentation
 export type { ConnectedMetadataCleanupV1 } from "./connectedAccountPresentationSchemasV1.js";
 import * as z from 'zod/mini';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import { transferredAccountSettingsSourceNeedsCleanupV1 } from '../account/settings/accountSettingsLegacyCleanup.js';
 import { type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1, type ConnectedPresentationCatalogSnapshotV1, type ConnectedAcknowledgementsCatalogSnapshotV1, type ConnectedDisclosureEntryV1, type LegacyConnectedMetadataInventoryV1, type ConnectedPresentationRowReadResponseV1Schema, type ConnectedAcknowledgementsRowReadResponseV1Schema, type ConnectedMetadataRowMutationResponseV1Schema, openConnectedPresentationContentV1, openConnectedAcknowledgementsContentV1, readLegacyConnectedMetadataV1, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1, CONNECTED_DISCLOSURE_SOURCE_ROOT_V1, type ConnectedMetadataDiagnosticV1 } from './connectedAccountPresentationRowsV1.js';
 
 export type ConnectedMetadataCatalogV1 = Readonly<{
     presentation: ConnectedPresentationCatalogSnapshotV1; acknowledgements: ConnectedAcknowledgementsCatalogSnapshotV1;
     disclosure: readonly ConnectedDisclosureEntryV1[]; cleanup?: ConnectedMetadataCleanupV1;
 }>;
+const CONNECTED_METADATA_SOURCE_ROOTS_V1 = [...CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1,
+    CONNECTED_DISCLOSURE_SOURCE_ROOT_V1] as const;
+/** Every host decides published rows' remaining source pass from its admitted raw Settings document. */
+export function connectedMetadataSourceNeedsCleanupV1(input: Readonly<{
+    rawSettings: Readonly<Record<string, unknown>> | null | undefined; cleanupPending: boolean;
+}>): boolean {
+    return transferredAccountSettingsSourceNeedsCleanupV1({ ...input, sourceRoots: CONNECTED_METADATA_SOURCE_ROOTS_V1 });
+}
 export type ConnectedMetadataSourceTransferV1 = Readonly<{
+    /** A current source owner can prove cleanup unnecessary; absent rows still initialize. */
+    needsSourceCleanup?(): boolean;
     readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
     readInventory(): Promise<LegacyConnectedMetadataInventoryV1>;
     initializePresentation(input: Readonly<{ record: ConnectedPresentationRecordV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>): Promise<z.infer<typeof ConnectedMetadataRowMutationResponseV1Schema>>;
@@ -82,7 +93,7 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
     const published = !missingPresentation && !missingAcknowledgements;
     if (published) {
         await input.onReadyBeforeCleanup?.(catalog);
-        if (input.hasPendingCleanup?.()) return catalog;
+        if (input.hasPendingCleanup?.() || transfer.needsSourceCleanup?.() === false) return catalog;
     }
     let source: Awaited<ReturnType<ConnectedMetadataSourceTransferV1['readSourceSnapshot']>>;
     try { source = await transfer.readSourceSnapshot(); }

@@ -1,4 +1,4 @@
-import { loadConnectedMetadataCatalogV1, type ConnectedMetadataCatalogV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
+import { connectedMetadataSourceNeedsCleanupV1, loadConnectedMetadataCatalogV1, type ConnectedMetadataCatalogV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import {
     CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
     ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema,
@@ -15,9 +15,10 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/a
 import type { CapturedAccountSettingsRequest } from './accountSettingsRequest';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { collapsedGroupsState, removeCollapsedGroupKey, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { readRetainedAccountSettingsRaw } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { fetchAndApplyProfile } from '@/sync/engine/account/syncAccount';
 import type { Profile } from '@/sync/domains/profiles/profile';
@@ -87,9 +88,18 @@ async function admit<T>(context: ConnectedMetadataAccountContext, usage: 'identi
     context.assertCurrent();
     return operation(current.mode, current.mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(context.credentials));
 }
+/** Before a source write: fresh authority. */
 async function assertModeCurrent(context: ConnectedMetadataAccountContext, mode: 'plain' | 'e2ee'): Promise<void> {
     const current = await resolveAccountStorageContext(context.credentials, {
         encryption: (await context.resolveAccountEncryption()).encryption, request: context.request, usage: 'fresh-authority',
+    });
+    context.assertCurrent();
+    if (current.mode !== mode) throw new ConnectedMetadataRowOperationError('account-mode-mismatch');
+}
+/** Before disclosing a read catalog: the connection's admitted observation (one cheap still-active check). */
+async function assertModeCurrentForDisclosure(context: ConnectedMetadataAccountContext, mode: 'plain' | 'e2ee'): Promise<void> {
+    const current = await resolveAccountStorageContextForDisclosure(context.credentials, {
+        encryption: (await context.resolveAccountEncryption()).encryption, request: context.request,
     });
     context.assertCurrent();
     if (current.mode !== mode) throw new ConnectedMetadataRowOperationError('account-mode-mismatch');
@@ -178,7 +188,9 @@ function writeAcknowledgements(context: ConnectedMetadataAccountContext, input: 
         return result;
     });
 }
-type Publication = Readonly<{ onReady?: (projection: ConnectedMetadataCatalogV1, isCurrent: () => boolean) => void; hasPendingCleanup?: () => boolean }>;
+type Publication = Readonly<{ onReady?: (projection: ConnectedMetadataCatalogV1, isCurrent: () => boolean) => void; hasPendingCleanup?: () => boolean;
+    /** This Account's previous read left its source or history cleanup pending. */
+    sourceCleanupPending?: boolean }>;
 function disclosureKey(context: ConnectedMetadataAccountContext, subject: QualifiedConnectedDisclosureSubject): string {
     return resolveConnectedServiceCollapseKey({ scope: { serverId: context.serverId, accountId: context.accountId },
         service: subject.kind === 'account' ? subject.account.service : subject.group.service,
@@ -209,8 +221,11 @@ async function readConnectedMetadataCatalog(context: ConnectedMetadataAccountCon
         readPresentationRow: () => apiReadConnectedPresentationRow(captured, signal),
         readAcknowledgementsRow: () => apiReadConnectedAcknowledgementsRow(captured, signal),
         hasPendingCleanup: publication?.hasPendingCleanup,
-        ...(publication?.onReady ? { onReadyBeforeCleanup: async catalog => { await assertModeCurrent(context, mode); publication.onReady!(catalog, context.accountLifetime.isCurrent); } } : {}),
+        ...(publication?.onReady ? { onReadyBeforeCleanup: async catalog => { await assertModeCurrentForDisclosure(context, mode); publication.onReady!(catalog, context.accountLifetime.isCurrent); } } : {}),
         ...(maintenance ? { transfer: {
+            needsSourceCleanup: () => connectedMetadataSourceNeedsCleanupV1({
+                rawSettings: readRetainedAccountSettingsRaw({ serverId: context.serverId, accountId: context.accountId }),
+                cleanupPending: publication?.sourceCleanupPending === true }),
             readSourceSnapshot: async () => {
                 const source = await readAccountSettingsBaseline({ credentials: context.credentials, encryption: (await context.resolveAccountEncryption()).encryption,
                     accountMode: mode, request: (path, init) => context.request(path, init, { retry: 'none' }) });
@@ -234,7 +249,7 @@ async function readConnectedMetadataCatalog(context: ConnectedMetadataAccountCon
             }),
         } } : {}),
         });
-        await assertModeCurrent(context, mode);
+        await assertModeCurrentForDisclosure(context, mode);
         return result;
     }));
 }

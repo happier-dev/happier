@@ -47,6 +47,7 @@ import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/ac
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { parseCapabilitiesDetectResponse, parseCapabilitiesInvokeResponse, type CapabilitiesDetectResponse, type CapabilitiesInvokeResponse } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '../fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '../fixtures/accountBootstrapHttpBoundary';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type AddHomeOptions, type HomeGovernanceHarness, type HomeDomainAnswer } from './homeGovernanceHarness';
@@ -94,6 +95,8 @@ export function installProviderConnectionsCatalogHttpBoundary(input: Readonly<{
 }
 
 type ProviderRpcResponse =
+    | CapabilitiesDetectResponse
+    | CapabilitiesInvokeResponse
     | ReturnType<typeof DaemonContributionRegistryProjectionDescribeResponseSchema.parse>
     | DaemonProviderConnectionsDescribeResponseV1
     | DaemonProviderConnectionMutationResponseV1
@@ -298,6 +301,8 @@ export function createExperimentalProviderModelProjectionFixture(input: Readonly
 
 function defaultResponses(): ProviderRpcResponseByMethod {
     return {
+        'capabilities.detect': { protocolVersion: 1, results: { 'tool.plugins': { ok: true, checkedAt: 1,
+            data: { installedPlugins: [] } } } },
         [RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS]: DaemonProviderBindingStatusResponseV1Schema.parse({ status: 'current' }),
         [RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH]: DaemonProviderUsageRefreshResponseV1Schema.parse({ status: 'not_supported' }),
         [RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE]: createProviderConnectionsDescribeFixture(),
@@ -320,6 +325,16 @@ function defaultResponses(): ProviderRpcResponseByMethod {
 
 function parseResponse(method: string, response: unknown): ProviderRpcResponse {
     switch (method) {
+        case RPC_METHODS.CAPABILITIES_INVOKE: {
+            const parsed = parseCapabilitiesInvokeResponse(response);
+            if (!parsed) throw new Error('Malformed capability invoke boundary fixture');
+            return parsed;
+        }
+        case 'capabilities.detect': {
+            const parsed = parseCapabilitiesDetectResponse(response);
+            if (!parsed) throw new Error('Malformed capabilities boundary fixture');
+            return parsed;
+        }
         case RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS:
             return DaemonProviderBindingStatusResponseV1Schema.parse(response);
         case RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE:
@@ -492,7 +507,12 @@ export function installProviderSettingsRpcBoundary(harness: ProviderSettingsHarn
 }
 
 /** A fixture Machine admits the real bundled declarations, not a mocked classifier/writer. */
-export function installBundledProviderDeclarationsRpcBoundary(harness: ProviderSettingsHarness): void {
+/**
+ * Serves the bundled Provider declarations as the Machine's merged projection. `amend` adds declaration
+ * fields a test needs (for example `usageSources`) to one contribution, keyed by its contribution key.
+ */
+export function installBundledProviderDeclarationsRpcBoundary(harness: ProviderSettingsHarness,
+    amend: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {}): void {
     harness.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () => {
         const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
         const { BUNDLED_CANONICAL_AGENT_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
@@ -506,7 +526,7 @@ export function installBundledProviderDeclarationsRpcBoundary(harness: ProviderS
                 entriesById: Object.fromEntries(readAccountProviderDeclarations({ kind: 'account' }).map(row => [
                     row.contributionKey, { id: row.contributionKey,
                         pluginId: row.contributionKey.slice(0, row.contributionKey.indexOf('/')),
-                        provenance: row.provenance, sourceKind: 'bundled', definition: row.definition },
+                        provenance: row.provenance, sourceKind: 'bundled', definition: { ...row.definition, ...amend[row.contributionKey] } },
                 ])),
             } } },
         });

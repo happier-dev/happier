@@ -13,6 +13,31 @@ import {
 } from './accountProviderDeclarations';
 
 describe('admitted Provider declarations', () => {
+    it('supplements Account facts with admitted dynamic declarations without weakening exact Machine reads', () => {
+        const bundled = readAccountProviderDeclarations({ kind: 'account' }).find(row => row.definition.id === 'deepseek')!;
+        const requirements = readAccountAgentProviderRequirements('agent:happier.agent.codex/codex', { kind: 'account' })!;
+        const contributionKey = 'acme.provider/deepseek';
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            agentsById: { dynamic: { id: 'dynamic', identity: { pluginId: 'acme.agent', localId: 'dynamic' }, providerRequirements: requirements } },
+            familiesById: {
+            providers: { family: 'providers', entriesById: { [contributionKey]: {
+                id: contributionKey, pluginId: 'acme.provider', provenance: 'external', sourceKind: 'path', definition: bundled.definition,
+            } } },
+        } });
+        const context: ProviderDeclarationContext = { kind: 'account', projection };
+        expect(readAccountProviderDeclarations(context).map(row => row.contributionKey)).toEqual(expect.arrayContaining([
+            bundled.contributionKey, contributionKey,
+        ]));
+        expect(readProviderConnectionPickerKind({ kind: 'contribution', contributionKey }, context)).toBe('frontier');
+        expect(readProviderConnectionPickerKind({ kind: 'contribution', contributionKey: bundled.contributionKey }, context)).toBe('frontier');
+        expect(readProviderConnectionPickerKind({ kind: 'contribution', contributionKey: bundled.contributionKey }, { kind: 'machine', projection })).toBeUndefined();
+        expect(readProviderConnectionPickerKind({ kind: 'contribution', contributionKey }, { kind: 'account' })).toBeUndefined();
+        expect(readAccountAgentProviderDeclarations(context)).toEqual([
+            { agentTargetKey: 'agent:acme.agent/dynamic', requirements },
+        ]);
+        expect(readAccountAgentProviderRequirements('agent:acme.agent/dynamic', context)).toEqual(requirements);
+    });
+
     it('reads only the addressed Provider declaration for kind and icon in a large Machine registry', () => {
         const definition = readAccountProviderDeclarations({ kind: 'account' }).find(row => row.definition.managedRuntime)!.definition;
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {

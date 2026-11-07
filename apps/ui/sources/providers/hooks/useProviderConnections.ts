@@ -2,39 +2,24 @@ import * as React from 'react';
 import type { DaemonProviderConnectionsDescribeResponseV1 } from '@happier-dev/protocol/rpc';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { describeAccountProviderConnectionsV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient, type ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
-import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { providerDeclarationContext, readAccountProviderDeclarations, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, readAccountProviderDeclarations, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { getProviderCatalogSnapshot, subscribeProviderCatalogSnapshots, type ProviderCatalogSnapshot,
-    beginProviderConnectionCheckRead, getProviderConnectionCheckSnapshot, providerConnectionCheckQueryKey,
+    beginProviderConnectionCheckRead, getProviderConnectionCheckSnapshot, isProviderConnectionCheckReadRequired, providerConnectionCheckQueryKey,
     subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
-import {
-    registerProviderConnectionReader,
-    refreshProviderConnectionReaders,
-    type ProviderConnectionRefreshScope,
-} from './providerConnectionRefresh';
-export type { ProviderConnectionRefreshScope } from './providerConnectionRefresh';
+import { observeProviderCatalog, refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
+export type ProviderConnectionRefreshScope = 'account' | 'machine';
 
 type Success = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
-type Connection = Success['connections'][number];
-
-function accountFactsMatch(previous: Connection, next: Connection): boolean {
-    // A display-only rename advances the saved revision without changing the
-    // facts a Machine checked. Grants and secret bindings can change without
-    // advancing that revision, so compare every other Account-derived field.
-    return stableJsonStringify({ ...previous, displayName: next.displayName,
-        displayNameMode: next.displayNameMode, revision: next.revision }) === stableJsonStringify(next);
-}
-
 type ProviderConnectionsState = Readonly<{
     scopeKey: string | null;
     accountScopeKey?: string;
@@ -72,19 +57,26 @@ export function useProviderConnections(input: Readonly<{
     const { describeProviderConnections, ready, retryReadiness, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(input.serverId ?? []);
     const active = input.active ?? true;
     const declarations = useDaemonMergedProjectionInputs({ machineId: input.machineId, serverId: input.serverId,
-        enabled: input.enabled && active && Boolean(input.machineId) });
+        enabled: input.enabled && active && Boolean(input.machineId), sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
     const declarationProjection = declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 ?? null : null;
-    const declarationContext = React.useMemo(() => providerDeclarationContext(input.machineId, declarationProjection),
-        [input.machineId, declarationProjection]);
+    // These readers present Account configuration; optional Machine declarations
+    // augment it without making saved counts or preferences depend on that Machine.
+    const declarationContext = React.useMemo<ProviderDeclarationContext>(() => ({ kind: 'account', projection: declarationProjection }),
+        [declarationProjection]);
+    const declarationsStatus = !input.machineId || declarations.phase === 'ready' ? 'ready'
+        : declarations.phase === 'error' || declarations.phase === 'unsupported' ? 'unavailable' : 'loading';
+    const declarationsRef = React.useRef<Readonly<{ context: ProviderDeclarationContext; status: typeof declarationsStatus }>>({ context: declarationContext, status: declarationsStatus });
+    declarationsRef.current = { context: declarationContext, status: declarationsStatus };
     const activeRef = React.useRef(active);
     activeRef.current = active;
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const readCatalogAdmission = React.useCallback(() => (
-        accountLifetime && input.serverId && areServerProfileIdentifiersEquivalent(input.serverId, accountLifetime.scope.serverId)
-            ? getProviderCatalogSnapshot(accountLifetime.scope) : null
-    ), [accountLifetime, input.serverId]);
-    // Observe admission withdrawal, not a second catalog load or a newer editor revision.
+        input.enabled && binding?.isCurrent() && (accountLifetime?.isCurrent() ?? true)
+            ? getProviderCatalogSnapshot(binding.scope) : null
+    ), [accountLifetime, binding, input.enabled]);
     const catalogAdmission = React.useSyncExternalStore(subscribeProviderCatalogSnapshots, readCatalogAdmission, readCatalogAdmission);
+    React.useEffect(() => active && input.enabled && binding?.isCurrent()
+        ? observeProviderCatalog(binding.scope) : undefined, [active, binding, input.enabled]);
     const [state, setState] = React.useState<ProviderConnectionsState>({
         scopeKey: null,
         accountLifetime: null,
@@ -122,25 +114,44 @@ export function useProviderConnections(input: Readonly<{
     const answeredCatalog = accountMatchesScope && catalogAdmission?.data
         && state.catalog?.cryptoAdmission?.contentPublicKeyFingerprint === catalogAdmission.cryptoAdmission?.contentPublicKeyFingerprint
         ? state.catalog?.data ?? null : null;
-    // A phone's list/detail transition may mount a new reader while the Home is
-    // slow. Reuse the catalog owner's admitted display data until this reader
-    // answers; a later catalog revision must not overwrite an editor's answer.
-    const retained = React.useMemo(() => {
-        if (!input.enabled || !binding?.isCurrent() || !accountLifetime?.isCurrent()
-            || !areServerAccountScopesEqual(binding.scope, accountLifetime.scope)
-            || !catalogAdmission?.data || accountMatchesScope && state.accountData) return null;
-        return { catalog: catalogAdmission.data, data: describeAccountProviderConnectionsV1(
-            catalogAdmission.data, readAccountProviderDeclarations(declarationContext), input.connectionId,
-        ) };
-    }, [accountLifetime, accountMatchesScope, binding, catalogAdmission, declarationContext, input.connectionId, input.enabled, state.accountData]);
-    const catalog = answeredCatalog ?? retained?.catalog ?? null;
-    const answeredData = state.catalog?.data && answeredCatalog === null ? null
-        : stateMatchesScope ? state.data : accountMatchesScope ? state.accountData ?? null : null;
-    // A mounted editor keeps the exact answer its draft read. Other readers may
-    // refresh the shared last-known Machine check without changing that basis.
-    const data = stateMatchesScope && state.accountAnswered ? answeredData
-        : cachedMachine ?? answeredData ?? retained?.data ?? null;
-    const error = stateMatchesScope ? state.error : null;
+    // Remote refreshes leave an editor's draft basis alone. A local write's
+    // producer-set ACK revision advances every reader immediately, without a describe.
+    const catalog = !catalogAdmission?.data ? null : input.connectionId && answeredCatalog
+        && state.catalog?.acknowledgedRevision === catalogAdmission.acknowledgedRevision
+        ? answeredCatalog : catalogAdmission.data;
+    React.useEffect(() => {
+        if (!catalogAdmission?.data || catalogAdmission.acknowledgedRevision === undefined) return;
+        setState(current => current.accountScopeKey === accountScopeKey && current.accountLifetime === accountLifetime
+            && current.catalog?.acknowledgedRevision !== catalogAdmission.acknowledgedRevision
+            ? { ...current, catalog: catalogAdmission } : current);
+    }, [accountLifetime, accountScopeKey, catalogAdmission]);
+    const baseData = React.useMemo(() => catalog ? describeAccountProviderConnectionsV1(
+        catalog, readAccountProviderDeclarations(declarationContext), input.connectionId, { declarationsStatus },
+    ) : null, [catalog, declarationContext, declarationsStatus, input.connectionId]);
+    const data = React.useMemo(() => {
+        if (!baseData) return baseData;
+        const checks = new Map(cachedMachine?.connections.map(row => [row.connectionId, row]));
+        const connections = baseData.connections.map(row => {
+            const checked = checks.get(row.connectionId);
+            checks.delete(row.connectionId);
+            if (!checked) return row;
+            return checked.revision === row.revision && checked.displayName === row.displayName
+                && checked.displayNameMode === row.displayNameMode ? checked
+                : { ...checked, revision: row.revision, displayName: row.displayName, displayNameMode: row.displayNameMode };
+        });
+        // A Machine answer can also carry its own observed rows. Keep their
+        // captured configuration, but never resurrect a check the owner retired.
+        const machineBasis = stateMatchesScope && state.accountAnswered ? state.data : cachedMachine;
+        for (const row of machineBasis?.connections ?? []) {
+            const checked = checks.get(row.connectionId);
+            if (!checked) continue;
+            connections.push(row.runtime === checked.runtime && row.probeObservationIdentity === checked.probeObservationIdentity
+                ? row : { ...row, runtime: checked.runtime, probeObservationIdentity: checked.probeObservationIdentity });
+        }
+        return { ...(cachedMachine ?? baseData), connections };
+    }, [baseData, cachedMachine, state.accountAnswered, state.data, stateMatchesScope]);
+    const error = resolution.kind === 'unavailable' ? createProviderErrorV1('provider_authorization_changed')
+        : stateMatchesScope ? state.error : null;
     const machineError = stateMatchesScope ? state.machineError ?? null : null;
     // Account rows are already usable while optional Machine facts refresh.
     // Consumers use loading to replace their values, so reserve it for the first answer.
@@ -159,7 +170,7 @@ export function useProviderConnections(input: Readonly<{
         return () => registration?.dispose();
     }, [accountLifetime]);
 
-    const read = React.useCallback(async () => {
+    const read = React.useCallback(async (mode: 'initial' | 'account' | 'machine' = 'initial') => {
         if (!activeRef.current) return null;
         const requestGeneration = ++generation.current;
         const requestStillCurrent = (): boolean => (
@@ -188,35 +199,33 @@ export function useProviderConnections(input: Readonly<{
         let accountData: Success | null = null;
         let catalog: ProviderCatalogSnapshot | null = null;
         try {
-            // Account configuration is readable independently of machine execution.
-            // Machine facts augment that fresh projection; a failed daemon cannot hide its editor.
-            const accountResult = await describeProviderConnections({
-                serverId,
-                ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-            }, { signal: controller.signal });
+            // The shared catalog loader owns Account I/O. Readers only project its admitted facts.
+            if (!binding?.isCurrent()) return null;
+            if (mode === 'account' || mode === 'initial' && readCatalogAdmission()?.status !== 'ready') {
+                await refreshProviderCatalog(binding.scope);
+            }
             if (requestGeneration !== generation.current || !requestStillCurrent()) return;
-            if (accountResult.status === 'error') {
+            const admitted = readCatalogAdmission();
+            if (!admitted?.data) {
                 setState({ scopeKey, accountScopeKey, accountLifetime, data: null, accountData: null,
-                    error: accountResult.error, machineError: null, accountAnswered: true, loading: true });
+                    error: createProviderErrorV1('provider_catalog_unavailable'), machineError: null, accountAnswered: true, loading: true });
                 return null;
             }
+            const accountResult = describeAccountProviderConnectionsV1(admitted.data,
+                readAccountProviderDeclarations(declarationsRef.current.context), input.connectionId,
+                { declarationsStatus: declarationsRef.current.status });
             accountData = accountResult;
-            const admitted = readCatalogAdmission();
-            if (admitted?.data) {
-                const revisions = new Map(accountData.connections.map(connection => [connection.connectionId, connection.revision]));
-                catalog = { ...admitted, data: { ...admitted.data,
-                    connections: admitted.data.connections.filter(connection => revisions.get(connection.id) === connection.revision) } };
-            }
+            // The rows above come from this same admitted catalog, so it is already the
+            // editor basis. Keep it whole: a detail reader describes one connection, and
+            // dropping the others would orphan their grants and bindings.
+            catalog = admitted;
             setState((current) => {
                 const sameTarget = machineId && current.scopeKey === scopeKey
                     && current.accountLifetime === accountLifetime;
-                const previousAccountRows = new Map(sameTarget ? current.accountData?.connections.map(row => [row.connectionId, row]) : []);
-                const previousRows = new Map(sameTarget ? current.data?.connections.map(row => [row.connectionId, row]) : []);
+                const previousRows = new Map(readMachineSnapshot()?.connections.map(row => [row.connectionId, row]));
                 const connections = accountResult.connections.map(row => {
-                    const previousAccountRow = previousAccountRows.get(row.connectionId);
                     const previousRow = previousRows.get(row.connectionId);
-                    if (!previousAccountRow || !previousRow || previousRow.revision !== previousAccountRow.revision
-                        || !accountFactsMatch(previousAccountRow, row)) return row;
+                    if (!previousRow) return row;
                     if (previousRow.displayName === row.displayName && previousRow.displayNameMode === row.displayNameMode
                         && previousRow.revision === row.revision) return previousRow;
                     return { ...previousRow, displayName: row.displayName, displayNameMode: row.displayNameMode, revision: row.revision };
@@ -254,7 +263,7 @@ export function useProviderConnections(input: Readonly<{
                 setState({ scopeKey, accountScopeKey, accountLifetime, data: accountData, accountData, catalog,
                     error: null, machineError: result.error, accountAnswered: true, loading: true });
             }
-            return accountData;
+            return readMachineSnapshot() ?? accountData;
         } catch (caught) {
             if (requestGeneration !== generation.current || !requestStillCurrent()) return;
             const failure = providerErrorFromRpcFailure(caught, {
@@ -263,7 +272,7 @@ export function useProviderConnections(input: Readonly<{
                 });
             setState({ scopeKey, accountScopeKey, accountLifetime, data: accountData, accountData, catalog,
                 error: accountData ? null : failure, machineError: accountData ? failure : null, accountAnswered: accountData !== null, loading: true });
-            return accountData;
+            return readMachineSnapshot() ?? accountData;
         } finally {
             if (pendingRead.current === controller) pendingRead.current = null;
             if (requestGeneration === generation.current && requestStillCurrent()) {
@@ -273,14 +282,16 @@ export function useProviderConnections(input: Readonly<{
                     : current);
             }
         }
-    }, [accountLifetime, binding, resolution.kind, accountScopeKey, describeProviderConnections, ready, input.connectionId, input.enabled, input.machineId, input.serverId, machineQueryKey, readCatalogAdmission, scopeKey]);
+    }, [accountLifetime, binding, resolution.kind, accountScopeKey, describeProviderConnections, ready, input.connectionId, input.enabled, input.machineId, input.serverId, machineQueryKey, readCatalogAdmission, readMachineSnapshot, scopeKey]);
 
     React.useEffect(() => {
-        const unregister = active && input.enabled
-            ? registerProviderConnectionReader({
-                targets: [{ machineId: input.machineId, serverId: input.serverId }], accountLifetime, read,
-            })
-            : null;
+        if (active && input.enabled && binding?.isCurrent() && binding.credentialKey && machineQueryKey
+            && isProviderConnectionCheckReadRequired(binding.scope, binding.credentialKey, machineQueryKey)) {
+            void read('machine');
+        }
+    }, [active, binding, cachedMachine, input.enabled, machineQueryKey, read]);
+
+    React.useEffect(() => {
         // Visibility pauses demand; it does not change the authority of a
         // retained projection or the metadata an editor draft was built from.
         setState((current) => current.scopeKey === scopeKey && current.accountLifetime === accountLifetime
@@ -295,24 +306,14 @@ export function useProviderConnections(input: Readonly<{
             generation.current += 1;
             pendingRead.current?.abort();
             pendingRead.current = null;
-            unregister?.();
         };
     }, [accountLifetime, accountScopeKey, active, input.enabled, input.machineId, input.serverId, read, scopeKey]);
 
-    const refresh = React.useCallback(async (refreshScope: ProviderConnectionRefreshScope = 'machine') => {
+    const refresh = React.useCallback(async (_refreshScope: ProviderConnectionRefreshScope = 'machine') => {
         if (activeRef.current && input.enabled && currentAccountLifetimeRef.current === accountLifetime
             && (accountLifetime?.isCurrent() ?? true)) retryReadiness();
-        const ownRead = read();
-        if (input.enabled
-            && currentAccountLifetimeRef.current === accountLifetime
-            && (accountLifetime?.isCurrent() ?? true) && binding?.isCurrent() === true) {
-            // Account edits affect every machine projection on this Home;
-            // runtime-only changes retain demand on the exact machine.
-            refreshProviderConnectionReaders({ scope: refreshScope, machineId: input.machineId,
-                serverId: input.serverId, accountLifetime, ownRead: read });
-        }
-        return await ownRead;
-    }, [accountLifetime, binding, input.enabled, input.machineId, input.serverId, read, retryReadiness]);
+        return await read('account');
+    }, [accountLifetime, input.enabled, read, retryReadiness]);
 
     return { data, catalog, error, machineError, loading, refresh, pendingApproval, declarationProjection, declarationContext };
 }

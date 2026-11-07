@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -16,7 +17,7 @@ import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_R
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { act } from 'react-test-renderer';
-import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
+import { renderHook, renderScreen, flushHookEffects, waitForTestEvent } from '@/dev/testkit';
 import * as React from 'react';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
@@ -52,7 +53,7 @@ let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> |
 function describeAgent(agentId: string) {
   return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
     projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-      installedPackagesById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+      installedPackagesById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
       agentsById: { [agentId]: { id: agentId, identity: { pluginId: 'acme.voice', localId: 'agent' }, title: 'Acme Agent',
         connectedAccounts: [{ purpose: 'models', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, credentialKinds: ['oauth'] }] } },
     }),
@@ -107,6 +108,113 @@ afterEach(async () => {
 afterAll(async () => { await network.dispose(); });
 
 describe('defaultActionExecutor canonical agent inventory corridor', () => {
+  it.each([
+    ['filesystem_identity_custody_unavailable', false, 'thrown'],
+    ['agent_isolation_unavailable', false, 'returned'],
+    ['provider_endpoint_unreachable', true, 'thrown'],
+    ['connected_service_credential_reconnect_required', false, 'returned'],
+  ] as const)('retains %s (retryable %s, %s) through the Action and model probe', async (errorCode, retryable, carrier) => {
+    resetDynamicModelProbeCacheForTests();
+    // Serialized handler exceptions enter at the genuine Socket boundary.
+    const failure = { error: 'private transport diagnostic', errorCode, details: { retryable } };
+    if (carrier === 'thrown') network.setRpcResponder(async () => {
+      throw Object.assign(new RpcError(failure.error, errorCode), { details: failure.details });
+    });
+    else network.respond(RPC_METHODS.CAPABILITIES_INVOKE, failure);
+    const result = await createDefaultActionExecutor().execute('agents.models.list', {
+      agentId: 'acme-voice-agent', machineId: 'machine-1', probe: { cwd: '/repo' },
+    }, { surface: 'ui', serverId });
+    expect(result).toMatchObject({ ok: false, errorCode, details: { retryable } });
+    if (carrier === 'thrown') expect(result).toMatchObject({ details: {
+      reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown',
+    } });
+    expect(JSON.stringify(result)).not.toContain('private transport diagnostic');
+    const hook = await renderHook(() => useNewSessionPreflightModelsState({
+      backendTarget: { kind: 'backend', backendId: 'acme-voice-agent' }, runtimeCarrierAgentId: 'acme-voice-agent',
+      selectedMachineId: 'machine-1', capabilityServerId: serverId, cwd: '/repo',
+    }));
+    try {
+      await vi.waitFor(() => expect(hook.getCurrent().probe).toMatchObject({ failed: true, errorCode, retryable }));
+      if (carrier === 'thrown') expect(hook.getCurrent().probe).toMatchObject({
+        reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown',
+      });
+    } finally { await hook.unmount(); }
+  });
+
+  it('keeps an untyped uncertain transport failure unknown instead of inventing a native reason', async () => {
+    network.setRpcResponder(async () => { throw new Error('private transport diagnostic'); });
+    expect(await createDefaultActionExecutor().execute('agents.models.list', {
+      agentId: 'acme-voice-agent', machineId: 'machine-1', probe: { cwd: '/repo' },
+    }, { surface: 'ui', serverId })).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+      details: { reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' } });
+  });
+
+  it.each([
+    ['connected_service_credential_reconnect_required', 'connectedServices.diagnostics.body.connected_service_credential_reconnect_required'],
+    ['filesystem_identity_custody_unavailable', 'settingsProviders.errors.genericDescription'],
+    ['agent_isolation_unavailable', 'settingsProviders.errors.genericDescription'],
+  ] as const)('renders existing recovery copy and the %s reason, keeps nonretryable reads idle, and recovers on refresh', async (errorCode, descriptionKey) => {
+    resetDynamicModelProbeCacheForTests();
+    const { t } = await import('@/text');
+    const { SessionModelPicker } = await import('@/components/sessions/modelPicker/SessionModelPicker');
+    network.respond(RPC_METHODS.CAPABILITIES_INVOKE, { error: 'private transport diagnostic',
+      errorCode, details: { retryable: false } });
+    const screen = await renderScreen(React.createElement(NewSessionEngineOptionDetail, {
+      backendTarget: { kind: 'backend', backendId: 'acme-voice-agent' }, runtimeCarrierAgentId: 'acme-voice-agent',
+      selectedMachineId: 'machine-1', capabilityServerId: serverId, cwd: '/repo',
+    }));
+    const copy = t(descriptionKey);
+    const modelPicker = () => screen.tree.root.findByType(SessionModelPicker);
+    await vi.waitFor(() => expect(JSON.stringify(screen.tree.toJSON())).toContain(copy));
+    expect(JSON.stringify(screen.tree.toJSON())).toContain(errorCode);
+    expect(JSON.stringify(screen.tree.toJSON())).not.toContain('private transport diagnostic');
+    const reads = () => network.requests.filter(request => request.method === RPC_METHODS.CAPABILITIES_INVOKE).length;
+    const before = reads();
+    expect(before).toBeGreaterThan(0);
+    const { DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS } = await import('@/sync/domains/models/dynamicModelProbeCache');
+    const beforeClock = Date.now();
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS + 1); });
+    expect(reads()).toBe(before);
+    vi.setSystemTime(beforeClock);
+    vi.useRealTimers();
+    const recovered = AgentModelsProbeObservationSchema.parse({
+      availableModels: [{ id: 'recovered-model', name: 'Recovered model' }], supportsFreeform: false, source: 'dynamic',
+    });
+    network.setRpcResponder(async request => {
+      if (request.method !== RPC_METHODS.CAPABILITIES_INVOKE) throw new Error(`Unexpected method: ${request.method}`);
+      const payload = request.payload as { method: string };
+      return { ok: true, result: payload.method === 'probeConfigOptions' ? { configOptions: [], source: 'dynamic' } : recovered };
+    });
+    const refresh = modelPicker().props.probe?.onRefresh;
+    if (!refresh) throw new Error('Expected the model picker refresh action');
+    await act(async () => { refresh(); });
+    await vi.waitFor(() => expect(modelPicker().props.probe?.failed).toBe(false));
+    expect(JSON.stringify(screen.tree.toJSON())).not.toContain(copy);
+    expect(JSON.stringify(screen.tree.toJSON())).toContain('Recovered model');
+  });
+
+  it('retains the shared native refusal in config and mode probe consumers', async () => {
+    const { useNewSessionPreflightConfigOptionsState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState');
+    const { useNewSessionPreflightSessionModesState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState');
+    const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache');
+    const { resetDynamicSessionModeProbeCacheForTests } = await import('@/sync/domains/sessionModes/dynamicSessionModeProbeCache');
+    resetDynamicConfigOptionsProbeCacheForTests();
+    resetDynamicSessionModeProbeCacheForTests();
+    const errorCode = 'agent_isolation_unavailable';
+    network.respond(RPC_METHODS.CAPABILITIES_INVOKE, { error: 'private transport diagnostic', errorCode, details: { retryable: false } });
+    const hook = await renderHook(() => {
+      const params = { backendTarget: { kind: 'backend', backendId: 'acme-voice-agent' } as const,
+        runtimeCarrierAgentId: 'acme-voice-agent', selectedMachineId: 'machine-1', capabilityServerId: serverId, cwd: '/shared-failure' };
+      return { config: useNewSessionPreflightConfigOptionsState(params), modes: useNewSessionPreflightSessionModesState(params) };
+    });
+    try {
+      await vi.waitFor(() => {
+        for (const state of Object.values(hook.getCurrent())) expect(state.probe).toMatchObject({ errorCode, retryable: false });
+      });
+    } finally { await hook.unmount(); }
+  });
+
   it('lists connected services when its production callback is called without context', async () => {
     const source = ts.createSourceFile('defaultActionExecutor.ts', readFileSync(
       new URL('./defaultActionExecutor.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
@@ -246,7 +354,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
         draftInput: { agentId: 'codex', machineId: 'role-machine', probe: { cwd: '/role-repo', connectedServices } } }, { surface: 'ui', serverId });
       expect(result).toMatchObject({ ok: true, result: { options: [{ value: 'gpt-6.1-sol', label: 'Sol' }] } });
       const { beginConnectedAccountCatalogLoad, applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
-      await act(async () => beginConnectedAccountCatalogLoad({ serverId, accountId: 'account-a' }, 'purposes'));
+      await act(async () => beginConnectedAccountCatalogLoad({ serverId, accountId: 'account-a' }, 'purposes', true));
       expect(readDetail().props.selectedMachineId).toBeNull();
       await act(async () => applyConnectedAccountCatalogSnapshot({ serverId, accountId: 'account-a' }, 'purposes', {
         status: 'ready', revision: 2, record: { key: 'purposes', value: { v: 1, bindings: [] } },
@@ -336,7 +444,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       selectedMachineId: 'machine-1', capabilityServerId: serverId, cwd: '/repo', probeContext: props.detail.props.capabilityProbeContext,
     }), { initialProps: { detail: readEngine() } });
     try {
-      await flushHookEffects();
+      await waitForTestEvent(models.subscribe, models.getCurrent, value => !value.probe.namesPending && value.probe.phase === 'idle');
       expect(models.getCurrent().modelOptions.map(model => model.value)).toContain('native/gpt-6.1-sol');
       const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' }, agentTargetKey: key, nativeModels: models.getCurrent().modelOptions,
         providerGroups: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true });
@@ -348,7 +456,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       await picker.rerender({ binding: null });
       await detailScreen.update(readDetail());
       await models.rerender({ detail: readEngine() });
-      await flushHookEffects();
+      await waitForTestEvent(models.subscribe, models.getCurrent, value => !value.probe.namesPending && value.probe.phase === 'idle');
       expect(models.getCurrent().modelOptions.map(model => model.value)).not.toContain('native/gpt-6.1-sol');
       expect(models.getCurrent().modelOptions.map(model => model.value)).toContain('native/other-account');
     } finally { await models.unmount(); await picker.unmount(); }

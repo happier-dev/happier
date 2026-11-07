@@ -1,13 +1,15 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { AtmosphereSurfaceFrame } from '@/components/atmosphere/AtmosphereSurfaceFrame';
-import { LookChip, type LookTarget } from '@/components/atmosphere/look/LookChip';
 import { useNewSessionFloatingComposer } from '@/components/sessions/new/navigation/useNewSessionFloatingComposer';
+import { focusNewSessionComposerWhenPresented } from '@/components/sessions/new/navigation/newSessionComposerFocus';
 import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { ProjectSetupDraftFootnote, ProjectSetupDraftHeader } from '@/components/projects/projectSetup/ProjectSetupReturn';
-import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
+import { NewSessionComposerLookButton } from '@/components/sessions/new/components/NewSessionComposerLookButton';
+import { LookChip, type LookTarget } from '@/components/atmosphere/look/LookChip';
 import { NewSessionComposerCard } from '@/components/sessions/new/components/NewSessionComposerCard';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { NewSessionWebDismissal } from '@/components/sessions/new/components/NewSessionWebDismissal';
@@ -23,6 +25,7 @@ import {
     resolveNewSessionDraftRouteScope,
 } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import {
+    useNewSessionEmbeddedHost,
     useNewSessionHostCreationProfile,
     useNewSessionHostNavigation,
     useNewSessionHostParams,
@@ -43,14 +46,11 @@ import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/Compose
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { useActionOperationByRequestId } from '@/sync/domains/actionOperations/useActionOperations';
 import {
-    clearNewSessionOrdinaryEntryDraftIdExact,
-    readNewSessionOrdinaryEntryDraftId,
-    setNewSessionOrdinaryEntryDraftId,
-} from '@/sync/domains/settings/localOnlyAccountSettings';
+    clearOrdinaryNewSessionDraftIdExact,
+    rememberOrdinaryNewSessionDraftId,
+    useOrdinaryNewSessionDraftId,
+} from '@/sync/domains/state/newSessionTargetUiState';
 import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useSetting } from '@/sync/store/hooks';
-import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useServerCredentialAccountScopeBindings, useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -71,8 +71,9 @@ function NewSessionScreenInner(props: Readonly<{
     composerTopContent?: React.ReactNode;
     composerBottomContent?: React.ReactNode;
     draftId: string;
+    draftOrigin?: 'ordinary' | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
-    statusTrailingActions?: React.ReactNode;
+    renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean; shouldBottomAnchor: boolean }>) => React.ReactNode;
     automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
     fixedDirectoryIntent?: SessionDirectoryIntentV1;
     inputPlaceholder?: string;
@@ -83,10 +84,15 @@ function NewSessionScreenInner(props: Readonly<{
     const creationProfile = useNewSessionHostCreationProfile();
     const simpleProps = model.variant === 'simple' ? model.simpleProps : null;
     const inputPlaceholder = props.inputPlaceholder;
-    // An embedding page's placeholder rides the composer's own input; the props keep their identity.
+    // An embedding page's placeholder rides the composer's own input; the props keep their identity. A Bot draft
+    // keeps its own identity (name, face, picker) wherever it opens, embedded or on its route.
+    const botCreation = model.botCreation;
     const embeddedPanelProps = React.useMemo(
-        () => (simpleProps && inputPlaceholder ? { ...simpleProps, inputPlaceholder } : simpleProps),
-        [inputPlaceholder, simpleProps],
+        () => {
+            const panelProps = simpleProps && inputPlaceholder ? { ...simpleProps, inputPlaceholder } : simpleProps;
+            return panelProps ? withBotDraftPresentation(panelProps, botCreation) : panelProps;
+        },
+        [botCreation, inputPlaceholder, simpleProps],
     );
 
     if (model.variant === 'simple') {
@@ -192,28 +198,42 @@ function NewSessionContent(props: Readonly<{
     composerTopContent?: React.ReactNode;
     composerBottomContent?: React.ReactNode;
     draftId: string;
+    draftOrigin?: 'ordinary' | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
-    statusTrailingActions?: React.ReactNode;
+    renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean; shouldBottomAnchor: boolean }>) => React.ReactNode;
+    onStartAnother?: () => void;
+    launchHandOffRef?: React.MutableRefObject<(() => void) | null>;
     automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
     fixedDirectoryIntent?: SessionDirectoryIntentV1;
     inputPlaceholder?: string;
     composerControlPreset?: 'full' | 'compact';
 }>) {
-    // With no route card around it, the floating composer seats Look in its own status row,
-    // beside Start another and Delete draft, instead of in the window's corner.
+    // With no route card around it, the floating composer seats Look in its own status row, beside Start
+    // another and Delete draft, instead of in the window's corner. A bottom-anchored row sits on the band's
+    // solid ground, so Look is one of its quiet icons there; the centred desktop row floats over the live
+    // picture and keeps the glass chip.
     const floatingComposer = useNewSessionFloatingComposer(props.presentation);
-    const statusTrailingActions = floatingComposer ? (
-        <>
-            {props.statusTrailingActions}
-            <LookChip target={NEW_SESSION_LOOK_TARGET} testID="new-session-look" />
-        </>
-    ) : props.statusTrailingActions;
+    const renderDraftActions = props.renderStatusTrailingActions;
+    const hostActions = useNewSessionEmbeddedHost()?.statusTrailingActions;
+    const renderStatusTrailingActions = React.useMemo(() => (
+        floatingComposer || hostActions
+            ? (state: Readonly<{ isCreating: boolean; shouldBottomAnchor: boolean }>) => (
+                <>
+                    {renderDraftActions?.(state)}
+                    {!floatingComposer ? null : state.shouldBottomAnchor
+                        ? <NewSessionComposerLookButton target={NEW_SESSION_LOOK_TARGET} testID="new-session-look" />
+                        : <LookChip target={NEW_SESSION_LOOK_TARGET} testID="new-session-look" />}
+                    {hostActions}
+                </>
+            )
+            : renderDraftActions
+    ), [floatingComposer, hostActions, renderDraftActions]);
 
     return (
         <NewSessionScreenPortalScope presentation={props.presentation}>
             {props.presentation === 'screen' ? <AtmosphereSurfaceFrame surface="new-session" showLook={!floatingComposer}>
-                <NewSessionScreenInner {...props} statusTrailingActions={statusTrailingActions} />
-            </AtmosphereSurfaceFrame> : <NewSessionScreenInner {...props} />}
+                <NewSessionScreenInner {...props} renderStatusTrailingActions={renderStatusTrailingActions} />
+            </AtmosphereSurfaceFrame> : <NewSessionScreenInner {...props} renderStatusTrailingActions={renderStatusTrailingActions} />}
         </NewSessionScreenPortalScope>
     );
 }
@@ -268,7 +288,7 @@ export function NewSessionScreen(props: NewSessionScreenProps) {
         ? activeLifetime
         : requestedDraftScopeBinding;
     const entryMode = useSetting('newSessionDraftEntryMode');
-    const ordinaryEntryDraftId = useSetting('newSessionOrdinaryEntryDraftId');
+    const ordinaryEntryDraftId = useOrdinaryNewSessionDraftId(draftScope);
     // Validation uses the existing route owner; allocation belongs to Ready,
     // after the remembered draft's exact read has established whether it exists.
     const routeIdentity = resolveNewSessionDraftRouteIdentity({ routeDraftId, createDraftId: () => '' });
@@ -284,7 +304,7 @@ export function NewSessionScreen(props: NewSessionScreenProps) {
         request.routeDraftId !== explicitDraftId && (explicitDraftId === null || request.assignedDraftId !== explicitDraftId)
     )) {
         const requestedDraftId = explicitDraftId ?? (entryMode === 'resumePrevious'
-            ? readNewSessionOrdinaryEntryDraftId({ newSessionOrdinaryEntryDraftId: ordinaryEntryDraftId })
+            ? ordinaryEntryDraftId
             : null);
         request = { lifetime, routeDraftId: explicitDraftId, assignedDraftId: null,
             addresses: requestedDraftId ? [{ kind: 'newSession', draftId: requestedDraftId }] : [] };
@@ -321,8 +341,7 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
     }>();
     const { draftScope, onDraftIdentityResolved } = props;
     const draftAction = useMountedActionExecution(draftScope);
-    const resolveOrdinaryEntry = useResolveNewSessionOrdinaryEntryRoute();
-    const expectedSettingsScope = useAccountSettingsScope();
+    const resolveOrdinaryEntry = useResolveNewSessionOrdinaryEntryRoute(draftScope);
     const draftIdentity = React.useMemo(() => {
         const explicitIdentity = resolveNewSessionDraftRouteIdentity({ routeDraftId });
         if (!explicitIdentity.shouldWriteRouteParam) {
@@ -354,12 +373,9 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
     }), [draftIdentity.draftId]);
     const exactDraft = useNewSessionDraftPresentation(draftScope, draftIdentity.draftId);
     React.useEffect(() => {
-        if (draftIdentity.draftOrigin !== 'ordinary' || exactDraft?.materialized !== true) return;
-        const pointerDelta = setNewSessionOrdinaryEntryDraftId(draftIdentity.draftId);
-        if (!pointerDelta) return;
-        if (getStorage().getState().settings.newSessionOrdinaryEntryDraftId === pointerDelta.newSessionOrdinaryEntryDraftId) return;
-        getSyncSingleton().applySettings(pointerDelta, { expectedSettingsScope, source: 'ui' });
-    }, [expectedSettingsScope, draftIdentity.draftId, draftIdentity.draftOrigin, exactDraft?.materialized]);
+        if (!draftScope || draftIdentity.draftOrigin !== 'ordinary' || exactDraft?.materialized !== true) return;
+        rememberOrdinaryNewSessionDraftId(draftScope, draftIdentity.draftId);
+    }, [draftScope, draftIdentity.draftId, draftIdentity.draftOrigin, exactDraft?.materialized]);
     const launchUserAttemptId = exactDraft?.launchUserAttemptId ?? null;
     const launchOperation = useActionOperationByRequestId(
         launchUserAttemptId,
@@ -371,20 +387,26 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         launchUserAttemptId,
         operation: launchOperation,
     }));
+    const launchHandOffRef = React.useRef<(() => void) | null>(null);
+    const focusNextDraftRef = React.useRef(false);
     const startAnother = React.useCallback(() => {
+        // The launch in flight, if any, was asked for: it keeps running behind the new draft.
+        launchHandOffRef.current?.();
+        focusNextDraftRef.current = true;
         openDraft(resolveOrdinaryEntry({ forceFresh: true }));
     }, [openDraft, resolveOrdinaryEntry]);
+    React.useEffect(() => {
+        if (!focusNextDraftRef.current) return;
+        focusNextDraftRef.current = false;
+        return focusNewSessionComposerWhenPresented(draftIdentity.draftId);
+    }, [draftIdentity.draftId]);
     const deleteDraft = React.useCallback(async () => {
         if (!draftScope || launchInCustody) return;
         const outcome = await draftAction.execute('session.draft.delete', { draftId: draftIdentity.draftId });
         if (!outcome.ok || !draftAction.isCurrent()) return;
         const deleted = AppShellActionOutputSchemas['session.draft.delete'].safeParse(outcome.result);
         if (!deleted.success || deleted.data.status !== 'deleted') return;
-        const pointerDelta = clearNewSessionOrdinaryEntryDraftIdExact(
-            getStorage().getState().settings,
-            draftIdentity.draftId,
-        );
-        if (pointerDelta) getSyncSingleton().applySettings(pointerDelta, { expectedSettingsScope, source: 'ui' });
+        clearOrdinaryNewSessionDraftIdExact(draftScope, draftIdentity.draftId);
         if (committedDraftIdRef.current === draftIdentity.draftId) {
             openDraft(resolveOrdinaryEntry({ forceFresh: true }));
         }
@@ -395,14 +417,13 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         draftScope,
         launchInCustody,
         openDraft,
-        expectedSettingsScope,
         resolveOrdinaryEntry,
     ]);
 
     const draftConflictBanner = useSessionDraftConflictComposerBanner(exactDraft?.conflict ?? null);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(exactDraft?.status ?? 'clean'),
-        [exactDraft?.status],
+        () => buildSessionDraftSyncStatusBadge(exactDraft?.badgeStatus ?? null),
+        [exactDraft?.badgeStatus],
     );
     const authoringOriginValue = exactDraft?.authoringOrigin;
     const authoringOriginKey = authoringOriginValue === undefined ? null : JSON.stringify(authoringOriginValue);
@@ -433,15 +454,18 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         ...(draftSyncStatusBadge ? [draftSyncStatusBadge] : []),
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
     ], [draftConflictBanner.statusBadge, draftSyncStatusBadge]);
-    const statusTrailingActions = React.useMemo(() => (
-        draftScope && exactDraft?.materialized === true ? (
+    const showDraftActions = Boolean(draftScope && exactDraft?.materialized === true);
+    // Start another stays available mid-launch: the launch outlives this draft's screen.
+    // Delete waits for the whole launch, including before the daemon publishes custody.
+    const renderStatusTrailingActions = React.useCallback((state: Readonly<{ isCreating: boolean }>) => (
+        showDraftActions ? (
             <NewSessionDraftComposerActions
-                deleteDisabled={launchInCustody}
+                deleteDisabled={launchInCustody || state.isCreating}
                 onStartAnother={startAnother}
                 onDelete={deleteDraft}
             />
         ) : null
-    ), [deleteDraft, draftScope, exactDraft?.materialized, launchInCustody, startAnother]);
+    ), [deleteDraft, launchInCustody, showDraftActions, startAnother]);
 
     return (
         <NewSessionContent
@@ -451,8 +475,11 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
             composerTopContent={composerTopContent}
             composerBottomContent={composerBottomContent}
             draftId={draftIdentity.draftId}
+            draftOrigin={draftIdentity.draftOrigin}
             statusBadges={statusBadges}
-            statusTrailingActions={statusTrailingActions}
+            renderStatusTrailingActions={renderStatusTrailingActions}
+            onStartAnother={startAnother}
+            launchHandOffRef={launchHandOffRef}
             automationExactTurnRetarget={props.automationExactTurnRetarget ?? null}
             fixedDirectoryIntent={props.fixedDirectoryIntent}
             inputPlaceholder={props.inputPlaceholder}

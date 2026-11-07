@@ -1,19 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../plugins/deepseek/src/provider/contribution.js';
 import { OLLAMA_PROVIDER_CONTRIBUTION } from '../../../../plugins/ollama/src/provider/contribution.js';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../plugins/cliproxyapi/src/provider/contribution.js';
 import { ProviderContributionV1Schema } from '../contributions/v1.js';
-import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, parseProviderActionRequestV1 } from '../providerActionsV1.js';
+import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, parseProviderActionRequestV1 } from '../providerActionsV1.js';
 import { ProviderConnectionV1Schema } from './v1.js';
 import { CustomProviderTemplateV1Schema } from './customTemplateV1.js';
-import { createAccountProviderActionExecuteV1, type AccountProviderDeclarationV1 } from './accountProviderActionV1.js';
+import { createAccountProviderActionExecuteV1, describeAccountProviderConnectionsV1, type AccountProviderDeclarationV1 } from './accountProviderActionV1.js';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, type ProviderConnectionsCatalogV1 } from './connectionRowsV1.js';
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1, parseProviderSettingsV1Narrow } from '../settings/v1.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
 import { createProviderActionExecuteV1 } from '../executeProviderActionV1.js';
-
+import { budgetInlineCompletionContext } from '../../models/descriptor.js';
 import { prepareApprovalRequest } from '../../actions/executor/approvalPreparation.js';
+import { describeApprovalActionFields } from '../../actions/actionApprovalPresentation.js';
+import { createProviderDiscoveryCandidateIdV1 } from '../detection/v1.js';
 
 const fixtureSource = new URL('../../../../tests/src/testkit/actionExecutorBoundary.ts', import.meta.url).href;
 const { createActionExecutorBoundaryFixture }: {
@@ -26,13 +28,14 @@ function accountRow(catalog: ProviderConnectionsCatalogV1 = DEFAULT_PROVIDER_CON
   let revision = 1;
   let writes = 0;
   let reads = 0;
+  const declarationReads: unknown[][] = [];
   let outcome: 'updated' | 'conflict' | 'outcome_unknown' = 'updated';
   let beforeWrite: (() => void) | null = null;
   let definitions: readonly AccountProviderDeclarationV1[] = [{ contributionKey: 'happier.provider.deepseek/deepseek',
     definition: ProviderContributionV1Schema.parse(DEEPSEEK_PROVIDER_CONTRIBUTION), provenance: 'first_party' as const }];
   const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
     readCatalog: async () => { reads++; return { status: 'ready', revision, catalog: current }; },
-    readDefinitions: async () => definitions,
+    readDefinitions: async (...args: unknown[]) => { declarationReads.push(args); return definitions; },
     writeCatalog: async input => {
       expect(input.expectedRevision).toBe(revision);
       const callback = beforeWrite;
@@ -45,13 +48,353 @@ function accountRow(catalog: ProviderConnectionsCatalogV1 = DEFAULT_PROVIDER_CON
       return { status: outcome };
     },
   });
-  return { execute, get catalog() { return current; }, get revision() { return revision; }, get writes() { return writes; }, get reads() { return reads; },
+  return { execute, declarationReads, get catalog() { return current; }, get revision() { return revision; }, get writes() { return writes; }, get reads() { return reads; },
     beforeNextWrite(callback: () => void) { beforeWrite = callback; },
     setOutcome(value: typeof outcome) { outcome = value; }, clearDefinitions() { definitions = []; },
     setDefinitions(value: readonly AccountProviderDeclarationV1[]) { definitions = value; } };
 }
 
 describe('shared Provider Account Action producer', () => {
+  it('distinguishes pending declarations from a settled empty or failed declaration read', () => {
+    const catalog = { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [ProviderConnectionV1Schema.parse({
+      v: 1, id: 'pc_pending', source: { kind: 'contribution', contributionKey: 'happier.provider.deepseek/deepseek' },
+      role: 'named', displayName: 'DeepSeek', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1,
+    })] };
+    const pending = describeAccountProviderConnectionsV1(catalog, [], undefined, { declarationsStatus: 'loading' }).connections[0]!;
+    expect(pending).toMatchObject({ sourceStatus: 'loading', authorizationError: null });
+    for (const declarationsStatus of ['ready', 'unavailable'] as const) {
+      expect(describeAccountProviderConnectionsV1(catalog, [], undefined, { declarationsStatus }).connections[0])
+        .toMatchObject({ sourceStatus: 'unavailable', authorizationError: { code: 'provider_contribution_unavailable' } });
+    }
+  });
+
+  it('publishes the unbound gateway cause from the Account describe entry without a Machine', async () => {
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway', source: { kind: 'contribution',
+      contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' }, role: 'named', displayName: 'Main gateway',
+      displayNameMode: 'custom', deployment: { kind: 'managedLocal' }, revision: 1, createdAt: 1, updatedAt: 1 });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    row.setDefinitions([{ contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+      definition: ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION), provenance: 'first_party' }]);
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.describe', {}), {}))
+      .toMatchObject({ ok: true, result: { connections: [{ authorizationError: {
+        code: 'provider_connection_invalid', reason: 'managed_purpose_bindings_missing', connectionId: connection.id,
+      } }] } });
+    expect(row.writes).toBe(0);
+  });
+
+  it.each(['providers.connections.create_custom', 'providers.connections.enable_detected', 'providers.probe'] as const)(
+    'presents selected Saved Secret authority as a typed reference in the neighboring %s review', actionId => {
+      const savedSecretId = 'ss_private_reference';
+      const raw = actionId === 'providers.connections.create_custom'
+        ? { action: 'createCustom', connectionId: 'pc_private', template: customTemplate, savedSecretId, enable: false }
+        : actionId === 'providers.connections.enable_detected'
+          ? { action: 'enableDetected', connectionId: 'pc_private', machineId: 'machine-a', displayName: null, savedSecretId,
+            candidateId: createProviderDiscoveryCandidateIdV1({ machineId: 'machine-a', contributionKey: 'happier.provider.deepseek/deepseek',
+              endpointTemplateId: 'deepseek-openai-chat', normalizedEndpointUrl: 'https://api.deepseek.com/v1' }) }
+          : { kind: 'draft', draftConnectionId: 'pc_draft', machineId: 'machine-a', template: customTemplate,
+            savedSecretId };
+      const input = PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
+      const displayed = describeApprovalActionFields({ actionId, actionArgs: input });
+      expect(displayed.unrepresentable).toBeNull();
+      expect(displayed.rows).toContainEqual(expect.objectContaining({
+        kind: 'value', path: 'savedSecretId', reference: { kind: 'savedSecret', id: savedSecretId },
+      }));
+      expect(input).toHaveProperty('savedSecretId', savedSecretId);
+    },
+  );
+  it.each(['create', 'bind'] as const)('discloses current credential authority during %s confirmation without exposing Saved Secret material', async operation => {
+    const row = accountRow();
+    const contributionKey = 'happier.provider.deepseek/deepseek';
+    const authorityDescription = 'This token can spend across every gateway in its account.';
+    row.setDefinitions([{ contributionKey, provenance: 'first_party', definition: ProviderContributionV1Schema.parse({
+      ...DEEPSEEK_PROVIDER_CONTRIBUTION, credential: { ...DEEPSEEK_PROVIDER_CONTRIBUTION.credential, authorityDescription },
+    }) }]);
+    const create = { action: 'createContribution', connectionId: 'pc_authority', contributionKey,
+      displayName: null, savedSecretId: 'ss_private_reference', enable: false } as const;
+    if (operation === 'bind') expect(await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      ...create, savedSecretId: null,
+    }), {})).toMatchObject({ ok: true });
+    const writes = row.writes;
+    const executor = createActionExecutor({ providerActionExecute: row.execute, presentUserActionConfirmation: async args => {
+      expect(args.preview).toMatchObject({ providerCredentialAuthority: { authorityDescription }, summary: expect.stringContaining(authorityDescription) });
+      // Execution and the typed display reference retain the selected identity.
+      // The reference reader resolves metadata names, never secret material.
+      expect(args.input).toMatchObject({ savedSecretId: 'ss_private_reference' });
+      const displayed = describeApprovalActionFields({ actionId: args.actionId, actionArgs: args.input, preview: args.preview });
+      expect(displayed.unrepresentable).toBeNull();
+      expect(displayed.rows).toContainEqual(expect.objectContaining({
+        kind: 'value', path: 'savedSecretId', reference: { kind: 'savedSecret', id: 'ss_private_reference' },
+      }));
+      return false;
+    } });
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' } as const;
+    const result = operation === 'create'
+      ? await executor.execute('providers.connections.create_contribution', create, context)
+      : await executor.execute('providers.connections.secrets.bind', { action: 'bindSecret', connectionId: 'pc_authority',
+        credentialSlotId: 'apiKey', savedSecretId: 'ss_private_reference', scope: 'account' }, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(row.writes).toBe(writes);
+  });
+  it('custom-copy preserves effective overrides when the source is already custom', async () => {
+    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_copy_policy', source: { kind: 'custom', template: customTemplate },
+      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      endpointOverrides: [{ endpointTemplateId, baseUrl: 'https://selected.example/v1', publicHeaders: { 'x-policy': 'account' } }] });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.duplicate', {
+      action: 'duplicate', connectionId: connection.id, newConnectionId: 'pc_copy_result', displayName: 'Copy', mode: 'asCustom',
+    }), {})).toMatchObject({ ok: true });
+    const copied = row.catalog.connections.find(value => value.id === 'pc_copy_result');
+    expect(copied?.source).toMatchObject({ kind: 'custom', template: { endpointTemplates: [expect.objectContaining({
+      baseUrl: 'https://selected.example/v1', publicHeaders: { 'x-policy': 'account' },
+    })] } });
+  });
+
+  it('a normalized unchanged policy patch writes no catalog revision while a real change still publishes', async () => {
+    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_noop_policy', source: { kind: 'custom', template: customTemplate },
+      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      endpointOverrides: [{ endpointTemplateId, publicHeaders: { 'x-policy': 'account' } }] });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    const change = (value: string) => row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', {
+      action: 'setEndpointOverride', connectionId: connection.id, expectedRevision: 0, endpointTemplateId, scope: 'account',
+      publicHeaders: { 'X-Policy': value },
+    }), {});
+    expect(await change('account')).toMatchObject({ ok: true });
+    expect(row.writes).toBe(0);
+    expect(row.catalog.connections[0]?.revision).toBe(0);
+    expect(await change('changed')).toMatchObject({ ok: true });
+    expect(row.writes).toBe(1);
+  });
+
+  it('person confirmation receives authoritative policy and a denied or cancelled review writes nothing', async () => {
+    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_ui_review', source: { kind: 'custom', template: customTemplate },
+      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      endpointOverrides: [{ endpointTemplateId, publicHeaders: { 'x-policy': 'account' } }] });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    for (const cancel of [false, true]) {
+      const abort = new AbortController();
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ providerActionExecute: row.execute,
+        presentUserActionConfirmation: async args => {
+          expect(args).toMatchObject({ preview: { providerEndpointPolicyReview: {
+            before: { publicHeaders: { 'x-policy': 'account' } }, after: { publicHeaders: { 'x-policy': 'changed' } },
+          } } });
+          if (cancel) abort.abort();
+          return cancel;
+        } }));
+      const result = await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: connection.id,
+        expectedRevision: 0, endpointTemplateId, scope: 'account', publicHeaders: { 'x-policy': 'changed' } },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', signal: abort.signal });
+      expect(result).toMatchObject({ ok: false, errorCode: cancel ? 'cancelled' : 'approval_canceled' });
+      expect(row.writes).toBe(0);
+    }
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ providerActionExecute: row.execute, presentUserActionConfirmation: async () => true }));
+    expect(await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: connection.id,
+      expectedRevision: 0, endpointTemplateId, scope: 'account', publicHeaders: { 'x-policy': 'changed' } },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' })).toMatchObject({ ok: true });
+    expect(row.writes).toBe(1);
+    expect(await executor.execute('providers.connections.describe', { connectionId: connection.id },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { connections: [{ endpoints: [{ publicHeaders: { 'x-policy': 'changed' } }] }] } });
+  });
+  it.each(['headers', 'hints'] as const)('keeps readable policy approval across changed template %s and refuses a stale connection revision', async changed => {
+    const row = accountRow();
+    await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_review', contributionKey: 'happier.provider.deepseek/deepseek',
+      displayName: null, savedSecretId: null, enable: false,
+    }), {});
+    const request = parseProviderActionRequestV1('providers.connections.endpoint.set', {
+      action: 'setEndpointOverride', connectionId: 'pc_review', scope: 'account', expectedRevision: 0,
+      endpointTemplateId: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id, publicHeaders: { 'x-billing': 'byok' },
+    });
+    if (request.actionId !== 'providers.connections.endpoint.set') throw new Error('Expected endpoint policy request');
+    const input = request.input;
+    const writes = row.writes;
+    const prepared = await prepareApprovalRequest({ deps: createActionExecutorBoundaryFixture({ providerActionExecute: row.execute }),
+      actionId: 'providers.connections.endpoint.set', input, actionArgs: input, context: {} });
+    expect(prepared).toMatchObject({ preview: { providerEndpointPolicyReview: { before: { publicHeaders: {} },
+        after: { publicHeaders: { 'x-billing': 'byok' } }, scope: 'account' } } });
+    expect(row.writes).toBe(writes);
+    expect(row.catalog.connections[0]?.endpointOverrides).toBeUndefined();
+    if (!prepared || 'ok' in prepared) throw new Error('Expected authoritative policy review');
+    row.setDefinitions([{ contributionKey: 'happier.provider.deepseek/deepseek', provenance: 'first_party',
+      definition: ProviderContributionV1Schema.parse({ ...DEEPSEEK_PROVIDER_CONTRIBUTION,
+        endpointTemplates: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates.map(endpoint => ({ ...endpoint,
+          ...(changed === 'headers' ? { publicHeaders: { 'x-new-default': 'new' } }
+            : { publicHeaderHints: { 'x-billing': 'This policy changes billing authority.' } }) })) }) }]);
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', prepared.actionArgs), {}))
+      .toMatchObject({ ok: true });
+    expect(row.writes).toBe(writes + 1);
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId: input.endpointTemplateId,
+      publicHeaders: { 'x-billing': 'byok' } }]);
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', prepared.actionArgs), {}))
+      .toMatchObject({ ok: false, errorCode: 'provider_connection_changed' });
+    expect(row.writes).toBe(writes + 1);
+  });
+  it('keeps addresses independent of policy patches and restores template policy on reset after reload', async () => {
+    const row = accountRow();
+    const key = 'happier.provider.deepseek/deepseek';
+    await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_policy', contributionKey: key,
+      displayName: null, savedSecretId: null, enable: false,
+    }), {});
+    const endpointTemplateId = DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id;
+    const change = (patch: Record<string, unknown>) => row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', {
+      action: 'setEndpointOverride', connectionId: 'pc_policy', expectedRevision: row.catalog.connections[0]!.revision,
+      endpointTemplateId, scope: 'account', ...patch,
+    }), {});
+    expect(await change({ baseUrl: 'https://custom.example/v1' })).toMatchObject({ ok: true });
+    expect(await change({ publicHeaders: { 'X-Billing': 'byok' } })).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId, baseUrl: 'https://custom.example/v1', publicHeaders: { 'x-billing': 'byok' } }]);
+    const read = await row.execute(parseProviderActionRequestV1('providers.connections.describe', { connectionId: 'pc_policy' }), {});
+    expect(read).toMatchObject({ ok: true, result: { connections: [{ endpoints: expect.arrayContaining([expect.objectContaining({ baseUrl: 'https://custom.example/v1',
+      publicHeaders: { 'x-billing': 'byok' }, accountOverridePublicHeaders: { 'x-billing': 'byok' }, publicHeaderSources: { 'x-billing': 'accountOverride' } })]) }] } });
+    expect(await change({ baseUrl: null })).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId, publicHeaders: { 'x-billing': 'byok' } }]);
+    expect(await change({ publicHeaders: null })).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([]);
+    const writes = row.writes;
+    for (const publicHeaders of [{ Authorization: 'secret' }, { 'x-policy': 'bad\nvalue' }, { 'cf-aig-metadata-payload': 'value' }]) {
+      expect(() => parseProviderActionRequestV1('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: 'pc_policy',
+        expectedRevision: row.catalog.connections[0]!.revision, endpointTemplateId, scope: 'account', publicHeaders })).toThrow();
+    }
+    expect(row.writes).toBe(writes);
+  });
+  it('creates, updates, reads and deletes a custom source without reading plugin declarations', async () => {
+    const row = accountRow();
+    const { credential: _credential, ...template } = customTemplate;
+    const created = await row.execute(parseProviderActionRequestV1('providers.connections.create_custom', {
+      action: 'createCustom', connectionId: 'pc_custom_cost', template, savedSecretId: null, enable: true,
+    }), {});
+    expect(created).toMatchObject({ ok: true, result: { created: true, connection: { sourceStatus: 'available' } } });
+    const connection = row.catalog.connections[0]!;
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.update', {
+      action: 'update', connectionId: connection.id, expectedRevision: connection.revision, displayName: 'Changed custom source',
+    }), {})).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.displayName).toBe('Changed custom source');
+    expect(await row.execute(parseProviderActionRequestV1('providers.models.list', { connectionId: connection.id }), {}))
+      .toMatchObject({ ok: true, result: { status: 'success' } });
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.delete', {
+      action: 'delete', connectionId: connection.id,
+    }), {})).toMatchObject({ ok: true });
+    expect(row.catalog.connections).toHaveLength(0);
+    expect(row.declarationReads).toHaveLength(0);
+  });
+
+  it('reads only the selected contribution once and observes its current declaration on the next invocation', async () => {
+    const row = accountRow();
+    const key = 'happier.provider.deepseek/deepseek';
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_selected_cost', contributionKey: key,
+      displayName: null, savedSecretId: null, enable: false,
+    }), {})).toMatchObject({ ok: true });
+    expect(row.declarationReads).toEqual([[[key]]]);
+    row.clearDefinitions();
+    expect(await row.execute(parseProviderActionRequestV1('providers.models.list', { connectionId: 'pc_selected_cost' }), {}))
+      .toMatchObject({ ok: false, errorCode: 'provider_contribution_unavailable' });
+    expect(row.declarationReads).toEqual([[[key]], [[key]]]);
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.delete', {
+      action: 'delete', connectionId: 'pc_selected_cost',
+    }), {})).toMatchObject({ ok: true });
+    expect(row.catalog.connections).toHaveLength(0);
+    expect(row.declarationReads).toHaveLength(2);
+  });
+
+  it('rejects an undeclared credential slot before writing the Account catalog', async () => {
+    const row = accountRow();
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_slots', contributionKey: 'happier.provider.deepseek/deepseek',
+      displayName: null, savedSecretId: null, enable: false,
+    }), {})).toMatchObject({ ok: true });
+    const writes = row.writes;
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.secrets.bind', {
+      action: 'bindSecret', connectionId: 'pc_slots', credentialSlotId: 'undeclared',
+      savedSecretId: 'ss_other', scope: 'account',
+    }), {}))
+      .toMatchObject({ ok: false, errorCode: 'provider_credential_transport_unavailable' });
+    expect(row.writes).toBe(writes);
+  });
+  it('binds a declared external usage credential independently of inference and clears it after declaration removal', async () => {
+    const row = accountRow();
+    const contributionKey = 'example.billing/source';
+    const definition = ProviderContributionV1Schema.parse({ ...DEEPSEEK_PROVIDER_CONTRIBUTION,
+      usageSources: [{ id: 'credits', endpointTemplateId: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id,
+        path: '/credits', parser: 'example-credits', billingCredential: { slotId: 'managementKey',
+          destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } }] });
+    row.setDefinitions([{ contributionKey, definition, provenance: 'external' }]);
+    const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
+      assertCurrent() {}, async rpc() { throw new Error('Account billing binding must not use machine RPC'); },
+      async setDefault() { throw new Error('Billing must not change defaults'); },
+      account: row.execute,
+    }) });
+    const context = { surface: 'ui' as const, bypassApprovals: true };
+    expect(await executor.execute('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_billing', contributionKey,
+      displayName: null, savedSecretId: 'ss_inference', enable: true,
+    }, context)).toMatchObject({ ok: true });
+    const grants = row.catalog.accountGrants;
+    const bind = (savedSecretId: string | null) => executor.execute('providers.connections.secrets.bind', {
+      action: 'bindSecret', connectionId: 'pc_billing', credentialSlotId: 'managementKey', savedSecretId, scope: 'account',
+    }, context);
+    expect(await bind('ss_billing')).toMatchObject({ ok: true });
+    expect(row.catalog.secretBindingsByConnectionId.pc_billing?.account).toEqual({ apiKey: 'ss_inference', managementKey: 'ss_billing' });
+    expect(row.catalog.accountGrants).toEqual(grants);
+    row.clearDefinitions();
+    expect(await bind(null)).toMatchObject({ ok: true });
+    expect(row.catalog.secretBindingsByConnectionId.pc_billing?.account).toEqual({ apiKey: 'ss_inference' });
+  });
+  it.each([
+    ['happier.provider.deepseek/deepseek', DEEPSEEK_PROVIDER_CONTRIBUTION, 'deepseek-v4-pro'],
+    ['happier.provider.ollama/ollama', OLLAMA_PROVIDER_CONTRIBUTION, 'qwen2.5-coder:1.5b-base'],
+  ] as const)('authors a fresh inline allowance through the public connection Action and lists its exact descriptor: %s', async (contributionKey, contribution, modelId) => {
+    const row = accountRow();
+    row.setDefinitions([{ contributionKey, definition: ProviderContributionV1Schema.parse(contribution), provenance: 'first_party' }]);
+    const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
+      assertCurrent() {}, async rpc() { throw new Error('Account setup must not use machine RPC'); },
+      async setDefault() { throw new Error('Editor setup must not change Agent defaults'); },
+      account: row.execute,
+    }) });
+    const context = { surface: 'ui' as const, bypassApprovals: true };
+    expect(await executor.execute('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_inline', contributionKey, displayName: 'Editor source',
+      savedSecretId: null, enable: false,
+    }, context)).toMatchObject({ ok: true });
+    const connection = row.catalog.connections[0]!;
+    expect(connection.modelSettings).toBeUndefined();
+    expect(await executor.execute('providers.connections.update', {
+      action: 'update', connectionId: connection.id, expectedRevision: connection.revision,
+      modelSettings: { [modelId]: { maxTokens: 128, temperature: 0 }, other: { temperature: 0.5 } },
+    }, context)).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]).toMatchObject({ revision: connection.revision + 1,
+      modelSettings: { [modelId]: { maxTokens: 128, temperature: 0 } } });
+    const listed = await executor.execute('providers.models.list', { connectionId: connection.id }, context);
+    expect(listed).toMatchObject({ ok: true, result: { status: 'success', models: expect.arrayContaining([
+      expect.objectContaining({ id: modelId, descriptor: expect.objectContaining({ inlineCompletion: expect.objectContaining({ outputTokens: 128 }) }) }),
+    ]) } });
+    if (!listed.ok) throw new Error('Model list failed');
+    const result = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1['providers.models.list'].parse(listed.result);
+    if (result.status !== 'success') throw new Error('Model list refused');
+    const model = result.models.find(candidate => candidate.id === modelId)?.descriptor;
+    expect(model && budgetInlineCompletionContext(model, { prefix: 'const', suffix: '' })).toEqual({ prefix: 'const', suffix: '' });
+    expect(await executor.execute('providers.connections.update', {
+      action: 'update', connectionId: connection.id, expectedRevision: connection.revision + 1,
+      modelSettings: { [modelId]: { maxTokens: 256 } },
+    }, context)).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.modelSettings).toEqual({ [modelId]: { maxTokens: 256, temperature: 0 }, other: { temperature: 0.5 } });
+    const writes = row.writes;
+    expect(await executor.execute('providers.connections.update', {
+      action: 'update', connectionId: connection.id, expectedRevision: connection.revision,
+      modelSettings: { [modelId]: { maxTokens: 512 } },
+    }, context)).toMatchObject({ ok: false, errorCode: 'provider_connection_changed' });
+    expect(row.writes).toBe(writes);
+    expect(await executor.execute('providers.connections.update', {
+      action: 'update', connectionId: connection.id, expectedRevision: connection.revision + 2,
+      modelSettings: { [modelId]: null },
+    }, context)).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.modelSettings).toEqual({ other: { temperature: 0.5 } });
+  });
+
   it('round-trips manual reasoning declarations through Action registration, Account writer and catalog admission', async () => {
     const row = accountRow();
     // Exercise the registered Action after the host's existing approval flow.
@@ -195,7 +538,7 @@ describe('shared Provider Account Action producer', () => {
     expect(row.writes).toBe(1);
     expect(row.catalog.connections).toEqual([connection]);
   });
-  it('creates and enables a gateway with its unavailable pool in one catalog mutation and repairs an interrupted create', async () => {
+  it('atomically creates a distinct managed gateway without converting a same-name external connection', async () => {
     const half = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_half', source: { kind: 'contribution',
       contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' }, role: 'named', displayName: 'Main gateway',
       displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1 });
@@ -206,17 +549,26 @@ describe('shared Provider Account Action producer', () => {
         definition: ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION), provenance: 'first_party' }]);
       const input = { action: 'createContribution', connectionId: 'pc_new', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
         displayName: 'Main gateway', savedSecretId: null, enable: true,
+        gatewayPlacement: { kind: 'machine', machineId: 'offline-hub' },
+        claudeHelperModels: { fast: 'fast-helper' },
         deployment: { kind: 'managedLocal', purposeBindingDefaults: { 'openai-upstream': pool } } };
       expect(PROVIDER_ACTION_INPUT_SCHEMAS_V1['providers.connections.create_contribution'].safeParse(input).success).toBe(true);
       const result = await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', input), {});
-      expect(result).toMatchObject({ ok: true, result: { connection: { deployment: { kind: 'managedLocal' }, grants: { accountEnabled: true } } } });
+      expect(result).toMatchObject({ ok: true, result: { connection: { deployment: { kind: 'managedLocal', targetMachineId: 'offline-hub' },
+        gatewayPlacement: input.gatewayPlacement, grants: { accountEnabled: true } } } });
       expect(row.writes).toBe(1);
-      expect(row.catalog.connections).toEqual([expect.objectContaining({ id: connections.length ? half.id : 'pc_new',
-        deployment: { kind: 'managedLocal' }, purposeBindingDefaults: { 'openai-upstream': pool } })]);
-      expect(row.catalog.accountGrants.map(grant => grant.connectionId)).toEqual([row.catalog.connections[0]!.id]);
-      const retry = { ...input, connectionId: row.catalog.connections[0]!.id };
+      expect(row.catalog.connections).toEqual([...connections, expect.objectContaining({ id: 'pc_new',
+        deployment: { kind: 'managedLocal' }, gatewayPlacement: input.gatewayPlacement,
+        claudeHelperModels: input.claudeHelperModels, purposeBindingDefaults: { 'openai-upstream': pool } })]);
+      expect(row.catalog.accountGrants.map(grant => grant.connectionId)).toEqual(['pc_new']);
+      const retry = input;
       expect(await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', retry), {})).toMatchObject({ ok: true });
-      expect(row.catalog.connections).toHaveLength(1);
+      expect(row.catalog.connections).toHaveLength(connections.length + 1);
+      const beforeChangedRetry = row.writes;
+      expect(await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+        ...retry, gatewayPlacement: { kind: 'machine', machineId: 'different-hub' },
+      }), {})).toMatchObject({ ok: false, errorCode: 'provider_connection_changed' });
+      expect(row.writes).toBe(beforeChangedRetry);
     }
   });
   it('does not convert an existing default external connection during managed creation', async () => {
@@ -235,20 +587,21 @@ describe('shared Provider Account Action producer', () => {
     expect(row.catalog.connections).toEqual([existing]);
   });
   it('never persists a partial gateway when slot admission or the catalog CAS refuses creation', async () => {
-    for (const conflict of [false, true]) {
+    for (const failure of ['slot', 'external', 'conflict'] as const) {
       const row = accountRow();
       row.setDefinitions([{ contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
         definition: ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION), provenance: 'first_party' }]);
-      if (conflict) row.setOutcome('conflict');
+      if (failure === 'conflict') row.setOutcome('conflict');
       const result = await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
         action: 'createContribution', connectionId: 'pc_new', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
         displayName: 'Main gateway', savedSecretId: null, enable: true,
-        deployment: { kind: 'managedLocal', purposeBindingDefaults: conflict ? {} : {
+        gatewayPlacement: { kind: 'machine', machineId: 'offline-hub' },
+        deployment: failure === 'external' ? { kind: 'external' } : { kind: 'managedLocal', purposeBindingDefaults: failure === 'conflict' ? {} : {
           'undeclared-slot': { kind: 'group', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool' },
         } },
       }), {});
-      expect(result).toMatchObject({ ok: false, errorCode: conflict ? 'provider_catalog_conflict' : 'provider_connection_invalid' });
-      expect(row.writes).toBe(conflict ? 1 : 0);
+      expect(result).toMatchObject({ ok: false, errorCode: failure === 'conflict' ? 'provider_connection_changed' : 'provider_connection_invalid' });
+      expect(row.writes).toBe(failure === 'conflict' ? 1 : 0);
       expect(row.catalog.connections).toEqual([]);
       expect(row.catalog.accountGrants).toEqual([]);
     }
@@ -318,6 +671,25 @@ describe('shared Provider Account Action producer', () => {
       expect(row.catalog).toBe(previous);
       expect(row.writes).toBe(writes);
     }
+  });
+
+  it.each([
+    ['providers.models.source_visibility.set', { action: 'setConnectionVisibility', connectionId: 'pc_target', shown: false }],
+    ['providers.models.visibility.set', { action: 'setVisibility',
+      ref: { scope: 'allAgents', providerConnectionId: 'pc_target', modelId: 'model' }, hidden: true }],
+    ['providers.models.visibility.reset', { action: 'resetVisibility', scope: { kind: 'connection', connectionId: 'pc_target' } }],
+  ] as const)('preserves the connection for %s catalog conflict recovery without replay', async (actionId, input) => {
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_target',
+      source: { kind: 'contribution', contributionKey: 'happier.provider.deepseek/deepseek' }, role: 'named',
+      displayName: 'Target', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1 });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    row.setOutcome('conflict');
+    const previous = row.catalog;
+    expect(await row.execute(parseProviderActionRequestV1(actionId, input), {}))
+      .toMatchObject({ ok: false, errorCode: 'provider_connection_changed',
+        details: { connectionId: connection.id, action: 'review_connection' } });
+    expect(row.catalog).toBe(previous);
+    expect(row.writes).toBe(1);
   });
 
   it('preserves native and connection visibility scopes through successful Account mutations', async () => {
@@ -404,7 +776,10 @@ describe('shared Provider Account Action producer', () => {
     const request = parseProviderActionRequestV1('providers.connections.update', { action: 'update', connectionId: 'pc_custom',
       expectedRevision: 0, template: { ...customTemplate, name: 'Corrected name' } });
     row.setOutcome('conflict');
-    expect(await row.execute(request, {})).toMatchObject({ ok: false, errorCode: 'provider_catalog_conflict' });
+    const writesBeforeConflict = row.writes;
+    expect(await row.execute(request, {})).toMatchObject({ ok: false, errorCode: 'provider_connection_changed',
+      details: { retryable: true, action: 'review_connection' } });
+    expect(row.writes).toBe(writesBeforeConflict + 1);
     expect(row.catalog.connections[0]?.revision).toBe(0);
     row.setOutcome('updated');
     expect(await row.execute(request, {})).toMatchObject({ ok: true, result: { connection: { revision: 1, grants: { accountState: 'valid' } } } });
@@ -462,14 +837,17 @@ describe('shared Provider Account Action producer', () => {
     expect(row.catalog.connections).toEqual([]);
   });
 
-  it('preserves the catalog on CAS conflict and reads current state after an uncertain receipt without replay', async () => {
+  it('returns a create CAS refusal without replay and never replays an uncertain receipt', async () => {
     const row = accountRow(); row.setOutcome('conflict');
     const request = parseProviderActionRequestV1('providers.connections.create_contribution', {
       action: 'createContribution', connectionId: 'pc_work', contributionKey: 'happier.provider.deepseek/deepseek',
       displayName: 'Draft', savedSecretId: null, enable: false,
     });
-    expect(await row.execute(request, {})).toMatchObject({ ok: false, errorCode: 'provider_catalog_conflict' });
+    expect(await row.execute(request, {})).toMatchObject({ ok: false, errorCode: 'provider_connection_changed',
+      details: { code: 'provider_connection_changed', connectionId: 'pc_work', retryable: true, action: 'review_connection' } });
     expect(row.catalog.connections).toEqual([]);
+    expect(row.writes).toBe(1);
+    expect(row.reads).toBe(1);
     row.setOutcome('outcome_unknown');
     expect(await row.execute(request, {})).toMatchObject({ ok: false, errorCode: 'provider_catalog_outcome_unknown' });
     expect(await row.execute(parseProviderActionRequestV1('providers.connections.describe', { connectionId: 'pc_work' }), {}))
@@ -571,134 +949,5 @@ describe('shared Provider Account Action producer', () => {
     }
     expect(row.catalog.connections[0]?.endpointOverrides?.map(endpoint => endpoint.endpointTemplateId))
       .toEqual(['ollama-native', 'ollama-openai-responses']);
-  });
-});
-
-describe('Provider endpoint policy Action', () => {
-  it('custom-copy preserves effective overrides when the source is already custom', async () => {
-    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
-    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_copy_policy', source: { kind: 'custom', template: customTemplate },
-      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
-      endpointOverrides: [{ endpointTemplateId, baseUrl: 'https://selected.example/v1', publicHeaders: { 'x-policy': 'account' } }] });
-    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
-    expect(await row.execute(parseProviderActionRequestV1('providers.connections.duplicate', {
-      action: 'duplicate', connectionId: connection.id, newConnectionId: 'pc_copy_result', displayName: 'Copy', mode: 'asCustom',
-    }), {})).toMatchObject({ ok: true });
-    const copied = row.catalog.connections.find(value => value.id === 'pc_copy_result');
-    expect(copied?.source).toMatchObject({ kind: 'custom', template: { endpointTemplates: [expect.objectContaining({
-      baseUrl: 'https://selected.example/v1', publicHeaders: { 'x-policy': 'account' },
-    })] } });
-  });
-
-  it('a normalized unchanged policy patch writes no catalog revision while a real change still publishes', async () => {
-    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
-    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_noop_policy', source: { kind: 'custom', template: customTemplate },
-      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
-      endpointOverrides: [{ endpointTemplateId, publicHeaders: { 'x-policy': 'account' } }] });
-    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
-    const change = (value: string) => row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', {
-      action: 'setEndpointOverride', connectionId: connection.id, expectedRevision: 0, endpointTemplateId, scope: 'account',
-      publicHeaders: { 'X-Policy': value },
-    }), {});
-    expect(await change('account')).toMatchObject({ ok: true });
-    expect(row.writes).toBe(0);
-    expect(row.catalog.connections[0]?.revision).toBe(0);
-    expect(await change('changed')).toMatchObject({ ok: true });
-    expect(row.writes).toBe(1);
-  });
-
-  it('person confirmation receives authoritative policy and a denied or cancelled review writes nothing', async () => {
-    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
-    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_ui_review', source: { kind: 'custom', template: customTemplate },
-      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
-      endpointOverrides: [{ endpointTemplateId, publicHeaders: { 'x-policy': 'account' } }] });
-    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
-    for (const cancel of [false, true]) {
-      const abort = new AbortController();
-      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ providerActionExecute: row.execute,
-        presentUserActionConfirmation: async args => {
-          expect(args).toMatchObject({ preview: { providerEndpointPolicyReview: {
-            before: { publicHeaders: { 'x-policy': 'account' } }, after: { publicHeaders: { 'x-policy': 'changed' } },
-          } } });
-          if (cancel) abort.abort();
-          return cancel;
-        } }));
-      const result = await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: connection.id,
-        expectedRevision: 0, endpointTemplateId, scope: 'account', publicHeaders: { 'x-policy': 'changed' } },
-        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', signal: abort.signal });
-      expect(result).toMatchObject({ ok: false, errorCode: cancel ? 'cancelled' : 'approval_canceled' });
-      expect(row.writes).toBe(0);
-    }
-    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ providerActionExecute: row.execute, presentUserActionConfirmation: async () => true }));
-    expect(await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: connection.id,
-      expectedRevision: 0, endpointTemplateId, scope: 'account', publicHeaders: { 'x-policy': 'changed' } },
-      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' })).toMatchObject({ ok: true });
-    expect(row.writes).toBe(1);
-    expect(await executor.execute('providers.connections.describe', { connectionId: connection.id },
-      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' }))
-      .toMatchObject({ ok: true, result: { connections: [{ endpoints: [{ publicHeaders: { 'x-policy': 'changed' } }] }] } });
-  });
-  it.each(['headers', 'hints'] as const)('keeps readable policy approval across changed template %s and refuses a stale connection revision', async changed => {
-    const row = accountRow();
-    await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
-      action: 'createContribution', connectionId: 'pc_review', contributionKey: 'happier.provider.deepseek/deepseek',
-      displayName: null, savedSecretId: null, enable: false,
-    }), {});
-    const request = parseProviderActionRequestV1('providers.connections.endpoint.set', {
-      action: 'setEndpointOverride', connectionId: 'pc_review', scope: 'account', expectedRevision: 0,
-      endpointTemplateId: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id, publicHeaders: { 'x-billing': 'byok' },
-    });
-    if (request.actionId !== 'providers.connections.endpoint.set') throw new Error('Expected endpoint policy request');
-    const input = request.input;
-    const writes = row.writes;
-    const prepared = await prepareApprovalRequest({ deps: createActionExecutorBoundaryFixture({ providerActionExecute: row.execute }),
-      actionId: 'providers.connections.endpoint.set', input, actionArgs: input, context: {} });
-    expect(prepared).toMatchObject({ preview: { providerEndpointPolicyReview: { before: { publicHeaders: {} },
-        after: { publicHeaders: { 'x-billing': 'byok' } }, scope: 'account' } } });
-    expect(row.writes).toBe(writes);
-    expect(row.catalog.connections[0]?.endpointOverrides).toBeUndefined();
-    if (!prepared || 'ok' in prepared) throw new Error('Expected authoritative policy review');
-    row.setDefinitions([{ contributionKey: 'happier.provider.deepseek/deepseek', provenance: 'first_party',
-      definition: ProviderContributionV1Schema.parse({ ...DEEPSEEK_PROVIDER_CONTRIBUTION,
-        endpointTemplates: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates.map(endpoint => ({ ...endpoint,
-          ...(changed === 'headers' ? { publicHeaders: { 'x-new-default': 'new' } }
-            : { publicHeaderHints: { 'x-billing': 'This policy changes billing authority.' } }) })) }) }]);
-    expect(await row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', prepared.actionArgs), {}))
-      .toMatchObject({ ok: true });
-    expect(row.writes).toBe(writes + 1);
-    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId: input.endpointTemplateId,
-      publicHeaders: { 'x-billing': 'byok' } }]);
-    expect(await row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', prepared.actionArgs), {}))
-      .toMatchObject({ ok: false, errorCode: 'provider_connection_changed' });
-    expect(row.writes).toBe(writes + 1);
-  });
-  it('keeps addresses independent of policy patches and restores template policy on reset after reload', async () => {
-    const row = accountRow();
-    const key = 'happier.provider.deepseek/deepseek';
-    await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
-      action: 'createContribution', connectionId: 'pc_policy', contributionKey: key,
-      displayName: null, savedSecretId: null, enable: false,
-    }), {});
-    const endpointTemplateId = DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id;
-    const change = (patch: Record<string, unknown>) => row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', {
-      action: 'setEndpointOverride', connectionId: 'pc_policy', expectedRevision: row.catalog.connections[0]!.revision,
-      endpointTemplateId, scope: 'account', ...patch,
-    }), {});
-    expect(await change({ baseUrl: 'https://custom.example/v1' })).toMatchObject({ ok: true });
-    expect(await change({ publicHeaders: { 'X-Billing': 'byok' } })).toMatchObject({ ok: true });
-    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId, baseUrl: 'https://custom.example/v1', publicHeaders: { 'x-billing': 'byok' } }]);
-    const read = await row.execute(parseProviderActionRequestV1('providers.connections.describe', { connectionId: 'pc_policy' }), {});
-    expect(read).toMatchObject({ ok: true, result: { connections: [{ endpoints: expect.arrayContaining([expect.objectContaining({ baseUrl: 'https://custom.example/v1',
-      publicHeaders: { 'x-billing': 'byok' }, accountOverridePublicHeaders: { 'x-billing': 'byok' }, publicHeaderSources: { 'x-billing': 'accountOverride' } })]) }] } });
-    expect(await change({ baseUrl: null })).toMatchObject({ ok: true });
-    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId, publicHeaders: { 'x-billing': 'byok' } }]);
-    expect(await change({ publicHeaders: null })).toMatchObject({ ok: true });
-    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([]);
-    const writes = row.writes;
-    for (const publicHeaders of [{ Authorization: 'secret' }, { 'x-policy': 'bad\nvalue' }, { 'cf-aig-metadata-payload': 'value' }]) {
-      expect(() => parseProviderActionRequestV1('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: 'pc_policy',
-        expectedRevision: row.catalog.connections[0]!.revision, endpointTemplateId, scope: 'account', publicHeaders })).toThrow();
-    }
-    expect(row.writes).toBe(writes);
   });
 });

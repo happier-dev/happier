@@ -33,17 +33,35 @@ describe('Connected Account catalog publication', () => {
             record: { key: 'configurations', value: { v: 1, entries: [] } } }, true);
         expect(getConnectedAccountCatalogValue(scope, 'purposes')).toBe(first);
     });
-    it('keeps stale display through refresh and rejects retired scope or lost private admission', () => {
-        applyConnectedAccountCatalogSnapshot(scope, 'purposes', ready, true);
-        const value = getConnectedAccountCatalogValue(scope, 'purposes').value;
-        beginConnectedAccountCatalogLoad(scope, 'purposes');
-        expect(getConnectedAccountCatalogValue(scope, 'purposes')).toMatchObject({ status: 'loading', value, stale: true });
-        applyConnectedAccountCatalogSnapshot(scope, 'purposes', ready, false);
-        expect(getConnectedAccountCatalogValue(scope, 'purposes').status).toBe('loading');
-        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'unreachable' }, true);
-        expect(getConnectedAccountCatalogValue(scope, 'purposes')).toMatchObject({ status: 'unavailable', value, stale: true });
-        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
-        expect(getConnectedAccountCatalogValue(scope, 'purposes')).toMatchObject({ status: 'unavailable', value: null });
+    it('keeps equal refreshes silent, publishes a changed revision and rejects lost private admission', () => {
+        const ready = { status: 'ready' as const, revision: 4,
+            record: { key: 'configurations' as const, value: { v: 1 as const, entries: [] } } };
+        const key = ready.record.key;
+        applyConnectedAccountCatalogSnapshot(scope, key, ready, true);
+        const initial = getConnectedAccountCatalogValue(scope, key);
+        const value = initial.value;
+        let notifications = 0;
+        const stop = subscribeConnectedAccountCatalogSnapshots(() => { notifications += 1; });
+        for (let index = 0; index < 10; index += 1) {
+            beginConnectedAccountCatalogLoad(scope, key);
+            applyConnectedAccountCatalogSnapshot(scope, key, structuredClone(ready), true);
+        }
+        expect(notifications).toBe(0);
+        expect(getConnectedAccountCatalogValue(scope, key)).toBe(initial);
+        applyConnectedAccountCatalogSnapshot(scope, key, ready, false);
+        expect(getConnectedAccountCatalogValue(scope, key)).toBe(initial);
+        beginConnectedAccountCatalogLoad(scope, key);
+        applyConnectedAccountCatalogSnapshot(scope, key, { ...ready, revision: 5 }, true);
+        expect(notifications).toBe(1);
+        expect(getConnectedAccountCatalogValue(scope, key).revision).toBe(5);
+        beginConnectedAccountCatalogLoad(scope, key, true);
+        expect(getConnectedAccountCatalogValue(scope, key)).toMatchObject({ status: 'loading', stale: true, value });
+        expect(notifications).toBe(2);
+        stop();
+        applyConnectedAccountCatalogSnapshot(scope, key, { status: 'unavailable', reason: 'unreachable' }, true);
+        expect(getConnectedAccountCatalogValue(scope, key)).toMatchObject({ status: 'unavailable', value, stale: true });
+        applyConnectedAccountCatalogSnapshot(scope, key, { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
+        expect(getConnectedAccountCatalogValue(scope, key)).toMatchObject({ status: 'unavailable', value: null });
     });
     it('publishes a fresh safe partial projection without granting ready catalog authority', () => {
         applyConnectedAccountCatalogSnapshot(scope, 'purposes', ready, true);

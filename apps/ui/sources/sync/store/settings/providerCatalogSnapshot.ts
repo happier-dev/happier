@@ -2,12 +2,15 @@ import type { ProviderConnectionsCatalogSnapshotV1, ProviderConnectionsCatalogV1
 import type { DaemonProviderModelProjectionResponseV1, DaemonProviderModelsResponseV1, DaemonProviderConnectionsDescribeResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ProviderConnectionId } from '@happier-dev/protocol/providers/ids';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialChange, type HomeCredentialMutationEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { parseToken } from '@/utils/auth/parseToken';
 import { canPublishCatalogReceipt, retainCatalogRevision } from './wholeCatalogReceiptOrdering';
+import { ProviderCatalogReferences } from './providerCatalogReferences';
+import { reconcileProviderCatalog } from './providerCatalogReconciliation';
 
 /** Public key evidence from a read admitted under persisted E2EE mode; never retained key bytes. */
 export type ProviderCatalogCryptoAdmission = Readonly<{ contentPublicKeyFingerprint: string }>;
@@ -16,15 +19,18 @@ export type ProviderCatalogSnapshot = Readonly<{
     scope: ServerAccountScope; status: ProviderConnectionsCatalogSnapshotV1['status'];
     catalog: ProviderConnectionsCatalogSnapshotV1; data: ProviderConnectionsCatalogV1 | null;
     revision: number | 'absent'; stale: boolean;
+    /** Local write receipts advance editor bases; remote refreshes must not overwrite an open draft. */
+    acknowledgedRevision?: number;
     cryptoAdmission: ProviderCatalogCryptoAdmission | null;
 }>;
 const snapshots = new Map<string, ProviderCatalogSnapshot>();
+const references = new ProviderCatalogReferences();
 type ModelProjection = Extract<DaemonProviderModelProjectionResponseV1, { status: 'success' }>;
 type ConnectionModels = Extract<DaemonProviderModelsResponseV1, { status: 'success' }>;
 type ConnectionCheck = Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }>;
 type ModelDisplay = Readonly<{ kind: 'projection'; value: ModelProjection }>
     | Readonly<{ kind: 'connection-list'; value: ConnectionModels }>
-    | Readonly<{ kind: 'connection-check'; value: ConnectionCheck }>;
+    | Readonly<{ kind: 'connection-check'; value: ConnectionCheck; accountCatalog: ProviderConnectionsCatalogV1 | null; readRequired?: true }>;
 type ModelProjectionSnapshot = {
     scope: ServerAccountScope;
     data: ModelDisplay | null;
@@ -83,6 +89,14 @@ export function subscribeProviderCatalogSnapshots(listener: () => void): () => v
 export function getProviderCatalogSnapshot(scope: ServerAccountScope | null | undefined): ProviderCatalogSnapshot | null {
     return scope ? snapshots.get(serverAccountScopeKeySuffix(scope)) ?? null : null;
 }
+export function readProviderCatalogConnection(scope: ServerAccountScope | null | undefined,
+    connectionId: string): ReturnType<ProviderCatalogReferences['connection']> {
+    return scope ? references.connection(serverAccountScopeKeySuffix(scope), connectionId) : null;
+}
+export function readProviderCatalogModel(scope: ServerAccountScope | null | undefined,
+    connectionId: string, modelId: string): ReturnType<ProviderCatalogReferences['model']> {
+    return scope ? references.model(serverAccountScopeKeySuffix(scope), connectionId, modelId) : null;
+}
 function modelProjectionKey(scope: ServerAccountScope, credentialKey: string, queryKey: string): string {
     return JSON.stringify([serverAccountScopeKeySuffix(scope), credentialKey, queryKey]);
 }
@@ -100,6 +114,10 @@ export function providerConnectionCheckQueryKey(machineId: string, connectionId?
 export function getProviderConnectionCheckSnapshot(scope: ServerAccountScope, credentialKey: string, queryKey: string): ConnectionCheck | null {
     const data = modelProjections.get(modelProjectionKey(scope, credentialKey, queryKey))?.data;
     return data?.kind === 'connection-check' ? data.value : null;
+}
+export function isProviderConnectionCheckReadRequired(scope: ServerAccountScope, credentialKey: string, queryKey: string): boolean {
+    const data = modelProjections.get(modelProjectionKey(scope, credentialKey, queryKey))?.data;
+    return data?.kind === 'connection-check' && data.readRequired === true;
 }
 function ensureModelProjectionSnapshot(scope: ServerAccountScope, key: string): ModelProjectionSnapshot {
     let snapshot = modelProjections.get(key);
@@ -130,6 +148,14 @@ export function subscribeProviderModelProjectionSnapshot(scope: ServerAccountSco
         }
     };
 }
+/** A mounted reader superseded this query; other observers still own its display. */
+export function releaseProviderModelProjectionSnapshot(scope: ServerAccountScope, credentialKey: string, queryKey: string): void {
+    const key = modelProjectionKey(scope, credentialKey, queryKey);
+    const snapshot = modelProjections.get(key);
+    if (!snapshot || snapshot.listeners.size > 0) return;
+    modelProjections.delete(key);
+    syncCredentialSubscription();
+}
 /** Each caller revalidates through its own Action; only admitted successes enter the shared display snapshot. */
 export function beginProviderModelProjectionRead(scope: ServerAccountScope, credentialKey: string, queryKey: string): (data: ModelProjection) => void {
     const publish = beginModelDisplayRead(scope, credentialKey, queryKey);
@@ -140,8 +166,56 @@ export function beginProviderConnectionModelsRead(scope: ServerAccountScope, cre
     return value => publish({ kind: 'connection-list', value });
 }
 export function beginProviderConnectionCheckRead(scope: ServerAccountScope, credentialKey: string, queryKey: string): (data: ConnectionCheck) => void {
+    const target = modelProjections.get(modelProjectionKey(scope, credentialKey, queryKey));
+    if (target?.data?.kind === 'connection-check' && target.data.readRequired) {
+        const { readRequired: _readRequired, ...data } = target.data;
+        target.data = data;
+    }
     const publish = beginModelDisplayRead(scope, credentialKey, queryKey);
-    return value => publish({ kind: 'connection-check', value });
+    const accountCatalog = getProviderCatalogSnapshot(scope)?.data ?? null;
+    return value => publish({ kind: 'connection-check', value: reconcileConnectionCheck(value, accountCatalog,
+        getProviderCatalogSnapshot(scope)?.data ?? null), accountCatalog: getProviderCatalogSnapshot(scope)?.data ?? null });
+}
+
+function connectionCheckAccountFacts(catalog: ProviderConnectionsCatalogV1, connectionId: ProviderConnectionId) {
+    const connection = catalog.connections.find(row => row.id === connectionId);
+    if (!connection) return null;
+    // Display edits advance the saved row without changing an endpoint check.
+    const { displayName: _name, displayNameMode: _mode, revision: _revision, updatedAt: _updatedAt, ...source } = connection;
+    return { source, accountGrants: catalog.accountGrants.filter(row => row.connectionId === connectionId),
+        machineGrants: catalog.machineGrants.filter(row => row.connectionId === connectionId),
+        bindings: catalog.secretBindingsByConnectionId[connectionId] ?? null };
+}
+
+/** Account observations can retire a check, but cannot manufacture an unchecked Machine observation. */
+function reconcileConnectionCheck(value: ConnectionCheck, previous: ProviderConnectionsCatalogV1 | null,
+    next: ProviderConnectionsCatalogV1 | null): ConnectionCheck {
+    if (!previous || !next || previous === next) return value;
+    const connections = value.connections.filter(row => sameStrictJsonValue(
+        connectionCheckAccountFacts(previous, row.connectionId), connectionCheckAccountFacts(next, row.connectionId),
+    ));
+    return connections.length === value.connections.length ? value : { ...value, connections };
+}
+
+function reconcileConnectionChecks(scope: ServerAccountScope, catalog: ProviderConnectionsCatalogV1 | null): void {
+    const currentIds = new Set(catalog?.connections.map(row => row.id));
+    for (const projection of modelProjections.values()) {
+        if (projection.data?.kind !== 'connection-check'
+            || serverAccountScopeKeySuffix(projection.scope) !== serverAccountScopeKeySuffix(scope)) continue;
+        const previous = projection.data.value;
+        const value = reconcileConnectionCheck(previous, projection.data.accountCatalog, catalog);
+        const retainedIds = new Set(value.connections.map(row => row.connectionId));
+        // Deletions need no Machine work. Changed sources/grants/bindings retire
+        // their check and ask currently mounted consumers for one new observation.
+        const readRequired = previous.connections.some(row => currentIds.has(row.connectionId) && !retainedIds.has(row.connectionId));
+        projection.data = { ...projection.data, value, accountCatalog: catalog, ...(readRequired ? { readRequired: true } : {}) };
+        if (value !== previous) {
+            // The retired source also retires reads admitted against it. Reuse
+            // the query's existing admission ordering, as credential withdrawal does.
+            projection.accepted = ++projection.requested;
+            for (const listener of [...projection.listeners]) listener();
+        }
+    }
 }
 function beginModelDisplayRead(scope: ServerAccountScope, credentialKey: string, queryKey: string): (data: ModelDisplay) => void {
     const key = modelProjectionKey(scope, credentialKey, queryKey);
@@ -161,10 +235,13 @@ export function applyAcknowledgedProviderCatalog(scope: ServerAccountScope, data
     current: boolean, cryptoAdmission: ProviderCatalogCryptoAdmission | null): void {
     const previous = getProviderCatalogSnapshot(scope);
     if (!canPublishCatalogReceipt({ current, revision, retainedRevision: previous?.revision })) return;
+    data = reconcileProviderCatalog(previous?.data, data)!;
     const next: ProviderCatalogSnapshot = { scope, status: 'loading', catalog: { status: 'loading' },
-        data, revision, stale: true, cryptoAdmission };
+        data, revision, acknowledgedRevision: revision, stale: true, cryptoAdmission };
     if (previous && sameStrictJsonValue(previous, next)) return;
+    if (data !== previous?.data) references.apply(serverAccountScopeKeySuffix(scope), data);
     snapshots.set(serverAccountScopeKeySuffix(scope), next);
+    reconcileConnectionChecks(scope, data);
     syncCredentialSubscription();
     for (const listener of [...listeners]) listener();
 }
@@ -182,23 +259,26 @@ export function applyProviderCatalogSnapshot(scope: ServerAccountScope, catalog:
         syncCredentialSubscription();
     }
     const candidate = catalog.status === 'ready' || catalog.status === 'partial' ? catalog.catalog : withdraw ? null : old?.data ?? null;
-    const data = old?.data && JSON.stringify(old.data) === JSON.stringify(candidate) ? old.data : candidate;
-    const next: ProviderCatalogSnapshot = { scope: old?.scope ?? scope, catalog, status: catalog.status, data,
+    const data = reconcileProviderCatalog(old?.data, candidate);
+    const admitted = catalog.status === 'ready' || catalog.status === 'partial' ? { ...catalog, catalog: data! } : catalog;
+    const next: ProviderCatalogSnapshot = { scope: old?.scope ?? scope, catalog: admitted, status: catalog.status, data,
         revision: retainCatalogRevision(catalog, old?.revision),
+        ...(data && old?.acknowledgedRevision !== undefined ? { acknowledgedRevision: old.acknowledgedRevision } : {}),
         stale: catalog.status !== 'ready',
         cryptoAdmission: !data ? null : catalog.status === 'ready' || catalog.status === 'partial'
             ? cryptoAdmission : old?.cryptoAdmission ?? null };
-    if (old && JSON.stringify(old) === JSON.stringify(next)) return;
+    if (old && sameStrictJsonValue(old, next)) return;
+    if (data !== old?.data) references.apply(key, data);
     snapshots.set(key, next);
+    reconcileConnectionChecks(scope, data);
     syncCredentialSubscription();
     for (const listener of [...listeners]) listener();
 }
-export function beginProviderCatalogLoad(scope: ServerAccountScope): void {
+/** Refresh is transport work; only explicit invalidation withdraws retained admission. */
+export function beginProviderCatalogLoad(scope: ServerAccountScope, invalidate = false): void {
+    if (!invalidate && getProviderCatalogSnapshot(scope)) return;
     applyProviderCatalogSnapshot(scope, { status: 'loading' }, true);
 }
-export function invalidateProviderCatalogsForServer(serverId: string): void {
-    for (const snapshot of snapshots.values()) if (snapshot.scope.serverId === serverId) beginProviderCatalogLoad(snapshot.scope);
-}
 export function resetProviderCatalogSnapshotsForTests(): void {
-    snapshots.clear(); modelProjections.clear(); listeners.clear(); syncCredentialSubscription();
+    snapshots.clear(); references.clear(); modelProjections.clear(); listeners.clear(); syncCredentialSubscription();
 }

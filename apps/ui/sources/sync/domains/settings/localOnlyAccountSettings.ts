@@ -2,44 +2,8 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { isAccountSettingsReadOnlySourceKeyV1, isRetiredAccountSettingsRootKey } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
-    NewSessionOrdinaryEntryDraftIdSchema,
     parseLocalAccountSettings,
-    type LocalAccountSettings,
 } from '@/sync/domains/settings/registry/local/localAccountSettingDefinitions';
-
-type NewSessionOrdinaryEntryDraftPointerSettings = Readonly<Pick<
-    LocalAccountSettings,
-    'newSessionOrdinaryEntryDraftId'
->>;
-
-export type NewSessionOrdinaryEntryDraftPointerDelta = Readonly<Pick<
-    LocalAccountSettings,
-    'newSessionOrdinaryEntryDraftId'
->>;
-
-export function readNewSessionOrdinaryEntryDraftId(
-    settings: NewSessionOrdinaryEntryDraftPointerSettings,
-): string | null {
-    const parsed = NewSessionOrdinaryEntryDraftIdSchema.safeParse(settings.newSessionOrdinaryEntryDraftId);
-    return parsed.success ? parsed.data : null;
-}
-
-export function setNewSessionOrdinaryEntryDraftId(
-    draftId: string,
-): NewSessionOrdinaryEntryDraftPointerDelta | null {
-    const parsed = NewSessionOrdinaryEntryDraftIdSchema.safeParse(draftId);
-    return parsed.success ? { newSessionOrdinaryEntryDraftId: parsed.data } : null;
-}
-
-export function clearNewSessionOrdinaryEntryDraftIdExact(
-    settings: NewSessionOrdinaryEntryDraftPointerSettings,
-    draftId: string,
-): NewSessionOrdinaryEntryDraftPointerDelta | null {
-    const currentDraftId = readNewSessionOrdinaryEntryDraftId(settings);
-    const expectedDraftId = NewSessionOrdinaryEntryDraftIdSchema.safeParse(draftId);
-    if (!expectedDraftId.success || currentDraftId !== expectedDraftId.data) return null;
-    return { newSessionOrdinaryEntryDraftId: null };
-}
 
 /**
  * Runtime projections are non-persisted Settings facts.
@@ -69,13 +33,18 @@ export function stripReadOnlyAccountSettingsDelta<T extends object>(delta: T): T
     return next;
 }
 
+/** Retained device import seeds are never current preference projections or Account writes. */
+export function stripRetiredNewSessionSettings<T extends object>(settings: T): T {
+    if (!Object.hasOwn(settings, 'lastNewSessionAgentPickerViewV1') && !Object.hasOwn(settings, 'newSessionOrdinaryEntryDraftId')) return settings;
+    const { lastNewSessionAgentPickerViewV1: _picker, newSessionOrdinaryEntryDraftId: _draft, ...retained } = settings as Record<string, unknown>;
+    return retained as T;
+}
+
 export function stripLocalOnlyAccountSettings(settings: Partial<Settings>): Partial<Settings> {
     const {
         machineAdministrationTargetsLocalV1: _machineAdministrationTargetsLocalV1,
         lastUsedAgent: _lastUsedAgent,
         lastUsedBackendTarget: _lastUsedBackendTarget,
-        lastNewSessionAgentPickerViewV1: _lastNewSessionAgentPickerView,
-        newSessionOrdinaryEntryDraftId: _newSessionOrdinaryEntryDraftId,
         serverSelectionGroups: _serverSelectionGroups,
         serverSelectionActiveTargetKind: _serverSelectionActiveTargetKind,
         serverSelectionActiveTargetId: _serverSelectionActiveTargetId,
@@ -83,7 +52,7 @@ export function stripLocalOnlyAccountSettings(settings: Partial<Settings>): Part
         clientEncryptionRequirementLocalV1: _clientEncryptionRequirementLocalV1,
         ...rest
     } = stripDerivedAccountSettingsProjections(settings);
-    return rest;
+    return stripRetiredNewSessionSettings(rest);
 }
 
 export function pickLocalOnlyAccountSettings(settings: Settings): Partial<Settings> {

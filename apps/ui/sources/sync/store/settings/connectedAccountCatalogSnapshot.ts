@@ -73,10 +73,9 @@ export function applyConnectedAccountCatalogSnapshot(scope: ServerAccountScope, 
     if (next === old) return;
     for (const listener of [...listeners]) listener();
 }
-export function beginConnectedAccountCatalogLoad(scope: ServerAccountScope, key: ConnectedAccountCatalogKeyV1): void {
+/** Refresh is transport work; only explicit invalidation withdraws retained admission. */
+export function beginConnectedAccountCatalogLoad(scope: ServerAccountScope, key: ConnectedAccountCatalogKeyV1, invalidate = false): void {
+    if (!invalidate && getConnectedAccountCatalogSnapshot(scope, key)) return;
     applyConnectedAccountCatalogSnapshot(scope, key, { status: 'loading' }, true);
-}
-export function invalidateConnectedAccountCatalogsForServer(serverId: string): void {
-    for (const snapshot of snapshots.values()) if (snapshot.scope.serverId === serverId) beginConnectedAccountCatalogLoad(snapshot.scope, snapshot.key);
 }
 export function resetConnectedAccountCatalogSnapshotsForTests(): void { snapshots.clear(); listeners.clear(); }

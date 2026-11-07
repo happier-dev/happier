@@ -52,6 +52,36 @@ beforeEach(async () => {
 });
 
 describe('snapshot Administration candidates', () => {
+    it('retains unchanged rows across snapshot refreshes while publishing presence, disambiguation and Account changes', () => {
+        const first = { ...machine({ id: 'aaaa-first', active: true }), metadata: { displayName: 'Studio' } as Machine['metadata'] };
+        const second = { ...machine({ id: 'bbbb-second', active: true }), metadata: { displayName: 'Studio' } as Machine['metadata'] };
+        const third = machine({ id: 'third', active: true });
+        const snapshots = [{ kind: 'resolved', profileId: profile.id, accountId: 'account-b',
+            serverIdentityId: profile.serverIdentityId!, serverName: 'Server B', observation: 'live',
+            machines: [first, second, third] }] as const;
+        const initial = buildMachineAdministrationCandidateInventoryRowsFromSnapshots({ snapshots, nowMs: 100 });
+        recordMachineRequestFailed({ serverId: profile.serverIdentityId!, accountId: 'account-b', machineId: first.id, observedAtMs: 100 });
+        const withdrawn = buildMachineAdministrationCandidateInventoryRowsFromSnapshots({ snapshots: [...snapshots], nowMs: 100,
+            previous: { snapshots, rows: initial } });
+        expect(withdrawn[0]?.candidate.availability).toBe('offline');
+        expect(withdrawn[0]).not.toBe(initial[0]);
+        expect(withdrawn[1]).toBe(initial[1]);
+        expect(withdrawn[2]).toBe(initial[2]);
+
+        const renamedSnapshots = [{ ...snapshots[0], machines: [{ ...first, metadata: { ...first.metadata!, displayName: 'Renamed' } }, second, third] }];
+        const renamed = buildMachineAdministrationCandidateInventoryRowsFromSnapshots({ snapshots: renamedSnapshots, nowMs: 100,
+            previous: { snapshots, rows: withdrawn } });
+        expect(renamed[1]?.candidate.displayNameParts).toEqual({ name: 'Studio', hint: null });
+        expect(renamed[1]).not.toBe(withdrawn[1]);
+        expect(renamed[2]).toBe(withdrawn[2]);
+        expect(buildMachineAdministrationCandidateInventoryRowsFromSnapshots({ snapshots: [...renamedSnapshots], nowMs: 100,
+            previous: { snapshots: renamedSnapshots, rows: renamed } })).toBe(renamed);
+        const otherAccount = buildMachineAdministrationCandidateInventoryRowsFromSnapshots({
+            snapshots: renamedSnapshots.map(snapshot => ({ ...snapshot, accountId: 'another-account' })), nowMs: 100,
+            previous: { snapshots: renamedSnapshots, rows: renamed } });
+        expect(otherAccount[2]).not.toBe(renamed[2]);
+    });
+
     it('does not read profile storage for empty inventories or locked-only rows', async () => {
         const { MMKV } = await import('react-native-mmkv');
         const reads = vi.spyOn(MMKV.prototype, 'getString');

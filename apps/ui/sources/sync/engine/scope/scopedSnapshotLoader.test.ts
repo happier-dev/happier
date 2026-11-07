@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createScopedSnapshotLoader } from './scopedSnapshotLoader';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { getHomeAccountChangeDemandedServerIds, publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { normalizeAccountSettingsHistoryClientV1 } from '@happier-dev/protocol/account/settings/accountSettingsHistoryClientV1';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { loadConnectedAccountCatalogV1, type ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 
@@ -45,6 +46,296 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
 }));
 
 describe('createScopedSnapshotLoader', () => {
+    it('joins a finite catalog acquisition when an observer arrives before its first publication', async () => {
+        const target = { key: 'finite-then-observed', serverId: 'catalog-home' };
+        const reply = createDeferred<void>();
+        let reads = 0;
+        let current = false;
+        const loader = createScopedSnapshotLoader({
+            subscribeRetainedInvalidation: () => () => {},
+            load: async (_target, context) => {
+                reads += 1;
+                await reply.promise;
+                current = context.isCurrent();
+            },
+            shouldLoadOnObserve: () => true,
+            invalidateServer: () => {}, invalidateTarget: () => {},
+        });
+        const acquired = loader.refresh(target);
+        let release = () => {};
+        try {
+            await vi.waitFor(() => expect(reads).toBe(1));
+            release = loader.observe(target);
+            reply.resolve();
+            await acquired;
+            expect(reads).toBe(1);
+            expect(current).toBe(true);
+        } finally { reply.resolve(); release(); loader.resetForTests(); }
+    });
+
+    it.each([false, true])('shares a pending refresh without another read and cancels only abandoned demand (live sibling: %s)', async sibling => {
+        const target = { key: 'borrowed-catalog', serverId: 'borrowed-home' };
+        const reply = createDeferred<string>();
+        let requests = 0;
+        let publication: string | null = null;
+        let requestSignal: AbortSignal | undefined;
+        const loader = createScopedSnapshotLoader({
+            subscribeRetainedInvalidation: () => () => {},
+            load: async (_target, context) => {
+                requests += 1;
+                requestSignal = context.signal;
+                const value = await reply.promise;
+                if (context.isCurrent()) publication = value;
+            },
+            shouldLoadOnObserve: () => true,
+            invalidateServer: () => {}, invalidateTarget: () => {},
+        });
+        let release = () => {};
+        try {
+            release = loader.observe(target);
+            await vi.waitFor(() => expect(requests).toBe(1));
+            const cancelled = new AbortController();
+            const first = loader.refresh(target, cancelled.signal);
+            const refused = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+            const second = sibling ? loader.refresh(target) : undefined;
+            release();
+            cancelled.abort();
+            await refused;
+            expect(requestSignal?.aborted).toBe(!sibling);
+            reply.resolve('current catalog');
+            if (second) await second;
+            else await new Promise<void>(resolve => setImmediate(resolve));
+            expect(publication).toBe(sibling ? 'current catalog' : null);
+            expect(requests).toBe(1);
+        } finally { reply.resolve('released'); release(); loader.resetForTests(); }
+    });
+
+    it('retains catalog invalidation across navigation without background reads or repeated currentness checks', async () => {
+        const target = { key: 'catalog-navigation', serverId: 'navigation-home' };
+        let revision = 1;
+        let reads = 0;
+        let currentnessReads = 0;
+        let withdrawAdmission = () => {};
+        let retainedSubscriptions = 0;
+        let snapshot: McpServerCatalogSnapshotV1 = { status: 'loading' };
+        const loader = createScopedSnapshotLoader({
+            subscribeRetainedInvalidation: (_target, { invalidate }) => {
+                retainedSubscriptions++;
+                withdrawAdmission = invalidate;
+                return () => { retainedSubscriptions--; };
+            },
+            load: async (_target, context) => {
+                // Substitute only HTTP; the protocol loader and publication stay real.
+                const request = async (path: string) => {
+                    if (path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1) {
+                        reads++;
+                        return Response.json({ status: 'deleted', revision });
+                    }
+                    currentnessReads++;
+                    return Response.json({ mode: 'plain', version: 1, settingsVersion: 0, updatedAt: 0,
+                        signingKeyFingerprint: null, contentKeyFingerprint: null,
+                        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
+                };
+                AccountEncryptionCurrentnessResponseSchema.parse(await (await request('/v1/account/encryption/currentness')).json());
+                const catalog = await loadMcpServerCatalogV1({ mode: 'plain', material: null,
+                    readRow: async () => McpServerCatalogRowReadResponseV1Schema.parse(await (await request(MCP_SERVER_CATALOG_ROWS_ROUTE_V1)).json()),
+                });
+                if (context.isCurrent()) snapshot = catalog;
+            },
+            shouldLoadOnObserve: () => snapshot.status !== 'ready',
+            invalidateServer: () => { snapshot = { status: 'loading' }; },
+            invalidateTarget: () => { snapshot = { status: 'loading' }; },
+            matchesWake: event => event.entityIds === undefined || event.entityIds.includes('mcp-catalog'),
+            onCredentialMutation: () => { snapshot = { status: 'unavailable', reason: 'unauthorized' }; return true; },
+        });
+        const settle = () => new Promise<void>(resolve => setImmediate(resolve));
+        let release = loader.observe(target);
+        try {
+            await loader.refresh(target);
+            await settle();
+            expect(snapshot).toMatchObject({ status: 'ready', revision: 1 });
+            const admitted = snapshot;
+            for (let navigation = 0; navigation < 100; navigation++) {
+                release();
+                publishHomeAccountChange(target.serverId, ['unrelated-session'], { changeKinds: ['session'] });
+                release = loader.observe(target);
+                await settle();
+            }
+            expect(reads).toBe(1);
+            expect(currentnessReads).toBe(1);
+            expect(snapshot).toBe(admitted);
+            release();
+            expect(getHomeAccountChangeDemandedServerIds()).not.toContain(target.serverId);
+            revision = 2;
+            publishHomeAccountChange(target.serverId, ['mcp-catalog']);
+            await settle();
+            expect(reads).toBe(1); // Invalidation is not demand for a hidden catalog.
+            release = loader.observe(target);
+            await vi.waitFor(() => expect(snapshot).toMatchObject({ status: 'ready', revision: 2 }));
+            expect(reads).toBe(2);
+            expect(currentnessReads).toBe(2);
+            publishHomeAccountChange(target.serverId, undefined, { source: 'connected' });
+            await vi.waitFor(() => expect(reads).toBe(3));
+            await settle();
+            release();
+            withdrawAdmission();
+            expect(snapshot).toMatchObject({ status: 'loading' });
+            release = loader.observe(target);
+            await settle();
+            expect(reads).toBe(4);
+            release();
+            await loader.refresh(target); // An explicit finite read still has a live invalidation listener.
+            await settle();
+            expect(reads).toBe(5);
+            release = loader.observe(target);
+            await settle();
+            expect(reads).toBe(5);
+            release();
+            emitHomeCredentialMutation({ kind: 'credentials_removed', serverId: target.serverId, serverUrl: 'https://navigation-home.test' });
+            expect(snapshot).toMatchObject({ status: 'unavailable', reason: 'unauthorized' });
+            await settle();
+            expect(reads).toBe(5);
+            expect(retainedSubscriptions).toBe(0);
+        } finally { release(); loader.resetForTests(); }
+    });
+
+    it('prunes a retired hidden catalog and releases its lifecycle subscriptions', async () => {
+        const target = { key: 'retired-scope', serverId: 'retired-home' };
+        let retire = () => {};
+        let subscriptions = 0;
+        let invalidations = 0;
+        const loader = createScopedSnapshotLoader({
+            subscribeRetainedInvalidation: (_target, handlers) => {
+                subscriptions++;
+                retire = handlers.retire;
+                return () => { subscriptions--; };
+            },
+            load: async () => {}, shouldLoadOnObserve: () => false,
+            invalidateServer: () => { invalidations++; }, invalidateTarget: () => { invalidations++; },
+        });
+        const release = loader.observe(target);
+        try {
+            release();
+            expect(subscriptions).toBe(1);
+            retire();
+            expect(subscriptions).toBe(0);
+            const retiredInvalidations = invalidations;
+            publishHomeAccountChange(target.serverId);
+            expect(invalidations).toBe(retiredInvalidations);
+        } finally { release(); loader.resetForTests(); }
+    });
+
+    it.each(['direct', 'maintenance'] as const)('serializes a replacement behind an abandoned %s publisher', async publicationKind => {
+        const target = { key: 'reopened-catalog', serverId: 'reopened-home' };
+        let releaseOld!: () => void;
+        const oldResponse = new Promise<string>(resolve => { releaseOld = () => resolve('retired'); });
+        let requests = 0;
+        let publication: string | null = null;
+        // HTTP can finish after its caller detached (for example an adapter without native cancellation).
+        const request = async () => ++requests === 1 ? oldResponse : 'current';
+        const loader = createScopedSnapshotLoader({
+            load: async (_target, context) => publicationKind === 'direct' ? void (publication = await request()) : context.readWithMaintenance<string>({
+                read: async ({ onReady }) => {
+                    const value = await request();
+                    onReady(value, () => true);
+                    return value;
+                },
+                publish: value => { publication = value; },
+                getPublication: () => publication,
+            }),
+            shouldLoadOnObserve: () => true,
+            invalidateServer: () => {}, invalidateTarget: () => {},
+        });
+        const releaseFirst = loader.observe(target);
+        let releaseNext: (() => void) | undefined;
+        try {
+            await vi.waitFor(() => expect(requests).toBe(1));
+            releaseFirst();
+            releaseNext = loader.observe(target);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(requests).toBe(1);
+            releaseOld();
+            await vi.waitFor(() => expect(publication).toBe('current'));
+            expect(requests).toBe(2);
+            releaseOld();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(publication).toBe('current');
+        } finally {
+            releaseOld(); releaseFirst(); releaseNext?.();
+            await loader.refresh(target); loader.resetForTests();
+        }
+    });
+
+    it('reopens a retained catalog without joining an abandoned transport or starting its cleanup', async () => {
+        const target = { key: 'retained-recovery', serverId: 'recovery-home' };
+        let finishOld!: () => void;
+        const oldResponse = new Promise<string>(resolve => { finishOld = () => resolve('obsolete'); });
+        let requests = 0;
+        let cleanups = 0;
+        let publication: string | null = null;
+        const loader = createScopedSnapshotLoader({
+            subscribeRetainedInvalidation: () => () => {},
+            load: async (_target, context) => context.readWithMaintenance<string>({
+                read: async ({ onReady, hasPendingCleanup }) => {
+                    const value = ++requests === 1 ? await oldResponse : 'current';
+                    onReady(value, () => true);
+                    if (!hasPendingCleanup()) cleanups++;
+                    return value;
+                },
+                publish: value => { publication = value; }, getPublication: () => publication,
+            }),
+            shouldLoadOnObserve: () => true, invalidateServer: () => {}, invalidateTarget: () => {},
+        });
+        const first = loader.observe(target);
+        let next = () => {};
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            first();
+            next = loader.observe(target);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(requests).toBe(2);
+            expect(publication).toBe('current');
+            finishOld();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(publication).toBe('current');
+            expect(cleanups).toBe(1);
+        } finally { finishOld(); first(); next(); loader.resetForTests(); }
+    });
+
+    it.each(['before-release', 'after-release'] as const)('answers a finite refresh borrowed %s', async borrowAt => {
+        const target = { key: 'finite-borrower', serverId: 'borrower-home' };
+        let finish!: () => void;
+        const response = new Promise<void>(resolve => { finish = resolve; });
+        let publication: string | null = null;
+        let signal: AbortSignal | undefined;
+        const loader = createScopedSnapshotLoader({
+            load: async (_target, context) => {
+                signal = context.signal;
+                return context.readWithMaintenance<string>({
+                    read: async () => { await response; return 'answer'; },
+                    publish: value => { publication = value; }, getPublication: () => publication,
+                });
+            },
+            shouldLoadOnObserve: () => publication === null,
+            invalidateServer: () => {}, invalidateTarget: () => {},
+        });
+        const release = loader.observe(target);
+        let completed = false;
+        let borrowed = Promise.resolve();
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            if (borrowAt === 'before-release') borrowed = loader.refresh(target).then(() => { completed = true; });
+            release();
+            if (borrowAt === 'after-release') borrowed = loader.refresh(target).then(() => { completed = true; });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(signal?.aborted).toBe(borrowAt === 'after-release');
+            expect(completed).toBe(false);
+            finish();
+            await borrowed;
+            expect(publication).toBe('answer');
+        } finally { finish(); release(); await borrowed; loader.resetForTests(); }
+    });
+
     it('cancels a demanded read only when its final observer leaves', async () => {
         const target = { key: 'read-lifetime', serverId: 'read-home' };
         let signal: AbortSignal | undefined;
@@ -522,10 +813,7 @@ describe('createScopedSnapshotLoader', () => {
             loader.resetForTests();
         }
     });
-    it('shares one refcounted Account-change and credential observer across concurrent consumers', async () => {
-        credentialBoundary.listener = null;
-        credentialBoundary.subscriptions = 0;
-        credentialBoundary.releases = 0;
+    it('shares credential mutation delivery while releasing each consumer at its own demand boundary', async () => {
         const load = vi.fn(async () => {});
         const onCredentialMutation = vi.fn(() => true);
         const loader = createScopedSnapshotLoader({
@@ -548,7 +836,9 @@ describe('createScopedSnapshotLoader', () => {
         const releaseFirst = loader.observe(target);
         const releaseSecond = loader.observe(target);
         const releaseSibling = sibling.observe({ key: 'home-a:sibling', serverId: 'home-a' });
-        expect(credentialBoundary.subscriptions).toBe(1);
+        // Home Account change owns one persistent underlying credential watcher.
+        // Earlier cases may already have installed it; preserve that real listener.
+        expect(credentialBoundary.listener).not.toBeNull();
 
         emitHomeCredentialMutation({
             kind: 'credentials_set',
@@ -560,11 +850,20 @@ describe('createScopedSnapshotLoader', () => {
         expect(onCredentialMutation).toHaveBeenCalledTimes(1);
 
         releaseFirst();
-        expect(credentialBoundary.releases).toBe(0);
+        emitHomeCredentialMutation({ kind: 'credentials_set', serverId: 'home-a', serverUrl: 'https://home-a.test' });
+        await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(siblingLoad).toHaveBeenCalledTimes(2));
         releaseSecond();
-        expect(credentialBoundary.releases).toBe(0);
+        emitHomeCredentialMutation({ kind: 'credentials_set', serverId: 'home-a', serverUrl: 'https://home-a.test' });
+        await vi.waitFor(() => expect(siblingLoad).toHaveBeenCalledTimes(3));
+        expect(load).toHaveBeenCalledTimes(2);
+        expect(onCredentialMutation).toHaveBeenCalledTimes(2);
         releaseSibling();
-        expect(credentialBoundary.releases).toBe(1);
+        emitHomeCredentialMutation({ kind: 'credentials_set', serverId: 'home-a', serverUrl: 'https://home-a.test' });
+        await Promise.resolve();
+        expect(load).toHaveBeenCalledTimes(2);
+        expect(siblingLoad).toHaveBeenCalledTimes(3);
+        expect(onCredentialMutation).toHaveBeenCalledTimes(2);
     });
 
     it('revalidates after a zero-observer interval without reloading for concurrent observers', async () => {

@@ -9,6 +9,7 @@ import { createProviderErrorV1 } from '../providers/errors.js';
 import {
   DaemonProviderModelsRequestV1Schema,
   DaemonProviderModelsResponseV1Schema,
+  DaemonProviderModelRowV1Schema,
   DaemonProviderModelLoadRequestV1Schema,
   DaemonProviderProbeRequestV1Schema,
   DaemonProviderProbeResponseV1Schema,
@@ -35,6 +36,14 @@ import {
   DaemonProviderProfileMigrationConflictConfirmResponseV1Schema,
 } from './providers.js';
 import { RPC_METHODS } from './methods.js';
+
+it('binds optional inference metadata to its exact source catalog model row', () => {
+  const row = { id: 'exact-model', source: 'static', stale: false, loadState: 'unknown', visibility: 'visible',
+    descriptor: { id: 'exact-model', name: 'Exact model', contextWindowTokens: 32,
+      inlineCompletion: { operationId: 'fim', tokenAccounting: 'utf8-bytes', promptOverheadTokens: 3 } } };
+  expect(DaemonProviderModelRowV1Schema.safeParse(row).success).toBe(true);
+  expect(DaemonProviderModelRowV1Schema.safeParse({ ...row, descriptor: { ...row.descriptor, id: 'other-model' } }).success).toBe(false);
+});
 
 function reviewedLegacyProfileMapping() {
   return {
@@ -71,6 +80,18 @@ function reviewedLegacyProfileMapping() {
 }
 
 describe('provider machine RPC contracts', () => {
+  it('admits native metadata only for an exact private Provider source catalog request', () => {
+    const request = { machineId: 'machine-1', agentTargetKey: 'agent:happier.agent.codex/codex',
+      sourceCatalog: true, providerConnection: { connectionId: 'pc_source',
+        expectedConnectionSecurityFingerprint: `connection-security:v1:${'a'.repeat(43)}` },
+      nativeSource: { resourceId: 'resource-1', expectedResourceRevision: 2 } };
+    expect(DaemonProviderModelProjectionRequestV1Schema.safeParse(request).success).toBe(true);
+    for (const invalid of [{ ...request, sourceCatalog: undefined }, { ...request, providerConnection: undefined },
+      { ...request, includeDirectMaterialization: true },
+      { ...request, nativeSource: { ...request.nativeSource, headers: { authorization: 'forbidden' } } }]) {
+      expect(DaemonProviderModelProjectionRequestV1Schema.safeParse(invalid).success).toBe(false);
+    }
+  });
   it('admits revision-checked gateway configuration edits and explicit reset through the existing update request', () => {
     const request = {
       action: 'update', connectionId: 'pc_gateway', machineId: 'machine-a', expectedRevision: 2,
@@ -263,12 +284,12 @@ describe('provider machine RPC contracts', () => {
     }).success).toBe(false);
   });
 
-  it('rejects successful probe responses above the canonical catalog limit', () => {
+  it('preserves successful probe responses beyond the retired catalog count', () => {
     expect(DaemonProviderProbeResponseV1Schema.safeParse({
       status: 'success',
       models: Array.from({ length: 5_001 }, (_, index) => ({ id: `provider-model-${index}` })),
       requestFingerprint: `probe-request:v1:${'a'.repeat(43)}`,
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it('describes a closed built-in authoring review without granting the browser endpoint authority', () => {
@@ -504,10 +525,10 @@ describe('provider machine RPC contracts', () => {
       action: 'bindSecret', machineId: 'machine-1', connectionId: 'pc_1',
       credentialSlotId: 'apiKey', savedSecretId: null, scope: 'account',
     })).toMatchObject({ action: 'bindSecret', savedSecretId: null });
-    expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
+    expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'bindSecret', machineId: 'machine-1', connectionId: 'pc_1',
       credentialSlotId: 'otherKey', savedSecretId: null, scope: 'account',
-    }).success).toBe(false);
+    })).toMatchObject({ action: 'bindSecret', credentialSlotId: 'otherKey' });
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
       action: 'setEndpointOverride', machineId: 'machine-1', connectionId: 'pc_1', expectedRevision: 0,
       scope: 'machine', endpointTemplateId: 'openai', baseUrl: null,

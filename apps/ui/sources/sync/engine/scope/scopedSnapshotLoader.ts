@@ -1,4 +1,5 @@
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import {
     subscribeHomeAccountChange,
     subscribeHomeCredentialChange,
@@ -30,7 +31,7 @@ export type ScopedSnapshotLoader<TTarget extends ScopedLoadTarget> = Readonly<{
     /** Registers a live consumer and loads when the domain says it is needed. */
     observe: (target: TTarget) => () => void;
     /** Explicit retry. Coalesces with an in-flight load for the same target. */
-    refresh: (target: TTarget) => Promise<void>;
+    refresh: (target: TTarget, signal?: AbortSignal) => Promise<void>;
     /** Invalidates now and awaits the newest load, including a required trailing reload. */
     invalidate: (target: TTarget) => Promise<void>;
     /** A cursor read shares its observed sequence's cancellation lifetime. */
@@ -53,7 +54,7 @@ export type ScopedSnapshotLoadContext = Readonly<{
         /** Freshness can lapse during a read while its captured Account still admits display data. */
         publish: (projection: TProjection, current: boolean, isAccountCurrent?: () => boolean) => void;
         getPublication: () => unknown;
-    }>) => Promise<void | ScopedSnapshotLoadMaintenance>;
+    }>) => Promise<void>;
 }>;
 
 export type ScopedSnapshotReadPublication<TProjection> = Readonly<{
@@ -68,6 +69,11 @@ export type ScopedSnapshotLoadMaintenance = Readonly<{
 }>;
 
 export type ScopedSnapshotLoad<TTarget> = Readonly<{ target: TTarget; context: ScopedSnapshotLoadContext }>;
+
+export type ScopedSnapshotRetainedInvalidation = Readonly<{
+    invalidate: (reason?: 'transport-withdrawal') => void;
+    retire: () => void;
+}>;
 
 type ScopedSnapshotReader<TTarget> = Readonly<{
     /** Reads the target and publishes the outcome into the domain's store. */
@@ -85,10 +91,17 @@ type ScopedSnapshotReader<TTarget> = Readonly<{
 export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(params: ScopedSnapshotReader<TTarget> & Readonly<{
     /**
      * Whether a newly observed target needs a read. The domain decides this from
-     * its own store during one uninterrupted observation period. Returning
-     * after the last observer left always revalidates because wakes were absent.
+     * its own store. Without retained invalidation, returning after the last
+     * observer left revalidates because wakes were absent.
      */
     shouldLoadOnObserve: (target: TTarget) => boolean;
+    /**
+     * Account catalogs retain wake/credential invalidation across navigation.
+     * Their admission owner pushes withdrawal to synchronous readers and
+     * retires this retention with the captured Home/Account scope. Retention
+     * creates no connection demand, background reads or mutation authority.
+     */
+    subscribeRetainedInvalidation?: (target: TTarget, handlers: ScopedSnapshotRetainedInvalidation) => () => void;
     /** Marks the domain's rows for one Home stale. Called before refetching. */
     invalidateServer: (serverId: string) => void;
     /** Marks this exact retained target stale; the domain distinguishes advisory reloads from retirement. */
@@ -106,8 +119,9 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     onCredentialMutation?: (event: HomeCredentialMutationEvent, target: TTarget) => boolean;
 }>): ScopedSnapshotLoader<TTarget> {
     const observed = new Map<string, { target: TTarget; count: number }>();
+    const retainedTargets = new Map<string, { target: TTarget; unsubscribe: () => void }>();
     const inFlight = new Map<string, Promise<void>>();
-    const lifetimes = new Map<string, AbortController>();
+    const lifetimes = new Map<string, { controller: AbortController; finiteReads: number }>();
     const maintenance = new Map<string, { result: ScopedSnapshotLoadMaintenance; reloadAfterMaintenance: boolean }>();
     /**
      * A target read without observers, or returning after its observers left, cannot remain trusted as current:
@@ -136,7 +150,22 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     const pendingLoads = new Map<string, PendingLoad[]>();
 
     function readTarget(target: TTarget, context: ScopedSnapshotLoadContext): Promise<void | ScopedSnapshotLoadMaintenance> {
-        if (params.load) return params.load(target, context);
+        const load = params.load;
+        if (load) {
+            // Incumbent direct publishers serialize their replacement. Catalogs
+            // opt into guarded publication and can release an abandoned waiter.
+            if (!params.subscribeRetainedInvalidation) return load(target, context);
+            return new Promise((resolve, reject) => {
+                const detach = () => { context.signal.removeEventListener('abort', finish); };
+                const finish = () => { detach(); resolve(); };
+                if (context.signal.aborted) { finish(); return; }
+                context.signal.addEventListener('abort', finish, { once: true });
+                try {
+                    void load(target, context).then(result => { detach(); resolve(result); },
+                        error => { detach(); reject(error); });
+                } catch (error) { detach(); reject(error); }
+            });
+        }
         const loadMany = params.loadMany;
         const key = params.loadGroupKey(target);
         return new Promise<void>((resolve, reject) => {
@@ -187,10 +216,16 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
             try {
                 while (true) {
                     let failure: unknown = null;
+                    // A new demanded read covers the stale mark, including a
+                    // mounted observer whose captured admission just retired.
+                    // Its replacement read must publish the current refusal.
+                    if (retainedTargets.has(target.key) || observed.has(target.key)) revalidateOnNextObserve.delete(target.key);
                     // A deciding first-page read replaces its old cursor sequence.
-                    lifetimes.get(target.key)?.abort();
+                    const demand = lifetimes.get(target.key) ?? { controller: new AbortController(), finiteReads: 0 };
+                    demand.controller.abort();
                     const lifetime = new AbortController();
-                    lifetimes.set(target.key, lifetime);
+                    demand.controller = lifetime;
+                    lifetimes.set(target.key, demand);
                     try {
                         // Enter the load through a microtask so `inFlight` is registered before a
                         // domain reader can either resolve or throw synchronously.
@@ -220,20 +255,25 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                                 const ready = new Promise<void>(resolve => { finishRead = resolve; });
                                 let capturedCurrent: (() => boolean) | null = null;
                                 let published: unknown;
-                                const completion = read({ hasPendingCleanup: hasPendingMaintenance,
+                                // Assign completion before invoking read: onReady may
+                                // run synchronously and must register its cleanup first.
+                                const completion: Promise<void> = Promise.resolve().then(() => read({
+                                    hasPendingCleanup: () => lifetime.signal.aborted || hasPendingMaintenance(),
                                     onReady: (projection, isAccountCurrent) => {
+                                        if (lifetime.signal.aborted) return;
                                         capturedCurrent = isAccountCurrent;
+                                        registerMaintenance(target, { maintenance: completion, isMaintenanceCurrent: isAccountCurrent });
                                         if (isAccountCurrent()) publish(projection, isCurrent(), isAccountCurrent);
                                         published = getPublication();
                                         finishRead();
                                     },
-                                }).then(projection => {
+                                })).then(projection => {
+                                    if (lifetime.signal.aborted) return;
                                     if (!capturedCurrent || (capturedCurrent() && published === getPublication())) {
                                         publish(projection, isCurrent(), capturedCurrent ?? undefined);
                                     }
                                 });
                                 await Promise.race([ready, completion]);
-                                if (capturedCurrent) return { maintenance: completion, isMaintenanceCurrent: capturedCurrent };
                             },
                         }));
                         // An independent foreground pass already serves the demand
@@ -247,26 +287,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                         // A foreground reread can join cleanup already owned by this
                         // captured Account. Its short completion must not replace the
                         // original, still-running cleanup promise.
-                        if (result && maintenance.get(target.key)?.result.isMaintenanceCurrent() !== true) {
-                            // A wake can precede early publication and registration here.
-                            const entry = { result, reloadAfterMaintenance: reloadAfterInFlight.has(target.key) };
-                            maintenance.set(target.key, entry);
-                            void result.maintenance.catch(() => {}).finally(async () => {
-                                if (maintenance.get(target.key) !== entry) return;
-                                maintenance.delete(target.key);
-                                // Let an already-running foreground read decide whether it
-                                // joined this cleanup or performed the demanded pass itself.
-                                // Feeding cleanup completion back into its in-flight wake
-                                // flag would make each new cleanup queue another reread.
-                                await inFlight.get(target.key)?.catch(() => {});
-                                if (entry.reloadAfterMaintenance && result.isMaintenanceCurrent()) {
-                                    // Hand the existing debt to any newer cleanup first. Starting
-                                    // another foreground read here would only join it and create
-                                    // another final-proof completion, perpetuating the same debt.
-                                    if (!requireMaintenanceReload(target)) void loadOnce(target).catch(() => {});
-                                }
-                            });
-                        }
+                        if (result) registerMaintenance(target, result);
                     } catch (error) {
                         if (!lifetime.signal.aborted) failure = error;
                     }
@@ -285,10 +306,10 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                 // read or start a new read; it cannot join a request that already chose to exit.
                 if (inFlight.get(target.key) === pending) {
                     inFlight.delete(target.key);
-                    if (!observed.has(target.key)) lifetimes.delete(target.key);
+                    if (!observed.has(target.key) && !lifetimes.get(target.key)?.finiteReads) lifetimes.delete(target.key);
                     // A finite borrower can refresh without any wake subscription. Its answer
                     // stays valid for that invocation, but a later first observer must revalidate.
-                    if (!observed.has(target.key) && !revalidateOnNextObserve.has(target.key)) {
+                    if (!observed.has(target.key) && !retainedTargets.has(target.key) && !revalidateOnNextObserve.has(target.key)) {
                         revalidateOnNextObserve.set(target.key, 'finite-read');
                     }
                 }
@@ -299,9 +320,61 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     }
 
     function targetsForServer(serverId: string): TTarget[] {
-        return [...observed.values()]
-            .map((entry) => entry.target)
+        const targets = new Map([...retainedTargets].map(([key, entry]) => [key, entry.target] as const));
+        for (const [key, entry] of observed) targets.set(key, entry.target);
+        return [...targets.values()]
             .filter((target) => areServerProfileIdentifiersEquivalent(target.serverId, serverId));
+    }
+
+    function registerMaintenance(target: TTarget, result: ScopedSnapshotLoadMaintenance): void {
+        if (maintenance.get(target.key)?.result.isMaintenanceCurrent() === true) return;
+        const entry = { result, reloadAfterMaintenance: reloadAfterInFlight.has(target.key) };
+        maintenance.set(target.key, entry);
+        void result.maintenance.catch(() => {}).finally(async () => {
+            if (maintenance.get(target.key) !== entry) return;
+            maintenance.delete(target.key);
+            // Foreground demand decides whether it joined this cleanup or
+            // already served the required pass. Do not feed its own tail back.
+            await inFlight.get(target.key)?.catch(() => {});
+            if (entry.reloadAfterMaintenance && result.isMaintenanceCurrent()) {
+                if (!requireMaintenanceReload(target)) void loadOnce(target).catch(() => {});
+            }
+        });
+    }
+
+    function retireRetainedTarget(target: TTarget): void {
+        const retained = retainedTargets.get(target.key);
+        if (!retained) return;
+        retainedTargets.delete(target.key);
+        retained.unsubscribe();
+        revalidateOnNextObserve.set(target.key, 'observer-gap');
+        params.invalidateTarget(target, 'observer-gap');
+        lifetimes.get(target.key)?.controller.abort();
+        reloadAfterInFlight.delete(target.key);
+        releaseLifecycleSubscriptionsIfIdle();
+    }
+
+    function retainInvalidation(target: TTarget): void {
+        if (!params.subscribeRetainedInvalidation || retainedTargets.has(target.key)) return;
+        const entry = { target, unsubscribe: () => {} };
+        retainedTargets.set(target.key, entry);
+        const unsubscribe = params.subscribeRetainedInvalidation(target, {
+            invalidate: (reason) => {
+                if (retainedTargets.get(target.key) !== entry) return;
+                // Observed catalogs receive actual changes through their Home
+                // wake; a socket gap alone changes no content. Finite readers
+                // still lose freshness before their next synchronous use.
+                if (reason === 'transport-withdrawal' && observed.has(target.key)) return;
+                // Withdraw freshness at the producer event, before any hidden
+                // synchronous reader can consume the retained admission.
+                params.invalidateTarget(target, 'observer-gap');
+                revalidateOnNextObserve.set(target.key, 'observer-gap');
+                if (observed.has(target.key) || inFlight.has(target.key)) requestReload(target);
+            },
+            retire: () => { retireRetainedTarget(target); },
+        });
+        if (retainedTargets.get(target.key) === entry) entry.unsubscribe = unsubscribe;
+        else unsubscribe();
     }
 
     function requestReload(target: TTarget): void {
@@ -311,6 +384,57 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
             return;
         }
         void loadOnce(target).catch(() => {});
+    }
+
+    async function withFiniteDemand(target: TTarget, read: () => Promise<void>): Promise<void> {
+        if (params.subscribeRetainedInvalidation) {
+            // A non-observing consumer (for example Voice) can be the first
+            // reader. Its admitted snapshot needs the same withdrawal signals.
+            retainInvalidation(target);
+            ensureLifecycleSubscriptions();
+        }
+        const demand = lifetimes.get(target.key) ?? { controller: new AbortController(), finiteReads: 0 };
+        demand.finiteReads += 1;
+        lifetimes.set(target.key, demand);
+        if (!observed.has(target.key)) {
+            const abandoned = revalidateOnNextObserve.get(target.key) === 'observer-gap';
+            revalidateOnNextObserve.delete(target.key);
+            // A new finite borrower cannot revive an already canceled reader.
+            // Serialize its own deciding pass after that reader settles.
+            if (abandoned && inFlight.has(target.key)) reloadAfterInFlight.add(target.key);
+        }
+        try { await read(); }
+        finally {
+            demand.finiteReads -= 1;
+            if (!observed.has(target.key) && !inFlight.has(target.key) && demand.finiteReads === 0
+                && lifetimes.get(target.key) === demand) lifetimes.delete(target.key);
+        }
+    }
+
+    async function refresh(target: TTarget, signal?: AbortSignal): Promise<void> {
+        throwIfAborted(signal);
+        try {
+            await withFiniteDemand(target, () => {
+                const pending = loadOnce(target);
+                return signal ? new Promise<void>((resolve, reject) => {
+                    const cleanup = () => signal.removeEventListener('abort', onAbort);
+                    const onAbort = () => {
+                        cleanup();
+                        try { throwIfAborted(signal); } catch (error) { reject(error); }
+                    };
+                    signal.addEventListener('abort', onAbort, { once: true });
+                    if (signal.aborted) onAbort();
+                    void pending.then(() => { cleanup(); resolve(); }, error => { cleanup(); reject(error); });
+                }) : pending;
+            });
+            throwIfAborted(signal);
+        } finally {
+            const demand = lifetimes.get(target.key);
+            if (signal?.aborted && !observed.has(target.key) && demand?.finiteReads === 0) {
+                if (inFlight.has(target.key)) revalidateOnNextObserve.set(target.key, 'observer-gap');
+                demand.controller.abort();
+            }
+        }
     }
 
     function invalidate(target: TTarget): Promise<void> {
@@ -345,7 +469,8 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
         if (!params.prepareWake) params.invalidateServer(targets[0]!.serverId);
         for (const target of targets) {
             if (params.prepareWake) params.invalidateTarget(target, 'reload');
-            requestReload(target);
+            if (observed.has(target.key) || inFlight.has(target.key)) requestReload(target);
+            else revalidateOnNextObserve.set(target.key, 'observer-gap');
         }
     }
 
@@ -354,13 +479,18 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
             unsubscribeWake = subscribeHomeAccountChange((event) => {
                 if (params.matchesWake && !params.matchesWake(event)) return;
                 handleWake(event);
-            }, { includeCatchUpPending: params.observeCatchUpPending });
+            }, { includeCatchUpPending: params.observeCatchUpPending, reconnect: 'refresh' });
         }
         if (params.onCredentialMutation && !unsubscribeCredentials) {
             unsubscribeCredentials = subscribeHomeCredentialChange((event) => {
                 for (const target of targetsForServer(event.serverId)) {
-                    if (params.onCredentialMutation?.(event, target) === true) {
-                        requestReload(target);
+                    // Credentials replaced/removed the captured admission. Do
+                    // not keep signed-out or old-Account targets subscribed.
+                    retireRetainedTarget(target);
+                    const reload = params.onCredentialMutation?.(event, target) === true;
+                    if (reload) {
+                        if (observed.has(target.key) || inFlight.has(target.key)) requestReload(target);
+                        else revalidateOnNextObserve.set(target.key, 'observer-gap');
                     }
                 }
             });
@@ -368,7 +498,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     }
 
     function releaseLifecycleSubscriptionsIfIdle(): void {
-        if (observed.size > 0) return;
+        if (observed.size > 0 || retainedTargets.size > 0) return;
         unsubscribeWake?.();
         unsubscribeWake = null;
         unsubscribeCredentials?.();
@@ -377,8 +507,10 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
 
     return {
         observe(target) {
+            retainInvalidation(target);
             const entry = observed.get(target.key);
-            const returnedAfterObserverGap = !entry && (revalidateOnNextObserve.delete(target.key) || inFlight.has(target.key));
+            const returnedAfterObserverGap = !entry && (revalidateOnNextObserve.delete(target.key)
+                || inFlight.has(target.key) && !retainedTargets.has(target.key));
             if (entry) {
                 entry.count += 1;
             } else {
@@ -411,45 +543,52 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                 tracked.count -= 1;
                 if (tracked.count <= 0) {
                     observed.delete(target.key);
-                    revalidateOnNextObserve.set(target.key, 'observer-gap');
-                    // Once the last observer leaves, this device also stops
-                    // listening for wakes for the target when no sibling keeps
-                    // the shared lifecycle alive. Retain the rows for continuity,
-                    // but withdraw their currentness immediately so synchronous
-                    // readers cannot treat an unobserved projection as fresh.
-                    params.invalidateTarget(target, 'observer-gap');
+                    // refresh()/invalidate() borrowers own demand until their
+                    // shared read answers, even after a surface unmounts.
+                    if (lifetimes.get(target.key)?.finiteReads) {
+                        releaseLifecycleSubscriptionsIfIdle();
+                        return;
+                    }
+                    const retainsInvalidation = retainedTargets.has(target.key) && !inFlight.has(target.key);
+                    if (!retainsInvalidation) revalidateOnNextObserve.set(target.key, 'observer-gap');
+                    // A settled catalog keeps its invalidation subscription,
+                    // while interrupted reads and domains without that contract
+                    // withdraw currentness until their next demanded read.
+                    if (!retainsInvalidation) params.invalidateTarget(target, 'observer-gap');
                     // No background read is useful without a consumer. The
                     // next first observer now owns the revalidation instead.
                     reloadAfterInFlight.delete(target.key);
-                    lifetimes.get(target.key)?.abort();
+                    lifetimes.get(target.key)?.controller.abort();
                     lifetimes.delete(target.key);
                 }
                 releaseLifecycleSubscriptionsIfIdle();
             };
         },
-        async refresh(target) {
-            await loadOnce(target);
-        },
+        refresh,
         async invalidate(target) {
-            await invalidate(target);
+            await withFiniteDemand(target, () => invalidate(target));
         },
         async readContinuation(target, read) {
-            const lifetime = lifetimes.get(target.key) ?? new AbortController();
-            lifetimes.set(target.key, lifetime);
+            const demand = lifetimes.get(target.key) ?? { controller: new AbortController(), finiteReads: 0 };
+            const lifetime = demand.controller;
+            lifetimes.set(target.key, demand);
             try {
                 await read(lifetime.signal);
             } catch (error) {
                 if (!lifetime.signal.aborted) throw error;
             } finally {
-                if (!observed.has(target.key) && !inFlight.has(target.key) && lifetimes.get(target.key) === lifetime) {
+                if (!observed.has(target.key) && !inFlight.has(target.key) && !demand.finiteReads && lifetimes.get(target.key) === demand) {
                     lifetimes.delete(target.key);
                 }
             }
         },
         resetForTests() {
-            for (const lifetime of lifetimes.values()) lifetime.abort();
+            for (const lifetime of lifetimes.values()) lifetime.controller.abort();
             lifetimes.clear();
             observed.clear();
+            const retained = [...retainedTargets.values()];
+            retainedTargets.clear();
+            for (const entry of retained) entry.unsubscribe();
             inFlight.clear();
             maintenance.clear();
             reloadAfterInFlight.clear();

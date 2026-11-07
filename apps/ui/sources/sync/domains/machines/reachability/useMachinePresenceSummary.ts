@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
+import type { CliUpdateFacts } from '@happier-dev/protocol/machines/cliUpdateFacts';
 
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachines, resolveServerScopedMachineInventory, resolveServerScopedMachineInventoryKeys, selectMachineInventoryRowsById } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -9,22 +10,23 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, getServerProfilesGeneration, subscribeServerProfiles, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { isMachineVisibleForLaunchSelection, isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
+import { isMachineSelectableForFleet, resolveFleetMachineAvailability } from '@/sync/domains/machines/administration/fleetUnion';
 import {
     isMachineReachable,
     resolveMachineReachability,
     subscribeMachineRequestReachability,
 } from '@/sync/domains/machines/reachability/machineReachability';
 import { getMachineDisplayName, isMachineOnline, readMachineStatusNextRefreshAtMs, type MachinePresenceCounts } from '@/utils/sessions/machineUtils';
-import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
+import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 
 import type { SessionMachineReachability } from '@/sync/domains/machines/reachability/resolveSessionMachineReachability';
+import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 /**
  * What a pane header says about the machine a tab runs on ("~/happier on MacBook Pro", "MacBook Pro is
  * offline"): its name, its home folder for `~` paths, and whether it is reachable. Primitives only, so
- * a heartbeat that does not flip presence re-renders nothing, but reschedules the grace expiry.
+ * a heartbeat that does not flip presence re-renders nothing.
  *
  * `reachability` is the existing session reachability vocabulary: `unknown` when the machine record
  * is not visible from here (a shared Session), which callers must not present as offline.
@@ -54,7 +56,7 @@ export function useMachinePresenceSummary(
     return useMachinePresenceSummaries(serverId, [machineId ?? ''], suppliedLifetime, areSummariesEqual)[0]!;
 }
 
-/** All-machines daemon reads share the same presence lifecycle and earliest clock wake. */
+/** All-machines daemon reads share the same pushed presence lifecycle. */
 export function useMachinePresenceSummaries(
     serverId: string | null | undefined,
     machineIds: readonly string[],
@@ -87,7 +89,8 @@ export function useMachinePresenceSummaries(
             const name = machine ? getMachineDisplayName(machine).trim() || null : null;
             const sentenceName = machine ? getMachineSentenceName(machine, name ?? undefined) : null;
             const homeDir = machine?.metadata?.homeDir?.trim() || null;
-            const reachability = machine ? resolveMachineReachability(scope, machine, nowMs, resolveScopeId) : 'unknown';
+            const reachability = machine && getDemoMachineRead({ serverId: targetServerId, machineId: machine.id }) ? 'reachable'
+                : machine ? resolveMachineReachability(scope, machine, nowMs, resolveScopeId) : 'unknown';
             const machineIsKnown = Boolean(machine);
             const activeAt = machine ? readMachineActivity(machine).activeAt : null;
             const lastSeenAt = reachability === 'unreachable' && machine && !isMachineOnline(machine, nowMs)
@@ -100,9 +103,104 @@ export function useMachinePresenceSummaries(
         });
         if (next.length !== cached.current.length || next.some((value, index) => value !== cached.current[index])) cached.current = next;
         return cached.current;
-    }, [readMachines, scope, ids]);
+    }, [readMachines, scope, ids, targetServerId]);
     const targets = React.useMemo(() => [{ serverId: targetServerId, machineIds: ids }], [targetServerId, ids]);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual);
+}
+
+export type MachineCliUpdateFact = Readonly<{
+    id: string;
+    metadataPresent: boolean;
+    platform: string | null;
+    happyCliVersion: string | null;
+    cliUpdate: CliUpdateFacts | null;
+    online: boolean | null;
+}>;
+
+export type MachineCliUpdateFactsSnapshot = Readonly<{
+    machineIds: readonly string[];
+    facts: readonly MachineCliUpdateFact[];
+}>;
+
+/** Only the machine-published CLI facts, independent of unrelated metadata or presentation. */
+function projectCliUpdateFacts(facts: CliUpdateFacts | null, previous: CliUpdateFacts | null): CliUpdateFacts | null {
+    if (!facts) return null;
+    const lastUpdate = facts.lastUpdate;
+    const previousLastUpdate = previous?.lastUpdate;
+    const sameLastUpdate = lastUpdate === null ? previousLastUpdate === null
+        : previousLastUpdate != null && lastUpdate.outcome === previousLastUpdate.outcome
+            && lastUpdate.targetVersion === previousLastUpdate.targetVersion
+            && lastUpdate.at === previousLastUpdate.at && lastUpdate.message === previousLastUpdate.message;
+    if (previous && facts.currentVersion === previous.currentVersion && facts.latestVersion === previous.latestVersion
+        && facts.channel === previous.channel && facts.installSource === previous.installSource
+        && facts.updateCommand === previous.updateCommand && facts.canUpdateRemotely === previous.canUpdateRemotely
+        && sameLastUpdate) return previous;
+    return {
+        currentVersion: facts.currentVersion,
+        latestVersion: facts.latestVersion,
+        channel: facts.channel,
+        installSource: facts.installSource,
+        updateCommand: facts.updateCommand,
+        canUpdateRemotely: facts.canUpdateRemotely,
+        lastUpdate: lastUpdate?.outcome === 'failed' ? {
+            outcome: lastUpdate.outcome, targetVersion: lastUpdate.targetVersion,
+            at: lastUpdate.at, message: lastUpdate.message,
+        } : lastUpdate ? {
+            outcome: lastUpdate.outcome, targetVersion: lastUpdate.targetVersion,
+            at: lastUpdate.at, message: lastUpdate.message,
+        } : null,
+    };
+}
+
+/** CLI consumers observe their facts, not Machine names, heartbeat timestamps or whole rows. */
+export function useMachineCliUpdateFacts(
+    serverId: string | null | undefined,
+    suppliedLifetime?: ServerAccountScopeLifetime | null,
+): MachineCliUpdateFactsSnapshot {
+    const store = getStorage();
+    const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
+    const scope = useMachinePresenceScope(targetServerId, suppliedLifetime);
+    const cached = React.useRef<MachineCliUpdateFactsSnapshot>({ machineIds: [], facts: [] });
+    const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
+        const state = store.getState();
+        const machines = targetServerId ? resolveServerScopedMachines({
+            serverId: targetServerId,
+            activeServerId: getActiveServerSnapshot().serverId,
+            get activeMachines() { return Object.values(state.machines); },
+            machineListByServerId: state.machineListByServerId,
+            machineListStatusByServerId: state.machineListStatusByServerId,
+        }, resolveScopeId) ?? [] : Object.values(state.machines);
+        return machines.filter(isMachineVisibleForSelection);
+    }, [store, targetServerId]);
+    const readSnapshot = React.useCallback((nowMs: number): MachineCliUpdateFactsSnapshot => {
+        const resolveScopeId = captureServerProfileScopeResolver();
+        const machines = readMachines(resolveScopeId).sort((left, right) => left.id.localeCompare(right.id));
+        const previous = cached.current;
+        const previousById = new Map(previous.facts.map(fact => [fact.id, fact]));
+        const facts = machines.map((machine): MachineCliUpdateFact => {
+            const before = previousById.get(machine.id);
+            const metadataPresent = Boolean(machine.metadata);
+            const platform = machine.metadata?.platform ?? null;
+            const happyCliVersion = machine.metadata?.happyCliVersion || null;
+            const cliUpdate = projectCliUpdateFacts(machine.metadata?.cliUpdate ?? null, before?.cliUpdate ?? null);
+            const availability = resolveFleetMachineAvailability(scope, machine, nowMs, resolveScopeId);
+            const online = availability === 'unknown' ? null : availability === 'online';
+            return before && before.metadataPresent === metadataPresent && before.platform === platform
+                && before.happyCliVersion === happyCliVersion && before.cliUpdate === cliUpdate && before.online === online
+                ? before : { id: machine.id, metadataPresent, platform, happyCliVersion, cliUpdate, online };
+        });
+        const idsChanged = facts.length !== previous.machineIds.length
+            || facts.some((fact, index) => fact.id !== previous.machineIds[index]);
+        if (idsChanged || facts.some((fact, index) => fact !== previous.facts[index])) {
+            cached.current = {
+                machineIds: idsChanged ? facts.map(fact => fact.id) : previous.machineIds,
+                facts,
+            };
+        }
+        return cached.current;
+    }, [readMachines, scope]);
+    const targets = React.useMemo(() => [{ serverId: targetServerId }], [targetServerId]);
+    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
 }
 
 export type MachinePresenceMembership = Readonly<{
@@ -256,10 +354,14 @@ export function useMachinePresenceSnapshot<T>(
     readSnapshot: (nowMs: number) => T,
     targets: readonly MachinePresenceTarget[],
     areEqual?: (left: T, right: T) => boolean,
+    /** Select demanded source facts before running a more expensive projection. */
+    readDemandedInputs?: (nowMs: number) => readonly unknown[],
 ): T {
     const store = getStorage();
     const activeServerId = useActiveServerSnapshot().serverId;
     const profilesGeneration = React.useSyncExternalStore(subscribeServerProfiles, getServerProfilesGeneration, getServerProfilesGeneration);
+    // A renewed source (new target, reader or Home) that yields equal content keeps the published value.
+    const published = React.useRef<Readonly<{ value: T }> | null>(null);
     const source = React.useMemo(() => {
         const observedTargets = targets.map(target => ({ ...target,
             machineIds: target.machineIds?.map(id => id.trim()).filter(Boolean),
@@ -268,15 +370,19 @@ export function useMachinePresenceSnapshot<T>(
         // an inventory index: an unchanged Home never walks its selected rows again.
         const readInputs = createPresenceInputReader(observedTargets, activeServerId);
         let revision = 0;
-        let cached: Readonly<{ inputs: readonly unknown[]; revision: number; value: T }> | undefined;
+        let cached: Readonly<{ inputs: readonly unknown[]; revision: number; value: T; demandedInputs?: readonly unknown[] }> | undefined;
         const getSnapshot = () => {
             const inputs = readInputs(store.getState());
             if (cached && cached.revision === revision && samePresenceInputs(cached.inputs, inputs)) return cached.value;
             // Sample wall time only at an observed input/request transition.
             const nowMs = Date.now();
-            const nextValue = readSnapshot(nowMs);
-            const value = cached && areEqual?.(cached.value, nextValue) ? cached.value : nextValue;
-            cached = { inputs, revision, value };
+            const demandedInputs = readDemandedInputs?.(nowMs);
+            const nextValue = cached && demandedInputs && cached.demandedInputs && samePresenceInputs(cached.demandedInputs, demandedInputs)
+                ? cached.value : readSnapshot(nowMs);
+            const previous = cached ?? published.current;
+            const value = previous && areEqual?.(previous.value, nextValue) ? previous.value : nextValue;
+            cached = { inputs, revision, value, demandedInputs };
+            published.current = { value };
             return value;
         };
         const subscribe = (listener: () => void) => {
@@ -330,6 +436,6 @@ export function useMachinePresenceSnapshot<T>(
             return () => { stopStore(); stopRequests(); stopActivity(); stopClock(); };
         };
         return { getSnapshot, subscribe };
-    }, [store, readSnapshot, readMachines, targets, areEqual, activeServerId, profilesGeneration]);
+    }, [store, readSnapshot, readMachines, targets, areEqual, readDemandedInputs, activeServerId, profilesGeneration]);
     return React.useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
 }

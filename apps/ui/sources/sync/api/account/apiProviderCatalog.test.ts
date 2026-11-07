@@ -265,4 +265,92 @@ describe('Provider catalog captured Account HTTP', () => {
         expect(await readProviderCatalog(scope)).toMatchObject({ status: 'unavailable', reason: 'scope-retired' });
         expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toBeNull();
     });
+    // HTTP alone is substituted; Sync's settings owner, admission, lifetime and the catalog owner stay real.
+    async function startProviderCatalogAccount(name: string, initial: Readonly<{ raw: Record<string, unknown>; row: 'absent' | 'present' }>) {
+        const accountId = `account-provider-${name}`;
+        let raw = initial.raw;
+        let settingsVersion = 7;
+        let absent = initial.row === 'absent';
+        let revision = absent ? 0 : 1;
+        let catalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
+        const counts = { settingsGets: 0, settingsWrites: 0, currentnessGets: 0, historyGets: 0, rowWrites: 0 };
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            const method = init?.method ?? 'GET';
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption/currentness') {
+                counts.currentnessGets += 1;
+                return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion }));
+            }
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings') {
+                if (method === 'POST') {
+                    counts.settingsWrites += 1;
+                    const body = JSON.parse(String(init?.body)) as { expectedVersion: number; content: { t: 'plain'; v: Record<string, unknown> } };
+                    if (body.expectedVersion !== settingsVersion) return Response.json({ success: false, error: 'version-mismatch', currentVersion: settingsVersion });
+                    raw = body.content.v;
+                    settingsVersion += 1;
+                    return Response.json({ success: true, version: settingsVersion });
+                }
+                counts.settingsGets += 1;
+                return Response.json({ version: settingsVersion, content: { t: 'plain', v: raw } });
+            }
+            if (path === '/v1/artifacts') return Response.json([]);
+            if (path === '/v2/account/settings/history') {
+                counts.historyGets += 1;
+                return Response.json({ snapshots: [] });
+            }
+            if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) {
+                if (method === 'POST') {
+                    counts.rowWrites += 1;
+                    const mutation = ProviderConnectionsRowMutationV1Schema.parse(JSON.parse(String(init?.body)));
+                    if (mutation.expectedRevision !== (absent ? 'absent' : revision)) return Response.json({ status: 'conflict', revision });
+                    if (mutation.content?.t === 'plain') catalog = mutation.content.v;
+                    revision += 1;
+                    absent = false;
+                    return Response.json({ status: 'updated', revision, cursor: revision });
+                }
+                if (absent) return Response.json({ status: 'absent' });
+                return Response.json({ status: 'present', revision, content: { t: 'plain', v: catalog } });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        await disconnectActiveServerConnection();
+        const home = await upsertAndActivateServer({ serverUrl: `https://provider-${name}.example.test`, name: `Provider ${name}` });
+        const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` };
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials);
+        await restoreConnectionToActiveServer(credentials);
+        const scope = { serverId: home.id, accountId };
+        getStorage().setState({ profileScope: scope, settingsScope: scope });
+        // Sync's own settings pass has already fetched this Account's raw document.
+        await vi.waitFor(() => expect(getStorage().getState().settingsVersion).toBe(7));
+        const reset = () => { for (const key of Object.keys(counts) as (keyof typeof counts)[]) counts[key] = 0; };
+        return { scope, counts, reset, readRaw: () => raw, readCatalog: () => catalog };
+    }
+    it('loads an already-migrated catalog without rereading the finished legacy source, its history or extra currentness', async () => {
+        const account = await startProviderCatalogAccount('migrated', { raw: {}, row: 'present' });
+        account.reset();
+        expect(await readProviderCatalog(account.scope)).toMatchObject({ status: 'ready', revision: 1 });
+        expect({ settingsGets: account.counts.settingsGets, historyGets: account.counts.historyGets,
+            currentnessGets: account.counts.currentnessGets, settingsWrites: account.counts.settingsWrites })
+            .toEqual({ settingsGets: 0, historyGets: 0, currentnessGets: 2, settingsWrites: 0 });
+    });
+    it.each(['absent', 'present'] as const)('still transfers and retires a 0.2 providerSettingsV1 source on an upgraded install (row %s)', async row => {
+        const legacy = { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [{ v: 1 as const, id: 'pc_legacy',
+            source: { kind: 'contribution' as const, contributionKey: 'happier.provider.deepseek/deepseek' }, role: 'named' as const,
+            displayName: 'Legacy connection', displayNameMode: 'custom' as const, revision: 1, createdAt: 1, updatedAt: 1 }] };
+        const account = await startProviderCatalogAccount(`legacy-${row}`, { raw: { providerSettingsV1: legacy }, row });
+        account.reset();
+        expect(await readProviderCatalog(account.scope)).toMatchObject({ status: 'ready' });
+        expect(account.counts.settingsGets).toBeGreaterThan(0);
+        expect(account.counts.rowWrites).toBe(row === 'absent' ? 1 : 0);
+        if (row === 'absent') expect(account.readCatalog().connections.map(connection => connection.id)).toEqual(['pc_legacy']);
+        expect(Object.hasOwn(account.readRaw(), 'providerSettingsV1')).toBe(false);
+        expect(account.counts.historyGets).toBeGreaterThan(0);
+        // The retired source is now proven absent by Sync's own acknowledged document.
+        account.reset();
+        expect(await readProviderCatalog(account.scope)).toMatchObject({ status: 'ready' });
+        expect({ settingsGets: account.counts.settingsGets, historyGets: account.counts.historyGets }).toEqual({ settingsGets: 0, historyGets: 0 });
+    });
 });

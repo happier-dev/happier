@@ -1,70 +1,79 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import {
-    OVERLAY_CAPSULE_BUTTON_GAP,
-    OVERLAY_CAPSULE_ROW_HEIGHT,
-    OverlayCapsuleButton,
-} from '@/components/ui/overlays/OverlayCapsuleButton';
+import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
+import { OVERLAY_CAPSULE_ROW_HEIGHT } from '@/components/ui/overlays/OverlayCapsuleButton';
 import { t } from '@/text';
 
 /**
- * The close affordance for the floating new-session composer.
+ * The new-session composer's own actions in its status row: leave and retract the keyboard (Look, where the
+ * composer floats on its own, is `NewSessionComposerLookButton` on the same rule). The status row is the
+ * card's header seated on the band's solid ground (Docked and the phone Modal alike), so they are the row's
+ * quiet icons at the card's accessory size, never glass capsules: those earn their glass only over a live
+ * picture.
  *
- * The sheet this replaces carried a header close button. Dropping the header is what makes the
- * composer read as a bare surface rather than a form — but it also removes the only guaranteed way
- * out, and a backdrop tap is not a sufficient substitute: an overlay whose only dismissal is
- * "tap somewhere that looks like nothing" is both an accessibility gap and a well-known cause of
- * accidental dismissals.
- *
- * The capsule itself is `OverlayCapsuleButton` — the shared owner for a floating control beside a
- * bottom-anchored overlay surface, which the native Search overlay uses for the same pair of
- * controls. This module keeps only the composer's copy and test ids.
+ * The composer carried a header close button when it was a sheet. Dropping the header is what makes it
+ * read as a bare surface, but a backdrop tap alone is not a sufficient way out: an overlay whose only
+ * dismissal is "tap somewhere that looks like nothing" is an accessibility gap and a known cause of
+ * accidental dismissals. This close is that way out.
  */
-
-/** Separates the capsule row from the composer card without letting their hit areas meet. */
-export const NEW_SESSION_CLOSE_BUTTON_GAP = OVERLAY_CAPSULE_BUTTON_GAP;
 
 /**
- * Total vertical space the capsule row takes above the card.
- *
- * Exported because the composer's height budget has to reserve it: the row is drawn outside the card
- * but inside the same bottom-anchored slot, so a budget that ignores it lets a long draft push the
- * row off the top of the screen — taking the only visible dismiss control with it.
+ * The height budget the bottom-anchored composer reserves for its status row above the input, so a long
+ * draft never pushes the row (and the only visible way out) under the status bar.
  */
 export const NEW_SESSION_CLOSE_ROW_HEIGHT = OVERLAY_CAPSULE_ROW_HEIGHT;
+
+/**
+ * The close glyph ends on the card's content edge, over the microphone's glyph: its square reaches past the
+ * edge by the space around its glyph, as the field's accessories do inside the card.
+ */
+const TRAILING_GLYPH_BLEED_PX = (AGENT_INPUT_QUIET_ICON_SIZE_PX - resolveIconButtonGlyphSize(AGENT_INPUT_QUIET_ICON_SIZE_PX)) / 2;
+
+/**
+ * The row sits just above the card: the hit areas split the row's gap sideways and never reach down into
+ * the card's own controls.
+ */
+export function useNewSessionStatusIconHitEdges() {
+    const { theme } = useUnistyles();
+    const half = theme.space.s10 / 2;
+    return React.useMemo(() => ({ leading: half, trailing: half, bottom: 0 }), [half]);
+}
 
 export const NewSessionComposerCloseButton = React.memo(function NewSessionComposerCloseButton(
     props: Readonly<{ onPress: () => void }>,
 ): React.ReactElement {
+    const edges = useNewSessionStatusIconHitEdges();
     return (
-        <OverlayCapsuleButton
-            testID="new-session-composer-close"
-            accessibilityLabel={t('common.cancel')}
-            icon="x"
-            onPress={props.onPress}
-        />
+        <View style={styles.closeSeat}>
+            <IconButton testID="new-session-composer-close" variant="plain" iconName="x" tooltipPlacement="top"
+                size={AGENT_INPUT_QUIET_ICON_SIZE_PX} interactiveTargetEdgesPx={edges}
+                accessibilityLabel={t('common.close')} tooltip={t('common.close')} onPress={props.onPress} />
+        </View>
     );
 });
 
 /**
- * Retracts the keyboard without leaving the composer.
- *
- * In this presentation a backdrop tap dismisses the whole screen, so — unlike the sheet it replaces,
- * where tapping the empty sheet area only lowered the keyboard — no gesture retracts the keyboard
- * alone. This capsule restores that, and exists only while the keyboard is up so it never sits there
- * as dead chrome.
+ * Retracts the keyboard without leaving the composer. A backdrop tap dismisses the whole floating composer,
+ * so no gesture lowers the keyboard alone; this does, and exists only while the keyboard is up.
  */
 export const NewSessionComposerKeyboardDismissButton = React.memo(
     function NewSessionComposerKeyboardDismissButton(
         props: Readonly<{ onPress: () => void }>,
     ): React.ReactElement {
+        const edges = useNewSessionStatusIconHitEdges();
         return (
-            <OverlayCapsuleButton
-                testID="new-session-composer-dismiss-keyboard"
-                accessibilityLabel={t('common.dismissKeyboard')}
-                icon="caret-down"
-                onPress={props.onPress}
-            />
+            <IconButton testID="new-session-composer-dismiss-keyboard" variant="plain" iconName="caret-down"
+                tooltipPlacement="top" size={AGENT_INPUT_QUIET_ICON_SIZE_PX} interactiveTargetEdgesPx={edges}
+                accessibilityLabel={t('common.dismissKeyboard')} tooltip={t('common.dismissKeyboard')}
+                onPress={props.onPress} />
         );
     },
 );
+
+const styles = StyleSheet.create(() => ({
+    closeSeat: { marginRight: -TRAILING_GLYPH_BLEED_PX },
+}));

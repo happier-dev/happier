@@ -1,10 +1,11 @@
 import * as React from 'react';
-import type { NewSessionDraftEntryMode } from '@happier-dev/protocol';
+import type { NewSessionDraftEntryMode } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import { resolveKeyboardPlatform } from '@/keyboard/runtime';
 import type { KeyboardPlatform } from '@/keyboard/types';
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
-import { readNewSessionOrdinaryEntryDraftId } from '@/sync/domains/settings/localOnlyAccountSettings';
+import { useOrdinaryNewSessionDraftId } from '@/sync/domains/state/newSessionTargetUiState';
 import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { resolveNewSessionDraftRouteIdentity } from './newSessionDraftRouteIdentity';
@@ -76,17 +77,21 @@ export function shouldForceFreshNewSessionEntryFromPressEvent(
     });
 }
 
-export function useResolveNewSessionOrdinaryEntryRoute(): (
+/**
+ * Resolving an entry only picks a draft identity; it writes nothing. A fresh ordinary draft stays local
+ * entry context until the person authors in it (its active Space is applied by the placement owner,
+ * `useNewSessionOrganizationPlacement`), so opening New Session never leaves a draft on the Account.
+ */
+export function useResolveNewSessionOrdinaryEntryRoute(scopeOverride?: ServerAccountScope | null): (
     options?: Readonly<{ forceFresh?: boolean; createDraftId?: () => string }>,
 ) => NewSessionOrdinaryEntryRouteResolution {
     const entryMode = useSetting('newSessionDraftEntryMode');
-    const ordinaryEntryDraftId = useSetting('newSessionOrdinaryEntryDraftId');
-    const scope = useActiveServerAccountScope();
+    const activeScope = useActiveServerAccountScope();
+    const scope = scopeOverride === undefined ? activeScope : scopeOverride;
+    const ordinaryEntryDraftId = useOrdinaryNewSessionDraftId(scope);
 
     return React.useCallback((options = {}) => {
-        const rememberedDraftId = readNewSessionOrdinaryEntryDraftId({
-            newSessionOrdinaryEntryDraftId: ordinaryEntryDraftId,
-        });
+        const rememberedDraftId = ordinaryEntryDraftId;
         const snapshot = scope && rememberedDraftId
             ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: rememberedDraftId })
             : null;

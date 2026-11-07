@@ -19,9 +19,12 @@ import { prepareProviderConnectionCreationV1 } from './creationV1.js';
 import { composeProviderSettingsV1, splitProviderSettingsV1, type ProviderConnectionsCatalogV1,
   type ProviderConnectionsCatalogSnapshotV1 } from './connectionRowsV1.js';
 import { DaemonProviderConnectionViewV1Schema, type DaemonProviderConnectionViewV1, type DaemonProviderConnectionsDescribeResponseV1 } from '../../rpc/providers.js';
-import { readProviderConnectionSourceFactsV1, projectAvailableProviderContributionsV1 } from './sourceFactsV1.js';
+import { readProviderConnectionSourceFactsV1, projectAvailableProviderContributionsV1, isProviderConnectionCredentialSlotDeclaredV1, readProviderAdditionalCredentialSlotsV1 } from './sourceFactsV1.js';
+import { normalizeProviderEndpointUrlSyntax } from '../safety/url.js';
 import { createProviderCustomCopyTemplateV1 } from './customCopyV1.js';
+import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import { chooseProviderGatewayContributionV1 } from '../gatewayContributionsV1.js';
+import { readAccountProviderDeclarationDemandV1 } from './declarationDemandV1.js';
 import { resolveEffectiveProviderEndpointV1, patchProviderEndpointOverrideV1 } from './effectiveEndpointV1.js';
 import { providerEndpointPolicySecurityFactsV1 } from '../endpointPolicyV1.js';
 
@@ -63,6 +66,7 @@ function securityFingerprint(connection: ProviderConnectionV1, source: NonNullab
     ...(facts.availabilityProbe ? { availabilityProbe: facts.availabilityProbe } : {}),
     ...(facts.catalogFallback ? { catalogFallback: facts.catalogFallback } : {}),
     ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
+    ...(facts.inlineCompletion ? { inlineCompletion: facts.inlineCompletion } : {}),
     ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
     ...(connection.deployment.kind === 'managedLocal' && contribution?.managedRuntime && identity ? {
       managedDeployment: { implementationIdentity: identity, managedRuntime: contribution.managedRuntime,
@@ -81,7 +85,8 @@ function accountEndpointsAreReady(connection: ProviderConnectionV1, source: NonN
 }
 
 export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1, connection: ProviderConnectionV1,
-  definitions: readonly AccountProviderDeclarationV1[]): DaemonProviderConnectionViewV1 {
+  definitions: readonly AccountProviderDeclarationV1[],
+  options: Readonly<{ declarationsStatus?: 'loading' | 'ready' | 'unavailable' }> = {}): DaemonProviderConnectionViewV1 {
   const source = sourceFor(connection, definitions);
   const contribution = source && 'kind' in source.definition ? source.definition : null;
   const credential = source?.definition.credential;
@@ -98,18 +103,29 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
   const managed = contribution?.managedRuntime && identity ? resolveProviderManagedRuntimeDeclarationV1({
     implementationIdentity: identity, managedRuntime: contribution.managedRuntime,
   }) : null;
+  const purposeBindings = connection.deployment.kind === 'managedLocal' && managed && identity
+    ? resolveManagedPurposeBindingIntentsV1(connection, { implementationIdentity: identity, managedRuntime: managed }) : undefined;
+  const sourceStatus = source ? 'available' : options.declarationsStatus === 'loading' ? 'loading' : 'unavailable';
+  const authorizationError = sourceStatus === 'unavailable' ? createProviderErrorV1('provider_contribution_unavailable', { connectionId: connection.id })
+    : purposeBindings === 'unbound' || purposeBindings === null
+      ? createProviderErrorV1('provider_connection_invalid', { connectionId: connection.id,
+        reason: purposeBindings === 'unbound' ? 'managed_purpose_bindings_missing' : 'managed_purpose_bindings_invalid' })
+      : null;
   return DaemonProviderConnectionViewV1Schema.parse({ connectionId: connection.id,
     contributionKey: connection.source.kind === 'contribution' ? connection.source.contributionKey : null,
     provenance: source?.provenance ?? 'external', displayName: connection.displayName,
     providerName: source?.definition.name ?? connection.displayName, icon: contribution?.icon ?? null,
     ...(contribution?.websiteUrl ? { websiteUrl: contribution.websiteUrl } : {}), role: connection.role,
-    displayNameMode: connection.displayNameMode, sourceStatus: source ? 'available' : 'unavailable',
+    displayNameMode: connection.displayNameMode, sourceStatus,
     probeCapability: source && readProviderConnectionSourceFactsV1(source.definition).catalogProbes.length ? 'catalog' : contribution?.discovery?.availabilityProbe ? 'availability' : 'none',
     manualModelPolicy: source?.definition.catalog.manualModelPolicy ?? 'catalog-only', compatibility: [],
     grants: { accountEnabled: accountState === 'valid', accountState, enabledMachineIds: settings.machineGrants.filter(grant => grant.connectionId === connection.id).map(grant => grant.machineId),
       machineState: 'absent', effectiveState: 'absent' },
     credential: credential ? { required: credential.required, accountBound: Boolean(bindings?.account?.apiKey),
       boundMachineIds: Object.entries(bindings?.byMachineId ?? {}).filter(([, slots]) => slots.apiKey).map(([id]) => id),
+      ...(credential.authorityDescription ? { authorityDescription: credential.authorityDescription } : {}),
+      ...(readProviderAdditionalCredentialSlotsV1(credential).length ? { additionalCredentials: readProviderAdditionalCredentialSlotsV1(credential).map(slot => ({ ...slot,
+        accountBound: Boolean(bindings?.account?.[slot.slotId]), boundMachineIds: Object.entries(bindings?.byMachineId ?? {}).filter(([, slots]) => slots[slot.slotId]).map(([id]) => id) })) } : {}),
       ...('keyUrl' in credential && credential.keyUrl ? { keyUrl: credential.keyUrl } : {}) } : null,
     deployment: connection.deployment.kind === 'managedLocal' ? { kind: 'managedLocal', targetMachineId: connection.gatewayPlacement?.kind === 'machine' ? connection.gatewayPlacement.machineId : null,
       effects: managed && identity ? { implementationIdentity: identity, protocols: contribution?.endpointTemplates.filter(endpoint => managed.endpointTemplateIds.includes(endpoint.id)).map(endpoint => endpoint.protocol) ?? [],
@@ -121,7 +137,7 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
     managedLocalOption: managed ? { targetMachineId: null, connectedAccountPurposes: managed.connectedAccounts.map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => declaration),
       ...(managed.connectedAccountPurposeBindingPolicy ? { connectedAccountPurposeBindingPolicy: managed.connectedAccountPurposeBindingPolicy } : {}) } : null,
     endpoints: source ? accountEndpoints(connection, source).map(({ ready: _ready, reason: _reason, ...endpoint }) => endpoint) : [],
-    scope: null, authorized: false, authorizationError: source ? null : createProviderErrorV1('provider_contribution_unavailable', { connectionId: connection.id }),
+    scope: null, authorized: false, authorizationError,
     revision: connection.revision, runtime: { health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [],
       ...(connection.deployment.kind === 'managedLocal' && managed && managed.connectedAccounts.length > 0
         ? { gateway: { status: 'not_checked', reachability: 'not_checked' } } : {}),
@@ -131,10 +147,11 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
 
 /** Display projection of an admitted Account catalog; it grants no Machine authority. */
 export function describeAccountProviderConnectionsV1(catalog: ProviderConnectionsCatalogV1,
-  definitions: readonly AccountProviderDeclarationV1[], connectionId?: string): Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }> {
+  definitions: readonly AccountProviderDeclarationV1[], connectionId?: string,
+  options: Readonly<{ declarationsStatus?: 'loading' | 'ready' | 'unavailable' }> = {}): Extract<DaemonProviderConnectionsDescribeResponseV1, { status: 'success' }> {
   const settings = composeProviderSettingsV1(catalog, {});
   return { status: 'success', connections: settings.connections.filter(connection => !connectionId || connection.id === connectionId)
-    .map(connection => describeAccountProviderConnectionV1(settings, connection, definitions)),
+    .map(connection => describeAccountProviderConnectionV1(settings, connection, definitions, options)),
     available: projectAvailableProviderContributionsV1({ connections: settings.connections, definitions }),
     discoveryCandidates: [], discoveryCandidatesTruncated: false, localInstallations: [], diagnosticsTruncated: false, diagnostics: [], availableTruncated: false };
 }
@@ -144,7 +161,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
   assertCurrent(): void;
   readCatalog(): Promise<ProviderConnectionsCatalogSnapshotV1>;
   writeCatalog(input: Readonly<{ catalog: ProviderConnectionsCatalogV1; expectedRevision: number }>): Promise<Readonly<{ status: string }>>;
-  readDefinitions(): Promise<readonly AccountProviderDeclarationV1[]>;
+  readDefinitions(contributionKeys?: readonly string[]): Promise<readonly AccountProviderDeclarationV1[]>;
   readAgentProviderRequirements?(agentTargetKey: string): AgentProviderRequirementsV1 | null | Promise<AgentProviderRequirementsV1 | null>;
   now(): number;
 }>): (request: ProviderActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult> {
@@ -165,9 +182,8 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
       return { ok: false, errorCode: 'provider_catalog_unavailable', error: 'provider_catalog_unavailable', details: captured };
     }
     let settings = composeProviderSettingsV1(captured.catalog, {});
-    const needsDefinitions = request.actionId.startsWith('providers.connections.') || request.actionId === 'providers.models.list'
-      || request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.manual.add' || request.actionId === 'providers.models.manual.remove';
-    const definitions = needsDefinitions ? await host.readDefinitions() : []; host.assertCurrent();
+    const declarationKeys = readAccountProviderDeclarationDemandV1(request, captured.catalog);
+    const definitions = declarationKeys?.length === 0 ? [] : await host.readDefinitions(declarationKeys); host.assertCurrent();
     const now = host.now();
     const find = (id: string) => settings.connections.find(connection => connection.id === id) ?? refuse('provider_connection_not_found', id);
     const requireSource = (connection: ProviderConnectionV1) => sourceFor(connection, definitions) ?? refuse('provider_contribution_unavailable', connection.id);
@@ -195,6 +211,15 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
         ...(input.displayName ? { displayName: input.displayName, displayNameMode: 'custom' as const } : {}),
         ...(input.displayNameMode ? { displayNameMode: input.displayNameMode, ...(input.displayNameMode === 'automatic' ? { displayName: source?.definition.name ?? previous.displayName } : {}) } : {}),
         deployment: { kind: deployment.kind }, revision: previous.revision + 1, updatedAt: now };
+      if (input.modelSettings !== undefined) {
+        const modelSettings = new Map(Object.entries(previous.modelSettings ?? {}));
+        for (const [modelId, patch] of Object.entries(input.modelSettings)) {
+          if (patch === null) modelSettings.delete(modelId);
+          else modelSettings.set(modelId, { ...modelSettings.get(modelId), ...patch });
+        }
+        if (modelSettings.size) candidate.modelSettings = Object.fromEntries(modelSettings);
+        else delete candidate.modelSettings;
+      }
       if (deployment.kind === 'managedLocal') {
         if (input.deployment?.kind === 'managedLocal' && (!source || !('managedRuntime' in source.definition) || !source.definition.managedRuntime)) refuse('provider_connection_invalid', previous.id);
         delete candidate.endpointOverrides; delete candidate.endpointOverridesByMachineId;
@@ -251,7 +276,9 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
               contributionKey: preview.contributionKey, revision: connection.revision, security: securityFingerprint(connection, source) });
             output = { ...output as object, authoringPreview: { status: 'resolved', connectionId: connection.id,
               contributionKey: preview.contributionKey, created: !existing, candidateId: null, scope: 'account', machineId: null,
-              endpoints, credential: source.definition.credential ? { slotId: 'apiKey', label: 'api_key', required: source.definition.credential.required } : null,
+              endpoints, credential: source.definition.credential ? { slotId: 'apiKey', label: 'api_key', required: source.definition.credential.required,
+                ...(source.definition.credential.authorityDescription ? { authorityDescription: source.definition.credential.authorityDescription } : {}),
+                ...(readProviderAdditionalCredentialSlotsV1(source.definition.credential).length ? { additionalCredentials: readProviderAdditionalCredentialSlotsV1(source.definition.credential) } : {}) } : null,
               fingerprint, revision: connection.revision, verification: 'declaration' } };
           }
           break;
@@ -274,33 +301,28 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
         case 'providers.connections.create_custom': {
           const input = request.input;
           const managedCreate = input.action === 'createContribution' && input.deployment?.kind === 'managedLocal';
+          if (input.action === 'createContribution' && !managedCreate && (input.gatewayPlacement != null || input.claudeHelperModels != null)) {
+            refuse('provider_connection_invalid', input.connectionId);
+          }
           let retained: ProviderConnectionV1 | undefined;
           if (managedCreate && input.action === 'createContribution') {
-            // Complete only an untouched interrupted authoring row; configured external sources
-            // keep their identity. The captured catalog CAS owns recovery and concurrent creation.
+            // Creation is atomic. Only the exact managed identity can rejoin a
+            // retry; a same-name external connection is an independent source.
             if (input.savedSecretId !== null || input.authoringReview) refuse('provider_connection_invalid', input.connectionId);
             const matchesSource = (connection: ProviderConnectionV1) => connection.source.kind === 'contribution'
               && areProviderContributionKeysEqualV1(connection.source.contributionKey, input.contributionKey)
               && connection.displayName === input.displayName;
-            const untouched = (connection: ProviderConnectionV1) => matchesSource(connection)
-              && connection.role === 'named' && connection.deployment.kind === 'external' && connection.revision === 0
-              && !connection.endpointOverrides?.length && !Object.keys(connection.endpointOverridesByMachineId ?? {}).length
-              && !Object.keys(connection.modelSettings ?? {}).length
-              && !settings.secretBindingsByConnectionId[connection.id]
-              && !settings.manualModelsByConnectionId[connection.id]?.length
-              && !settings.accountGrants.some(grant => grant.connectionId === connection.id)
-              && !settings.machineGrants.some(grant => grant.connectionId === connection.id);
             const exact = settings.connections.find(connection => connection.id === input.connectionId);
             if (exact) {
               const sameSlots = exact.deployment.kind === 'managedLocal' && matchesSource(exact)
                 && JSON.stringify(canonicalizeFingerprintValue(exact.purposeBindingDefaults ?? {}))
-                  === JSON.stringify(canonicalizeFingerprintValue(input.deployment?.kind === 'managedLocal' ? input.deployment.purposeBindingDefaults : {}));
-              if (!untouched(exact) && !sameSlots) refuse('provider_connection_changed', exact.id);
+                  === JSON.stringify(canonicalizeFingerprintValue(input.deployment?.kind === 'managedLocal' ? input.deployment.purposeBindingDefaults : {}))
+                && JSON.stringify(canonicalizeFingerprintValue(exact.gatewayPlacement ?? null))
+                  === JSON.stringify(canonicalizeFingerprintValue(input.gatewayPlacement ?? null))
+                && JSON.stringify(canonicalizeFingerprintValue(exact.claudeHelperModels ?? null))
+                  === JSON.stringify(canonicalizeFingerprintValue(input.claudeHelperModels ?? null));
+              if (!sameSlots) refuse('provider_connection_changed', exact.id);
               retained = exact;
-            } else {
-              const interrupted = settings.connections.filter(untouched);
-              if (interrupted.length > 1) refuse('provider_connection_changed', input.connectionId);
-              retained = interrupted[0];
             }
           }
           const prepared = retained ? { settings, connection: retained, created: false } : input.action === 'createContribution'
@@ -326,7 +348,9 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
           }
           if (managedCreate && input.action === 'createContribution' && connection.deployment.kind !== 'managedLocal') {
             connection = updateConnection({ action: 'update', connectionId: connection.id,
-              expectedRevision: connection.revision, deployment: input.deployment });
+              expectedRevision: connection.revision, deployment: input.deployment,
+              ...(input.gatewayPlacement !== undefined ? { gatewayPlacement: input.gatewayPlacement } : {}),
+              ...(input.claudeHelperModels !== undefined ? { claudeHelperModels: input.claudeHelperModels } : {}) });
           }
           if (input.enable) enable(connection, true);
           output = { status: 'success', action: input.action, connection: describeAccountProviderConnectionV1(settings, connection, definitions), created };
@@ -378,7 +402,9 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
           const input = request.input; const connection = find(input.connectionId);
           if (input.savedSecretId !== null) {
             if (connection.deployment.kind === 'managedLocal') refuse('provider_connection_invalid', connection.id);
-            if (!requireSource(connection).definition.credential) refuse('provider_credential_transport_unavailable', connection.id);
+            if (!isProviderConnectionCredentialSlotDeclaredV1(requireSource(connection).definition, input.credentialSlotId)) {
+              refuse('provider_credential_transport_unavailable', connection.id);
+            }
           }
           settings = bindProviderConnectionSecretV1({ settings, connectionId: connection.id, slotId: input.credentialSlotId, savedSecretId: input.savedSecretId });
           output = { status: 'success', action: input.action, connection: describeAccountProviderConnectionV1(settings, connection, definitions) }; break;
@@ -433,6 +459,13 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
       if (!mutation) { host.assertCurrent(); return { ok: true, result: parsed }; }
       context.signal?.throwIfAborted(); host.assertCurrent();
       const receipt = await host.writeCatalog({ catalog: splitProviderSettingsV1(settings).catalog, expectedRevision: captured.revision });
+      if (receipt.status === 'conflict') {
+        const connectionId = 'connectionId' in request.input ? request.input.connectionId
+          : request.actionId === 'providers.models.visibility.set' ? request.input.ref.providerConnectionId ?? undefined
+          : request.actionId === 'providers.models.visibility.reset' && request.input.scope.kind === 'connection'
+            ? request.input.scope.connectionId : undefined;
+        refuse('provider_connection_changed', connectionId);
+      }
       if (receipt.status !== 'updated') return { ok: false, errorCode: `provider_catalog_${receipt.status}`, error: `provider_catalog_${receipt.status}`, details: receipt };
       // A durable receipt survives Account retirement; projections are transport-owned best effort.
       return { ok: true, result: parsed };

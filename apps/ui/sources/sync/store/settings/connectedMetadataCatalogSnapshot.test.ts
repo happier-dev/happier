@@ -45,13 +45,29 @@ describe('Connected metadata catalog publication', () => {
         const scope = { serverId: 'refresh-home', accountId: 'refresh-owner' };
         applyConnectedMetadataCatalogSnapshot(scope, ready, true);
         const first = getConnectedMetadataCatalog(scope);
+        let notifications = 0;
+        const stop = subscribeConnectedMetadataCatalog(() => { notifications += 1; });
+        for (let index = 0; index < 10; index += 1) {
+            beginConnectedMetadataCatalogLoad(scope);
+            applyConnectedMetadataCatalogSnapshot(scope, structuredClone(ready), true);
+        }
+        expect(notifications).toBe(0);
+        expect(getConnectedMetadataCatalog(scope)).toBe(first);
         beginConnectedMetadataCatalogLoad(scope);
-        expect(getConnectedMetadataCatalog(scope)).toMatchObject({ presentation: { status: 'loading' },
-            labelsByKey: first.labelsByKey, acknowledgementsByKey: first.acknowledgementsByKey,
-            presentationStale: true, acknowledgementsStale: true });
+        applyConnectedMetadataCatalogSnapshot(scope, { ...ready,
+            presentation: { status: 'ready', entries: [], revision: 5, diagnostics: [] } }, true);
+        expect(notifications).toBe(1);
+        expect(getConnectedMetadataCatalog(scope).labelsByKey).toEqual({});
+        expect(getConnectedMetadataCatalog(scope).acknowledgementsByKey).toBe(first.acknowledgementsByKey);
+        beginConnectedMetadataCatalogLoad(scope, true);
+        expect(getConnectedMetadataCatalog(scope)).toMatchObject({ presentationStale: true, acknowledgementsStale: true });
+        expect(notifications).toBe(2);
+        stop();
+        applyConnectedMetadataCatalogSnapshot(scope, ready, true);
+        const restored = getConnectedMetadataCatalog(scope);
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'unavailable', reason: 'unreachable' },
             acknowledgements: { status: 'unavailable', reason: 'unreachable' }, disclosure: [] }, true);
-        expect(getConnectedMetadataCatalog(scope).labelsByKey).toBe(first.labelsByKey);
+        expect(getConnectedMetadataCatalog(scope).labelsByKey).toBe(restored.labelsByKey);
         applyConnectedMetadataCatalogSnapshot(scope, ready, false);
         expect(getConnectedMetadataCatalog(scope).presentation.status).toBe('unavailable');
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'unavailable', reason: 'account-mode-mismatch' },

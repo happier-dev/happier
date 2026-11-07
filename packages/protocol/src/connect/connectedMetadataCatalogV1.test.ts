@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConnectedMetadataCatalogV1, type ConnectedMetadataLoadInputV1 } from './connectedMetadataCatalogV1.js';
+import { connectedMetadataSourceNeedsCleanupV1, loadConnectedMetadataCatalogV1, type ConnectedMetadataLoadInputV1 } from './connectedMetadataCatalogV1.js';
 import type { ConnectedPresentationRowReadResponseV1Schema } from './connectedAccountPresentationRowsV1.js';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
@@ -11,6 +11,36 @@ function input(): ConnectedMetadataLoadInputV1 {
 }
 
 describe('connected metadata catalog destination authority', () => {
+    it('skips the finished source pass for published rows only when the admitted raw Settings proves no retained root', async () => {
+        const counts = { sourceReads: 0, historyPasses: 0, initialized: 0 };
+        let raw: Record<string, unknown> = { connectedServicesProfileLabelByKey: { 'openai-codex/default': 'Retained 0.2 label' } };
+        let presentation: 'absent' | 'present' = 'present';
+        const load = (rawSettings: () => Record<string, unknown> | undefined) => loadConnectedMetadataCatalogV1({ ...input(),
+            readPresentationRow: async () => presentation === 'absent' ? { status: 'absent' } : existing,
+            transfer: {
+                needsSourceCleanup: () => connectedMetadataSourceNeedsCleanupV1({ rawSettings: rawSettings(), cleanupPending: false }),
+                readSourceSnapshot: async () => { counts.sourceReads++; return { raw, version: 12 }; },
+                readInventory: async () => ({ entities: [subject], agents: [] }),
+                initializePresentation: async () => { counts.initialized++; presentation = 'present'; return { status: 'updated', revision: 4, cursor: 1 }; },
+                initializeAcknowledgements: async () => { throw new Error('Deleted authority must not be reseeded'); },
+                replaceSource: async value => { raw = { ...value.raw }; return { status: 'applied', settingsVersion: 13 }; },
+                normalizeHistory: async () => { counts.historyPasses++; return { status: 'complete' }; },
+            } });
+        // Upgraded 0.2 data: the retained root is still in the admitted document.
+        expect((await load(() => raw)).cleanup).toEqual({ status: 'complete' });
+        expect(raw).toEqual({});
+        expect(counts).toEqual({ sourceReads: 1, historyPasses: 1, initialized: 0 });
+        // Already migrated: no source read or history pass.
+        expect((await load(() => raw)).presentation).toMatchObject({ status: 'ready', revision: 4 });
+        expect(counts).toEqual({ sourceReads: 1, historyPasses: 1, initialized: 0 });
+        // An unknown document fails toward the source pass.
+        await load(() => undefined);
+        expect(counts.sourceReads).toBe(2);
+        // An absent row still initializes from the source whatever the document says.
+        presentation = 'absent';
+        await load(() => raw);
+        expect(counts).toMatchObject({ sourceReads: 3, initialized: 1 });
+    });
     it('does not enumerate transfer inventory when the current Settings source has no connected metadata roots', async () => {
         let inventoryReads = 0;
         let raw: Record<string, unknown> = { unrelatedPreference: true };

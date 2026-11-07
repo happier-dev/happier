@@ -3,32 +3,34 @@ import type { NewSessionLaunchApprovalNoticeState } from '@/components/sessions/
 import type { ViewStyle } from 'react-native';
 import { Keyboard, Platform, Pressable, StyleSheet as RNStyleSheet, View, useWindowDimensions } from 'react-native';
 import { useNavigation, useRouter } from 'expo-router';
-import Animated, {
-    runOnJS,
-    useAnimatedStyle,
-    useSharedValue,
-    withTiming,
-} from 'react-native-reanimated';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
-import { OverlayScrim } from '@/components/ui/overlays/OverlayScrim';
-import { createModalScrimWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import Animated, { type SharedValue } from 'react-native-reanimated';
+import { OVERLAY_SCRIM_BOTTOM_EXTENSION } from '@/components/ui/overlays/OverlayScrim';
+import { ScrimBand } from '@/components/ui/overlays/ScrimBand';
+import {
+    createFloatingBackdropPictureWebStyle,
+    createModalScrimWebStyle,
+} from '@/components/ui/overlays/createBackdropLayerStyle';
+import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
+import { useFloatingBackdropPicture } from '@/components/atmosphere/atmosphereBackdrop';
 import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
+import { useSetting } from '@/sync/domains/state/storage';
 import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
 import { useUnistyles } from 'react-native-unistyles';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { useFloatingComposerEntrance } from './useFloatingComposerEntrance';
 import { useNewSessionFloatingComposer } from '@/components/sessions/new/navigation/useNewSessionFloatingComposer';
 import {
-    NEW_SESSION_CLOSE_BUTTON_GAP,
     NEW_SESSION_CLOSE_ROW_HEIGHT,
     NewSessionComposerCloseButton,
     NewSessionComposerKeyboardDismissButton,
 } from '@/components/sessions/new/components/NewSessionComposerCloseButton';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputExtraActionPresentation } from '@/components/sessions/agentInput/agentInputContracts';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
-import type { AcpConfigOptionOverridesV1, ProviderErrorV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { layout } from '@/components/ui/layout/layout';
@@ -44,20 +46,10 @@ import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/scre
 import { NewSessionComposerCard } from '@/components/sessions/new/components/NewSessionComposerCard';
 import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
 import type { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
+import type { NewSessionManagedMachineDraftModel } from '../hooks/newSessionScreenModelTypes';
 
 const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
 
-/**
- * How far the composer card travels on entry.
- *
- * Durations and the curve come from `motionTokens.overlay.modal` — this is an ordinary overlay and
- * should settle like every other one. Only the distance is local, because distance is a property of
- * the surface rather than of the preset (the shared tokens range from 8 for a popover upward). A
- * bottom-anchored card wants enough travel to read as lifting into place and little enough that it
- * does not read as a sheet arriving: the preset's own 10 is invisible here, and anything past ~32
- * reads as the sheet this replaces. The tab bar the composer replaces occupies roughly this much of
- * the same space, so the card reads as rising into the layer the bar just vacated.
- */
 /**
  * How far the composer's frosted band reaches above the card.
  *
@@ -66,20 +58,7 @@ const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
  * scrolling content. Still far short of veiling the list - keeping it readable while you type is the
  * reason this is a floating composer and not a sheet.
  */
-const SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT = 128;
-
-const SIMPLE_NEW_SESSION_ENTER_TRAVEL_PX = 32;
-
-/** Shared modal arrival scale; the card grows into place rather than only sliding. */
-const SIMPLE_NEW_SESSION_ENTER_FROM_SCALE = motionTokens.overlay.modal.fromScale;
-
-/** A shorter drop on the way out — exits are quieter than entrances. */
-const SIMPLE_NEW_SESSION_EXIT_TRAVEL_PX = 12;
-
-/** How long the disarmed state may persist before it is assumed the pop never happened. */
-const SIMPLE_NEW_SESSION_DISMISS_SAFETY_MS = 1000;
-
-/** Separates the close capsule from the composer card without letting their hit areas meet. */
+export const SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT = 128;
 
 export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
@@ -97,6 +76,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     composerFileScope?: React.ComponentProps<typeof AgentInput>['composerFileScope'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
+    newSessionAfterSendMode?: React.ComponentProps<typeof AgentInput>['newSessionAfterSendMode'];
     /**
      * Registers this panel's Send as the one submission owner a Temporary
      * computer replacement uses. Returns its own unregistration.
@@ -115,6 +95,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     providerLaunchError?: ProviderErrorV1 | null;
     retryProviderLaunch?: () => void;
     launchApproval?: NewSessionLaunchApprovalNoticeState | null;
+    /** The requester's own folders on someone else's machine (MEMBER-WORKSPACE): read state and its hint. */
+    requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
     emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     sessionPromptInputMaxHeight?: number;
@@ -148,6 +130,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     acpSessionModeId?: string | null;
     setAcpSessionModeId?: (modeId: string | null) => void;
     acpConfigOptions?: React.ComponentProps<typeof AgentInput>['acpConfigOptionsOverride'];
+    acpModelConfigOptionId?: React.ComponentProps<typeof AgentInput>['acpModelConfigOptionIdOverride'];
     acpConfigOptionsProbe?: React.ComponentProps<typeof AgentInput>['acpConfigOptionsOverrideProbe'];
     acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
@@ -159,7 +142,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     /** Below the composer card (a seeded draft's provenance footnote). */
     composerBottomContent?: React.ReactNode;
     statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
-    machineName: string | undefined;
+    /** `null`: the Home has no machine yet, and the chip asks where to run ("Run on…"). */
+    machineName: string | null | undefined;
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedPath: string;
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
@@ -173,6 +157,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     useProfiles: boolean;
     selectedProfileId: string | null;
     selectedMachineId?: string | null;
+    /** New's Workflow continuation consumes the same reviewed managed creation draft. */
+    managedMachineDraft?: NewSessionManagedMachineDraftModel;
     isTemporaryComputer?: boolean;
     selectedMachineHomeDir?: string | null;
     profilePopover?: React.ComponentProps<typeof AgentInput>['profilePopover'];
@@ -181,9 +167,9 @@ export type NewSessionSimplePanelProps = Readonly<{
 }>;
 
 /**
- * The capsules at the end of the floating composer's status row: leave, and retract the keyboard
- * while it is up. They sit with the status line and the draft actions so the composer, its status
- * and its way out read as one cluster, not as a control floating above it.
+ * The bottom-anchored floating composer's own actions at the end of its status row: retract the
+ * keyboard while it is up, and leave. The row is the card's header on the band's solid ground, so they
+ * are its quiet icons (as on Docked) and read with the status line and draft actions as one cluster.
  *
  * Its own component because the keyboard subscription has to run INSIDE the scaffold's layout
  * provider; read from the panel body it would resolve to a null context and the dismiss control
@@ -209,13 +195,14 @@ const NewSessionFloatingComposerCapsules = React.memo(
             });
         }, [layout]);
 
+        // Unwrapped, so each icon takes the status row's one gap.
         return (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: NEW_SESSION_CLOSE_BUTTON_GAP }}>
+            <>
                 {isKeyboardOpen ? (
                     <NewSessionComposerKeyboardDismissButton onPress={props.onDismissKeyboard} />
                 ) : null}
                 <NewSessionComposerCloseButton onPress={props.onClose} />
-            </View>
+            </>
         );
     },
 );
@@ -223,24 +210,49 @@ const NewSessionFloatingComposerCapsules = React.memo(
 /**
  * The floating composer's ground on web: the shared modal scrim over the whole window, at the
  * floating glass frost, so the composer, its status line and its actions sit directly on the
- * frosted page with no card around them. Native seats the card with `OverlayScrim`'s short band instead. Pressing it closes.
+ * frosted page with no card around them. Phone layouts use the shared short band instead. Pressing outside closes.
+ *
+ * Where New session shows the background, the frost also carries it softly (owner, 2026-10-29): the
+ * picture its atmosphere frame already holds (its thumbnail when it has one), or a planet-colour glow when
+ * the planet is the source. Solid glass and Reduce Transparency keep the plain scrim.
  */
 function NewSessionWebFloatingBackdrop(props: Readonly<{ onPress: (() => void) | undefined }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { blurEnabled } = useGlassBlurSetting();
+    const strength = useSetting('newSessionBackdropStrengthV1');
+    const backdrop = useAtmosphereBandBoundary()?.backdrop ?? null;
     const scrimStyle = createModalScrimWebStyle({
         overlay: theme.colors.overlay as unknown as { scrim: string; scrimWizard?: string; scrimStrong?: string },
         enableBlur: blurEnabled,
         frost: 'floating',
+        strength,
     }) as unknown as ViewStyle;
+    const picture = useFloatingBackdropPicture(backdrop);
     return (
         <Pressable
             testID="new-session-scrim"
             accessible={false}
             onPress={props.onPress}
             style={[RNStyleSheet.absoluteFill, scrimStyle]}
-        />
+        >
+            {picture ? (
+                <View
+                    testID="new-session-scrim-picture"
+                    pointerEvents="none"
+                    style={createFloatingBackdropPictureWebStyle(picture, strength) as unknown as ViewStyle}
+                />
+            ) : null}
+        </Pressable>
     );
+}
+
+/** The frame already owns the picture; phone Modal and Docked consume one band on every platform. */
+function NewSessionFloatingBand(props: Readonly<{ progress: SharedValue<number>; sidePadding: number; bottomReach: number }>) {
+    const strength = useSetting('newSessionBackdropStrengthV1');
+    const picture = useFloatingBackdropPicture(useAtmosphereBandBoundary()?.backdrop ?? null);
+    return <ScrimBand shown progress={props.progress} strength={strength} picture={picture}
+        rampHeight={SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT} axes="top"
+        reach={{ right: props.sidePadding, bottom: props.bottomReach }} testID="new-session-scrim" />;
 }
 
 export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.ReactElement {
@@ -254,47 +266,13 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
     const isFloatingComposer = useNewSessionFloatingComposer();
     const router = useRouter();
     const navigation = useNavigation();
-    const reducedMotion = useReducedMotionPreference();
-    // Seeded settled for the non-floating case so the sheet path renders exactly as it did before.
-    const enterProgress = useSharedValue(isFloatingComposer ? 0 : 1);
-    const hasStartedEntranceRef = React.useRef(false);
+    const entrance = useFloatingComposerEntrance(isFloatingComposer);
     // Guards against a second dismiss landing while the first is still running.
     const isDismissingRef = React.useRef(false);
     const [isDismissing, setIsDismissing] = React.useState(false);
-    const cardExitProgress = useSharedValue(1);
-
-    // Self-heal: a dismissal that does not actually unmount this screen would otherwise leave the
-    // composer permanently non-interactive — a far worse failure than the double tap the disarm
-    // exists to prevent. The timer is cleared on unmount, so it only fires when the pop did not
-    // happen.
-    const dismissSafetyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    React.useEffect(() => () => {
-        if (dismissSafetyTimerRef.current !== null) clearTimeout(dismissSafetyTimerRef.current);
-    }, []);
-
-    // Started from the composer's FIRST LAYOUT, not from a mount effect. A mount effect fires while
-    // this screen is still doing its (substantial) mount work and before the modal is presented, so
-    // a fixed-duration animation was already finished by the time anything was on screen.
-    const handleComposerEntranceLayout = React.useCallback(() => {
-        if (!isFloatingComposer || hasStartedEntranceRef.current) return;
-        hasStartedEntranceRef.current = true;
-        if (reducedMotion) {
-            enterProgress.value = 1;
-            return;
-        }
-        // One frame after layout, not on the layout callback itself. Layout runs BEFORE
-        // react-native-screens presents the modal — it defers the present to the next main-queue
-        // turn precisely so children are laid out first — so starting here spent the opening frames
-        // off screen and only the tail of the curve was ever visible.
-        requestAnimationFrame(() => {
-            enterProgress.value = withTiming(1, {
-                duration: motionTokens.overlay.popover.enterMs,
-                easing: reanimatedMotionTokens.easing.standard,
-            });
-        });
-    }, [enterProgress, isFloatingComposer, reducedMotion]);
 
     const handleDismissKeyboard = React.useCallback(() => {
+        blurActiveElementOnWeb();
         Keyboard.dismiss();
     }, []);
 
@@ -307,12 +285,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
         if (isDismissingRef.current) return;
         isDismissingRef.current = true;
         setIsDismissing(true);
-        dismissSafetyTimerRef.current = setTimeout(() => {
-            dismissSafetyTimerRef.current = null;
-            isDismissingRef.current = false;
-            cardExitProgress.value = 1;
-            setIsDismissing(false);
-        }, SIMPLE_NEW_SESSION_DISMISS_SAFETY_MS);
 
         const leave = () => {
             // `navigation` matters: without it `safeRouterBack` cannot use `navigation.goBack()` and
@@ -325,21 +297,18 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             // mounted drags the composer — and the scrim's blur layers — down its curve.
             Keyboard.dismiss();
         };
-        if (reducedMotion) {
-            leave();
-            return;
-        }
-        // Only the CARD animates out; the scrim is left where it is. Animating opacity on an
-        // ancestor of the blur stack has the same offscreen-composite cost as moving it.
-        cardExitProgress.value = withTiming(0, {
-            duration: motionTokens.overlay.popover.exitMs,
-            easing: reanimatedMotionTokens.easing.standard,
-        }, (finished) => {
-            if (finished) runOnJS(leave)();
-        });
-    }, [cardExitProgress, navigation, reducedMotion, router]);
+        entrance.leave(leave);
+    }, [entrance.leave, navigation, router]);
 
     const isWebFloatingComposer = isFloatingComposer && Platform.OS === 'web';
+    // Where the floating card rests above the window's foot. On web its frost covers the window, so its
+    // own side margin. A native modal is presented over the app's bar and home indicator, which stay
+    // visible through the band: the card clears them by the gap the Docked card keeps.
+    const { theme } = useUnistyles();
+    const bottomChrome = useSessionCockpitBottomChromeHeight();
+    const floatingRestingGap = Platform.OS === 'web' ? props.newSessionSidePadding
+        : Math.max(props.newSessionSidePadding, bottomChrome + theme.space.s8, props.safeAreaBottom + theme.space.s8);
+    const floatingRestingOffset = Math.max(0, floatingRestingGap - props.newSessionBottomPadding);
     // The modal contract on a keyboard: Escape closes the floating composer (the draft is kept).
     // It is a modal layer like `BaseModal`'s; the composer's popovers and suggestions are scoped
     // under it (`EscapeLayerProvider` below), so they consume Escape first.
@@ -353,26 +322,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
         },
     });
 
-    // Travel only, never opacity: the scrim carries the fade, and a card that never faded in cannot
-    // be left invisible if the entrance is somehow missed — the blank-composer hazard
-    // `ComposerKeyboardScaffold` warns about.
-    // Rise plus a touch of scale. Travel alone reads as a panel being repositioned; the small scale
-    // is what makes it read as a surface arriving. `fromScale` is the shared modal token rather than
-    // a number invented here.
-    const composerEnterStyle = useAnimatedStyle(() => {
-        const settled = enterProgress.value;
-        return {
-            opacity: cardExitProgress.value,
-            transform: [
-                {
-                    translateY: (1 - settled) * SIMPLE_NEW_SESSION_ENTER_TRAVEL_PX
-                        + (1 - cardExitProgress.value) * SIMPLE_NEW_SESSION_EXIT_TRAVEL_PX,
-                },
-                { scale: SIMPLE_NEW_SESSION_ENTER_FROM_SCALE + (1 - SIMPLE_NEW_SESSION_ENTER_FROM_SCALE) * settled },
-            ],
-        };
-    }, [cardExitProgress, enterProgress]);
-
     const composerReservedHeight = props.newSessionBottomPadding
         + (shouldBottomAnchor
             // The floating composer is bottom-anchored but still runs under the status bar and keeps
@@ -381,8 +330,8 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             // and carries the only visible dismiss control off screen with it.
             ? (isFloatingComposer ? props.safeAreaTop + NEW_SESSION_CLOSE_ROW_HEIGHT : 0)
             : props.safeAreaTop + props.newSessionTopPadding);
-    // A centred desktop composer closes from its frosted ground and Escape; the capsules belong to the
-    // bottom-anchored (touch) composition and ride the status row the card already draws.
+    // A centred desktop composer closes from its frosted ground and Escape; its way out belongs to the
+    // bottom-anchored (touch) composition, as the quiet icons of the status row the card already draws.
     const cardPanelProps = isFloatingComposer && shouldBottomAnchor
         ? {
             ...props,
@@ -445,7 +394,10 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
     ];
     return (
         <EscapeLayerProvider layer={escapeLayer}>
-        {isWebFloatingComposer ? (
+        {isWebFloatingComposer ? shouldBottomAnchor ? (
+            <Pressable testID="new-session-backdrop-dismiss" accessible={false}
+                onPress={props.isCreating ? undefined : handleDismissScreen} style={RNStyleSheet.absoluteFill} />
+        ) : (
             <NewSessionWebFloatingBackdrop onPress={props.isCreating ? undefined : handleDismissScreen} />
         ) : null}
         <ComposerKeyboardScaffold
@@ -458,14 +410,11 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             // phantom chrome from the keyboard layout's bootstrap viewport.
             headerHeight={isFloatingComposer ? 0 : props.headerHeight}
             // The scaffold resolves the composer's resting offset as max(keyboardHeight,
-            // safeAreaBottom). A floating card is not seated against the screen edge, so the
-            // home-indicator inset is the wrong resting gap — it leaves the card sitting visibly
-            // higher than its own side margin. The composer wrapper already pads
-            // `newSessionBottomPadding` below the card, so only the remainder belongs here. The
-            // keyboard is always taller than that remainder, so keyboard-open positioning is
-            // unchanged.
+            // safeAreaBottom). A floating card rests at its own gap (above). The composer wrapper
+            // already pads `newSessionBottomPadding` below the card, so only the remainder belongs
+            // here. With the keyboard up the card rides it at that padding, so no bar is cleared twice.
             safeAreaBottom={isFloatingComposer
-                ? Math.max(0, props.newSessionSidePadding - props.newSessionBottomPadding)
+                ? floatingRestingOffset
                 : props.safeAreaBottom}
             style={shellStyle}
             contentStyle={
@@ -480,7 +429,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             composer={(
                 <PopoverBoundaryProvider boundaryRef={props.popoverBoundaryRef}>
                     <Animated.View
-                        onLayout={isFloatingComposer ? handleComposerEntranceLayout : undefined}
+                        onLayout={entrance.onComposerLayout}
                         style={[
                             {
                                 width: '100%',
@@ -490,22 +439,18 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                             // wrapper: that wrapper carries the keyboard seat (translateY =
                             // -bottomInset, written by the keyboard worklets), and the two
                             // transforms must compose rather than compete for one style.
-                            isFloatingComposer ? composerEnterStyle : null,
+                            isFloatingComposer ? entrance.style : null,
                         ]}
                     >
                         {/*
-                          * The scrim is anchored to the CARD, not to the slot. Anchoring it to the
-                          * slot measured its ramp from the top of the close capsule, which put the
-                          * band a capsule-plus-gap higher than the edge it is supposed to seat.
+                          * The scrim shares the card's padded wrapper.
+                          * Its reach starts at that wrapper's foot, not the card's visible edge.
                           */}
                         <View>
                         {shouldBottomAnchor ? null : pendingLaunchPreview}
-                        {isFloatingComposer && !isWebFloatingComposer ? (
-                            <OverlayScrim
-                                progress={enterProgress}
-                                rampHeight={SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT}
-                                testID="new-session-scrim"
-                            />
+                        {isFloatingComposer && (!isWebFloatingComposer || shouldBottomAnchor) ? (
+                            <NewSessionFloatingBand progress={entrance.enterProgress} sidePadding={props.newSessionSidePadding}
+                                bottomReach={Platform.OS === 'web' ? OVERLAY_SCRIM_BOTTOM_EXTENSION : floatingRestingOffset - bottomChrome} />
                         ) : null}
                         <NewSessionComposerCard
                             panelProps={cardPanelProps}

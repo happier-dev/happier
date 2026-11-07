@@ -2,8 +2,8 @@ import { parseConnectedAccountCatalogPhysicalKeyV1, type ConnectedAccountCatalog
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readConnectedAccountCatalog, type ConnectedAccountCatalogSourceAdmission } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
-import { applyConnectedAccountCatalogSnapshot, beginConnectedAccountCatalogLoad, getConnectedAccountCatalogSnapshot,
-    invalidateConnectedAccountCatalogsForServer } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
+import { applyConnectedAccountCatalogSnapshot, beginConnectedAccountCatalogLoad, getConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 type Target = ScopedLoadTarget & ConnectedAccountCatalogSourceAdmission & Readonly<{ scope: ServerAccountScope; catalogKey: ConnectedAccountCatalogKeyV1 }>;
 const targetFor = (scope: ServerAccountScope, catalogKey: ConnectedAccountCatalogKeyV1,
     sourceAdmission?: ConnectedAccountCatalogSourceAdmission): Target => ({
@@ -13,6 +13,7 @@ const targetFor = (scope: ServerAccountScope, catalogKey: ConnectedAccountCatalo
 });
 const publicationGuards = new Map<string, () => void>();
 const loader = createScopedSnapshotLoader<Target>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ key, scope, catalogKey, sourceMachineId }, context) => {
         const guard = publicationGuards.get(key);
         try { guard?.(); } catch { return; }
@@ -27,10 +28,13 @@ const loader = createScopedSnapshotLoader<Target>({
         });
     },
     shouldLoadOnObserve: ({ scope, catalogKey }) => getConnectedAccountCatalogSnapshot(scope, catalogKey)?.status !== 'ready',
-    invalidateServer: invalidateConnectedAccountCatalogsForServer,
-    invalidateTarget: ({ scope, catalogKey }) => beginConnectedAccountCatalogLoad(scope, catalogKey),
+    // Advisory wakes schedule a read without withdrawing the admitted snapshot.
+    invalidateServer: () => undefined,
+    invalidateTarget: ({ scope, catalogKey }, reason) => beginConnectedAccountCatalogLoad(scope, catalogKey, reason !== 'reload'),
     matchesWake: event => event.entityIds === undefined || event.entityIds.some(id =>
         id === 'self' || parseConnectedAccountCatalogPhysicalKeyV1(id) !== null),
+    prepareWake: (event, { catalogKey }) => event.entityIds === undefined || event.entityIds.some(id =>
+        id === 'self' || parseConnectedAccountCatalogPhysicalKeyV1(id) === catalogKey),
     onCredentialMutation: (_event, { scope, catalogKey }) => {
         applyConnectedAccountCatalogSnapshot(scope, catalogKey, { status: 'unavailable', reason: 'unauthorized' }, true);
         return true;

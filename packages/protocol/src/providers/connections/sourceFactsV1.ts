@@ -7,7 +7,29 @@ import type { ProviderConnectionV1 } from './v1.js';
 import type { AccountProviderDeclarationV1 } from '../catalog/accountModelProjectionV1.js';
 import type { DaemonProviderConnectionsDescribeResponseV1 } from '../../rpc/providers.js';
 import { normalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
+import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
 import { providerEndpointPolicySecurityFactsV1 } from '../endpointPolicyV1.js';
+
+/** Only declared credential slots can acquire Saved Secret authority. Clearing stale bindings is independent. */
+export function isProviderConnectionCredentialSlotDeclaredV1(
+  definition: ProviderContributionV1 | CustomProviderTemplateV1,
+  slotId: string,
+): boolean {
+  return definition.credential?.slotId === slotId
+    || readProviderAdditionalCredentialSlotsV1(definition.credential).some(credential => credential.slotId === slotId)
+    || 'kind' in definition && (definition.usageSources ?? []).some(source => source.billingCredential?.slotId === slotId);
+}
+
+/** Presentation of the existing declared custody slots, shared by every editor/read. */
+export function readProviderAdditionalCredentialSlotsV1(credential: ProviderContributionV1['credential'] | CustomProviderTemplateV1['credential']) {
+  const slots = new Map<string, { slotId: string; required: true; label?: PluginLocalizedStringV2 }>();
+  for (const transport of credential?.transports ?? []) {
+    for (const { slotId, label } of transport.additionalCredentials ?? []) {
+      if (!slots.has(slotId)) slots.set(slotId, { slotId, required: true, ...(label === undefined ? {} : { label }) });
+    }
+  }
+  return [...slots.values()];
+}
 
 /** The unconfigured declaration list is the same Account and machine authoring projection. */
 export function projectAvailableProviderContributionsV1(input: Readonly<{
@@ -28,6 +50,7 @@ export function projectAvailableProviderContributionsV1(input: Readonly<{
       credential: definition.credential ? {
         required: definition.credential.required,
         ...(definition.credential.keyUrl ? { keyUrl: definition.credential.keyUrl } : {}),
+        ...(definition.credential.authorityDescription ? { authorityDescription: definition.credential.authorityDescription } : {}),
       } : null,
     }))
     .sort((left, right) => left.name.localeCompare(right.name) || left.contributionKey.localeCompare(right.contributionKey));
@@ -40,6 +63,7 @@ export type ProviderConnectionSourceFactsV1 = Readonly<{
   availabilityProbe?: NonNullable<ProviderContributionV1['discovery']>['availabilityProbe'];
   catalogFallback?: ProviderCatalogCommandFallbackV1;
   modelLoad?: ProviderModelLoadDescriptorV1;
+  inlineCompletion?: ProviderContributionV1['inlineCompletion'];
   usageSources?: ProviderContributionV1['usageSources'];
 }>;
 
@@ -55,6 +79,7 @@ export function readProviderConnectionSourceFactsV1(
     ...(contribution?.discovery ? { availabilityProbe: contribution.discovery.availabilityProbe } : {}),
     ...(contribution?.discovery?.catalogFallback ? { catalogFallback: contribution.discovery.catalogFallback } : {}),
     ...(contribution?.modelLoad ? { modelLoad: contribution.modelLoad } : {}),
+    ...(contribution?.inlineCompletion ? { inlineCompletion: contribution.inlineCompletion } : {}),
     ...(contribution?.usageSources ? { usageSources: contribution.usageSources } : {}),
   };
 }

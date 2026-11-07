@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol/account/settings/accountSettings';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
 import {
-    clearNewSessionOrdinaryEntryDraftIdExact,
     pickLocalOnlyAccountSettings,
-    readNewSessionOrdinaryEntryDraftId,
-    setNewSessionOrdinaryEntryDraftId,
     stripLocalOnlyAccountSettings,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import { LOCAL_ACCOUNT_SETTING_DEFINITIONS, parseLocalAccountSettings } from '@/sync/domains/settings/registry/local/localAccountSettingDefinitions';
@@ -103,16 +100,16 @@ describe('localOnlyAccountSettings', () => {
             lastUsedBackendTarget: {
                 kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'review-bot',
             },
-            lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
             clientEncryptionRequirementLocalV1: 'require_e2ee',
         });
+        expect(picked).not.toHaveProperty('lastNewSessionAgentPickerViewV1');
     });
 
     it('declares last-used session creation settings as local-only in the canonical registry metadata', () => {
         expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS.lastUsedAgent.storageScope).toBe('local');
         expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS.lastUsedBackendTarget.storageScope).toBe('local');
-        expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS.lastNewSessionAgentPickerViewV1.storageScope).toBe('local');
-        expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS.newSessionOrdinaryEntryDraftId.storageScope).toBe('local');
+        expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS).not.toHaveProperty('lastNewSessionAgentPickerViewV1');
+        expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS).not.toHaveProperty('newSessionOrdinaryEntryDraftId');
         expect(LOCAL_ACCOUNT_SETTING_DEFINITIONS.clientEncryptionRequirementLocalV1.storageScope).toBe('local');
         expect(ACCOUNT_SETTING_ARTIFACTS.definitions.clientEncryptionRequirementV1.storageScope).toBe('account');
     });
@@ -136,23 +133,4 @@ describe('localOnlyAccountSettings', () => {
         }
     });
 
-    it('owns exact read, set, and clear operations for the scoped ordinary-entry pointer', () => {
-        const firstDraftId = '4a506d8a-85bd-4c42-a662-6f502f3acc45';
-        const secondDraftId = '23c4d625-58a3-499d-bd2c-a7dd13e352e8';
-
-        expect(readNewSessionOrdinaryEntryDraftId({ newSessionOrdinaryEntryDraftId: firstDraftId }))
-            .toBe(firstDraftId);
-        expect(setNewSessionOrdinaryEntryDraftId(firstDraftId)).toEqual({
-            newSessionOrdinaryEntryDraftId: firstDraftId,
-        });
-        expect(setNewSessionOrdinaryEntryDraftId('not-a-uuid')).toBeNull();
-        expect(clearNewSessionOrdinaryEntryDraftIdExact(
-            { newSessionOrdinaryEntryDraftId: firstDraftId },
-            secondDraftId,
-        )).toBeNull();
-        expect(clearNewSessionOrdinaryEntryDraftIdExact(
-            { newSessionOrdinaryEntryDraftId: firstDraftId },
-            firstDraftId,
-        )).toEqual({ newSessionOrdinaryEntryDraftId: null });
-    });
 });

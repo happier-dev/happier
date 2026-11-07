@@ -3,10 +3,7 @@ import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { writeSessionAttachmentDrafts } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
 import { readNewSessionAttachmentDrafts } from '../attachments/newSessionAttachmentDraftStore';
 import { resolveNewSessionDraftAttachmentFlowId } from '../attachments/newSessionDraftAttachmentFlowId';
-import { clearNewSessionOrdinaryEntryDraftIdExact } from '@/sync/domains/settings/localOnlyAccountSettings';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { clearOrdinaryNewSessionDraftIdExact } from '@/sync/domains/state/newSessionTargetUiState';
 import {
     captureSessionDraftCurrentness,
     captureSessionDraftLaunchCurrentness,
@@ -194,14 +191,5 @@ export async function clearCapturedNewSessionDraftAfterLaunch(params: Readonly<{
             userAttemptId: launchUserAttemptId,
         });
     }
-    const pointerDelta = clearNewSessionOrdinaryEntryDraftIdExact(
-        getStorage().getState().settings ?? settingsDefaults,
-        params.draftId,
-    );
-    if (pointerDelta) {
-        getSyncSingleton().applySettings(pointerDelta, {
-            expectedSettingsScope: params.scope,
-            source: 'ui',
-        });
-    }
+    clearOrdinaryNewSessionDraftIdExact(params.scope, params.draftId);
 }

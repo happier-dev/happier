@@ -2,12 +2,16 @@ import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/pr
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readProviderCatalog } from '@/sync/api/account/apiProviderCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
+import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
 import { applyProviderCatalogSnapshot, beginProviderCatalogLoad, getProviderCatalogSnapshot,
-    invalidateProviderCatalogsForServer, type ProviderCatalogCryptoAdmission } from '@/sync/store/settings/providerCatalogSnapshot';
+    type ProviderCatalogCryptoAdmission } from '@/sync/store/settings/providerCatalogSnapshot';
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 const targetFor = (scope: ServerAccountScope): Target => ({ key: `providers:${serverAccountScopeKeySuffix(scope)}`, serverId: scope.serverId, scope });
 const publicationGuards = new Map<string, () => void>();
+/** Targets whose last completed read left source or history cleanup pending. */
+const sourceCleanupPending = new Set<string>();
 const loader = createScopedSnapshotLoader<Target>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ key, scope }, context) => {
         const guard = publicationGuards.get(key);
         try { guard?.(); } catch { return; }
@@ -15,9 +19,14 @@ const loader = createScopedSnapshotLoader<Target>({
         let cryptoAdmission: ProviderCatalogCryptoAdmission | null = null;
         return context.readWithMaintenance<Awaited<ReturnType<typeof readProviderCatalog>>>({
             read: publication => readProviderCatalog(scope, undefined, guard, { ...publication,
+                sourceCleanupPending: sourceCleanupPending.has(key),
                 onCryptoAdmission: admission => { cryptoAdmission = admission; },
             }),
             publish: (catalog, current) => {
+                if (catalog.status === 'ready' && catalog.cleanup) {
+                    if (catalog.cleanup.status === 'cleanup-pending') sourceCleanupPending.add(key);
+                    else sourceCleanupPending.delete(key);
+                }
                 try { guard?.(); } catch { return; }
                 applyProviderCatalogSnapshot(scope, catalog, current, cryptoAdmission);
             },
@@ -25,8 +34,9 @@ const loader = createScopedSnapshotLoader<Target>({
         });
     },
     shouldLoadOnObserve: ({ scope }) => getProviderCatalogSnapshot(scope)?.status !== 'ready',
-    invalidateServer: invalidateProviderCatalogsForServer,
-    invalidateTarget: ({ scope }) => beginProviderCatalogLoad(scope),
+    // Advisory wakes schedule a read without withdrawing the admitted snapshot.
+    invalidateServer: () => undefined,
+    invalidateTarget: ({ scope }, reason) => beginProviderCatalogLoad(scope, reason !== 'reload'),
     matchesWake: event => event.entityIds === undefined || event.entityIds.some(id =>
         id === 'self' || id === PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1),
     onCredentialMutation: (_event, { scope }) => {
@@ -43,4 +53,4 @@ export function invalidateProviderCatalogAfterAcknowledgedMutation(scope: Server
         if (publicationGuards.get(target.key) === assertCurrent) publicationGuards.delete(target.key);
     });
 }
-export function resetProviderCatalogEngineForTests(): void { loader.resetForTests(); publicationGuards.clear(); }
+export function resetProviderCatalogEngineForTests(): void { loader.resetForTests(); publicationGuards.clear(); sourceCleanupPending.clear(); }

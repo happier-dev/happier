@@ -1,5 +1,5 @@
 import { loadProviderConnectionsCatalogV1, listProviderConnectionsCatalogSavedSecretRefsV1,
-    readRetainedProviderConnectionsCatalogV1, type ProviderConnectionImportIntentV1,
+    providerConnectionsSourceNeedsCleanupV1, readRetainedProviderConnectionsCatalogV1, type ProviderConnectionImportIntentV1,
     type ProviderConnectionsCatalogImportInputV1, type ProviderConnectionsCatalogImportResultV1 } from '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema,
@@ -11,8 +11,9 @@ import type { ProviderCatalogCryptoAdmission } from '@/sync/store/settings/provi
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { readRetainedAccountSettingsRaw } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { importLegacySavedSecretsInContext } from '@/sync/ops/settings/savedSecretResourceOperations';
 import { captureSavedSecretReferenceRevisionsInContext } from './apiSavedSecretCatalog';
@@ -48,13 +49,15 @@ async function projectCatalogForCurrentMode<TCatalog extends ProviderConnections
     context: LazyActionAccountContext, catalog: TCatalog, mode: 'plain' | 'e2ee',
 ) {
     const { encryption } = await context.resolveAccountEncryption();
-    const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
+    const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
     context.assertCurrent();
     return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' } as const;
 }
 type ReadPublication = Readonly<{
     onReady?: (catalog: ProviderConnectionsCatalogSnapshotV1, isCurrent: () => boolean) => void;
     hasPendingCleanup?: () => boolean;
+    /** This Account's previous read left its source or history cleanup pending. */
+    sourceCleanupPending?: boolean;
     onCryptoAdmission?: (admission: ProviderCatalogCryptoAdmission | null) => void;
     importConnection?: never;
 }>;
@@ -98,6 +101,8 @@ export async function readProviderCatalogInContext(context: LazyActionAccountCon
                     publication.onReady!(await project(ready), context.accountLifetime.isCurrent);
                 } } : {}),
                 transfer: {
+                    needsSourceCleanup: () => providerConnectionsSourceNeedsCleanupV1({
+                        rawSettings: readRetainedAccountSettingsRaw(scope), cleanupPending: publication?.sourceCleanupPending === true }),
                     readSourceSnapshot: async () => {
                         const readSource = async () => {
                             const { encryption } = await context.resolveAccountEncryption();
@@ -177,7 +182,14 @@ export function prepareProviderCatalogMutationInContext(context: LazyActionAccou
     return admit(context, 'fresh-authority', async (mode, material) => {
         const references = listProviderConnectionsCatalogSavedSecretRefsV1(input.catalog).map(reference => reference.secretId);
         const captures = await captureSavedSecretReferenceRevisionsInContext(context, { references, signal,
-            savedSecretRevisions: input.savedSecretRevisions, pendingResourceIds: input.pendingResourceIds });
+            savedSecretRevisions: input.savedSecretRevisions, pendingResourceIds: input.pendingResourceIds }).catch(error => {
+                // The shared Saved Secret capture refuses before the Provider
+                // row write. Preserve that domain failure through Action dispatch.
+                if (error instanceof Error && error.message === 'saved-secret-unavailable') {
+                    throw createProviderErrorV1('provider_secret_unavailable');
+                }
+                throw error;
+            });
         context.assertCurrent();
         return ProviderConnectionsRowMutationV1Schema.parse({ expectedRevision: input.expectedRevision,
             content: sealProviderConnectionsContentV1({ mode, material, catalog: input.catalog, randomBytes: getRandomBytes }), ...captures,

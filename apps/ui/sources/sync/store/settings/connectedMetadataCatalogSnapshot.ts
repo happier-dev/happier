@@ -6,6 +6,7 @@ import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/dom
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { isDemoModeActive } from '@/demoMode/runtime/enterExitDemoMode';
 import { canPublishCatalogReceipt, retainCatalogRevision } from './wholeCatalogReceiptOrdering';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 export type ConnectedMetadataCatalogSnapshot = ConnectedMetadataCatalogV1 & Readonly<{
     labelsByKey: Readonly<Record<string, string>>;
@@ -41,20 +42,16 @@ function withdraws(reason: string): boolean {
         || ['account-mode-mismatch', 'encryption-material-unavailable', 'account-not-found',
             'account-inconsistent', 'invalid-stored-content'].includes(reason);
 }
-function retainUnchangedRecord<T extends string | boolean>(previous: Readonly<Record<string, T>>, next: Readonly<Record<string, T>>) {
-    const keys = Object.keys(next);
-    return keys.length === Object.keys(previous).length && keys.every(key => previous[key] === next[key]) ? previous : next;
-}
 function numericRevision(revision: number | 'absent'): number | undefined {
     return typeof revision === 'number' ? revision : undefined;
 }
 function projectSnapshot(projection: ConnectedMetadataCatalogV1, previous: ConnectedMetadataCatalogSnapshot): ConnectedMetadataCatalogSnapshot {
     const presentation = projection.presentation;
     const acknowledgements = projection.acknowledgements;
-    const labelsByKey = retainUnchangedRecord(previous.labelsByKey,
+    const labelsByKey = retainDeep(previous.labelsByKey,
         presentation.status === 'ready' || presentation.status === 'partial' ? projectConnectedPresentationLabelsV1(presentation)
             : presentation.status === 'unavailable' && withdraws(presentation.reason) ? emptyLabels : previous.labelsByKey);
-    const acknowledgementsByKey = retainUnchangedRecord(previous.acknowledgementsByKey,
+    const acknowledgementsByKey = retainDeep(previous.acknowledgementsByKey,
         acknowledgements.status === 'ready' || acknowledgements.status === 'partial'
             ? Object.fromEntries(acknowledgements.entries.map(entry => [connectedAcknowledgementSubjectKeyV1(entry.subject), entry.acknowledged]))
             : acknowledgements.status === 'unavailable' && withdraws(acknowledgements.reason) ? emptyAcknowledgements : previous.acknowledgementsByKey);
@@ -100,9 +97,8 @@ export function applyConnectedMetadataCatalogSnapshot(scope: ServerAccountScope,
     snapshots.set(key, { scope, snapshot: next });
     for (const listener of [...listeners]) listener();
 }
-export function beginConnectedMetadataCatalogLoad(scope: ServerAccountScope): void {
+/** Refresh is transport work; only explicit invalidation withdraws retained admission. */
+export function beginConnectedMetadataCatalogLoad(scope: ServerAccountScope, invalidate = false): void {
+    if (!invalidate && snapshots.has(serverAccountScopeKeySuffix(scope))) return;
     applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'loading' }, acknowledgements: { status: 'loading' }, disclosure: [] }, true);
-}
-export function invalidateConnectedMetadataCatalogsForServer(serverId: string): void {
-    for (const { scope } of snapshots.values()) if (scope.serverId === serverId) beginConnectedMetadataCatalogLoad(scope);
 }
