@@ -8,6 +8,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import type { DaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/session/process/agentRuntimeDaemonTurnContributionsBridge';
 
 import { createSessionPromptPlanResolver } from './sessionPromptPlan';
+import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
+import type { SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
@@ -22,6 +24,7 @@ import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { applyInitialSessionCreationFactsToMetadata } from '@/agent/runtime/createSessionMetadata';
+import { applyDisplayTitleSessionMetadata, projectCurrentAgentSessionView } from '@happier-dev/agents/session/state/metadataWriters';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1,
   projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
@@ -61,6 +64,30 @@ function createProjectedIdentityTestMetadata(params: Parameters<typeof projectSe
 }
 
 describe('session prompt-plan producer', () => {
+  it.each(['codex', 'claude', 'gemini', 'opencode', 'pi', 'auggie'])('delivers admitted built-in instructions inline for %s without a skill-file read', async agentId => {
+    const deploy = readReadOnlySkillContentV1('happier:deploy')!;
+    const item = { skillId: 'happier:deploy', name: deploy.frontmatter.name, digest: deploy.digest,
+      state: 'delivered' as const, reason: 'rule_on' as const };
+    let plan: SessionSkillPlanV1 = { plan: 'session_dir', items: [item], nativeDisables: [], diagnostics: [] };
+    const resolve = createSessionPromptPlanResolver({
+      opts: { credentials: { token: 'inline-skills-test', encryption: null } },
+      session: Object.assign(createApiSessionClientFixture(), { sessionId: 'inline-skills-session',
+        getMetadataSnapshot: () => createTestMetadata() }),
+      agentId, machineId: 'test-machine', directory: '/tmp/project', memoryRecallGuidanceEnabled: false,
+      readNativeSessionId: () => 'native', daemonBridge,
+      readSessionSkills: () => ({ plan, indexItems: [] }),
+    });
+    // Native roots, ACP config/env/defaults and index delivery share this prompt producer.
+    for (const kind of ['session_dir', 'index'] as const) {
+      plan = { ...plan, plan: kind, items: [item] };
+      expect(await resolve()).toContain(deploy.skillMd);
+      for (const state of ['off', 'excluded', 'masked_by_native', 'unavailable'] as const) {
+        plan = { ...plan, items: [{ ...item, state }] };
+        expect(await resolve()).not.toContain(deploy.skillMd);
+      }
+    }
+  });
+
   it('withdraws prepared compaction guidance when its delivered Action tool is disabled', async () => {
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'compaction-context-account' })).toString('base64url')}.signature`, encryption: null };
     const scopeKey = resolveAccountSettingsScopeKey(credentials);
@@ -85,6 +112,49 @@ describe('session prompt-plan producer', () => {
       ...settings, actionsSettingsV1: { v: 1, actions: { 'session.compact': { enabled: false } } },
     }) });
     expect(resolve.assertPreparedPlanCurrent).toThrow(expect.objectContaining({ reason: 'active-account-settings-changed' }));
+  });
+
+  it('stops initial naming when the Session has a title before a fresh native conversation', async () => {
+    let metadata = createTestMetadata({ flavor: 'claude' });
+    let nativeSessionId = 'first-native';
+    const resolve = createSessionPromptPlanResolver({
+      opts: { credentials: { token: 'title-context-token', encryption: null } },
+      session: Object.assign(createApiSessionClientFixture(), { sessionId: 'retained-title', getMetadataSnapshot: () => metadata }),
+      agentId: 'codex', machineId: 'test-machine', directory: '/tmp/project',
+      memoryRecallGuidanceEnabled: false, readNativeSessionId: () => nativeSessionId, daemonBridge,
+    });
+    expect(await resolve()).toContain('change_title');
+    metadata = createTestMetadata(projectCurrentAgentSessionView(
+      applyDisplayTitleSessionMetadata(metadata, { title: 'Original task', updatedAt: 1 }),
+      { agentId: 'codex', agentScopedCurrentState: 'clear' },
+    ));
+    nativeSessionId = 'fresh-target-conversation';
+    expect(await resolve()).not.toContain('change_title');
+    expect(resolve.readCodingPromptBehavior?.()?.sessionTitleUpdates).toBe('initial');
+  });
+
+  it('keeps the delivered plan unchanged when the Agent fulfils initial naming in the same native conversation', async () => {
+    let metadata = createTestMetadata({ flavor: 'codex' });
+    let nativeSessionId: string | null = null;
+    const resolve = createSessionPromptPlanResolver({
+      opts: { credentials: { token: 'title-fulfilled-token', encryption: null } },
+      session: Object.assign(createApiSessionClientFixture(), { sessionId: 'title-fulfilled', getMetadataSnapshot: () => metadata }),
+      agentId: 'codex', machineId: 'test-machine', directory: '/tmp/project',
+      memoryRecallGuidanceEnabled: false, readNativeSessionId: () => nativeSessionId, daemonBridge,
+    });
+    // Startup plan: prepared before the native conversation exists.
+    const startup = await resolve();
+    expect(startup).toContain('change_title');
+    const startupRevision = resolve.readStartupInstructions?.()?.revision;
+    // Turn 1 opens the conversation and the Agent sets the title it was asked for.
+    nativeSessionId = 'native-conversation';
+    metadata = createTestMetadata(projectCurrentAgentSessionView(
+      applyDisplayTitleSessionMetadata(metadata, { title: 'Agent chosen title', updatedAt: 1 }),
+      { agentId: 'codex', agentScopedCurrentState: 'clear' },
+    ));
+    // Turn 2 preparation: a fulfilled one-shot instruction is not a plan revision.
+    expect(await resolve()).toBe(startup);
+    expect(resolve.readStartupInstructions?.()?.revision).toBe(startupRevision);
   });
 
   beforeEach(() => { installEmptyProjectAccountRowsHttpBoundary(); });

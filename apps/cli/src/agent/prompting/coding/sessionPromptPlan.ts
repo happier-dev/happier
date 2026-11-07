@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { hasSessionTitleInMetadata } from '@happier-dev/protocol/sessions/metadata/sessionTitle';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import type { AgentSessionStartupInstructionsV1, SessionRolePromptContextV1, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -6,6 +7,7 @@ import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/
 import type { DaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/session/process/agentRuntimeDaemonTurnContributionsBridge';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { renderSkillIndexV1 } from '@happier-dev/protocol/prompts/library/skills/skillIndexV1';
+import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import type { SkillLibraryItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import type { SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -130,6 +132,21 @@ export function createSessionPromptPlanResolver(params: Readonly<{
   let startupInstructions: AgentSessionStartupInstructionsV1 | null = null;
   const compositionScope = createPromptCompositionScope();
   let composition: PromptPlanComposition | null = null;
+  // Title presence the plan was first prepared with for one native conversation.
+  // Initial naming is a one-shot instruction scoped to the conversation start:
+  // the Agent fulfilling it is not a plan revision, which would reopen the
+  // native runtime to redeliver startup instructions. A new conversation
+  // (null → id adopts the startup one) takes the current title presence.
+  let titleBasis: Readonly<{ conversationId: string | null; titled: boolean }> | null = null;
+  const readPlanTitleBasis = (metadata: ReturnType<typeof params.session.getMetadataSnapshot>): boolean => {
+    const conversationId = params.readNativeSessionId();
+    if (!titleBasis || (titleBasis.conversationId !== null && conversationId !== titleBasis.conversationId)) {
+      titleBasis = { conversationId, titled: hasSessionTitleInMetadata(metadata) };
+    } else if (titleBasis.conversationId === null && conversationId !== null) {
+      titleBasis = { conversationId, titled: titleBasis.titled };
+    }
+    return titleBasis.titled;
+  };
   let preparedBehavior: Readonly<{ accountSnapshot: ReturnType<typeof getActiveAccountSettingsSnapshot>; settings: Record<string, unknown> | null;
     profileId: string | null; behavior: CodingPromptBehaviorV1; operationContext?: SavedSecretOperationContextV1;
     activeAccountSnapshot: ReturnType<typeof getActiveAccountSettingsSnapshot> }> | null = null;
@@ -189,9 +206,22 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     const skills = params.readSessionSkills?.();
     const skillIndex = skills?.plan.plan === 'index' && toolDelivery !== 'unsupported'
       ? renderSkillIndexV1(skills.indexItems, params.session.sessionId) : '';
+    // Built-in guidance must not depend on an Agent guessing a native path or
+    // asking the person to approve a shell read. Selection stays with the skill plan.
+    const builtInSkillInstructions = skills?.plan.items.flatMap(item => {
+      if (item.state !== 'delivered') return [];
+      const content = readReadOnlySkillContentV1(item.skillId);
+      return content && !content.frontmatter.disableModelInvocation ? [content.skillMd] : [];
+    }).join('\n\n') ?? '';
+    const skillPromptBlocks = [
+      ...(skillIndex ? [{ id: 'skills.index', scope: 'user_prompt' as const, text: skillIndex }] : []),
+      ...(builtInSkillInstructions ? [{ id: 'skills.built_in', scope: 'user_prompt' as const,
+        text: `The following Happier built-in skill instructions are already loaded. Use them directly; no SKILL.md file read is needed.\n\n${builtInSkillInstructions}` }] : []),
+    ];
     const plan = await resolveEffectiveCodingPromptPlan({
       ...stackInputs,
       sessionMetadata,
+      sessionTitled: readPlanTitleBasis(sessionMetadata),
       compositionScope,
       signal,
       baseOverride,
@@ -206,8 +236,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
       memoryMachineId: params.machineId,
       memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
       toolPromptContributions: promptContributions.toolPromptContributions,
-      promptAssetBlocks: skillIndex ? [...promptContributions.promptAssetBlocks,
-        { id: 'skills.index', scope: 'user_prompt', text: skillIndex }] : promptContributions.promptAssetBlocks,
+      promptAssetBlocks: [...promptContributions.promptAssetBlocks, ...skillPromptBlocks],
     }).catch(async (error: unknown) => {
       signal.throwIfAborted();
       // Failed preparation can carry private admission facts from the retired Account.
