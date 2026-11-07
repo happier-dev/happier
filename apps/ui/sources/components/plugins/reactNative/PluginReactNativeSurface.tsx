@@ -174,8 +174,11 @@ const resetFeedbackStyles = StyleSheet.create({
         minHeight: 0,
         position: 'relative',
     },
+    // As the targeted root: content-sized under a scroller, it grows into a bounded region (QB-55/81).
     contentSurface: {
+        flexGrow: 1,
         minWidth: 0,
+        minHeight: 0,
         position: 'relative',
     },
     retainedStatus: {
@@ -777,7 +780,12 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         // The first load (or a candidate still proving itself) is not a failure:
         // show the destination-shaped placeholder, not an "unavailable" card. A
         // user-pressed retry keeps its acknowledgement on the card it came from.
-        const initialLoadInFlight = !retrying && (Boolean(props.load) || pendingModule !== null);
+        // The host can still be establishing the source before it can supply a loader.
+        const initialLoadInFlight = !retrying && (
+            props.renderContext.surface.machineConnectionPending === true
+            || Boolean(props.load)
+            || pendingModule !== null
+        );
         return (
             <>
             {initialLoadInFlight ? (

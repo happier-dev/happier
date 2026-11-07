@@ -1,6 +1,7 @@
-import { PluginUiRevealSessionInputRequestV1Schema, PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
+    PluginUiSetPageNavigationRequestV1Schema,
     PluginUiActionControlRequestV1Schema,
+    PluginUiSetUnsavedChangesRequestV1Schema,
     PluginUiWidgetAreaRequestV1Schema,
     PluginUiWidgetAreaResultV1Schema,
     PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema,
@@ -12,6 +13,7 @@ import {
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
     PluginUiExecuteActionRequestV1Schema,
+    PluginUiDownloadFileRequestV1Schema,
     PluginUiActionAdmissionResultV1Schema,
     PluginUiEphemeralInputSettlementV1Schema,
     PluginUiAcquireComposerInputLockRequestV1Schema,
@@ -27,6 +29,7 @@ import {
     PluginUiOpenAutomationEventRequestV1Schema,
     PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiOpenConnectedAccountsResultV1Schema,
+    PluginUiOpenManagedMachineConfigurationRequestV1Schema,
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
@@ -43,6 +46,9 @@ import {
     PluginUiSelectActionInputResultV1Schema,
     PluginUiWatchComposerRequestV1Schema,
     PluginUiReadSessionRequestV1Schema,
+    PluginUiReadMachineDisplayNameRequestV1Schema,
+    PluginUiReadMachineDisplayNameResultV1Schema,
+    PluginUiRevealSessionInputRequestV1Schema,
     PluginUiReadSessionResultV1Schema,
     PluginUiReadStoredImageRequestV1Schema,
     PluginUiReadStoredImageResultV1Schema,
@@ -65,6 +71,7 @@ import {
     type PluginUiWatchSessionRequestV1,
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { FilesystemDownloadOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { randomUUID } from '@/platform/randomUUID';
 import {
     OpenableContentReadResultV1Schema,
@@ -87,7 +94,6 @@ import {
 import { loadPluginUiHostSupport } from '../hostApi/loadPluginUiHostSupport';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from '../hostApi/negotiatedMethods';
-import { pluginSurfaceSettlementSurvivesRetirement } from '../hostApi/outwardEffectSettlement';
 import { createPluginUiHostSubscriptionRegistry } from '../hostApi/subscriptions';
 import {
     createPluginSurfaceHostApiPluginErrorData,
@@ -162,7 +168,7 @@ function createHostApiError(
     code: string,
     diagnostics: readonly string[] = [],
     message?: string,
-    metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
+    metadata?: Pick<import('@happier-dev/protocol/plugins/ui').PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'> & Readonly<{ requestId?: string }>,
 ): PluginError {
     return new PluginError(createPluginSurfaceHostApiPluginErrorData(code, diagnostics, message, metadata));
 }
@@ -309,26 +315,18 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         const response = await (subscriptionEstablishmentMethods.has(method)
             ? settlement
             : settleWithCallerCancellation(settlement, options?.signal));
-        // The ONE settlement rule both physical carriers apply (§3.5): a
-        // retirement the carrier only observes AFTER the mounted owner settled
-        // an outward effect must not erase it — the navigation or settlement
-        // already happened, and `stale_surface` would tell the author nothing
-        // happened after something did, inviting a blind retry. Reads and
-        // decisions are answers ABOUT the mount, so the same shared classifier
-        // still refuses them from a mount that can no longer vouch for the
-        // answer. This replaces the per-method post-request `assertActive`
-        // placement it once took: adding a method can no longer require a
-        // second, implicit retirement decision.
+        // Finite work keeps its admitted outcome. A disposed carrier is a dead
+        // sink; subscription establishment owns its own late-lease cleanup.
         if (
             method !== 'disposeHostResource'
-            && (disposed || params.isRequestSurfaceCurrent?.(params.requestSurface) === false)
+            && disposed
             && !subscriptionEstablishmentMethods.has(method)
-            && !pluginSurfaceSettlementSurvivesRetirement({ method, response, requestPayload: payload })
         ) {
             throwHostApiError('stale_surface');
         }
         if (response.kind === 'error') {
-            throw createHostApiError(response.payload.code, response.payload.diagnostics, response.payload.message, response.payload);
+            throw createHostApiError(response.payload.code, response.payload.diagnostics, response.payload.message,
+                { ...response.payload, requestId: response.requestId });
         }
         return response.payload;
     }
@@ -724,7 +722,7 @@ function canonicalReferencePayload(reference: string | Readonly<{ pluginId: stri
         : { pluginId: reference.pluginId, localId: reference.localId };
 }
 
-function canonicalResourceReferencePayload(reference: Parameters<PluginUiHostApi['readResource']>[0]): PluginUiJsonValueV1 {
+function canonicalResourceReferencePayload(reference: Parameters<PluginUiHostApi['watchResource']>[0]): PluginUiJsonValueV1 {
     const parsed = PluginUiResourceSubscriptionTargetV1Schema.safeParse(reference);
     if (!parsed.success) throwHostApiError('invalid_payload', ['resource_reference_invalid']);
     return parsed.data;
@@ -834,19 +832,13 @@ function readCanonicalComposerContentInspection(value: PluginUiJsonValueV1 | und
  *   and never reports the withdrawal as a user decision;
  * - a host settlement that wins before withdrawal stays authoritative;
  *   cancellation does not promise to roll back a host effect;
- * - post-settlement retirement is decided ONCE by the shared outward-effect
- *   classifier (`../hostApi/outwardEffectSettlement`) at the request carrier,
- *   not by per-method `assertActive` placement: an accepted outward effect
- *   (including `openNewSession` and a terminal `settleEphemeralInput`)
- *   survives the retirement it caused, while reads and decisions are still
- *   refused from a mount that can no longer vouch for them. Subscription
- *   establishments keep their own establishment-currentness owner with its
- *   exact late-admission host cleanup.
+ * - finite work keeps its admitted result across an authority change; physical
+ *   disposal drops its late response. Subscription establishments keep their
+ *   own establishment-currentness owner and exact late-lease cleanup.
  */
 export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<{
     surface: SurfaceContext;
     requestSurface: PluginUiSurfaceContextV1;
-    requestIdPrefix: string;
     handleRequest: PluginReactNativeHostApiRequestHandler;
     installedMethods: readonly PluginUiHostMethodV1[];
     /**
@@ -886,14 +878,18 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
     let currentSurface = params.surface;
     const selectedInputs = createSelectedActionInputCustody();
     const contextWatchers = new Set<(surface: SurfaceContext) => void>();
-    let subscriptionSequence = 0;
     const disposables = new Set<() => void>();
+
+    function assertDeliveryActive(signal?: AbortSignal): void {
+        if (disposed) throwHostApiError('stale_surface');
+        throwIfAborted(signal);
+    }
 
     function assertActive(signal?: AbortSignal): void {
         if (!isCurrent()) {
             throwHostApiError('stale_surface');
         }
-        throwIfAborted(signal);
+        assertDeliveryActive(signal);
     }
 
     function assertInstalled(method: PluginUiHostMethodV1): void {
@@ -952,6 +948,9 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         return Object.freeze({ dispose: wrapped });
     }
 
+    // Subscription addresses, like request ids, are opaque wire correlation.
+    // Mount/artifact/target identity stays in the admitted surface envelope;
+    // embedding it here can exceed the daemon's existing subscription-id bound.
     const apiShape: PluginUiHostApi = {
         actionControl: async (control, controller, options) => {
             assertActive(options?.signal);
@@ -983,8 +982,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         watchEntityDragDrop: async (request, listener, options) => {
             assertActive(options?.signal); assertInstalled('watchEntityDragDrop');
             const payload = PluginUiWatchEntityDragDropRequestV1Schema.parse(request);
-            subscriptionSequence += 1;
-            const subscription = await transport.watchEntityDragDrop({ ...payload, subscriptionId: `${params.requestIdPrefix}:entity:${subscriptionSequence}` }, listener, options);
+            const subscription = await transport.watchEntityDragDrop({ ...payload, subscriptionId: randomUUID() }, listener, options);
             if (disposed || options?.signal?.aborted) { await subscription.dispose(); assertActive(options?.signal); }
             return disposable(() => { void subscription.dispose(); });
         },
@@ -1055,6 +1053,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const actionRequest = PluginUiExecuteActionRequestV1Schema.safeParse({
                 action,
                 ...(input === undefined ? {} : { input }),
+                ...(options?.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
             });
             if (!actionRequest.success) throwHostApiError('invalid_payload');
             // This mounted-host fact intentionally has no public SDK option
@@ -1090,6 +1089,16 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             // result and encourage a blind retry.
             return result;
         }) as PluginUiHostApi['executeAction'],
+        downloadFile: async (download, options) => {
+            assertActive(options?.signal);
+            assertInstalled('downloadFile');
+            const payload = PluginUiDownloadFileRequestV1Schema.safeParse(download);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const result = FilesystemDownloadOutputSchema.safeParse(await transport.request('downloadFile', payload.data,
+                options?.signal ? { signal: options.signal } : undefined));
+            if (!result.success) throwHostApiError('invalid_payload', ['download_result_invalid']);
+            return result.data;
+        },
         selectActionInput: async (selectionRequest, options) => {
             assertActive(options?.signal);
             assertInstalled('selectActionInput');
@@ -1167,10 +1176,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            // No post-settlement `assertActive`: the mounted owner records the
-            // settlement and closes the ephemeral surface as a consequence, so
-            // the accepted settlement stays a success (the shared outward-effect
-            // classifier owns that decision at the request carrier).
         },
         readResource: async (resource, options) => {
             assertActive(options?.signal);
@@ -1179,7 +1184,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 resource: canonicalResourceReferencePayload(resource),
             }, options?.signal ? { signal: options.signal } : undefined);
             const resourceContent = await readCanonicalResource(result);
-            assertActive(options?.signal);
+            assertDeliveryActive(options?.signal);
             return resourceContent;
         },
         statOpenableContent: async (ref, options) => {
@@ -1209,10 +1214,9 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         watchResource: async (resource, listener, options) => {
             assertActive(options?.signal);
             assertInstalled('watchResource');
-            subscriptionSequence += 1;
             const subscription = await transport.watchResource(
                 {
-                    subscriptionId: `${params.requestIdPrefix}:resource:${subscriptionSequence}`,
+                    subscriptionId: randomUUID(),
                     resource: canonicalResourceReferencePayload(resource) as PluginUiResourceSubscriptionRequestV1['resource'],
                 },
                 listener,
@@ -1280,10 +1284,9 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         watchSession: async (sessionId, listener, options) => {
             assertActive(options?.signal);
             assertInstalled('watchSession');
-            subscriptionSequence += 1;
             const subscription = await transport.watchSession(
                 {
-                    subscriptionId: `${params.requestIdPrefix}:session:${subscriptionSequence}`,
+                    subscriptionId: randomUUID(),
                     sessionId,
                 },
                 listener,
@@ -1297,9 +1300,8 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         },
         watchLiveStream: async (reference, listener, options) => {
             assertActive(options?.signal); assertInstalled('watchLiveStream');
-            subscriptionSequence += 1;
             const subscription = await transport.watchLiveStream({ reference,
-                subscriptionId: `${params.requestIdPrefix}:stream:${subscriptionSequence}` }, listener,
+                subscriptionId: randomUUID() }, listener,
                 options?.signal ? { signal: options.signal } : undefined);
             if (disposed || options?.signal?.aborted) { await subscription.dispose(); assertActive(options?.signal); }
             return disposable(() => { void subscription.dispose(); });
@@ -1338,9 +1340,8 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const payload = PluginUiWatchComposerRequestV1Schema.safeParse({ ref });
             if (!payload.success) throwHostApiError('invalid_payload');
             assertComposerScopeSupported(payload.data.ref);
-            subscriptionSequence += 1;
             const subscription = await transport.watchComposer({
-                subscriptionId: `${params.requestIdPrefix}:composer:${subscriptionSequence}`,
+                subscriptionId: randomUUID(),
                 ...payload.data,
             }, listener, options?.signal ? { signal: options.signal } : undefined);
             if (disposed || options?.signal?.aborted) {
@@ -1394,9 +1395,8 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             });
             if (!payload.success) throwHostApiError('invalid_payload');
             assertComposerScopeSupported(payload.data.ref);
-            subscriptionSequence += 1;
             const subscription = await transport.acquireComposerInputLock({
-                subscriptionId: `${params.requestIdPrefix}:composer-lock:${subscriptionSequence}`,
+                subscriptionId: randomUUID(),
                 ...payload.data,
             }, options?.signal ? { signal: options.signal } : undefined);
             if (disposed || options?.signal?.aborted) {
@@ -1451,6 +1451,13 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 options?.signal ? { signal: options.signal } : undefined,
             );
         },
+        openManagedMachineConfiguration: async (request, options) => {
+            assertActive(options?.signal);
+            assertInstalled('openManagedMachineConfiguration');
+            const payload = PluginUiOpenManagedMachineConfigurationRequestV1Schema.safeParse(request);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request('openManagedMachineConfiguration', payload.data, options);
+        },
         openConnectedAccounts: async (request = {}, options) => {
             assertActive(options?.signal);
             assertInstalled('openConnectedAccounts');
@@ -1476,6 +1483,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 // Protocol schema owns what a legal location is.
                 ...(options?.subPath !== undefined ? { subPath: options.subPath } : {}),
                 ...(options?.instanceKey !== undefined ? { instanceKey: options.instanceKey } : {}),
+                ...(options?.presentation !== undefined ? { presentation: options.presentation } : {}),
             }, options?.signal ? { signal: options.signal } : undefined);
         },
         // EU-5b's interaction counterpart: the page's OWN location, replaced in
@@ -1489,6 +1497,8 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const payload = PluginUiReplacePageLocationRequestV1Schema.safeParse({
                 subPath,
                 ...(options?.backLocation === undefined ? {} : { backLocation: options.backLocation }),
+                ...(options?.preserveUnsavedChanges === undefined ? {} : { preserveUnsavedChanges: options.preserveUnsavedChanges }),
+                ...(options?.view === undefined ? {} : { view: options.view }),
             });
             if (!payload.success) throwHostApiError('invalid_payload');
             const settled = PluginUiReplacePageLocationResultV1Schema.safeParse(await transport.request(
@@ -1499,13 +1509,25 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             if (!settled.success) throwHostApiError('invalid_payload', ['page_location_result_invalid']);
             return Object.freeze(settled.data);
         },
+        setPageNavigation: async (navigation, options) => {
+            assertInstalled('setPageNavigation');
+            const payload = PluginUiSetPageNavigationRequestV1Schema.parse({ navigation });
+            await transport.request('setPageNavigation', payload, options?.signal ? { signal: options.signal } : undefined);
+        },
+        setUnsavedChanges: async (isDirty, options) => {
+            assertActive(options?.signal);
+            assertInstalled('setUnsavedChanges');
+            const payload = PluginUiSetUnsavedChangesRequestV1Schema.safeParse({ isDirty });
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request('setUnsavedChanges', payload.data, options?.signal ? { signal: options.signal } : undefined);
+        },
         admitAction: async (action, input, options) => {
             assertActive(options?.signal);
             assertInstalled('admitAction');
             const payload = PluginUiExecuteActionRequestV1Schema.safeParse({ action, ...(input === undefined ? {} : { input }) });
             if (!payload.success) throwHostApiError('invalid_payload');
             const result = await transport.request('admitAction', payload.data, options?.signal ? { signal: options.signal } : undefined);
-            assertActive(options?.signal);
+            assertDeliveryActive(options?.signal);
             const parsed = PluginUiActionAdmissionResultV1Schema.safeParse(result);
             if (!parsed.success) throwHostApiError('invalid_payload');
             return parsed.data.admitted;
@@ -1536,7 +1558,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             // plugin would read as the user's decision — while the signal
             // beside the request lets the mount dismiss the open dialog.
             const { decodePluginUiConfirmResult } = await loadPluginUiHostSupport();
-            assertActive(options?.signal);
+            assertDeliveryActive(options?.signal);
             const decoded = decodePluginUiConfirmResult(result);
             if (!decoded.ok) throwHostApiError('invalid_payload', [decoded.diagnostic]);
             return decoded.value;
@@ -1557,7 +1579,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 options?.signal ? { signal: options.signal } : undefined,
             );
             const { decodePluginUiClipboardReadResult } = await loadPluginUiHostSupport();
-            assertActive(options?.signal);
+            assertDeliveryActive(options?.signal);
             const decoded = decodePluginUiClipboardReadResult(result);
             if (!decoded.ok) throwHostApiError('invalid_payload', [decoded.diagnostic]);
             return decoded.value;
@@ -1579,6 +1601,11 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 { url },
                 options?.signal ? { signal: options.signal } : undefined,
             );
+        },
+        openResource: async (resource, options) => {
+            assertActive(options?.signal);
+            assertInstalled('openResource');
+            await transport.request('openResource', resource, options?.signal ? { signal: options.signal } : undefined);
         },
     };
     const api = Object.freeze(apiShape);

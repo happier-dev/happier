@@ -63,7 +63,6 @@ const defaultCanonicalSurface = createPluginSurfaceContextFixture({
 const defaultHostApiAdapter = createCanonicalPluginReactNativeHostApiAdapter({
     surface: defaultCanonicalSurface,
     requestSurface: surfaceContext,
-    requestIdPrefix: 'rn:test-default',
     handleRequest: async () => ({ accepted: true }),
     installedMethods: PLUGIN_UI_HOST_METHODS_V1,
 });
@@ -132,7 +131,7 @@ describe('PluginReactNativeSurface', () => {
 
         const screen = await renderScreen(<PluginReactNativeSurface
             surfaceId="surface_1"
-            renderContext={defaultRenderContext}
+            renderContext={{ ...defaultRenderContext, surface: createPluginSurfaceContextFixture({ machineConnectionPending: true }) }}
             decision={{ state: 'fallback', reason: 'channel_policy_denied', diagnostics: [], fallback: { kind: 'hostedWeb', contributionId: 'web' } }}
             load={load}
                     />);
@@ -176,6 +175,32 @@ describe('PluginReactNativeSurface', () => {
         expect(text).toContain('pluginSurfaces.state.offline.titleNothingLoaded');
         expect(text).not.toContain('pluginReactNative.unavailable');
         expect(text).not.toContain('pluginRuntime.unavailableGeneric');
+    });
+
+    it.each([true, false])('keeps a starting source on loading rows until readiness settles (interaction %s)', async (interactionEnabled) => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const element = (machineConnectionPending: boolean, module?: PluginReactNativeSurfaceModule) => <PluginReactNativeSurface
+            surfaceId="surface_1"
+            renderContext={{ ...defaultRenderContext, surface: createPluginSurfaceContextFixture({ machineConnectionPending }) }}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            interactionEnabled={interactionEnabled}
+            module={module}
+        />;
+
+        const screen = await renderScreen(element(true));
+        expect(screen.findByTestId('plugin-rn-ui-loading')).toBeTruthy();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('pluginRuntime.unavailableGeneric');
+
+        await screen.update(element(false));
+        expect(screen.findByTestId('plugin-rn-ui-loading')).toBeNull();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+
+        await screen.update(element(true, {
+            renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-started' }),
+        }));
+        expect(screen.findByTestId('plugin-native-started')).toBeTruthy();
+        expect(screen.findByTestId('plugin-rn-ui-loading')).toBeNull();
     });
 
     it('renders a compatible loaded module through the boundary', async () => {
@@ -266,7 +291,6 @@ describe('PluginReactNativeSurface', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surfaceContext,
-            requestIdPrefix: 'rn-v2:test',
             handleRequest: vi.fn(async () => ({ accepted: true })),
             installedMethods: PLUGIN_UI_HOST_METHODS_V1,
         });
@@ -311,7 +335,6 @@ describe('PluginReactNativeSurface', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surfaceContext,
-            requestIdPrefix: 'rn-v2:private-context',
             handleRequest: vi.fn(async () => ({ accepted: true })),
             installedMethods: PLUGIN_UI_HOST_METHODS_V1,
         });
@@ -528,7 +551,6 @@ describe('PluginReactNativeSurface', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surfaceContext,
-            requestIdPrefix: 'rn-v2:retained-private-bindings',
             handleRequest: vi.fn(async () => ({ accepted: true })),
             installedMethods: PLUGIN_UI_HOST_METHODS_V1,
         });
@@ -638,7 +660,6 @@ describe('PluginReactNativeSurface', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: lightSurface,
             requestSurface: surfaceContext,
-            requestIdPrefix: 'rn-v2:retained-theme',
             handleRequest: vi.fn(async () => ({ accepted: true })),
             installedMethods: PLUGIN_UI_HOST_METHODS_V1,
         });
