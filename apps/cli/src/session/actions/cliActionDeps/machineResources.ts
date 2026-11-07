@@ -1,8 +1,5 @@
-import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
-import { MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
-import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
+import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliActionDepsParams } from './types';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
@@ -10,12 +7,12 @@ import { verifyManagedCreationAdminAccessInput, verifyManagedCreationAgentIsolat
 import { executeCapturedMachineAction } from '@/api/machine/capturedMachineAction';
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
+import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
 import { MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
 import { MACHINE_STORAGE_ACTION_INPUT_SCHEMAS, MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/storage';
 import { MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS, MACHINE_PROCESSES_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineProcesses';
 import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -24,9 +21,13 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { CliProjectAdmission, CliProjectAdmissionFailure } from './projectAdmission';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { createMachineServiceControlAction } from './machineServiceControl';
+import { createMachineServiceExecAction } from './machineServiceExec';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import type { CliDeploymentEnvironmentAccessRead, CliDeploymentEnvironmentAccessObserve } from '@/deployments/createCliDeploymentActionDeps';
 export function createCliMachineResourceActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'token' | 'externalActionMachineInstallationId' | 'externalActionMachineRequestPrivateKey' | 'serverIdentityId' | 'machineActionDirectTargetTransport' | 'machineGuardAction' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
-  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, deploymentStorage, executionRunActionFailure, machineRebootReferences }: Readonly<{
+  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, readEnvironmentAccess, observeEnvironmentAccessChanges, executionRunActionFailure, machineRebootReferences }: Readonly<{
     projectHomeAdmission: CliProjectAdmission['projectHomeAdmission'];
     callMachineAction: CliMachineActionCall;
     assertProjectRequesterCurrent: CliProjectAdmission['assertProjectRequesterCurrent'];
@@ -34,24 +35,46 @@ export function createCliMachineResourceActionDeps(
     withProjectHome: CliProjectAdmission['withProjectHome'];
     projectHomeId: string;
     machineRebootReferences?: ActionExecutorDeps['machineRebootReferences'];
-    deploymentStorage: NonNullable<ActionExecutorDeps['deploymentAction']>;
+    readEnvironmentAccess: CliDeploymentEnvironmentAccessRead;
+    observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
-): Pick<ActionExecutorDeps, 'machineReachabilityAction' | 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineResourcesPolicyAction' | 'machineGuardAction' | 'usageSourceAction'> {
-  // The incumbent log reader and inventory projection consume one captured Account read.
-  // Keep log refusal codes unchanged; inventory receives only the resulting read fact.
+): Pick<ActionExecutorDeps, 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineGuardAction' | 'usageSourceAction'> {
+  const canReadServiceEnvironments = async (serverId: string, environmentIds: readonly string[],
+    context: ActionExecutorContext, actionId: string): Promise<ReadonlySet<string>> => {
+    const result = await readEnvironmentAccess({ serverId, environmentIds }, context, actionId);
+    if (result.ok) return new Set(result.items.map(item => item.environmentId));
+    // Genuine forbidden membership is empty; a failed access read is not an authoritative empty list.
+    if ('errorCode' in result) throw result;
+    if (result.error === 'deployment_access_denied') return new Set();
+    throw executionRunActionFailure(result.error);
+  };
+  // Inventory/reboot, finite logs and process disclosure share current access facts.
   const canReadServiceEnvironment = async (serverId: string, environmentId: string,
-    context: ActionExecutorContext): Promise<true | CliProjectAdmissionFailure> => {
-    const result = await deploymentStorage('deployments.environments.get', { serverId, environmentId }, context);
-    const opened = DeploymentEnvironmentGetResultV1Schema.safeParse(result);
-    if (!opened.success) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
-    if (!opened.data.ok) return executionRunActionFailure(opened.data.error);
-    if (opened.data.environment.id !== environmentId || !opened.data.environment.capabilities.read) {
-      return { ok: false, errorCode: 'service_unavailable', error: 'service_unavailable' };
-    }
-    return true;
+    context: ActionExecutorContext, actionId = 'machines.services.logs.read'): Promise<true | CliProjectAdmissionFailure> => {
+    const result = await readEnvironmentAccess({ serverId, environmentIds: [environmentId] }, context, actionId);
+    if ('errorCode' in result) return result;
+    if (!result.ok) return executionRunActionFailure(result.error);
+    return result.items.some(item => item.environmentId === environmentId)
+      ? true : { ok: false, errorCode: 'service_unavailable', error: 'service_unavailable' };
   };
   return {
+    machineServiceExec: createMachineServiceExecAction({
+      ...(params.machineActionDirectTargetTransport ? { directMachineId: params.machineActionDirectTargetTransport.machineId } : {}),
+      serverId: projectHomeId, callMachineAction, admit: projectAccountAdmission,
+      assertCurrent: async context => {
+        context.signal?.throwIfAborted();
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        await assertProjectRequesterCurrent(context);
+      },
+      canExecuteEnvironment: async (serverId, environmentId, context) => {
+        const result = await readEnvironmentAccess({ serverId, environmentIds: [environmentId] }, context, 'machines.services.exec');
+        if ('errorCode' in result) return result;
+        if (!result.ok) return executionRunActionFailure(result.error);
+        return result.items.some(item => item.environmentId === environmentId && item.deploy)
+          ? true : { ok: false, errorCode: 'service_exec_denied', error: 'service_exec_denied' };
+      },
+    }),
     machineReboot: async ({ input, context, signal }) => {
       const denied = await projectAccountAdmission(input.serverId, context);
       if (denied) return denied;
@@ -66,9 +89,7 @@ export function createCliMachineResourceActionDeps(
         // Only the receiving factory installs this private callback, with its
         // genuine stamped ingress. Other local callers still traverse Home.
         if (direct?.machineId === input.machineId && direct.machineReboot) return direct.machineReboot({ input, context,
-          canReadEnvironments: async environmentIds => new Set((await Promise.all(environmentIds.map(async environmentId =>
-            await canReadServiceEnvironment(input.serverId, environmentId, context) === true ? environmentId : null)))
-            .filter((environmentId): environmentId is string => environmentId !== null)),
+          canReadEnvironments: environmentIds => canReadServiceEnvironments(input.serverId, environmentIds, context, 'machines.reboot'),
           ...(machineRebootReferences ? { readDeploymentReferences: () => readMachineDeploymentReferencesV1({
             homeId: projectHomeId, machineId: input.machineId, signal,
           }, page => machineRebootReferences({ input, context, cursor: page.cursor, signal })) } : {}),
@@ -89,10 +110,10 @@ export function createCliMachineResourceActionDeps(
         await assertProjectRequesterCurrent(context);
       },
       canControlEnvironment: async (serverId, environmentId, context) => {
-        const result = DeploymentEnvironmentGetResultV1Schema.safeParse(await deploymentStorage('deployments.environments.get', { serverId, environmentId }, context));
-        if (!result.success) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
-        if (!result.data.ok) return executionRunActionFailure(result.data.error);
-        return result.data.environment.id === environmentId && result.data.environment.capabilities.deploy
+        const result = await readEnvironmentAccess({ serverId, environmentIds: [environmentId] }, context, 'machines.services.control');
+        if ('errorCode' in result) return result;
+        if (!result.ok) return executionRunActionFailure(result.error);
+        return result.items.some(item => item.environmentId === environmentId && item.deploy)
           ? true : { ok: false, errorCode: 'service_control_denied', error: 'service_control_denied' };
       },
     }),
@@ -151,7 +172,7 @@ export function createCliMachineResourceActionDeps(
             ...(['machines.processes.list', 'machines.processes.get', 'machines.processes.check'].includes(actionId) ? {
               processEnvironmentRead: async (target: Readonly<{ serverId: string; environmentId: string }>) => {
                 await assertCurrent();
-                const readable = await canReadServiceEnvironment(target.serverId, target.environmentId, context);
+                const readable = await canReadServiceEnvironment(target.serverId, target.environmentId, context, actionId);
                 await assertCurrent();
                 return readable === true;
               },
@@ -226,10 +247,7 @@ export function createCliMachineResourceActionDeps(
         const policyRequest = actionId === 'machines.agentIsolation.status' ? null
           : MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
         const request = policyRequest ?? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.status'].parse(input);
-        const effectActionId = actionId === 'machines.agentIsolation.preview'
-          && resolveMachineRpcExternalActionEffectV1(actionId, context.externalActionExecutionAuthorization?.binding)
-            === 'machines.agentIsolation.set' ? 'machines.agentIsolation.set' : actionId;
-        if (policyRequest && effectActionId !== 'machines.agentIsolation.status' && !await verifyManagedCreationAgentIsolationInput({ actionId: effectActionId,
+        if (policyRequest && actionId !== 'machines.agentIsolation.status' && !await verifyManagedCreationAgentIsolationInput({ actionId,
           request: policyRequest, context,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
           privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
@@ -242,9 +260,9 @@ export function createCliMachineResourceActionDeps(
           signal?.throwIfAborted();
         };
         const invoke = (options = {}) => callMachineAction({ machineId: request.machineId, serverId, method: actionId,
-          request: { ...request, serverId }, authority: context.authority, context, effectActionId, exactMachine: true,
+          request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
           ...(signal ? { signal } : {}), ...options });
-        if (actionId === 'machines.agentIsolation.preview') { await assertCurrent(); return invoke(); }
+        if (actionId === 'machines.agentIsolation.preview' || actionId === 'machines.agentIsolation.status') { await assertCurrent(); return invoke(); }
         const { executeCapturedMachineAction } = await import('@/api/machine/capturedMachineAction');
         return executeCapturedMachineAction({ actionId, assertCurrent, invoke });
       });
@@ -264,7 +282,8 @@ export function createCliMachineResourceActionDeps(
             ? direct.machineServiceAction({ actionId, input, context, ...(signal ? { signal } : {}),
               requesterAccountId: context.externalActionExecutionAuthorization?.requesterAccountProjection?.accountId
                 ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
-              canReadEnvironment: async environmentId => await canReadServiceEnvironment(input.serverId, environmentId, context) === true })
+              canReadEnvironments: environmentIds => canReadServiceEnvironments(input.serverId, environmentIds, context, actionId),
+              observeEnvironmentAccessChanges: listener => observeEnvironmentAccessChanges({ serverId: input.serverId }, context, listener) })
             : { kind: 'unavailable', reason: 'admission_unavailable' };
         }
         return callMachineAction({ machineId: input.machineId, serverId: input.serverId,
@@ -272,14 +291,15 @@ export function createCliMachineResourceActionDeps(
           ...(signal ? { signal } : {}), ...options });
       } }));
     },
-    machineServiceScope: async ({ input, context }) => {
+    machineServiceScope: async ({ actionId, input, context }) => {
       const direct = params.machineActionDirectTargetTransport;
       if (!direct || direct.machineId !== input.machineId) return null;
       const denied = await projectAccountAdmission(input.serverId, context);
       if (denied) return denied;
-      const { withMachineServiceTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
+      const { withMachineServiceTarget, withMachineServiceLogTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
+      const select = actionId === MACHINE_SERVICE_LOGS_READ_ACTION_ID ? withMachineServiceLogTarget : withMachineServiceTarget;
       const resource = context.machineServiceLogsResource;
-      return withMachineServiceTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
+      return select({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
         ...(context.signal ? { signal: context.signal } : {}), assertCurrent: async () => {
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
@@ -297,9 +317,12 @@ export function createCliMachineResourceActionDeps(
         serverId: input.serverId, method: RPC_METHODS.MACHINES_SERVICE_LOGS_READ, request: input,
         authority: context.authority, context, effectActionId: 'machines.services.logs.read', exactMachine: true,
         ...(signal ? { signal } : {}) });
-      const { withMachineServiceTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
+      const [{ withMachineServiceLogTarget }, { canReadIncompleteSecretMaskingForHost }] = await Promise.all([
+        import('@/daemon/local/services/launch/machineServiceTarget'),
+        import('@/plugins/runtime/invocation/services/managedServiceNativeLogs'),
+      ]);
       const resource = context.machineServiceLogsResource;
-      return withMachineServiceTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
+      return withMachineServiceLogTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
         ...(signal ? { signal } : {}), ...(approvalScope ? { approvalScope } : {}), assertCurrent: async () => {
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
@@ -309,8 +332,13 @@ export function createCliMachineResourceActionDeps(
           const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
           if (allowed !== true) return allowed;
         }
-        const result = await (handle.readLogs?.({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(signal ? { signal } : {}) })
+        const allowIncompleteSecretMasking = canReadIncompleteSecretMaskingForHost(context)
+          && selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId }).kind === 'owner_person';
+        const result = await (handle.readLogs?.({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(signal ? { signal } : {}),
+          ...(allowIncompleteSecretMasking ? { allowIncompleteSecretMasking: true as const } : {}) })
           ?? { kind: 'unavailable' as const, reason: 'unsupported' as const });
+        // This finite page belongs to the admitted read. Access withdrawal is
+        // enforced at the next read or the existing open-stream boundary.
         if (resource?.sourceRevision !== undefined && result.kind === 'page' && result.page.sourceRevision !== resource.sourceRevision)
           return { kind: 'source-changed' as const, sourceRevision: result.page.sourceRevision };
         const observation = resource?.observation;
@@ -318,18 +346,60 @@ export function createCliMachineResourceActionDeps(
           if (!handle.watchLogs) return { kind: 'unavailable' as const, reason: 'unsupported' as const };
           const retired = () => observation.retire();
           handle.retirementSignal.addEventListener('abort', retired, { once: true });
+          const cursor = result.page.nextCursor ?? input.cursor;
           let subscription: Awaited<ReturnType<NonNullable<typeof handle.watchLogs>>>;
           try {
             subscription = await handle.watchLogs({ signal: observation.signal,
-              ...(input.cursor ? { cursor: input.cursor } : {}), emit: observation.emit });
+              ...(cursor ? { cursor } : {}), emit(value) {
+                if (handle.kind === 'adopted') { observation.emit(value); return; }
+                // Native invalidations carry no page, but must stop demanding
+                // output once this Environment is no longer readable.
+                void canReadServiceEnvironment(input.serverId, handle.environmentId, context).then(allowed => {
+                  if (observation.signal.aborted) return;
+                  if (allowed === true && !handle.retirementSignal.aborted && handle.isCurrent()) observation.emit(value);
+                  else observation.retire();
+                }).catch(() => observation.retire());
+              } });
           } catch (error) { handle.retirementSignal.removeEventListener('abort', retired); throw error; }
           observation.accept({ async dispose() {
             handle.retirementSignal.removeEventListener('abort', retired);
             await subscription.dispose();
           } });
+          if (handle.kind !== 'adopted') {
+            const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
+            if (allowed !== true) { observation.retire(); return allowed; }
+          }
           if (handle.retirementSignal.aborted || !handle.isCurrent()) observation.retire();
         }
         return result;
+      });
+    },
+    machineReachabilityAction: async ({ actionId, input, context, signal }) => {
+      const parsed = MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
+      if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const serverId = parsed.data.serverId ?? context.serverId ?? projectHomeId;
+      const denied = await projectAccountAdmission(serverId, context);
+      if (denied) return denied;
+      const assertCurrent = async () => {
+        signal?.throwIfAborted();
+        const scopeDenied = await projectAccountAdmission(serverId, context);
+        if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
+        await assertProjectRequesterCurrent(context);
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        signal?.throwIfAborted();
+      };
+      return withProjectHome(async () => {
+        const raw = await executeCapturedMachineAction({ actionId, assertCurrent,
+          invoke: options => callMachineAction({ machineId: parsed.data.machineId, serverId,
+            method: getActionSpec(actionId).bindings!.rpcMethod!, request: { ...parsed.data, serverId },
+            authority: context.authority, context, effectActionId: actionId, exactMachine: true,
+            ...(signal ? { signal } : {}), ...options }) });
+        const failure = ActionExecuteFailureSchema.safeParse(raw);
+        if (failure.success) return failure.data;
+        const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(raw);
+        if (deferred.success && deferred.data.actionId === actionId) return deferred.data;
+        const output = MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1[actionId].safeParse(raw);
+        return output.success ? output.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
       });
     },
     machineAdminAccessAction: async ({ actionId, input, context, signal }) => {
@@ -445,34 +515,5 @@ export function createCliMachineResourceActionDeps(
         },
       })(request, { ...context, serverId: request.input.serverId });
     },
-
-machineReachabilityAction: async ({ actionId, input, context, signal }) => {
-      const parsed = MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
-      if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-      const serverId = parsed.data.serverId ?? context.serverId ?? projectHomeId;
-      const denied = await projectAccountAdmission(serverId, context);
-      if (denied) return denied;
-      const assertCurrent = async () => {
-        signal?.throwIfAborted();
-        const scopeDenied = await projectAccountAdmission(serverId, context);
-        if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
-        await assertProjectRequesterCurrent(context);
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
-        signal?.throwIfAborted();
-      };
-      return withProjectHome(async () => {
-        const raw = await executeCapturedMachineAction({ actionId, assertCurrent,
-          invoke: options => callMachineAction({ machineId: parsed.data.machineId, serverId,
-            method: getActionSpec(actionId).bindings!.rpcMethod!, request: { ...parsed.data, serverId },
-            authority: context.authority, context, effectActionId: actionId, exactMachine: true,
-            ...(signal ? { signal } : {}), ...options }) });
-        const failure = ActionExecuteFailureSchema.safeParse(raw);
-        if (failure.success) return failure.data;
-        const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(raw);
-        if (deferred.success && deferred.data.actionId === actionId) return deferred.data;
-        const output = MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1[actionId].safeParse(raw);
-        return output.success ? output.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
-      });
-    }
-};
+  };
 }

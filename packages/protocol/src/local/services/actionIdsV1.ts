@@ -7,7 +7,8 @@ export const MACHINE_SERVICE_FRONTDOOR_ACTION_IDS = [
   'machines.services.list', 'machines.services.discovery', 'machines.services.detail',
   'machines.services.watch', 'machines.services.unwatch', 'machines.services.adopt',
 ] as const;
-export const MACHINE_SERVICE_ACTION_IDS = [...MACHINE_SERVICE_FRONTDOOR_ACTION_IDS, 'machines.services.logs.read', 'machines.services.control', 'machines.services.exec'] as const;
+export const MACHINE_SERVICE_LOGS_READ_ACTION_ID = 'machines.services.logs.read' as const;
+export const MACHINE_SERVICE_ACTION_IDS = [...MACHINE_SERVICE_FRONTDOOR_ACTION_IDS, MACHINE_SERVICE_LOGS_READ_ACTION_ID, 'machines.services.control', 'machines.services.exec'] as const;
 
 export const LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION = Object.freeze({
   'localServices.actions.copyUrl': 'copy_url',
