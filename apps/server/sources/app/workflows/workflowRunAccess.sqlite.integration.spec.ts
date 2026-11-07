@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
-import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1, type WorkflowDefinitionV1 } from "@happier-dev/protocol/workflows";
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1, type WorkflowDefinitionV1 } from "@happier-dev/protocol/workflows";
 import { WorkflowRunSummaryV1Schema } from "@happier-dev/protocol/workflows/workflowProgressV1";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
-import { admitWorkflowRun, getWorkflowRun, listWorkflowRuns, pauseWorkflowRun, resolveAutomationWorkflowAcceptedSnapshot, summarizeWorkflowRuns } from "./workflowRunService";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
+import { admitWorkflowRun, getWorkflowRun, listWorkflowRuns, pauseWorkflowRun, resolveAutomationWorkflowAcceptedSnapshot, summarizeWorkflowRuns, setWorkflowRunReadState } from "./workflowRunService";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerWorkflowRunStorageRoutes } from "@/app/api/routes/automations/registerWorkflowRunStorageRoutes";
 import { registerDiscussionRoutes } from "@/app/api/routes/discussions/registerDiscussionRoutes";
@@ -15,7 +16,6 @@ import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAc
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { inTx } from "@/storage/inTx";
 import { readWorkflowRunKeyProjectionsInTx, resolveWorkflowRunAdmissionVisibilityInTx } from "./workflowRunAccess";
-import { logger } from "@/utils/logging/log";
 import { readTeamSummaryForActorInTx } from "@/app/teams/lifecycle";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
@@ -34,7 +34,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    async function fixture() {
+    async function fixture(withApprovedOperation = false) {
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const viewer = await db.account.create({ data: { encryptionMode: "plain" } });
         const team = await db.team.create({ data: { name: "Workflow viewers" } });
@@ -44,17 +44,25 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
             dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
         await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
-        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "test", metadataVersion: 1 } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host: 'workflow-test', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }), metadataVersion: 1,
+            dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)) } });
         const runId = crypto.randomUUID();
         const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
             { kind: "wait", id: "answer", document: { text: "Answer", references: [], attachments: [] }, result: { kind: "text" } },
         ] };
         const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: "plain",
             binding: { v: 1, purpose: "accepted_snapshot", accountId: owner.id, runId },
-            acceptedSnapshot: await materializeWorkflowAcceptedSnapshotFixture({ definition, context: {
+            acceptedSnapshot: { ...await materializeWorkflowAcceptedSnapshotFixture({ definition, context: {
                 source: { kind: "inline", sourceArtifactId: artifact.id }, inputs: {}, machineId: machine.id, executionTarget: { kind: "session" },
                 workspaceTarget: { project: { machineId: machine.id, directory: "/repo", checkoutRootPath: "/repo" } },
                 origin: { kind: "direct" }, authorization: { principal: { kind: "host" } } } }),
+                ...(withApprovedOperation ? { approvedOperation: {
+                    parent: { actionId: 'machines.setup.apply', input: { machineId: machine.id, setup: {} } },
+                    approvedBy: { accountId: owner.id },
+                    steps: [{ actionId: 'machines.setup.apply', input: { machineId: machine.id, setup: {} } }],
+                } } : {}) },
         }));
         await db.automationRun.create({ data: { id: runId, accountId: owner.id, originKind: "direct", causeKind: null,
             sourceArtifactId: artifact.id, visibleTeamId: team.id, state: "queued", scheduledAt: new Date(), dueAt: new Date(),
@@ -104,6 +112,66 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         } finally {
             vi.unstubAllEnvs();
         }
+    });
+
+    it('stores exact approved operation content in the existing private Run envelope and revokes its reader with Team access', async () => {
+        const f = await fixture(true);
+        const stored = await getWorkflowRun({ accountId: f.viewer.id, runId: f.runId });
+        expect(stored.acceptedEnvelope).toBe(f.acceptedEnvelope);
+        const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: f.owner.id, runId: f.runId },
+            envelope: parseWorkflowStoredContentEnvelopeV1(stored.acceptedEnvelope) });
+        expect(opened).toMatchObject({ kind: 'available', content: { approvedOperation: {
+            approvedBy: { accountId: f.owner.id },
+            steps: [{ actionId: 'machines.setup.apply', input: { machineId: f.machine.id, setup: {} } }],
+        } } });
+        expect(stored.run).not.toHaveProperty('approvedOperation');
+        await db.teamMembership.update({ where: { id: f.membership.id }, data: { status: 'suspended' } });
+        await expect(getWorkflowRun({ accountId: f.viewer.id, runId: f.runId })).rejects.toMatchObject({ code: 'run_not_found' });
+    });
+
+    it('keeps failure seen owner-only, rejects stale observations, and preserves independent holds and new failures', async () => {
+        const f = await fixture();
+        const failedAt = new Date('2026-10-23T10:00:00.000Z');
+        await db.automationRun.update({ where: { id: f.runId }, data: { state: 'failed', revision: 2, startedAt: failedAt, finishedAt: failedAt } });
+        expect((await getWorkflowRun({ accountId: f.owner.id, runId: f.runId })).run)
+            .toMatchObject({ state: 'failed', failureUnseen: true, attentionRequired: true, invocationAttentionRequired: false });
+        expect((await getWorkflowRun({ accountId: f.viewer.id, runId: f.runId })).run)
+            .toMatchObject({ state: 'failed', failureUnseen: false, attentionRequired: false, attentionSeenFailureAt: null });
+        const sourceSummary = (accountId: string) => summarizeWorkflowRuns({ accountId,
+            sourceArtifactIds: [f.artifact.id], recent: 3, pageByteLimit: 1_000_000 });
+        expect((await sourceSummary(f.owner.id)).summaries[0]).toMatchObject({ needsYouCount: 1, needsYouRunId: f.runId,
+            recent: [{ runId: f.runId, state: 'failed', failureUnseen: true, invocationAttentionRequired: false, attentionRequired: true }] });
+        expect((await sourceSummary(f.viewer.id)).summaries[0]).toMatchObject({ needsYouCount: 0,
+            recent: [{ runId: f.runId, state: 'failed', failureUnseen: false, invocationAttentionRequired: false, attentionRequired: false }] });
+        const observed = { runId: f.runId, revision: 2, failedAt: failedAt.toISOString() };
+        await expect(setWorkflowRunReadState({ ...observed, accountId: f.viewer.id })).rejects.toMatchObject({ code: 'run_access_denied' });
+        await expect(setWorkflowRunReadState({ ...observed, accountId: f.owner.id, revision: 1 })).rejects.toMatchObject({ code: 'currentness_conflict' });
+        await expect(setWorkflowRunReadState({ ...observed, accountId: f.owner.id, failedAt: '2026-10-22T10:00:00.000Z' })).rejects.toMatchObject({ code: 'currentness_conflict' });
+        await withAuthenticatedTestApp(app => registerWorkflowRunStorageRoutes(app), async app => {
+            const response = await app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                headers: { 'x-test-user-id': f.owner.id }, payload: { operation: 'read_state.set', ...observed } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ runId: f.runId, attentionSeenFailureAt: observed.failedAt });
+        });
+        await db.automationRun.update({ where: { id: f.runId }, data: { revision: 3, workflowCustodyState: 'settled' } });
+        expect((await getWorkflowRun({ accountId: f.owner.id, runId: f.runId })).run)
+            .toMatchObject({ revision: 3, failureUnseen: false, attentionRequired: false });
+        expect((await sourceSummary(f.owner.id)).summaries[0]).toMatchObject({ needsYouCount: 0,
+            lastRun: { failureUnseen: false, invocationAttentionRequired: false, attentionRequired: false } });
+        await expect(setWorkflowRunReadState({ ...observed, accountId: f.owner.id }))
+            .resolves.toEqual({ runId: f.runId, attentionSeenFailureAt: observed.failedAt });
+        await db.workflowRunInvocation.create({ data: { id: crypto.randomUUID(), runId: f.runId, sequence: 0n,
+            memberOrdinal: 0n, lifecycle: 'waiting_for_review', contentEnvelope: 'private-unopened' } });
+        expect((await getWorkflowRun({ accountId: f.owner.id, runId: f.runId })).run)
+            .toMatchObject({ failureUnseen: false, invocationAttentionRequired: true, attentionRequired: true });
+        expect((await getWorkflowRun({ accountId: f.viewer.id, runId: f.runId })).run)
+            .toMatchObject({ failureUnseen: false, invocationAttentionRequired: true, attentionRequired: true, attentionSeenFailureAt: null });
+        expect((await sourceSummary(f.owner.id)).summaries[0]).toMatchObject({ needsYouCount: 1,
+            lastRun: { failureUnseen: false, invocationAttentionRequired: true, attentionRequired: true } });
+        await db.automationRun.update({ where: { id: f.runId }, data: { finishedAt: new Date('2026-10-23T11:00:00.000Z'), revision: 4 } });
+        expect((await getWorkflowRun({ accountId: f.owner.id, runId: f.runId })).run).toMatchObject({ failureUnseen: true });
+        await expect(setWorkflowRunReadState({ ...observed, accountId: f.owner.id })).rejects.toMatchObject({ code: 'currentness_conflict' });
     });
 
     it('admits a Workflow Discussion destination only at its committed frontier with current grants, keys and Session disclosure', async () => {
@@ -175,8 +243,11 @@ describe("Workflow Run live Team access (real SQLite)", () => {
     it("projects attention membership through real HTTP and Protocol without private content, preserving locked Team rows and revocation", async () => {
         const f = await fixture();
         const automation = await db.automation.create({ data: { accountId: f.owner.id, name: "Public trigger status", targetType: null, templateCiphertext: "{}" } });
-        await db.automationRun.update({ where: { id: f.runId }, data: { state: "failed", originKind: "automation",
+        await db.automationRun.update({ where: { id: f.runId }, data: { state: "failed", startedAt: new Date(), originKind: "automation",
             automationId: automation.id, causeKind: "manual", causeOccurredAt: new Date() } });
+        // Shared failure history alone is not this viewer's notice. A genuine hold remains attention.
+        await db.workflowRunInvocation.create({ data: { id: crypto.randomUUID(), runId: f.runId, sequence: 0n,
+            memberOrdinal: 0n, lifecycle: 'waiting_for_review', contentEnvelope: 'private-unopened' } });
         await withAuthenticatedTestApp(app => registerWorkflowRunStorageRoutes(app), async app => {
             const storage = { execute: async (operation: Readonly<Record<string, unknown>>) => {
                 const response = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
@@ -253,17 +324,19 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             originKind: "direct", causeKind: null, state: "queued", scheduledAt: new Date(), dueAt: new Date(),
             workflowCustodyState: "pending", workflowAcceptedSnapshotEnvelope: f.acceptedEnvelope,
         })) });
-        // The diagnostics sink observes real database operations; all policy and storage remain real.
-        const trace = vi.spyOn(logger, "trace").mockImplementation(() => {});
-        const authorityReads = () => trace.mock.calls.flatMap(([record]) => record !== null && typeof record === "object"
-            && "phase" in record && typeof record.phase === "string"
-            && /^db\.(?:TeamMembership|Artifact|ArtifactTeamGrant|ArtifactAccountGrant|ArtifactGroupGrant|TeamGroupMembership)\./u.test(record.phase)
-            ? [record.phase] : []).sort();
+        // Observe real provider IO without depending on diagnostic log levels.
+        const reads: string[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model && ["TeamMembership", "Artifact", "ArtifactTeamGrant", "ArtifactAccountGrant",
+                "ArtifactGroupGrant", "TeamGroupMembership"].includes(request.model)
+                && request.action.startsWith("find")) reads.push(`${request.model}.${request.action}`);
+        } });
+        const authorityReads = () => [...reads].sort();
         try {
             const single = await inTx(tx => readWorkflowRunKeyProjectionsInTx(tx, { actorAccountId: f.viewer.id, runIds: [f.runId] }));
             const singleReads = authorityReads();
             expect(singleReads.length).toBeGreaterThan(0);
-            trace.mockClear();
+            reads.length = 0;
             const page = await inTx(tx => readWorkflowRunKeyProjectionsInTx(tx, { actorAccountId: f.viewer.id, runIds }));
             expect(new Set(page.keys())).toEqual(new Set(runIds));
             for (const runId of runIds) expect(page.get(runId)).toEqual({ ...single.get(f.runId), runId });
@@ -274,7 +347,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             await db.teamMembership.update({ where: { id: f.membership.id }, data: { status: "suspended" } });
             await expect(inTx(tx => readWorkflowRunKeyProjectionsInTx(tx, { actorAccountId: f.viewer.id, runIds })))
                 .rejects.toMatchObject({ code: "run_not_found" });
-        } finally { trace.mockRestore(); }
+        } finally { stop(); }
     });
 
     it("keeps distinct Run owners, sources and frozen Teams separate in the same key batch", async () => {

@@ -1,12 +1,10 @@
-import type { Socket } from 'socket.io';
-import type { ClientConnection, UpdatePayload } from '@/app/events/eventRouter';
-import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
-import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 import Fastify from "fastify";
+import type { Socket } from 'socket.io';
+import type { ClientConnection, UpdatePayload } from '@/app/events/eventRouter';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -33,6 +31,7 @@ import {
     sealWorkflowProgressStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1,
     type WorkflowReviewV1,
+    WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1,
 } from "@happier-dev/protocol/workflows";
 import {
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
@@ -45,7 +44,7 @@ import {
 } from "@happier-dev/protocol/actions";
 
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 import { eventRouter } from "@/app/events/eventRouter";
@@ -53,6 +52,7 @@ import { createFakeSocket } from "@/app/api/testkit/socketHarness";
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { readManagedWakeTargets } from "@/app/machines/managed/managedWake";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from "@/app/automations/automationAccountCurrentness";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
@@ -68,12 +68,16 @@ import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkf
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowRunWaitResultV1Schema, WorkflowRunSummariesResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/materializedRunner.testkit";
-import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from "@/testkit/pluginInstallationPublisherTestkit";
+import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation as createTrustedMachineInstallationOwner } from "@/testkit/pluginInstallationPublisherTestkit";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import * as workflowRunService from "./workflowRunService";
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from "@happier-dev/protocol/testing/accountScopedCipherFixtures";
 import { projectNativeJsonValueForTransport } from "@happier-dev/protocol/json/strictJsonValue";
+import { sameAutomationAccountContentIdentityV1 } from "@happier-dev/protocol/automations/automationAccountCurrentnessV1";
 import { deriveWorkflowSessionInputLocalIdV2 } from "@happier-dev/protocol/sessions/messages/sessionInputAdmission";
+import { workflowDiscussionRoundPersistenceContracts } from './workflowDiscussionRound.testkit';
+import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 
 import {
     admitWorkflowInvocations as admitWorkflowInvocationsOwner,
@@ -109,7 +113,7 @@ const e2eeWorkflowContent = {
     runDataKey: new Uint8Array(32).fill(7),
     randomBytes: (length: number) => new Uint8Array(length).fill(3),
 };
-async function acceptedEnvelope(params: { accountId: string; runId: string; machineId: string; originSessionId?: string; automationId?: string; deliver?: boolean; permission?: "default" | "read-only"; definition?: WorkflowDefinitionV1 }) {
+async function acceptedEnvelope(params: { accountId: string; runId: string; machineId: string; originSessionId?: string; automationId?: string; mode?: "plain" | "e2ee"; deliver?: boolean; permission?: "default" | "read-only"; definition?: WorkflowDefinitionV1 }) {
     const origin = { kind: "direct" as const, ...(params.originSessionId ? { originSessionId: params.originSessionId } : {}) };
     const acceptedSnapshot = await materializeWorkflowAcceptedSnapshotFixture({
         definition: params.definition ?? (params.permission ? { ...definition, defaults: { ...definition.defaults, permissionMode: params.permission } } : definition),
@@ -125,7 +129,7 @@ async function acceptedEnvelope(params: { accountId: string; runId: string; mach
         },
     });
     return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
-        mode: "plain",
+        ...(params.mode === "e2ee" ? e2eeWorkflowContent : { mode: "plain" as const }),
         binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId },
         acceptedSnapshot,
     }));
@@ -215,18 +219,16 @@ async function createReviewStorageApp(accountId: string, authority: "present_use
         import("@/app/auth/auth"), import("@/app/api/utils/enableAuthentication"),
         import("@/app/api/routes/automations/registerWorkflowRunStorageRoutes"),
     ]);
-    if (authority === "account_automation") {
-        // Terminal authority is determined by current Account policy, not its minted floor.
-        await db.account.update({ where: { id: accountId }, data: { terminalPresentUserPolicy: "disallowed" } });
-    }
     const token = await auth.createToken(accountId, undefined, { kind: authority === "present_user" ? "account" : "terminal", authority });
-    await expect(auth.verifyToken(token)).resolves.toMatchObject({ authority });
+    // A terminal is person-class; an agent-originated call carries the per-invocation automation ceiling.
+    await expect(auth.verifyToken(token)).resolves.toMatchObject({ authority: "present_user" });
     const app = Fastify().withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     enableAuthentication(app);
     registerWorkflowRunStorageRoutes(app);
-    return { app, headers: { authorization: `Bearer ${token}` } };
+    return { app, headers: { authorization: `Bearer ${token}`,
+        ...(authority === "account_automation" ? { "x-happier-authority-ceiling": "account_automation" } : {}) } };
 }
 
 function observeWorkflowMachineWake(accountId: string, machineId?: string) {
@@ -306,7 +308,7 @@ describe("workflowRunService (integration)", () => {
             const read = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
                 headers, payload: { operation: "get", runId } });
             expect(read.statusCode, read.body).toBe(422);
-            expect(read.json()).toEqual({ error: "content_unavailable" });
+            expect(read.json()).toEqual({ error: "custody_pending" });
             const missing = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
                 headers, payload: { operation: "get", runId: randomUUID() } });
             expect(missing.statusCode).toBe(404);
@@ -349,6 +351,21 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
+    async function createTrustedMachineInstallation(params: Parameters<typeof createTrustedMachineInstallationOwner>[0]) {
+        await createTrustedMachineInstallationOwner(params);
+        await db.machine.update({ where: { id: params.machineId }, data: {
+            metadata: encodePlainMachineStoredContent({ host: 'workflow-test', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)),
+        } });
+    }
+
+    async function readMachineInstallationId(machineId: string): Promise<string> {
+        const machine = await db.machine.findUniqueOrThrow({ where: { id: machineId }, select: { installationId: true } });
+        if (!machine.installationId) throw new Error('Expected installed Workflow Machine');
+        return machine.installationId;
+    }
+
     async function seed() {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" }, select: { id: true } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
@@ -376,6 +393,20 @@ describe("workflowRunService (integration)", () => {
         } });
     }
 
+    it.each(legacyMachineShapes)('preserves legacy owned Machine direct admission (%s)', async shape => {
+        const seeded = await seed();
+        await retainLegacyMachineShape(seeded.machineId, shape);
+        const runId = randomUUID();
+        await expect(admitWorkflowRun({ ...seeded, runId, origin: { kind: 'direct' },
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) })).resolves.toMatchObject({
+            kind: 'created', run: { id: runId, ownerAccountId: seeded.accountId },
+        });
+        expect(await db.automationRunAssignment.findUniqueOrThrow({
+            where: { runId_machineId: { runId, machineId: seeded.machineId } },
+        })).toMatchObject({ admittedMachineInstallationId: shape === 'encrypted_installed'
+            ? await readMachineInstallationId(seeded.machineId) : null });
+    });
+
     it.each(legacyMachineShapes)('preserves legacy owned Machine assignment writes (%s)', async shape => {
         const seeded = await seed();
         await retainLegacyMachineShape(seeded.machineId, shape);
@@ -386,8 +417,58 @@ describe("workflowRunService (integration)", () => {
         } })).resolves.toMatchObject({ assignments: [{ machineId: seeded.machineId }] });
     });
 
-    // Direct-origin CHECKs require null trigger evidence; retaining a parent needs an approved storage amendment.
-    it.todo("retains authenticated parent Run ancestry for direct child Workflow admission");
+    it.each(legacyMachineShapes)('preserves legacy owned Machine occurrence admission (%s)', async shape => {
+        const seeded = await seed();
+        const automation = await createAutomation({ accountId: seeded.accountId, recipeFeaturePolicy: { workflowsEnabled: true }, input: {
+            automationId: randomUUID(), name: 'Retained owned Machine', enabled: true, triggers: [],
+            assignments: [{ machineId: seeded.machineId }],
+            executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' }),
+        } });
+        await retainLegacyMachineShape(seeded.machineId, shape);
+        await expect(inTx(tx => admitAutomationRunTx({ tx, accountId: seeded.accountId, automationId: automation.id,
+            now: new Date(), cause: { kind: 'manual', invokedAt: Date.now() }, recipeFeaturePolicy: { workflowsEnabled: true },
+        }))).resolves.toMatchObject({ kind: 'admitted', run: { accountId: seeded.accountId } });
+    });
+
+    it.each(legacyMachineShapes)('rejects legacy shared Machine admission without installed/current content facts (%s)', async shape => {
+        const custodian = await seed();
+        const guest = await seed();
+        await makeShareEligibleForTest(custodian.accountId, guest.accountId);
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId, machineId: custodian.machineId,
+            principal: { kind: 'account', accountId: guest.accountId }, level: 'view' }));
+        await retainLegacyMachineShape(custodian.machineId, shape);
+        const runId = randomUUID();
+        await expect(admitWorkflowRun({ accountId: guest.accountId, machineId: custodian.machineId, runId,
+            origin: { kind: 'direct' }, acceptedEnvelope: await acceptedEnvelope({
+                accountId: guest.accountId, machineId: custodian.machineId, runId,
+            }) })).rejects.toMatchObject({ code: 'target_unavailable' });
+        expect(await db.automationRun.findUnique({ where: { id: runId } })).toBeNull();
+    });
+
+    it('preserves legacy owned Machine replacement only for a non-replayable lifecycle occurrence', async () => {
+        const seeded = await seed();
+        const replacement = await seed();
+        const automation = await createAutomation({ accountId: seeded.accountId, recipeFeaturePolicy: { workflowsEnabled: true }, input: {
+            automationId: randomUUID(), name: 'Reversibly replaced owned Machine', enabled: true, triggers: [],
+            assignments: [{ machineId: seeded.machineId }],
+            executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' }),
+        } });
+        const trigger = await db.automationTrigger.create({ data: { automationId: automation.id,
+            kind: 'sessionLifecycle', enabled: true, revision: 1,
+            ...encodeAutomationSessionLifecycleConfiguration({ kind: 'sessionLifecycle', sourceSessionId: seeded.sessionId,
+                events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } }) } });
+        await retainLegacyMachineShape(seeded.machineId, 'encrypted_uninstalled');
+        await db.machine.update({ where: { id: seeded.machineId }, data: { replacedByMachineId: replacement.machineId } });
+        const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'sessionLifecycle',
+            triggerId: trigger.id, triggerRevision: 1, occurrenceKey: 'A'.repeat(43), occurredAt: Date.now(),
+            evidence: { event: 'parentTurnCompleted', sourceSessionId: seeded.sessionId, sourceTurnId: 'retained-turn',
+                policy: { kind: 'everyMatch' } } });
+        const admit = (lifecycle: boolean) => inTx(tx => admitAutomationRunTx({ tx, accountId: seeded.accountId,
+            automationId: automation.id, now: new Date(), cause: lifecycle ? cause : { kind: 'manual', invokedAt: Date.now() },
+            recipeFeaturePolicy: { workflowsEnabled: true } }));
+        expect(await admit(false)).toMatchObject({ kind: 'ineligible', reason: 'noEnabledAssignment' });
+        expect(await admit(true)).toMatchObject({ kind: 'admitted' });
+    });
 
     it('settles missing requester custody compatibility by leaving ordinary successful admission projections unchanged', async () => {
         const seeded = await seed();
@@ -446,11 +527,35 @@ describe("workflowRunService (integration)", () => {
             expect(historical.statusCode).toBe(401);
             await db.automationRunAssignment.update({ where: { runId_machineId: { runId, machineId: seeded.machineId } },
                 data: { admittedMachineInstallationId: installationId } });
+            if (state !== 'queued') {
+                await db.automationRunAssignment.create({ data: { runId, machineId: otherHost.machineId,
+                    admittedMachineInstallationId: otherInstallationId } });
+                const selectedExecutorRun = await db.automationRun.findUniqueOrThrow({ where: { id: runId },
+                    select: { state: true, revision: true, claimedByMachineId: true, errorCode: true,
+                        workflowCustodyState: true } });
+                const sibling = await app.inject({ method: 'POST', url: path, payload: wrongBody, headers: { ...headers,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                        keyPair: otherKeyPair, machineId: otherHost.machineId, installationId: otherInstallationId,
+                        path, body: wrongBody }) } });
+                expect(sibling.statusCode).toBe(200);
+                expect(sibling.json()).toEqual({ recorded: true });
+                expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId },
+                    select: { state: true, revision: true, claimedByMachineId: true, errorCode: true,
+                        workflowCustodyState: true } })).toEqual(selectedExecutorRun);
+            }
+            const beforeRefusal = await db.automationRun.findUniqueOrThrow({ where: { id: runId },
+                select: { attempt: true, revision: true } });
             const response = await app.inject({ method: "POST", url: path, payload: body, headers: { ...headers,
                 [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
                     keyPair, machineId: seeded.machineId, installationId, path, body }) } });
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toEqual({ recorded: true });
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId },
+                select: { attempt: true, revision: true, claimedByMachineId: true } })).toEqual({
+                attempt: beforeRefusal.attempt + (state === 'queued' ? 1 : 0),
+                revision: beforeRefusal.revision + (state === 'queued' ? 2 : 1),
+                claimedByMachineId: seeded.machineId,
+            });
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { state: true, errorCode: true, workflowCustodyState: true } }))
                 .toEqual({ state: "failed", errorCode: "requester_custody_unavailable",
                     workflowCustodyState: state === 'running_child' ? 'pending' : 'settled' });
@@ -649,6 +754,57 @@ describe("workflowRunService (integration)", () => {
                 expect(ownerUi.updates).toEqual([]);
             } finally { executor.close(); ownerUi.close(); }
         } finally { await app.close(); }
+    });
+
+    workflowDiscussionRoundPersistenceContracts();
+
+    // Direct-origin CHECKs require null trigger evidence; retaining a parent needs an approved storage amendment.
+    it.todo("retains authenticated parent Run ancestry for direct child Workflow admission");
+
+    it('starts an ordinary owner Run on its own Machine after the signed missing-Run preflight', async () => {
+        const seeded = await seed();
+        const installationId = await readMachineInstallationId(seeded.machineId);
+        const keyPair = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: seeded.machineId }, data: {
+            installationPublicKey: new Uint8Array(keyPair.publicKey),
+        } });
+        const runId = randomUUID();
+        const path = '/v3/automations/runs/workflow-storage';
+        const { app, headers } = await createReviewStorageApp(seeded.accountId);
+        const send = (body: Record<string, unknown>) => app.inject({ method: 'POST', url: path, payload: body,
+            headers: { ...headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                createSignedPluginInstallationPublisherHeader({ keyPair, machineId: seeded.machineId,
+                    installationId, path, body }) } });
+        try {
+            const missing = await send({ operation: 'get', runId, publisherMachineId: seeded.machineId });
+            expect(missing.statusCode, missing.body).toBe(404);
+            expect(missing.json()).toEqual({ error: 'run_not_found' });
+            const admitted = await send({ operation: 'admit', runId, machineId: seeded.machineId,
+                publisherMachineId: seeded.machineId, origin: { kind: 'direct' },
+                accountCurrentness: await accountCurrentness(seeded.accountId),
+                acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ run: { id: runId, ownerAccountId: seeded.accountId, state: 'queued' } });
+            const existing = await send({ operation: 'get', runId, publisherMachineId: seeded.machineId });
+            expect(existing.statusCode, existing.body).toBe(200);
+            expect(existing.json()).toMatchObject({ run: { id: runId, ownerAccountId: seeded.accountId } });
+        } finally { await app.close(); }
+    });
+
+    it('refuses a generic worker claim after the admitted Workflow installation rotates', async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        await admitWorkflowRun({ ...seeded, runId, origin: { kind: 'direct' },
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        const rotatedInstallationId = randomUUID();
+        await db.machine.update({ where: { id: seeded.machineId }, data: { installationId: rotatedInstallationId } });
+        const result = await claimAutomationRun({ ...seeded, leaseDurationMs: 30_000,
+            recipeFeaturePolicy: { workflowsEnabled: true },
+            claimRequest: { machineInstallationId: rotatedInstallationId, nonce: randomUUID(),
+                expiresAt: new Date(Date.now() + 60_000) } });
+        expect(result.run).toBeNull();
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { state: true } }))
+            .toEqual({ state: 'queued' });
     });
 
     it("pulls current origin delivery above a monotonic owner ack without keeping terminal custody", async () => {
@@ -879,7 +1035,7 @@ describe("workflowRunService (integration)", () => {
 
     it.each([true, false])("retains Automation scope in strict Run lists after scope editing and definition deletion (session scoped: %s)", async (scoped) => {
         const seeded = await seed();
-        const automation = await createAutomation({ accountId: seeded.accountId, input: { name: "Retained trigger", enabled: true,
+        const automation = await createAutomation({ accountId: seeded.accountId, input: { automationId: randomUUID(), name: "Retained trigger", enabled: true,
             scopeSessionId: scoped ? seeded.sessionId : null,
             executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: "/repo", prompt: "Work" }),
             assignments: [{ machineId: seeded.machineId, enabled: true, priority: 0 }], triggers: [] } });
@@ -941,7 +1097,7 @@ describe("workflowRunService (integration)", () => {
 
     it.each([true, false])("freezes the scoped Automation origin and explicit delivery request at accepted-snapshot resolution (delivery: %s)", async (deliver) => {
         const seeded = await seed();
-        const automation = await createAutomation({ accountId: seeded.accountId, input: { name: "Scoped workflow", enabled: true,
+        const automation = await createAutomation({ accountId: seeded.accountId, input: { automationId: randomUUID(), name: "Scoped workflow", enabled: true,
             scopeSessionId: seeded.sessionId,
             executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: "/repo", prompt: "Work" }),
             assignments: [{ machineId: seeded.machineId, enabled: true, priority: 0 }], triggers: [] } });
@@ -965,7 +1121,7 @@ describe("workflowRunService (integration)", () => {
             .rejects.toMatchObject({ code: "currentness_conflict" });
         const { app, headers } = await createReviewStorageApp(seeded.accountId);
         const keyPair = tweetnacl.sign.keyPair();
-        const installationId = randomUUID();
+        const installationId = await readMachineInstallationId(seeded.machineId);
         await db.machine.update({ where: { id: seeded.machineId }, data: { installationId,
             installationPublicKey: new Uint8Array(keyPair.publicKey) } });
         const path = "/v3/automations/runs/workflow-storage";
@@ -1023,6 +1179,30 @@ describe("workflowRunService (integration)", () => {
             invocationId, invocationAttempt: 0n, expectedLifecycle: "pending" as const, lifecycle: "admitting" as const, contentEnvelope };
         return { ...seeded, runId, rootId, invocationId, fact };
     }
+
+    it("commits and rejoins invocation input admission without parent Run writes", async () => {
+        const seeded = await seedPendingAdmission();
+        const before = await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId },
+            select: { revision: true, updatedAt: true } });
+        let parentWrites = 0;
+        const stopObserving = observeSqliteRequests({ before(request) {
+            if (request.model === "AutomationRun" && (request.action === "update" || request.action === "updateMany")) parentWrites += 1;
+        } });
+        try {
+            const changed = await commitWorkflowInvocationFact(seeded.fact);
+            expect(changed).toMatchObject({ lifecycle: "admitting", contentRevision: "1" });
+            await expect(commitWorkflowInvocationFact({ ...seeded.fact, expectedLifecycle: "admitting" }))
+                .resolves.toMatchObject({ lifecycle: "admitting", contentRevision: "1" });
+            const visible = await getWorkflowRunInvocation({ accountId: seeded.accountId, runId: seeded.runId,
+                invocationId: seeded.invocationId });
+            expect(visible).toMatchObject({ invocation: { index: { lifecycle: "admitting", contentRevision: "1" },
+                contentEnvelope: seeded.fact.contentEnvelope } });
+            console.info("WORKFLOW_ROW_FACT_PARENT_UPDATES", parentWrites);
+            expect(parentWrites).toBe(0);
+            await expect(db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId },
+                select: { revision: true, updatedAt: true } })).resolves.toEqual(before);
+        } finally { stopObserving(); }
+    });
 
     it("serves UI workflow storage reads through authenticated HTTP and real SQLite", async () => {
         const seeded = await seedPendingAdmission();
@@ -1204,37 +1384,88 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
-    it("rejects non-user review authority without mutating the held row", async () => {
+    // 10-29 present-user floors simplify: Action admission owns agent approval.
+    it.each(["present_user", "account_automation", "signed_agent"] as const)("completes review over authenticated HTTP as %s while retaining access and CAS", async (caller) => {
         const seeded = await seedPendingAdmission();
         await commitWorkflowInvocationFact({ ...seeded.fact, lifecycle: "waiting_for_review" });
         const row = await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: seeded.invocationId } });
         const parent = await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } });
-        const { app, headers } = await createReviewStorageApp(seeded.accountId, "account_automation");
+        const { app, headers } = await createReviewStorageApp(seeded.accountId, caller === "present_user" ? caller : "account_automation");
+        const path = "/v3/automations/runs/workflow-storage";
+        const payload = { operation: "invocations.complete_review", mode: "use_result", runId: seeded.runId,
+            invocationId: seeded.invocationId, invocationAttempt: "0", expectedContentRevision: "1",
+            accountCurrentness: await accountCurrentness(seeded.accountId), contentEnvelope: seeded.fact.contentEnvelope };
+        const { auth } = await import("@/app/auth/auth");
+        const keyPair = tweetnacl.sign.keyPair();
+        const installationId = await readMachineInstallationId(seeded.machineId);
+        const actionId = "workflow.run.invocations.complete_review";
+        const target = { kind: "machine" as const, machineId: seeded.machineId };
+        const envelope = { v: 1 as const, requestId: randomUUID(), target,
+            input: { runId: seeded.runId, invocationId: seeded.invocationId, expectedContentRevision: "1", mode: "use_result" } };
+        const signedHeaders = caller === "signed_agent" ? await (async () => {
+            await db.machine.update({ where: { id: seeded.machineId }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+            const pat = await auth.createApiToken({ accountId: seeded.accountId, tokenId: randomUUID(), label: "Review completion" });
+            const principal = await auth.verifyPat(pat.token);
+            if (!principal.ok) throw new Error("Expected current review PAT");
+            const authorization = await auth.mintExternalActionExecutionAuthorization({
+                accountId: principal.accountId, principalId: principal.principalId, credentialId: principal.credentialId, grant: principal.grant,
+                serverIdentityId: await getOrCreateServerIdentityId(), machineId: seeded.machineId, actionId,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
+            });
+            return (body: typeof payload) => ({
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId, requestId: envelope.requestId, method: "POST", path,
+                    body: { ...body, publisherMachineId: seeded.machineId }, privateKey: keyPair.secretKey }),
+                "x-happier-authority-ceiling": "account_automation",
+            });
+        })() : undefined;
+        const submit = (body: typeof payload) => app.inject({ method: "POST", url: path,
+            headers: signedHeaders?.(body) ?? headers,
+            payload: signedHeaders ? { ...body, publisherMachineId: seeded.machineId } : body });
         try {
-            const response = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
-                payload: { operation: "invocations.complete_review", mode: "use_result", runId: seeded.runId,
-                    invocationId: seeded.invocationId, invocationAttempt: "0", expectedContentRevision: "1",
-                    accountCurrentness: await accountCurrentness(seeded.accountId), contentEnvelope: seeded.fact.contentEnvelope } });
-            expect(response.statusCode).toBe(401);
+            expect((await app.inject({ method: "POST", url: path, payload })).statusCode).toBe(401);
+            const stranger = await seed();
+            const strangerToken = await auth.createToken(stranger.accountId, undefined, { kind: "account", authority: "present_user" });
+            const denied = await app.inject({ method: "POST", url: path, payload,
+                headers: { authorization: `Bearer ${strangerToken}` } });
+            expect(denied.statusCode, denied.body).toBe(404);
+            const stale = await submit({ ...payload, expectedContentRevision: "0" });
+            expect.soft(stale.statusCode, stale.body).toBe(409);
+            expect.soft(stale.json()).toEqual({ error: "currentness_conflict" });
+            if (signedHeaders) {
+                const tampered = await app.inject({ method: "POST", url: path,
+                    headers: signedHeaders(payload), payload: { ...payload, publisherMachineId: seeded.machineId, mode: "generate" } });
+                expect(tampered.statusCode, tampered.body).toBe(401);
+            }
+            const invalidEnvelope = await submit({ ...payload, contentEnvelope: "invalid-envelope" });
+            expect(invalidEnvelope.statusCode, invalidEnvelope.body).toBe(422);
             expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: seeded.invocationId } })).toEqual(row);
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } })).toEqual(parent);
-        } finally {
-            await app.close();
-        }
-        const presentUser = await createReviewStorageApp(seeded.accountId);
-        try {
-            const response = await presentUser.app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers: presentUser.headers,
-                payload: { operation: "invocations.complete_review", mode: "use_result", runId: seeded.runId,
-                    invocationId: seeded.invocationId, invocationAttempt: "0", expectedContentRevision: "1",
-                    accountCurrentness: await accountCurrentness(seeded.accountId), contentEnvelope: seeded.fact.contentEnvelope } });
-            expect(response.statusCode).toBe(200);
+            const response = await submit(payload);
+            expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ disposition: "completed", invocation: { index: { lifecycle: "completed", contentRevision: "2" } } });
             expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: seeded.invocationId } }))
                 .toMatchObject({ lifecycle: "completed", contentRevision: 2n });
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } }))
                 .toMatchObject({ revision: parent.revision + 1 });
         } finally {
-            await presentUser.app.close();
+            await app.close();
+        }
+    });
+
+    it("projects committed transition attention for Follow without a second Run read", async () => {
+        const seeded = await seedPendingAdmission(true);
+        for (const held of [false, true]) {
+            if (held) await commitWorkflowInvocationFact({ ...seeded.fact, lifecycle: "waiting_for_review" });
+            const parent = await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } });
+            const run = WorkflowRunSummaryV1Schema.parse(await transitionWorkflowRun({ ...seeded,
+                parentAttempt: 1, expectedRevision: parent.revision, state: "running",
+                checkpointEnvelope: parent.workflowCheckpointEnvelope! }));
+            expect(run).toMatchObject({ id: seeded.runId, state: "running", attentionRequired: held,
+                invocationAttentionRequired: held, revision: parent.revision + 1 });
         }
     });
 
@@ -1504,13 +1735,42 @@ describe("workflowRunService (integration)", () => {
             return target.success && target.data.origin.kind === 'context-delivery' ? [target.data] : [];
         });
         const request = { homeId, controller: { machineId: controller.id, installationId: controller.installationId! } };
+        const measureReconnect = async () => {
+            let sessionPointReads = 0;
+            const original = db.$transaction;
+            // Observe real database I/O without substituting placement or admission.
+            const observe = (tx: Tx): Tx => new Proxy(tx, { get(owner, key, receiver) {
+                const value: unknown = Reflect.get(owner, key, receiver);
+                if (key !== 'session' || !value || typeof value !== 'object') {
+                    return typeof value === 'function' ? value.bind(owner) : value;
+                }
+                return new Proxy(value, { get(model, method, modelReceiver) {
+                    const call: unknown = Reflect.get(model, method, modelReceiver);
+                    if (typeof call !== 'function') return call;
+                    if (method !== 'findUnique') return call.bind(model);
+                    return (...args: unknown[]) => { sessionPointReads += 1; return Reflect.apply(call, model, args); };
+                } });
+            } });
+            db.$transaction = new Proxy(original, { apply(target, receiver, args) {
+                const callback: unknown = args[0];
+                return typeof callback === 'function'
+                    ? Reflect.apply(target, receiver, [(tx: Tx) => callback(observe(tx)), ...args.slice(1)])
+                    : Reflect.apply(target, receiver, args);
+            } });
+            try { return { value: await readManagedWakeTargets({ actorAccountId: seeded.accountId, request }), sessionPointReads }; }
+            finally { db.$transaction = original; }
+        };
         try {
             await commitWorkflowInvocationFact(seeded.fact);
             expect(contextTargets()).toMatchObject([{ managedId: managed.id, enrolledMachineId: seeded.machineId,
                 origin: { kind: "context-delivery", session: { homeId, sessionId: seeded.sessionId },
                     delivery: { runId: seeded.runId, revision: 2 } } }]);
-            expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets)
+            const admitted = await measureReconnect();
+            expect(admitted.value.targets)
                 .toContainEqual(expect.objectContaining({ origin: expect.objectContaining({ kind: 'context-delivery' }) }));
+            // managedWake.ts reads only actual origin work; its canonical committed
+            // placement owner currently needs at most two Session point reads.
+            expect(admitted.sessionPointReads).toBeLessThanOrEqual(2);
             await db.machine.update({ where: { id: seeded.machineId }, data: { installationId: "replaced-origin-target" } });
             expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets
                 .some(target => target.origin.kind === 'context-delivery')).toBe(false);
@@ -1531,7 +1791,11 @@ describe("workflowRunService (integration)", () => {
             await workflowRunService.ackWorkflowRunOriginDelivery({ accountId: seeded.accountId, runId: seeded.runId, revision: 5 });
             expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets
                 .some(target => target.origin.kind === 'context-delivery')).toBe(false);
-            expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets).toEqual([]);
+            const settled = await measureReconnect();
+            expect(settled.value.targets).toEqual([]);
+            expect(settled.sessionPointReads).toBe(0);
+            console.info('managed-context-reconnect-counts', JSON.stringify({ relevantOrigins: 1,
+                admittedSessionPointReads: admitted.sessionPointReads, acknowledgedSessionPointReads: settled.sessionPointReads }));
         } finally { publication.mockRestore(); }
     });
 
@@ -1640,6 +1904,9 @@ describe("workflowRunService (integration)", () => {
                 publicKey: Buffer.from(signing.publicKey).toString("hex"), encryptionMode: "e2ee", contentPublicKey,
                 contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey }),
             } });
+            await db.machine.update({ where: { id: seeded.machineId }, data: {
+                metadata: 'encrypted-machine-metadata', dataEncryptionKey: null,
+            } });
         }
         await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" },
             acceptedEnvelope: mode === "plain" ? await acceptedEnvelope({ ...seeded, runId }) : await encryptedAcceptedEnvelope({ ...seeded, runId }),
@@ -1667,7 +1934,7 @@ describe("workflowRunService (integration)", () => {
             recipeFeaturePolicy: { workflowsEnabled: true } })).run).toBeNull();
         expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } }))
             .toMatchObject({ state: "queued", revision: 2, workflowResumeRequestedRevision: 2 });
-        const installationId = randomUUID();
+        const installationId = await readMachineInstallationId(seeded.machineId);
         await db.machine.update({ where: { id: seeded.machineId }, data: {
             installationId, installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
         } });
@@ -1691,7 +1958,11 @@ describe("workflowRunService (integration)", () => {
             .toMatchObject({ state: "claimed", workflowResumeRequestedRevision: null });
         const replayed = await claimAutomationRun({ ...seeded, leaseDurationMs: 60_000,
             recipeFeaturePolicy: { workflowsEnabled: true }, claimRequest });
-        expect(toAutomationV3WorkerClaimResponse(replayed)).toEqual(toAutomationV3WorkerClaimResponse(claimed));
+        const { accountCurrentness: claimedWitness, ...claimedResponse } = toAutomationV3WorkerClaimResponse(claimed);
+        const { accountCurrentness: replayedWitness, ...replayedResponse } = toAutomationV3WorkerClaimResponse(replayed);
+        expect(projectNativeJsonValueForTransport(replayedResponse)).toEqual(projectNativeJsonValueForTransport(claimedResponse));
+        if (!claimedWitness || !replayedWitness) throw new Error("Claim replay must retain Account content identity");
+        expect(sameAutomationAccountContentIdentityV1(claimedWitness, replayedWitness)).toBe(true);
         await db.automationRun.update({ where: { id: runId }, data: { leaseExpiresAt: new Date(0) } });
         const reclaimed = await claimAutomationRun({ ...seeded, leaseDurationMs: 60_000,
             recipeFeaturePolicy: { workflowsEnabled: true } });
@@ -1901,7 +2172,7 @@ describe("workflowRunService (integration)", () => {
         const runId = randomUUID();
         await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
         const keyPair = tweetnacl.sign.keyPair();
-        const installationId = randomUUID();
+        const installationId = await readMachineInstallationId(seeded.machineId);
         await db.machine.update({ where: { id: seeded.machineId }, data: {
             installationId, installationPublicKey: new Uint8Array(keyPair.publicKey),
             metadata: encodePlainMachineStoredContent({}),
@@ -2253,7 +2524,8 @@ describe("workflowRunService (integration)", () => {
             },
             select: { id: true },
         });
-        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: "{}" }, select: { id: true } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            installationId: randomUUID(), metadata: 'encrypted-machine-metadata' }, select: { id: true } });
         const seeded = { accountId: account.id, machineId: machine.id };
         const runId = randomUUID();
         const stale = await accountCurrentness(seeded.accountId);
@@ -2581,7 +2853,7 @@ describe("workflowRunService (integration)", () => {
         });
 
         await expect(db.automation.findUniqueOrThrow({ where: { id: automation.id }, select: { lastRunAt: true } }))
-            .resolves.toEqual({ lastRunAt: expect.any(Date) });
+            .resolves.toEqual({ lastRunAt: null });
         await expect(db.automationRunEvent.findMany({ where: { runId }, select: { type: true } }))
             .resolves.toEqual([expect.objectContaining({ type: "run_succeeded" })]);
         await expect(db.accountChange.findFirst({
@@ -2649,7 +2921,7 @@ describe("workflowRunService (integration)", () => {
         await expect(db.automationRunEvent.findMany({ where: { runId }, select: { type: true } }))
             .resolves.toEqual([{ type: eventType }]);
         await expect(db.automation.findUniqueOrThrow({ where: { id: automation.id }, select: { lastRunAt: true } }))
-            .resolves.toEqual({ lastRunAt: expect.any(Date) });
+            .resolves.toEqual({ lastRunAt: null });
         await expect(db.accountChange.findFirst({
             where: { accountId: seeded.accountId, kind: "automation", entityId: automation.id },
             select: { entityId: true },
@@ -3434,7 +3706,10 @@ describe("workflowRunService (integration)", () => {
     it("returns exact-machine terminal custody, cancellation and interrupted uncertainty without generic active Runs", async () => {
         const seeded = await seed();
         const otherMachine = await db.machine.create({
-            data: { id: randomUUID(), accountId: seeded.accountId, metadata: "{}" },
+            data: { id: randomUUID(), accountId: seeded.accountId, installationId: randomUUID(),
+                metadata: encodePlainMachineStoredContent({ host: 'test', platform: 'linux', happyCliVersion: '0.3.0',
+                    homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+                dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)) },
             select: { id: true },
         });
         const terminalRunId = randomUUID();
@@ -3506,6 +3781,11 @@ describe("workflowRunService (integration)", () => {
         expect(first.candidates.map((candidate) => candidate.run.id).sort())
             .toEqual([activeRunId, terminalRunId, interruptedRunId].sort());
         for (const candidate of first.candidates) expect(WorkflowRunSummaryV1Schema.parse(candidate.run)).toEqual(candidate.run);
+        const exact = await listWorkflowRunsForRecovery({ accountId: seeded.accountId, machineId: seeded.machineId,
+            runId: terminalRunId, pageByteLimit: 4_096 });
+        expect(exact.candidates.map(candidate => [candidate.run.id, candidate.parentAttempt])).toEqual([[terminalRunId, 1]]);
+        expect((await listWorkflowRunsForRecovery({ accountId: seeded.accountId, machineId: seeded.machineId,
+            runId: otherMachineRunId, pageByteLimit: 4_096 })).candidates).toEqual([]);
 
         // A child can finish before its aggregate publication succeeds. Keep
         // that interrupted parent reachable after the child leaves the index.
@@ -3597,7 +3877,7 @@ describe("workflowRunService (integration)", () => {
                 } });
             const recover = createWorkflowRunRecoveryReader({ accountId: seeded.accountId, machineId: seeded.machineId, storage,
                 resolveAccountEncryption: async () => ({ kind: "available", witness }), reconcileInvocation: observer });
-            await recover("control");
+            await recover("control", undefined, runId);
             const before = await getWorkflowRun({ accountId: seeded.accountId, runId });
             expect(before.run).toMatchObject({ state: "claimed", workflowCustodyState: "pending" });
             expect(await db.workflowRunInvocation.findMany({ where: { runId }, select: { lifecycle: true } }))
@@ -3767,6 +4047,67 @@ describe("workflowRunService (integration)", () => {
             .resolves.toMatchObject({ intent: "cancelled", run: { state: "cancelled", workflowCustodyState: "settled" } });
         expect((await claimAutomationRun({ accountId: seeded.accountId, machineId: seeded.machineId,
             leaseDurationMs: 45_000, recipeFeaturePolicy: { workflowsEnabled: true } })).run).toBeNull();
+    });
+
+    it.each((["plain", "e2ee"] as const).flatMap(mode =>
+        (["queued", "started"] as const).map(phase => ({ mode, phase }))))(
+        "cancels queued and started Runs through one public cancel operation ($mode/$phase)", async ({ mode, phase }) => {
+        const seeded = await seed();
+        const stranger = await seed();
+        if (mode === "e2ee") {
+            const signing = tweetnacl.sign.keyPair();
+            const contentPublicKey = new Uint8Array(tweetnacl.box.keyPair().publicKey);
+            await db.account.update({ where: { id: seeded.accountId }, data: {
+                publicKey: Buffer.from(signing.publicKey).toString("hex"), encryptionMode: "e2ee", contentPublicKey,
+                contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey }),
+            } });
+        }
+        const automation = await db.automation.create({ data: { accountId: seeded.accountId,
+            name: "Cancel any Run", targetType: null, templateCiphertext: "{}" } });
+        const owner = await createReviewStorageApp(seeded.accountId);
+        const foreign = await createReviewStorageApp(stranger.accountId);
+        try {
+                const runId = randomUUID();
+                const rootId = randomUUID();
+                await db.automationRun.create({ data: {
+                    id: runId, accountId: seeded.accountId, automationId: automation.id, originKind: "automation",
+                    causeKind: "manual", causeOccurredAt: new Date(), scheduledAt: new Date(), dueAt: new Date(),
+                    state: phase === "queued" ? "queued" : "running",
+                    startedAt: phase === "queued" ? null : new Date(),
+                    workflowCustodyState: phase === "queued" ? null : "pending",
+                    workflowAcceptedSnapshotEnvelope: phase === "started"
+                        ? await acceptedEnvelope({ ...seeded, runId, automationId: automation.id, mode }) : null,
+                    assignments: { create: { machineId: seeded.machineId, priority: 0 } },
+                    ...(phase === "started" ? { workflowInvocations: { create: {
+                        id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n,
+                        lifecycle: "running", contentEnvelope: mode === "e2ee"
+                            ? encryptedProgressEnvelope({ ...seeded, runId, id: rootId })
+                            : progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }),
+                    } } } : {}),
+                } });
+                const payload = { operation: "cancel", runId, expectedRevision: 0 };
+                const denied = await foreign.app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
+                    headers: foreign.headers, payload });
+                expect(denied.statusCode).toBe(404);
+                await expect(db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { revision: true } }))
+                    .resolves.toEqual({ revision: 0 });
+                const response = await owner.app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
+                    headers: owner.headers, payload });
+                expect(response.statusCode).toBe(200);
+                const result = response.json();
+                expect(result).toMatchObject({ intent: phase === "queued" ? "cancelled" : "cancel_requested",
+                    run: { id: runId, state: phase === "queued" ? "cancelled" : "running", revision: 1,
+                        workflowCustodyState: phase === "queued" ? null : "pending" } });
+                expect(WorkflowRunSummaryV1Schema.safeParse(result.run).success).toBe(true);
+                if (phase === "started") {
+                    await expect(db.workflowRunInvocation.findUniqueOrThrow({ where: { id: rootId }, select: { lifecycle: true } }))
+                        .resolves.toEqual({ lifecycle: "cancel_requested" });
+                } else {
+                    await expect(db.automationRunEvent.findMany({ where: { runId }, select: { type: true } }))
+                        .resolves.toEqual([{ type: "run_cancelled" }]);
+                    await expect(cancelAutomationRun({ accountId: seeded.accountId, runId })).resolves.toBeNull();
+                }
+        } finally { await owner.app.close(); await foreign.app.close(); }
     });
 
     it("settles cancellation before root admission and prevents a later launch", async () => {
@@ -4140,14 +4481,14 @@ describe("workflowRunService (integration)", () => {
         }, payload: body });
         try {
             const refused = await wrongPublisher();
-            expect(refused.statusCode, refused.body).toBe(409);
-            expect(refused.json()).toEqual({ error: "currentness_conflict" });
+            expect(refused.statusCode, refused.body).toBe(401);
+            expect(refused.json()).toBeNull();
             expect(await db.workflowRunInvocation.count({ where: { id: { in: newIds } } })).toBe(0);
             await expect(recoverWorkflowInvocations(request)).resolves.toMatchObject({ disposition: "accepted", run: { revision: 2, state: "queued" }, invocations: [{ id: newIds[0] }, { id: newIds[1] }] });
             await expect(recoverWorkflowInvocations(request)).resolves.toMatchObject({ disposition: "existing", run: { revision: 2 } });
             const refusedRejoin = await wrongPublisher();
-            expect(refusedRejoin.statusCode, refusedRejoin.body).toBe(409);
-            expect(refusedRejoin.json()).toEqual({ error: "currentness_conflict" });
+            expect(refusedRejoin.statusCode, refusedRejoin.body).toBe(401);
+            expect(refusedRejoin.json()).toBeNull();
         } finally {
             await app.close();
         }
@@ -4345,6 +4686,9 @@ describe("workflowRunService (integration)", () => {
 
     it.each([
         ["needs_attention", "completed"],
+        ["running", "outcome_uncertain"],
+        ["needs_attention", "outcome_uncertain"],
+        ["outcome_uncertain", "outcome_uncertain"],
         ["outcome_uncertain", "failed"],
         ["outcome_uncertain", "cancelled"],
         ["outcome_uncertain", "needs_attention"],
@@ -4375,7 +4719,8 @@ describe("workflowRunService (integration)", () => {
             operation: "invocations.fact", publisherMachineId: seeded.machineId, runId, expectedRevision: 1,
             accountCurrentness: await accountCurrentness(seeded.accountId), invocationId, invocationAttempt: "0", expectedContentRevision: "0",
             expectedLifecycle, lifecycle, resolution: "observed_terminal_execution",
-            contentEnvelope: progressEnvelope({ ...seeded, runId, id: invocationId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n, result: "observed exact settlement" }),
+            contentEnvelope: progressEnvelope({ ...seeded, runId, id: invocationId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n,
+                ...(lifecycle === "outcome_uncertain" ? { reason: "action_operation_not_found" } : { result: "observed exact settlement" }) }),
         } as const;
         const app = Fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
@@ -4393,11 +4738,13 @@ describe("workflowRunService (integration)", () => {
             expect(observed.statusCode, observed.body).toBe(200);
             expect(observed.json()).toMatchObject({ id: invocationId, lifecycle, attempt: "0" });
             const observedParentRevision: number = observed.json().parentRevision;
-            expect(observedParentRevision).toBe(parentBefore.revision + (lifecycle === "needs_attention" ? 0 : 1));
+            const attentionChanged = WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1.some(value => value === expectedLifecycle)
+                !== WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1.some(value => value === lifecycle);
+            expect(observedParentRevision).toBe(parentBefore.revision + Number(attentionChanged));
             const parentAfterAttention = await db.automationRun.findUniqueOrThrow({ where: { id: runId } });
             expect({ ...parentAfterAttention, revision: parentBefore.revision, updatedAt: parentBefore.updatedAt }).toEqual(parentBefore);
             expect(parentAfterAttention.updatedAt.getTime()).toBeGreaterThanOrEqual(parentBefore.updatedAt.getTime());
-            if (expectedLifecycle === "needs_attention") {
+            if (expectedLifecycle === "needs_attention" && lifecycle === "completed") {
                 const rootBody = { ...body, expectedRevision: observedParentRevision, invocationId: rootId, expectedLifecycle: "pending", lifecycle: "pending", resolution: "root_list_progress",
                     contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n,
                         stepProgress: { completed: 1, total: 1 } }) };
@@ -4422,6 +4769,10 @@ describe("workflowRunService (integration)", () => {
             expect((await observe({ ...body, expectedRevision: observedParentRevision })).statusCode).toBe(409);
             const rejoined = await observe(freshBody);
             expect(rejoined.statusCode, rejoined.body).toBe(200);
+            if (lifecycle === 'outcome_uncertain') {
+                const rewritten = await observe({ ...freshBody, expectedLifecycle: 'completed' });
+                expect(rewritten.statusCode, rewritten.body).toBe(422);
+            }
             expect(await db.workflowRunInvocation.count({ where: { runId } })).toBe(2);
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toEqual(parentAfterAttention);
             await expect(db.workflowRunInvocation.findUniqueOrThrow({ where: { id: invocationId }, select: { lifecycle: true, contentEnvelope: true } }))
@@ -4438,7 +4789,7 @@ describe("workflowRunService (integration)", () => {
             const otherMachine = await db.machine.create({ data: { id: randomUUID(), accountId: seeded.accountId, metadata: "{}" } });
             await db.automationRunAssignment.updateMany({ where: { runId }, data: { machineId: otherMachine.id } });
             const wrongMachine = await observe(freshBody);
-            expect(wrongMachine.statusCode, wrongMachine.body).toBe(409);
+            expect(wrongMachine.statusCode, wrongMachine.body).toBe(401);
             await db.automationRunAssignment.updateMany({ where: { runId }, data: { machineId: seeded.machineId } });
             const replacementId = randomUUID();
             await db.workflowRunInvocation.create({ data: {

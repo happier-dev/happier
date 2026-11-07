@@ -23,6 +23,7 @@ import {
 import { AutomationSessionLifecycleRegistrationValidationError } from "./automationSessionLifecycleRegistration";
 import { encodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
+import { toAutomationRunV3ListApiDto } from "./automationApiProjection";
 
 function executionRecipe(templateVersion: number) {
     return createAutomationWorkflowRecipeFixture({ templateVersion,
@@ -985,6 +986,29 @@ describe("automation trigger-set CRUD", () => {
         expect(cadenceEdited?.triggers[0]).toMatchObject({ everyMs: 180_000 });
         expect(cadenceEdited?.triggers[0]?.nextRunAt?.getTime() ?? 0)
             .toBeGreaterThanOrEqual(beforeCadenceEdit.getTime() + 180_000);
+    });
+
+    it("preserves canonical Workflow status from storage through the retained history projection", async () => {
+        const account = await db.account.create({
+            data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(), name: "Held history", enabled: true,
+                executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
+                triggers: [{ triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) }],
+            },
+        });
+        const admitted = await runAutomationNow({ accountId: account.id, automationId: created.id });
+        if (!admitted) throw new Error("Expected an admitted Workflow history Run");
+        await db.automationRun.update({ where: { id: admitted.id }, data: { state: "interrupted" } });
+        const page = await listAutomationRuns({ accountId: account.id, automationId: created.id, limit: 1 });
+        expect(page?.runs.map(toAutomationRunV3ListApiDto)).toEqual([
+            expect.objectContaining({ id: admitted.id, state: "running", workflowRunState: "interrupted" }),
+        ]);
     });
 
     it("pages Run history by stable trigger-aware anchors while triggers are edited and removed between reads", async () => {

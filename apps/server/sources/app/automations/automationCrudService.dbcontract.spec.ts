@@ -1,8 +1,3 @@
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
-import { admitAutomationRunTx } from './automationRunAdmissionService';
-import { readAutomationEventStoredDefinitionsV1 } from './automationEventStoredDefinitionService';
-import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { randomUUID } from "node:crypto";
 
 import {
@@ -16,16 +11,22 @@ import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
+import { observeLazyPrismaQuery } from "@/app/changes/accountPublicationContention.testkit";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { AutomationDefinitionCreateRequestSchema } from "@happier-dev/protocol/automations/automationApiV3";
+import { deriveAutomationOccurrenceKeyV1 } from "@happier-dev/protocol/automations/automationOccurrenceV1";
 
 import {
     AutomationTriggerMutationConflictError,
     createAutomation,
     getAutomation,
     deleteAutomation,
+    disableAutomationInTx,
     finalizeDeletedAutomationsWithoutRetainedRunsTx,
+    runAutomationNow,
     setAutomationEnabled,
     reconcileAutomationDefinition,
     updateAutomation,
@@ -33,6 +34,12 @@ import {
 } from "./automationCrudService";
 import { toAutomationDefinitionDetailApiDto, toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
 import { AutomationValidationError } from "./automationValidation";
+import { admitAutomationRunTx } from "./automationRunAdmissionService";
+import { readAutomationEventStoredDefinitionsV1 } from "./automationEventStoredDefinitionService";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { ensurePluginWebhookEndpointV1, revokePluginWebhookEndpointV1 } from "@/app/plugins/webhooks/endpointStore";
+import { reportAutomationEventSourceStatusV1 } from "./automationEventSourceStatusService";
+import { initEncrypt } from "@/modules/encrypt";
 
 const EVENT_PLUGIN_ID = "com.happier.event-crud-dbcontract";
 const EVENT_PLUGIN_VERSION = "1.0.0";
@@ -52,7 +59,7 @@ function resolveContractProviderFromEnv(): "postgres" | "mysql" | "sqlite" {
     );
 }
 
-function eventWriterReleaseFacts() {
+function eventWriterReleaseFacts(supportsDurablePush = false) {
     const sourceConfigSchema = {
         type: "object",
         additionalProperties: false,
@@ -84,7 +91,8 @@ function eventWriterReleaseFacts() {
                     execution: { target: "daemon" },
                     inputSchema: sourceConfigSchema,
                     resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
-                }],
+                }, ...(supportsDurablePush ? [{ id: "receive-repository-events", title: "Receive repository events",
+                    scopes: ["global"], surfaces: ["plugin"], dangerLevel: "safe", execution: { target: "daemon" } }] : [])],
                 events: [{
                     id: EVENT_LOCAL_ID,
                     kind: "event",
@@ -102,13 +110,16 @@ function eventWriterReleaseFacts() {
                         eligible: true,
                         source: {
                             sourceContractVersion: 1,
-                            supportedObservationTransports: ["checkpointedPull"],
+                            supportedObservationTransports: supportsDurablePush ? ["checkpointedPull", "durablePush"] : ["checkpointedPull"],
+                            ...(supportsDurablePush ? { webhookContributionRef: { pluginId: EVENT_PLUGIN_ID, localId: "repository-events" } } : {}),
                             sourceConfigSchema,
                             setupActionRef: { pluginId: EVENT_PLUGIN_ID, localId: SETUP_ACTION_LOCAL_ID },
                         },
                     },
                 }],
-                webhooks: [],
+                webhooks: supportsDurablePush ? [{ id: "repository-events", title: "Repository events",
+                    verifier: { kind: "github_hmac_sha256_v1", routing: "accountEndpoint" },
+                    handlerAction: { localId: "receive-repository-events" } }] : [],
             },
         },
         collectionContracts: [],
@@ -166,6 +177,57 @@ function eventWriterTriggerInput(trigger: ReturnType<typeof eventWriterTrigger>)
 }
 
 const ownedAccountIds = new Set<string>();
+
+/** Hold the first real parent read until its peer reads or requests the parent lock. */
+async function withConcurrentDefinitionReads<T>(operation: () => Promise<T>): Promise<T> {
+    const original = db.$transaction;
+    let release!: () => void;
+    const peerArrived = new Promise<void>(resolve => { release = resolve; });
+    let firstReader: Tx | undefined;
+    const parentLockRequesters = new Set<Tx>();
+    db.$transaction = new Proxy(original, { apply(target, receiver, args: unknown[]) {
+        const callback = args[0];
+        if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
+        return Reflect.apply(target, receiver, [async (tx: Tx) => {
+            let readObserved = false;
+            return callback(new Proxy(tx, { get(owner, property, proxyReceiver) {
+                if (property === "$queryRawUnsafe") return (...values: Parameters<Tx["$queryRawUnsafe"]>) => {
+                    // With serialization in place the peer waits before its read;
+                    // release the holder so the real database can hand over its lock.
+                    if (values[0].includes('FROM "Automation"') && values[0].includes("FOR ")) {
+                        parentLockRequesters.add(tx);
+                        if (firstReader && firstReader !== tx) release();
+                    }
+                    return tx.$queryRawUnsafe(...values);
+                };
+                if (property !== "automation") return Reflect.get(owner, property, proxyReceiver);
+                return new Proxy(owner.automation, { get(model, method, modelReceiver) {
+                    if (method !== "findFirst") return Reflect.get(model, method, modelReceiver);
+                    return (...values: Parameters<typeof model.findFirst>) => observeLazyPrismaQuery(
+                        model.findFirst(...values),
+                        () => ({ started() {}, settled() {} }),
+                        undefined,
+                        async consume => {
+                            const row = await consume();
+                            if (!readObserved) {
+                                readObserved = true;
+                                if (!firstReader) {
+                                    firstReader = tx;
+                                    if ([...parentLockRequesters].some(requester => requester !== tx)) release();
+                                    await peerArrived;
+                                }
+                                else release();
+                            }
+                            return row;
+                        },
+                    );
+                } });
+            } }));
+        }, ...args.slice(1)]);
+    } });
+    try { return await operation(); }
+    finally { release(); db.$transaction = original; }
+}
 
 async function seedEventWriterAccount(mode: "plain" | "e2ee" = "plain"): Promise<EventWriterAccount> {
     const suffix = randomUUID();
@@ -262,6 +324,9 @@ async function cleanupOwnedAccounts(): Promise<void> {
         await db.accountChange.deleteMany({ where: { accountId } });
         await db.automationEventSourceCatalogStatus.deleteMany({ where: { accountId } });
         await db.automationEventCatalogState.deleteMany({ where: { accountId } });
+        const endpointRouteIds = (await db.pluginWebhookEndpoint.findMany({ where: { accountId }, select: { routeId: true } })).map(endpoint => endpoint.routeId);
+        await db.pluginWebhookEndpoint.deleteMany({ where: { accountId } });
+        await db.pluginWebhookRoute.deleteMany({ where: { id: { in: endpointRouteIds } } });
         await db.pluginMachineMaterialization.deleteMany({ where: { accountId } });
         await db.accountPluginIntent.deleteMany({ where: { accountId } });
         await db.accountPluginRelease.deleteMany({ where: { accountId } });
@@ -296,7 +361,7 @@ describe("Automation Event CRUD database contract", () => {
         }
         await db.$connect();
         dbConnected = true;
-    });
+    }, 120_000);
 
     afterEach(async () => {
         await cleanupOwnedAccounts();
@@ -341,11 +406,11 @@ describe("Automation Event CRUD database contract", () => {
             input: { assignments: [{ machineId: account.machineId }] } })).rejects.toBeInstanceOf(AutomationValidationError);
         expect(await db.automationAssignment.count({ where: { automationId: created.id } })).toBe(0);
         expect(await db.automationRun.count({ where: { automationId: created.id } })).toBe(0);
-        const detail = toAutomationDefinitionDetailApiDto(read!, { mode: "plain", version: 0, contentKeyFingerprint: null });
+        const detail = toAutomationDefinitionDetailApiDto(read!, { mode: "plain", version: 0, contentKeyFingerprint: null }, null);
         expect(detail).toMatchObject({ observationOnly: { kind: "observationOnly", templateVersion: 1 } });
         expect(detail).not.toHaveProperty("executionRecipe");
         expect(detail).not.toHaveProperty("templateCiphertext");
-        expect(toAutomationDefinitionListItemApiDto(created)).toMatchObject({ observationOnly: { kind: "observationOnly", templateVersion: 1 } });
+        expect(toAutomationDefinitionListItemApiDto(created, null)).toMatchObject({ observationOnly: { kind: "observationOnly", templateVersion: 1 } });
         expect(await readEventCatalogRevision(account.id)).toBe(1n);
         await setAutomationEnabled({ accountId: account.id, automationId: created.id, enabled: false });
         expect(await getAutomation({ accountId: account.id, automationId: created.id })).toMatchObject({ enabled: false, assignments: [] });
@@ -379,9 +444,126 @@ describe("Automation Event CRUD database contract", () => {
         const metadataOnly = await reconcileAutomationDefinition({ accountId: account.id, automationId: created.id,
             input: { expectedTemplateVersion: 5, name: "Renamed monitoring", description: created.description, enabled: true,
                 assignments: [], triggers: retainedTriggers, removedTriggers: [] } });
-        expect(toAutomationDefinitionDetailApiDto(metadataOnly!, { mode: "plain", version: 0, contentKeyFingerprint: null }))
+        expect(toAutomationDefinitionDetailApiDto(metadataOnly!, { mode: "plain", version: 0, contentKeyFingerprint: null }, null))
             .toMatchObject({ name: "Renamed monitoring", observationOnly: { kind: "observationOnly", templateVersion: 6 } });
         expect(await readEventCatalogRevision(account.id)).toBe(7n);
+    });
+
+    it("disables future Automation admission inside its caller transaction without republishing an equal disable", async () => {
+        const account = await seedEventWriterAccount();
+        const created = await createAutomation({ accountId: account.id, input: {
+            automationId: randomUUID(), name: "Retire preview admission", enabled: true,
+            executionRecipe: eventExecutionRecipe({ templateVersion: 1, machineId: account.machineId }),
+            assignments: [{ machineId: account.machineId }], triggers: [
+                eventWriterTriggerInput(eventWriterTrigger(account, "preview-source")),
+                { triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger: {
+                    kind: "schedule", enabled: true,
+                    schedule: { kind: "interval", everyMs: 60_000, scheduleExpr: null, timezone: null },
+                } },
+            ],
+        } });
+        const admitted = await runAutomationNow({ accountId: account.id, automationId: created.id });
+        const revisionBefore = await readEventCatalogRevision(account.id);
+        const schedule = created.triggers.find(trigger => trigger.kind === "schedule")!;
+        expect(schedule.nextRunAt).not.toBeNull();
+        const publicationState = async () => {
+            const owner = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            const change = await db.accountChange.findUniqueOrThrow({ where: {
+                accountId_kind_entityId: { accountId: account.id, kind: "automation", entityId: created.id },
+            }, select: { cursor: true } });
+            return { seq: owner.seq, cursor: change.cursor };
+        };
+        const publicationBefore = await publicationState();
+        const rollback = new Error("caller transaction rolled back");
+        await expect(inTx(async tx => {
+            expect(await disableAutomationInTx(tx, { accountId: account.id, automationId: created.id }))
+                .toMatchObject({ enabled: false });
+            throw rollback;
+        })).rejects.toBe(rollback);
+        expect(await db.automation.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({ enabled: true });
+        expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: schedule.id } }))
+            .toMatchObject({ nextRunAt: schedule.nextRunAt });
+        expect(await readEventCatalogRevision(account.id)).toBe(revisionBefore);
+        expect(await publicationState()).toEqual(publicationBefore);
+
+        const disabled = await inTx(tx => disableAutomationInTx(tx, { accountId: account.id, automationId: created.id }));
+        expect(disabled).toMatchObject({ enabled: false, templateVersion: created.templateVersion });
+        expect(disabled!.triggers.find(trigger => trigger.id === schedule.id)?.nextRunAt).toBeNull();
+        expect(await readEventCatalogRevision(account.id)).toBe(revisionBefore! + 1n);
+        const publicationAfter = { seq: publicationBefore.seq + 1, cursor: publicationBefore.seq + 1 };
+        expect(await publicationState()).toEqual(publicationAfter);
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: admitted!.id } }))
+            .toMatchObject({ state: "queued" });
+        const updatedAt = disabled!.updatedAt;
+        await inTx(async tx => {
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                expect(await disableAutomationInTx(tx, { accountId: account.id, automationId: created.id }))
+                    .toMatchObject({ enabled: false, updatedAt });
+            }
+        });
+        expect(await readEventCatalogRevision(account.id)).toBe(revisionBefore! + 1n);
+        expect(await publicationState()).toEqual(publicationAfter);
+    });
+
+    it("retains exact durable monitoring placement and fallback through route revocation, pause and resume", async () => {
+        const previousSecret = process.env.HANDY_MASTER_SECRET;
+        process.env.HANDY_MASTER_SECRET = "durable-monitor-dbcontract-test-secret";
+        try { await initEncrypt(); }
+        finally {
+            if (previousSecret === undefined) delete process.env.HANDY_MASTER_SECRET;
+            else process.env.HANDY_MASTER_SECRET = previousSecret;
+        }
+        const account = await seedEventWriterAccount();
+        await db.accountPluginRelease.update({
+            where: { accountId_pluginId_version: { accountId: account.id, pluginId: EVENT_PLUGIN_ID, version: EVENT_PLUGIN_VERSION } },
+            data: { normalizedManifest: eventWriterReleaseFacts(true).normalizedManifest },
+        });
+        const materialization = { machineId: account.machineId, materializationId: account.materializationId, pluginId: EVENT_PLUGIN_ID };
+        const sourceInstanceId = `monitor-${randomUUID()}`;
+        await db.machine.update({ where: { id: account.machineId }, data: {
+            operationProtocolCapabilities: { pluginWebhookClaim: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        await db.pluginMachineMaterialization.update({
+            where: { machineId_materializationId: { machineId: account.machineId, materializationId: account.materializationId } },
+            data: { serverIdentityId: await getOrCreateServerIdentityId() },
+        });
+        const endpoint = await ensurePluginWebhookEndpointV1({
+            accountId: account.id,
+            input: { webhookContribution: { pluginId: EVENT_PLUGIN_ID, localId: "repository-events" }, targetMaterialization: materialization,
+                sourceInstanceId, setup: { kind: "accountEndpointV1", credential: "serverGenerated" }, idempotencyKey: randomUUID() },
+            contribution: { pluginId: EVENT_PLUGIN_ID, localId: "repository-events", handlerActionLocalId: "receive-repository-events",
+                verifierKind: "github_hmac_sha256_v1", routingKind: "accountEndpoint" },
+            target: { materialization, machineInstallationId: account.machineInstallationId, pluginVersion: EVENT_PLUGIN_VERSION },
+            publicBaseUrl: "https://happier.example",
+        });
+        const created = await createAutomation({ accountId: account.id, input: AutomationDefinitionCreateRequestSchema.parse({
+            automationId: randomUUID(), name: "Durable deployment monitoring", enabled: true,
+            observationOnly: { kind: "observationOnly", templateVersion: 1 }, assignments: [],
+            triggers: [{ triggerId: randomUUID(), trigger: { ...eventWriterTrigger(account, sourceInstanceId),
+                observationTransport: { kind: "durablePush", webhookEndpointId: endpoint.webhookEndpointId,
+                    endpointMaterializationRef: materialization, webhookRoutingSourceInstanceId: sourceInstanceId,
+                    setup: { kind: "accountEndpointV1", credential: "serverGenerated" } } } }],
+        }) });
+        const caller = { ...materialization, machineInstallationId: account.machineInstallationId,
+            sourceCustody: { kind: "managed" as const, immutableGenerationId: "durable-monitor-fixture", installSource: "archive" as const } };
+        const read = () => readAutomationEventStoredDefinitionsV1({ accountId: account.id, caller, input: { transport: { kind: "durablePush" } } });
+        const projection = { kind: "page", definitions: [{ automationId: created.id, observationOnly: { kind: "observationOnly" },
+            observationTransport: { kind: "durablePush", endpointMaterializationRef: materialization } }] };
+        await expect(read()).resolves.toMatchObject(projection);
+        await revokePluginWebhookEndpointV1({ accountId: account.id, webhookEndpointId: endpoint.webhookEndpointId,
+            expectedRevision: endpoint.revision, idempotencyKey: randomUUID() });
+        await expect(read()).resolves.toMatchObject(projection);
+        await expect(reportAutomationEventSourceStatusV1({ accountId: account.id, caller, input: {
+            kind: "catalogReconciliation", scope: { kind: "durablePush", webhookEndpointId: endpoint.webhookEndpointId },
+            observedRevision: "1", adoptedRevision: "1", state: "current", scanStartedAt: null, nextRetryAt: null,
+        } })).resolves.toEqual({});
+        await setAutomationEnabled({ accountId: account.id, automationId: created.id, enabled: false });
+        await expect(read()).resolves.toMatchObject({ kind: "page", definitions: [] });
+        await setAutomationEnabled({ accountId: account.id, automationId: created.id, enabled: true });
+        await expect(read()).resolves.toMatchObject(projection);
+        await db.pluginWebhookEndpoint.update({ where: { id: endpoint.webhookEndpointId }, data: { targetMaterializationId: "moved-materialization" } });
+        await expect(read()).resolves.toMatchObject({ kind: "page", definitions: [] });
     });
 
     it("keeps one plain Event definition's lifecycle, CAS, selector identity, and catalog cursor atomic", async () => {
@@ -432,7 +614,7 @@ describe("Automation Event CRUD database contract", () => {
                 sourceConfig: { repositoryId: firstSource },
             },
         });
-        const listItem = toAutomationDefinitionListItemApiDto(created);
+        const listItem = toAutomationDefinitionListItemApiDto(created, null);
         expect(listItem.triggers[0]).not.toHaveProperty("definitionEnvelope");
         expect(JSON.stringify(listItem)).not.toContain(privateDisplayLabel);
 
@@ -464,6 +646,7 @@ describe("Automation Event CRUD database contract", () => {
             trigger: eventWriterTrigger(account, firstSource, "Private renamed repository"),
         });
         const sameSourceTrigger = sameSource?.triggers[0]!;
+        expect(sameSource?.templateVersion).toBe(3);
         expect(sameSourceTrigger).toEqual(expect.objectContaining({
             id: createdTrigger.id,
             revision: createdTrigger.revision + 1,
@@ -480,6 +663,7 @@ describe("Automation Event CRUD database contract", () => {
             trigger: eventWriterTrigger(account, secondSource),
         });
         const changedTrigger = changedSource?.triggers[0]!;
+        expect(changedSource?.templateVersion).toBe(4);
         expect(changedTrigger).toEqual(expect.objectContaining({
             id: createdTrigger.id,
             revision: createdTrigger.revision + 2,
@@ -511,7 +695,7 @@ describe("Automation Event CRUD database contract", () => {
             },
         })).toEqual({
             name: "Renamed repository updates",
-            templateVersion: 2,
+            templateVersion: 4,
             triggers: [{
                 sourceSelectorId: changedTrigger.sourceSelectorId,
                 revision: createdTrigger.revision + 2,
@@ -604,7 +788,11 @@ describe("Automation Event CRUD database contract", () => {
                 causeTriggerKind: "pluginEvent",
                 causeTriggerRevision: trigger.revision,
                 causeOccurredAt: occurredAt,
-                occurrenceKey: `retained-event-run-${randomUUID()}`,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: trigger.id, evidence: {
+                    v: 1, kind: "pluginEvent", eventRef: { pluginId: EVENT_PLUGIN_ID, localId: EVENT_LOCAL_ID },
+                    sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId),
+                    occurrenceId: retainedRunId, occurredAt: occurredAt.getTime(), payload: {},
+                } }),
                 causeEventPluginId: EVENT_PLUGIN_ID,
                 causeEventLocalId: EVENT_LOCAL_ID,
                 causeSourceSelectorId: trigger.sourceSelectorId,
@@ -666,13 +854,13 @@ describe("Automation Event CRUD database contract", () => {
                 assignments: [{ machineId: account.machineId }],
             },
         });
-        expect(await readEventCatalogRevision(account.id)).toBe(0n);
+        expect(await readEventCatalogRevision(account.id)).toBeNull();
         const resumeSeq = (await db.account.findUniqueOrThrow({
             where: { id: account.id },
             select: { seq: true },
         })).seq;
 
-        const outcomes = await Promise.allSettled([
+        const updateBoth = () => Promise.allSettled([
             updateAutomationTrigger({
                 accountId: account.id,
                 automationId: created.id,
@@ -688,8 +876,14 @@ describe("Automation Event CRUD database contract", () => {
                 enabled: true,
             }),
         ]);
+        const outcomes = provider === "postgres"
+            ? await withConcurrentDefinitionReads(updateBoth)
+            : await updateBoth();
+        expect(outcomes.filter((outcome) => outcome.status === "rejected")).toEqual([]);
         const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
         expect(fulfilled).toHaveLength(2);
+        expect(fulfilled.map(outcome => outcome.value?.templateVersion).sort()).toEqual([2, 3]);
+        expect((await getAutomation({ accountId: account.id, automationId: created.id }))?.templateVersion).toBe(3);
         expect(await db.automationTrigger.findMany({
             where: {
                 automationId: created.id,
@@ -717,6 +911,19 @@ describe("Automation Event CRUD database contract", () => {
             where: { id: account.id },
             select: { seq: true },
         })).toEqual({ seq: resumeSeq + 2 });
+
+        const sameTrigger = created.triggers[0]!;
+        // Both writers request a real change; an equal enable is a semantic no-op
+        // that succeeds without a revision, so it cannot exercise the CAS race.
+        const sameTriggerOutcomes = await Promise.allSettled([false, false].map(enabled => updateAutomationTrigger({
+            accountId: account.id, automationId: created.id, triggerId: sameTrigger.id,
+            expectedRevision: sameTrigger.revision + 1, enabled,
+        })));
+        expect(sameTriggerOutcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+        const conflicts = sameTriggerOutcomes.filter(outcome => outcome.status === "rejected");
+        expect(conflicts).toHaveLength(1);
+        expect(conflicts[0]!.reason).toBeInstanceOf(AutomationTriggerMutationConflictError);
+        expect((await getAutomation({ accountId: account.id, automationId: created.id }))?.templateVersion).toBe(4);
     });
 
 });

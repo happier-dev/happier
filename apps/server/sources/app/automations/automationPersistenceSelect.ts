@@ -54,8 +54,10 @@ export const automationTriggerListItemSelect = {
 export const automationListItemSelect = {
     id: true, accountId: true, name: true, description: true, enabled: true,
     workflowDefinitionId: true, scopeSessionId: true,
+    deploymentEnvironmentId: true,
+    deploymentPreviewRole: true,
     managedTargetHomeId: true, managedTargetManagedId: true, managedTargetIndexed: true,
-    targetType: true, templateCiphertext: true, templateVersion: true, lastRunAt: true,
+    targetType: true, templateCiphertext: true, templateVersion: true,
     createdAt: true, updatedAt: true,
     assignments: {
         select: { machineId: true, enabled: true, priority: true, updatedAt: true },
@@ -136,6 +138,7 @@ export const automationRunDetailSelect = {
 export const automationRunV3ListItemSelect = {
     ...automationRunCauseSelect,
     id: true, automationId: true, state: true,
+    workflowCustodyState: true,
     executionDispatchState: true, executionAttempt: true,
     errorCode: true,
     replyHandoffState: true, replyHandoffAttempt: true, replyHandoffDueAt: true,

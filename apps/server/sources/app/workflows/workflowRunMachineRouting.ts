@@ -1,5 +1,4 @@
 import { buildAutomationRunMachineWakeUpdate, emitAutomationRunUpdatedToMachineOnly } from '@/app/automations/automationChangePublisher';
-import { AUTOMATION_RUN_TERMINAL_STATES } from '@/app/automations/automationTypes';
 import { db } from '@/storage/db';
 import { afterTx, type Tx } from '@/storage/inTx';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -13,7 +12,7 @@ export async function replayWorkflowRunMachineWakes(input: Readonly<{
 }>): Promise<void> {
     const assignments = await db.automationRunAssignment.findMany({ where: {
         machineId: input.machineId, admittedMachineInstallationId: input.installationId,
-        run: { workflowCustodyState: 'pending', state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } },
+        run: { workflowCustodyState: 'pending' },
     }, select: { run: { select: {
         id: true, accountId: true, automationId: true, triggerId: true, state: true,
         scheduledAt: true, startedAt: true, finishedAt: true, updatedAt: true,

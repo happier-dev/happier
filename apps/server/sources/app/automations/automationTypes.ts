@@ -1,4 +1,5 @@
 import { parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import type { AutomationStoredActionDefinitionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { type AutomationReplyHandoffStateV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStateV1';
 import { type AutomationExecutionDispatchStateV3, type AutomationTriggerCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
@@ -7,6 +8,7 @@ import { type AutomationPluginEventDefinitionTriggerInput, type AutomationTrigge
 import { type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { automationRunCauseSelect } from './automationPersistenceSelect';
+import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowRunStateV1';
 
 export type AutomationScheduleKind = 'cron' | 'interval';
 export type AutomationTargetType = 'new_session' | 'existing_session' | 'execution_run';
@@ -62,13 +64,6 @@ export function initialAutomationExecutionDispatchStateForRun(
         : null;
 }
 export type AutomationRunReplyHandoffState = AutomationReplyHandoffStateV1;
-
-/**
- * The execution-dispatch retry ceiling. One decision: a detached dispatch that
- * repeatedly returns strict pre-creation rejection gets this many attempts
- * before start/settlement terminalizes the Run as retry-exhausted.
- */
-export const AUTOMATION_EXECUTION_DISPATCH_MAX_ATTEMPTS = 3;
 
 /** States that no longer retain durable Conversation reply custody. */
 export const AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES = [
@@ -145,11 +140,12 @@ export type AutomationLegacyDefinitionInput = AutomationDefinitionInputCommon & 
     legacyTemplateEnvelopeAdmission?: AutomationLegacyTemplateEnvelopeAdmission;
     executionRecipe?: never;
     observationOnly?: never;
+    automationId?: never;
 }>;
 
 /** Current definition content: executable Workflow or a non-executable observation marker. */
 type AutomationCurrentDefinitionContent = Readonly<{
-    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
+    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2 | AutomationStoredActionDefinitionRecipeV1;
     observationOnly?: never;
 }> | Readonly<{
     observationOnly: AutomationObservationOnlyDefinitionV1;
@@ -201,7 +197,7 @@ export type AutomationPatchInput =
 export function isAutomationCurrentUpsertInput(
     input: AutomationUpsertInput,
 ): input is AutomationCurrentUpsertInput {
-    return input.executionRecipe !== undefined || input.observationOnly !== undefined;
+    return input.automationId !== undefined;
 }
 
 /** Keeps release-compatible patch semantics distinct from the current recipe writer. */
@@ -222,6 +218,8 @@ export type AutomationListItem = Readonly<{
     accountId: string;
     workflowDefinitionId: string | null;
     scopeSessionId: string | null;
+    deploymentEnvironmentId?: string | null;
+    deploymentPreviewRole?: string | null;
     managedTargetHomeId?: string | null;
     managedTargetManagedId?: string | null;
     managedTargetIndexed?: boolean;
@@ -231,7 +229,6 @@ export type AutomationListItem = Readonly<{
     targetType: AutomationTargetType | null;
     templateCiphertext: string;
     templateVersion: number;
-    lastRunAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
     assignments: ReadonlyArray<{
@@ -361,12 +358,13 @@ export type AutomationRunItem = Readonly<{
 
 /** The authenticated current-version Run-list row. */
 export type AutomationRunV3ListItem =
-    Pick<
+    Omit<Pick<
         AutomationRunItem,
         | keyof typeof automationRunCauseSelect
         | 'id'
         | 'automationId'
         | 'state'
+        | 'workflowCustodyState'
         | 'executionDispatchState'
         | 'executionAttempt'
         | 'errorCode'
@@ -384,7 +382,7 @@ export type AutomationRunV3ListItem =
         | 'producedSessionId'
         | 'createdAt'
         | 'updatedAt'
-    > & Readonly<{ triggerRetired?: boolean }>;
+    >, 'state'> & Readonly<{ state: WorkflowRunStateV1; triggerRetired?: boolean }>;
 
 
 /** One committed Run transition as persisted by the lifecycle owners. */
@@ -399,7 +397,8 @@ export type AutomationRunEventRow = Readonly<{
  * the canonical Run row. Newest-first as selected; the detail projection is the
  * owner that presents it in ascending order.
  */
-export type AutomationRunDetailItem = AutomationRunItem & Readonly<{
+export type AutomationRunDetailItem = Omit<AutomationRunItem, 'state'> & Readonly<{
+    state: WorkflowRunStateV1;
     events: readonly AutomationRunEventRow[];
 }>;
 

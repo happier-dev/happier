@@ -39,6 +39,7 @@ import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
 import { registerAccountEncryptionMigrateRoutes } from "@/app/api/routes/account/registerAccountEncryptionMigrateRoutes";
@@ -61,7 +62,7 @@ import {
     updateAutomation,
     updateAutomationTrigger,
 } from "./automationCrudService";
-import { AutomationValidationError, parseAutomationUpsertInput } from "./automationValidation";
+import { AutomationValidationError, readLegacyExistingSessionTemplateAdmission } from "./automationValidation";
 import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import { cancelAutomationRun } from "./automationRunService";
@@ -311,22 +312,24 @@ describe("automationCrudService (integration)", () => {
             id: "session-old", accountId: account.id, tag: randomUUID(),
             metadata: "opaque-retained-e2ee-metadata", encryptionMode: "e2ee",
         } });
-        const input = parseAutomationUpsertInput({
-            name: "Retained Session", enabled: false, schedule: { kind: "manual" },
-            targetType: "existing_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
-        }, { accountMode: "plain", allowLegacyEncryptedExistingSessionTemplate: true });
+        const input = {
+            name: "Retained Session", enabled: false, schedule: { kind: "manual" as const },
+            targetType: "existing_session" as const, templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
+            legacyTemplateEnvelopeAdmission: readLegacyExistingSessionTemplateAdmission(
+                AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, "existing_session"),
+        };
         const retained = await createAutomation({ accountId: account.id, input });
         expect(retained).toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 1 });
         await expect(reconcileAutomationDefinition({ accountId: account.id, automationId: retained.id, input: {
             expectedTemplateVersion: 1, name: "Retained Session", description: null,
             enabled: false, assignments: [], triggers: [], removedTriggers: [],
-        } })).resolves.toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 2 });
+        } })).resolves.toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 1 });
         await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
             input: { targetType: "new_session" } })).rejects.toBeInstanceOf(AutomationValidationError);
         await withAuthenticatedTestApp(registerAutomationV3Routes, async (app) => {
             const response = await app.inject({ method: "PATCH", url: `/v3/automations/${retained.id}`,
                 headers: { "x-test-user-id": account.id }, payload: {
-                    expectedTemplateVersion: 2,
+                    expectedTemplateVersion: 1,
                     templateCiphertext: JSON.stringify({ kind: "happier_automation_template_plain_v1",
                         payload: { ...JSON.parse(AUTOMATION_TEMPLATE_V02_PLAIN).payload, existingSessionId: session.id } }),
                 } });
@@ -343,7 +346,7 @@ describe("automationCrudService (integration)", () => {
         await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
             input: { name: "Cannot rename after target mode changed" } })).rejects.toBeInstanceOf(AutomationValidationError);
         await expect(getAutomation({ accountId: account.id, automationId: retained.id }))
-            .resolves.toMatchObject({ name: "Retained Session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 2 });
+            .resolves.toMatchObject({ name: "Retained Session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, templateVersion: 1 });
         await db.session.update({ where: { id: session.id }, data: {
             metadata: JSON.stringify({ flavor: "pi", piSessionId: "plain-session" }),
         } });
@@ -356,12 +359,12 @@ describe("automationCrudService (integration)", () => {
             const plainTemplate = (sessionId: string) => JSON.stringify({ kind: "happier_automation_template_plain_v1",
                 payload: { ...JSON.parse(AUTOMATION_TEMPLATE_V02_PLAIN).payload, existingSessionId: sessionId } });
             const retarget = await app.inject({ method: "PATCH", url: `/v3/automations/${retained.id}`, headers,
-                payload: { expectedTemplateVersion: 2, templateCiphertext: plainTemplate(otherTarget.id) } });
+                payload: { expectedTemplateVersion: 1, templateCiphertext: plainTemplate(otherTarget.id) } });
             expect(retarget.statusCode).toBe(400);
             const recovery = await app.inject({ method: "PATCH", url: `/v3/automations/${retained.id}`, headers,
-                payload: { expectedTemplateVersion: 2, templateCiphertext: plainTemplate(session.id) } });
+                payload: { expectedTemplateVersion: 1, templateCiphertext: plainTemplate(session.id) } });
             expect(recovery.statusCode, recovery.body).toBe(200);
-            expect(recovery.json()).toMatchObject({ targetType: "existingSession", templateVersion: 3,
+            expect(recovery.json()).toMatchObject({ targetType: "existingSession", templateVersion: 2,
                 templateCiphertext: plainTemplate(session.id) });
         });
     });
@@ -511,10 +514,12 @@ describe("automationCrudService (integration)", () => {
             id: "session-old", accountId: account.id, tag: randomUUID(),
             metadata: "opaque-retained-e2ee-metadata", encryptionMode: "e2ee",
         } });
-        const retained = await createAutomation({ accountId: account.id, input: parseAutomationUpsertInput({
+        const retained = await createAutomation({ accountId: account.id, input: {
             name: "Retained during transition", enabled: false, schedule: { kind: "manual" },
             targetType: "existing_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
-        }, { accountMode: "e2ee", allowLegacyEncryptedExistingSessionTemplate: true }) });
+            legacyTemplateEnvelopeAdmission: readLegacyExistingSessionTemplateAdmission(
+                AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, "existing_session"),
+        } });
         const directive = { action: "migrate" as const, templates: [{
             automationId: retained.id, expectedTemplateVersion: retained.templateVersion,
             templateCiphertext: retained.templateCiphertext, triggerDefinitionEnvelopes: [],
@@ -851,6 +856,49 @@ describe("automationCrudService (integration)", () => {
         expect(scheduled.triggers[0]!.id).not.toBe(scheduled.triggers[1]!.id);
     });
 
+    it("publishes independent concurrent trigger revisions through HTTP and rejects a mis-bound trigger", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const headers = { "x-test-user-id": account.id };
+            const create = await app.inject({ method: "POST", url: "/v3/automations", headers, payload: {
+                automationId: randomUUID(), name: "Concurrent trigger edits", enabled: false,
+                executionRecipe: currentRecipe(1), assignments: [],
+                triggers: [triggerInput(intervalTrigger(60_000, false)), triggerInput(intervalTrigger(120_000, false))],
+            } });
+            expect(create.statusCode, create.body).toBe(200);
+            const definition = AutomationDefinitionDetailSchema.parse(create.json());
+            const responses = await Promise.all(definition.triggers.map(trigger => app.inject({
+                method: "PATCH", url: `/v3/automations/${definition.id}/triggers`, headers,
+                payload: { triggerId: trigger.id, expectedRevision: trigger.revision, enabled: true },
+            })));
+            const updates = responses.map(response => {
+                expect(response.statusCode, response.body).toBe(200);
+                return AutomationDefinitionDetailSchema.parse(response.json());
+            });
+            expect(updates.map(update => update.templateVersion).sort()).toEqual([2, 3]);
+            const read = await app.inject({ method: "GET", url: `/v3/automations/${definition.id}`, headers });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(AutomationDefinitionDetailSchema.parse(read.json())).toMatchObject({
+                templateVersion: 3, triggers: definition.triggers.map(trigger => ({ id: trigger.id, revision: 1, enabled: true })),
+            });
+            const stale = await app.inject({ method: "PATCH", url: `/v3/automations/${definition.id}/triggers`, headers,
+                payload: { triggerId: definition.triggers[0]!.id, expectedRevision: 0, enabled: false } });
+            expect(stale.statusCode).toBe(409);
+            expect(stale.json()).toEqual({ error: "automation_trigger_revision_conflict" });
+
+            const other = await createAutomation({ accountId: account.id, input: {
+                automationId: randomUUID(), name: "Other definition", enabled: false,
+                executionRecipe: currentRecipe(1), assignments: [], triggers: [],
+            } });
+            const misBound = await app.inject({ method: "PATCH", url: `/v3/automations/${other.id}/triggers`, headers,
+                payload: { triggerId: definition.triggers[0]!.id, expectedRevision: 1, enabled: false } });
+            expect(misBound.statusCode).toBe(404);
+            expect(misBound.json()).toEqual({ error: "automation_not_found" });
+            expect((await getAutomation({ accountId: account.id, automationId: other.id }))?.templateVersion).toBe(1);
+            expect((await getAutomation({ accountId: account.id, automationId: definition.id }))?.templateVersion).toBe(3);
+        });
+    });
+
     it("requires workflow occurrence evidence exactly for private-input causes", async () => {
         const account = await db.account.create({
             data: { encryptionMode: "plain" },
@@ -1185,6 +1233,47 @@ describe("automationCrudService (integration)", () => {
             trigger: intervalTrigger(120_000, false),
         })).rejects.toBeInstanceOf(AutomationTriggerCreateConflictError);
     });
+
+    it.each(["patch", "reconcile", "trigger"] as const)(
+        "leaves equal %s authoring without writes, publications or revision changes",
+        async operation => {
+            const account = await db.account.create({ data: { encryptionMode: "plain" } });
+            const created = await createAutomation({ accountId: account.id, input: {
+                automationId: randomUUID(), name: "Unchanged authoring", description: null,
+                enabled: false, executionRecipe: currentRecipe(1), assignments: [],
+                triggers: [triggerInput(intervalTrigger(60_000))],
+            } });
+            const trigger = created.triggers[0]!;
+            const before = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            const writes: string[] = [];
+            // Observe actual database IO; normalization, admission and publication stay real.
+            const restore = observeSqliteRequests({ before(request) {
+                if (request.model?.startsWith("Automation") || request.model === "AccountChange") {
+                    if (/^(create|update|delete|upsert)/u.test(request.action)) writes.push(`${request.model}.${request.action}`);
+                }
+            } });
+            try {
+                const unchanged = operation === "patch"
+                    ? await updateAutomation({ accountId: account.id, automationId: created.id,
+                        expectedTemplateVersion: created.templateVersion,
+                        input: { name: created.name, description: created.description, enabled: created.enabled, assignments: [] } })
+                    : operation === "trigger"
+                        ? await updateAutomationTrigger({ accountId: account.id, automationId: created.id,
+                            triggerId: trigger.id, expectedRevision: trigger.revision,
+                            trigger: intervalTrigger(60_000) })
+                        : await reconcileAutomationDefinition({ accountId: account.id, automationId: created.id, input: {
+                            expectedTemplateVersion: created.templateVersion, name: created.name,
+                            description: created.description, enabled: created.enabled, assignments: [], removedTriggers: [],
+                            triggers: [{ kind: "existing", triggerId: trigger.id, expectedRevision: trigger.revision,
+                                enabled: trigger.enabled, trigger: intervalTrigger(60_000) }],
+                        } });
+                expect(unchanged).toMatchObject({ id: created.id, templateVersion: created.templateVersion,
+                    updatedAt: created.updatedAt, triggers: [{ id: trigger.id, revision: trigger.revision, updatedAt: trigger.updatedAt }] });
+                expect(writes).toEqual([]);
+                await expect(db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).resolves.toEqual(before);
+            } finally { restore(); }
+        },
+    );
 
     it("preserves trigger identities, revisions, and next-run state across name and recipe edits", async () => {
         const account = await db.account.create({

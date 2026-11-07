@@ -76,5 +76,5 @@ export async function readSharedWorkflowTriggerSummaries(input: Readonly<{
         loadAutomationEventStatusProjections({ automations: rows }),
         loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
     ]);
-    return [...summarizeWorkflowTriggerRowsV1(rows.map(row => toAutomationDefinitionListItemApiDto(row, events, lifecycle.get(row.id)))).values()];
+    return [...summarizeWorkflowTriggerRowsV1(rows.map(row => toAutomationDefinitionListItemApiDto(row, null, events, lifecycle.get(row.id)))).values()];
 }

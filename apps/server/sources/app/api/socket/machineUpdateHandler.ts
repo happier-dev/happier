@@ -1,4 +1,3 @@
-import { replayWorkflowRunMachineWakes } from '@/app/workflows/workflowRunMachineRouting';
 import { registerMachineDaemonStateHandler } from './machineDaemonStateHandler';
 import {
     acquireMachinePublicationLocksInTx, readMarkedMachineSocketUpgradeRequired,
@@ -6,7 +5,7 @@ import {
     encodedMachineEnvelope, isSafePlainMachinePublication, resolveMachineScopedPayloadMachineId,
     resolveMachineMetadataTarget, publishMachineAliveObservation,
 } from './machinePublication';
-import { isDeepStrictEqual } from "node:util";
+import { registerMachineOperationCapabilitiesHandler } from './machineOperationCapabilities';
 import { machineAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import { activityCache } from "@/app/presence/sessionCache";
 import { buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
@@ -15,14 +14,14 @@ import { db } from "@/storage/db";
 import { Socket } from "socket.io";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
+import { replayWorkflowRunMachineWakes } from '@/app/workflows/workflowRunMachineRouting';
 import { submitMachineRemoteAlerts } from '@/app/activity/remoteAlerts/submitMachineRemoteAlerts';
 import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1, type ExternalSessionOperationSocketBatchLimitResolutionV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
 import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1, EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1, ExternalSessionTranscriptInvalidationV1Schema, ExternalSessionSourceUnavailableOccurrenceV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1, MachineSessionTerminalCaptureRequestV1Schema, MachineSessionTerminalFinalizeRequestV1Schema, type MachineSessionTerminalCaptureResponseV1, type MachineSessionTerminalFinalizeResponseV1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
-import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesRequestV1Schema, type MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { SESSION_SERVER_START_INGRESS_EVENT_V1, type SessionServerStartIngressResponseV1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
@@ -37,7 +36,7 @@ import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
 import type { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { publishSessionPublisherClose } from "@/app/presence/publishSessionPublisherClose";
-import { hasCurrentSessionActionRpcSourceBindingInTx, hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
+import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
 import { scheduleSessionActivityRemoteAlerts } from "@/app/activity/remoteAlerts/submitSessionActivityRemoteAlerts";
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "@/app/session/access/sessionRecipients";
 import { scheduleSessionPersonalEvent } from "@/app/session/personal/publishPersonalEvent";
@@ -45,7 +44,6 @@ import {
     classifyMachineAvailabilityState,
     readMachineAvailabilityState,
 } from "@/app/machines/machineStateGuards";
-import { hasCurrentSocketCredential } from "./socketCredentialCurrentness";
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from "./machineSocketInstallationProof";
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, TeamCredentialExternalProviderOperationRetireV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { retireExternalBrokerOperationInTx } from "@/app/teams/credentials/externalBrokerOperation";
@@ -56,6 +54,7 @@ import { USAGE_SOURCES_INVALIDATION_EVENT_V1, UsageSourcesInvalidationV1Schema }
 import {
     resolveMachineAdmissionInTx,
     resolveMachineAccessInTx,
+    resolveMachineAccessForActorsInTx,
     resolveCurrentMachineRecipientAccountIdsInTx,
 } from "@/app/machines/machineAccess";
 import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMachineMutationV1Schema, type SessionMessageReplyMutationResultV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -63,36 +62,10 @@ import { mutateSessionMessageReplyForMachineInTx } from '@/app/session/messages/
 import { createServerRpcForwarder } from './serverRpcForwarder';
 import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionMachinePublicationV2Schema, DiscussionAgentApprovedReplayResponseV1Schema, isDiscussionRequestWithinTransportBudgetV1 } from '@happier-dev/protocol/discussions/api';
 import { postPreparedDiscussionMessageInTx, prepareDiscussionPostMutationAccounts } from '@/app/discussions/mutations';
-import { isSessionInputSourceCurrentInTx } from '@/app/session/messages/sessionMessageReply';
+import { admitInstalledDiscussionPublisherInTx } from '@/app/discussions/installedPublisherAdmission';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { ExecutionRunMachineActivityV1Schema } from '@happier-dev/protocol/execution/runs/activityV1';
-
-async function readMachineCapabilitiesPublicationInTx(tx: Tx, input: Readonly<{
-    accountId: string;
-    machineId: string;
-    socket: Socket;
-    capabilities: MachineOperationProtocolCapabilitiesV1;
-}>) {
-    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: input.accountId, machineId: input.machineId });
-    if (admission.kind !== 'admitted' || admission.custodianAccountId !== input.accountId
-        || !hasCurrentMachineSocketInstallation(input.socket, admission.installationId)) {
-        return { kind: 'unavailable' as const };
-    }
-    const machine = await tx.machine.findFirst({
-        where: { accountId: admission.custodianAccountId, id: input.machineId, installationId: admission.installationId },
-        select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true,
-            revokedAt: true, replacedByMachineId: true },
-    });
-    if (!machine || classifyMachineAvailabilityState(machine) !== 'available') {
-        return { kind: 'unavailable' as const };
-    }
-    const expectedRevision = machine.operationProtocolCapabilitiesRevision;
-    if (expectedRevision !== null && expectedRevision > 0
-        && isDeepStrictEqual(machine.operationProtocolCapabilities, input.capabilities)) {
-        return { kind: 'unchanged' as const, revision: expectedRevision };
-    }
-    return { kind: 'change_required' as const, expectedRevision, installationId: admission.installationId };
-}
+import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, ScmDiffSummaryMachineResultUpdateSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 
 /** Connect and heartbeat share final publisher admission and one transition path. */
 export async function observeMachineAliveFromSocket(input: Readonly<{
@@ -112,10 +85,13 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
     // with the daemon. Queued observations retain their original timestamp at
     // the recorder boundary; only live socket ingress normalizes the clock.
     const timestamp = Date.now();
-    const isCurrent = async () => socket.connected && (!input.isCurrent || await input.isCurrent());
+    // Ownership may require Redis. Admit before opening a transaction so an
+    // unavailable ownership service cannot hold a Machine row lock.
+    if (input.isCurrent && !await input.isCurrent()) return;
+    if (!socket.connected) return;
     const presence = await recordMachineAlive({ accountId: userId, machineId, timestamp }, async (tx, machine) => {
-        // Admit current socket ownership once, after any presence-lock wait.
-        if (!await isCurrent()) return null;
+        // A disconnect cancels locally while waiting for the recovery lock.
+        if (!socket.connected) return null;
         if (machine.installationId === null) {
             // Released uninstalled custodian publishers have no installation proof.
             if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available') return null;
@@ -123,10 +99,10 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
             if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available'
                 || !hasCurrentMachineSocketInstallation(socket, machine.installationId)) return null;
         }
-        return { recipientAccountIds: machine.active ? [] : await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId),
+        return { recipientAccountIds: machine.active && input.continuingBeat ? [] : await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId),
             wasOffline: !machine.active, lastActiveAt: machine.lastActiveAt };
     }, input.continuingBeat ? {
-        installationId: readVerifiedMachineSocketInstallationIdFromSocketData(socket.data), isCurrent,
+        installationId: readVerifiedMachineSocketInstallationIdFromSocketData(socket.data),
     } : undefined);
     if (!presence) { activityCache.invalidateMachine(machineId); return; }
     // Ordinary beats only renew reachability. Transitions and changed work facts
@@ -174,15 +150,23 @@ export function machineUpdateHandler(
                 respond({ v: 1, ok: false, error: 'discussions_unavailable' });
                 return;
             }
-            if (!parsed.success || !isDiscussionRequestWithinTransportBudgetV1(parsed.data.publication.request)) {
+            if (!parsed.success) {
+                respond({ v: 1, ok: false, error: 'discussion_machine_publication_invalid' });
+                return;
+            }
+            if (!isDiscussionRequestWithinTransportBudgetV1(parsed.data.publication.request)) {
                 respond({ v: 1, ok: false, error: 'discussion_invalid_content' });
                 return;
             }
             const machineId = readAuthenticatedMachineId(socket);
             const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
-            if (!machineId || machineId !== parsed.data.machineId || !installationId
-                || !await hasCurrentSocketCredential(userId, socket)) {
-                respond({ v: 1, ok: false, error: 'discussion_post_denied' });
+            if (!machineId || machineId !== parsed.data.machineId || !installationId) {
+                respond({ v: 1, ok: false, error: !machineId ? 'discussion_machine_identity_missing'
+                    : machineId !== parsed.data.machineId ? 'discussion_machine_identity_mismatch' : 'discussion_machine_installation_missing' });
+                return;
+            }
+            if (!socket.connected) {
+                respond({ v: 1, ok: false, error: 'discussion_machine_credential_not_current' });
                 return;
             }
             if (parsed.data.operation === 'workflow_result') {
@@ -192,12 +176,11 @@ export function machineUpdateHandler(
                     producer: workflowPublication.producer, workflowReturn: { machineId, origin: workflowPublication.origin,
                         ...(workflowPublication.expectedParentRevision !== undefined ? { expectedParentRevision: workflowPublication.expectedParentRevision } : {}) } };
                 const result = await inTx(async tx => {
-                    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
-                    if (admission.kind !== 'admitted' || admission.custodianAccountId !== userId
-                        || admission.installationId !== installationId) return null;
+                    const admission = await admitInstalledDiscussionPublisherInTx(tx, { accountId: userId, machineId, installationId });
+                    if (!admission.ok) return admission;
                     return postPreparedDiscussionMessageInTx(tx, append);
                 }, { prepare: () => prepareDiscussionPostMutationAccounts(append) });
-                respond(result ? { v: 1, ...result } : { v: 1, ok: false, error: 'discussion_post_denied' });
+                respond({ v: 1, ...result });
                 return;
             }
             const reviewedPublication = parsed.data.publication;
@@ -210,17 +193,12 @@ export function machineUpdateHandler(
                     ...(reviewedPublication.runId ? { runId: reviewedPublication.runId } : {}),
                     ...(reviewedPublication.toolCallId ? { toolCallId: reviewedPublication.toolCallId } : {}) } };
             const result = await inTx(async tx => {
-                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
                 // The installed owner replays a reviewed body or an accepted
                 // Workflow original; neither impersonates a live Session publisher.
-                if (admission.kind !== 'admitted' || admission.custodianAccountId !== userId
-                    || admission.installationId !== installationId
-                    || !await hasCurrentSessionActionRpcSourceBindingInTx(tx, { accountId: userId, machineId,
-                        installationId, sourceSessionId: reviewedPublication.sessionId, lockAuthority: true })) return null;
-                const session = await tx.session.findUnique({ where: { id: reviewedPublication.sessionId }, select: { archivedAt: true } });
-                if (!session || session.archivedAt || reviewedPublication.sourceSession
-                    && (reviewedPublication.sourceSession.sourceSessionId !== reviewedPublication.sessionId
-                        || !await isSessionInputSourceCurrentInTx(tx, userId, reviewedPublication.sourceSession))) return null;
+                const admission = await admitInstalledDiscussionPublisherInTx(tx, { accountId: userId, machineId, installationId,
+                    source: { sessionId: reviewedPublication.sessionId, sourceSession: reviewedPublication.sourceSession },
+                    lockAuthority: true });
+                if (!admission.ok) return null;
                 return postPreparedDiscussionMessageInTx(tx, append);
             }, { prepare: () => prepareDiscussionPostMutationAccounts(append) });
             respond(result ? { v: 1, ...result } : { v: 1, ok: false, error: 'discussion_post_denied' });
@@ -240,7 +218,7 @@ export function machineUpdateHandler(
         const machineId = readAuthenticatedMachineId(socket);
         const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
         try {
-            if (!machineId || !installationId || !await hasCurrentSocketCredential(userId, socket)) {
+            if (!machineId || !installationId || !socket.connected) {
                 callback?.({ ok: false, reasonCode: "resource_forbidden" });
                 return;
             }
@@ -312,7 +290,7 @@ export function machineUpdateHandler(
             callback?.({ v: 1, ok: false, error: 'forbidden' }); return;
         }
         try {
-            if (!await hasCurrentSocketCredential(userId, socket)) { callback?.({ v: 1, ok: false, error: 'forbidden' }); return; }
+            if (!socket.connected) { callback?.({ v: 1, ok: false, error: 'forbidden' }); return; }
             callback?.(await inTx(tx => mutateSessionMessageReplyForMachineInTx(tx, { accountId: userId, installationId,
                 mutation: parsed.data, authentication: readSessionAccessAuthenticationFromSocket(socket) }), { isolationLevel: 'ReadCommitted' }));
         } catch {
@@ -381,6 +359,7 @@ export function machineUpdateHandler(
                     sessionId: parsed.data.sessionId,
                     localId: parsed.data.localId,
                     content: parsed.data.content,
+                    usageTimingV1: parsed.data.usageTimingV1,
                     requestedAction: parsed.data.requestedAction,
                     ...(verifiedInvocation && 'grant' in verifiedInvocation.binding ? { callerInputConstraints: {
                         models: verifiedInvocation.binding.grant.models,
@@ -422,7 +401,7 @@ export function machineUpdateHandler(
             return;
         }
         try {
-            if (installationId && !await hasCurrentSocketCredential(userId, socket)) {
+            if (installationId && !socket.connected) {
                 callback?.({ v: 1, status: "rejected", sessionId: parsed.data.sessionId, reason: "unauthorized" });
                 return;
             }
@@ -508,7 +487,7 @@ export function machineUpdateHandler(
         const machineId = readAuthenticatedMachineId(socket);
         const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
         try {
-            if (!machineId || !installationId || !await hasCurrentSocketCredential(userId, socket)) {
+            if (!machineId || !installationId || !socket.connected) {
                 callback?.({ v: 1, ok: false, reason: 'authority_unavailable' }); return;
             }
             const result = await updatePendingRequestedAction({ actorUserId: userId,
@@ -560,7 +539,7 @@ export function machineUpdateHandler(
             return;
         }
         try {
-            if (installationId && !await hasCurrentSocketCredential(userId, socket)) {
+            if (installationId && !socket.connected) {
                 callback?.({ v: 1, status: "rejected", sessionId: parsed.data.sessionId, reason: "unauthorized" });
                 return;
             }
@@ -623,7 +602,7 @@ export function machineUpdateHandler(
     const handleActionOperationSnapshotPush = async (raw: unknown, acknowledge?: (admitted: boolean) => void) => {
         let admitted = false;
         try {
-            if (!await hasCurrentSocketCredential(userId, socket)) return;
+            if (!socket.connected) return;
             const account = await db.account.findUnique({ where: { id: userId }, select: { encryptionMode: true } });
             if (!account) return;
             const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
@@ -631,7 +610,7 @@ export function machineUpdateHandler(
             const payload = projectActionOperationSnapshotPush(raw, readAuthenticatedMachineId(socket), {
                 accountId: userId, encryptionMode: mode.mode,
             });
-            if (!payload || !await hasCurrentSocketCredential(userId, socket)) return;
+            if (!payload || !socket.connected) return;
             eventRouter.emitEphemeral({ userId, payload, recipientFilter: { type: 'user-scoped-only' } });
             admitted = true;
         } catch {
@@ -732,12 +711,33 @@ export function machineUpdateHandler(
         }
     });
 
+    socket.on(SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, async (data: unknown) => {
+        try {
+            const parsed = ScmDiffSummaryMachineResultUpdateSchema.safeParse(data);
+            const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
+            if (!parsed.success || !machineId || !socket.connected) return;
+            const admitted = await inReadSnapshot(async tx => {
+                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
+                return admission.kind === 'admitted' && admission.custodianAccountId === userId
+                    && admission.installationId === parsed.data.installationId
+                    && hasCurrentMachineSocketInstallation(socket, admission.installationId);
+            });
+            if (!admitted) return;
+            // Private saved-result identity stays with the custodian Account. Reads retain their existing authorization.
+            eventRouter.emitEphemeral({ userId, payload: { type: SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, machineId,
+                resultId: parsed.data.resultId, revision: parsed.data.revision }, recipientFilter: { type: 'user-scoped-only' } });
+        } catch {
+            log({ module: 'websocket', level: 'error', event: SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, errorCode: 'internal_error' },
+                'Saved SCM result activity handling failed.');
+        }
+    });
+
     socket.on('execution-run-updated', async (data: unknown) => {
         try {
             websocketEventsCounter.inc({ event_type: 'execution-run-updated' });
             const parsed = ExecutionRunMachineActivityV1Schema.safeParse(data);
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
-            if (!parsed.success || !machineId || !await hasCurrentSocketCredential(userId, socket)) return;
+            if (!parsed.success || !machineId || !socket.connected) return;
             const admitted = await inReadSnapshot(async tx => {
                 const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
                 return admission.kind === 'admitted' && admission.custodianAccountId === userId
@@ -760,7 +760,7 @@ export function machineUpdateHandler(
             websocketEventsCounter.inc({ event_type: USAGE_SOURCES_INVALIDATION_EVENT_V1 });
             const parsed = UsageSourcesInvalidationV1Schema.safeParse(data);
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
-            if (!parsed.success || !machineId || !await hasCurrentSocketCredential(userId, socket)) return;
+            if (!parsed.success || !machineId || !socket.connected) return;
             const admitted = await inTx(async tx => {
                 const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
                 return admission.kind === 'admitted' && admission.custodianAccountId === userId
@@ -868,127 +868,7 @@ export function machineUpdateHandler(
         }
     });
 
-    // The authenticated daemon replaces its full content-free operation capability
-    // projection here. This is deliberately separate from encrypted daemonState and
-    // has no merge behavior: omission withdraws an older leaf.
-    socket.on(MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, async (
-        request: unknown,
-        callback?: (response: unknown) => void,
-    ) => {
-        const parsed = MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse(request);
-        const machineId = parsed.success
-            ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId)
-            : null;
-        if (!parsed.success || !machineId) {
-            callback?.({ v: 1, result: 'error', code: 'invalid_request' });
-            return;
-        }
-
-        try {
-            // Credential verification uses the Auth owner's database reader.
-            // Complete it before opening a write transaction so it cannot wait
-            // on a connection held by that same transaction.
-            if (!await hasCurrentSocketCredential(userId, socket)) {
-                callback?.({ v: 1, result: 'error', code: 'machine_unavailable' });
-                socket.disconnect(true);
-                return;
-            }
-            const readPublication = (tx: Tx) => readMachineCapabilitiesPublicationInTx(tx, {
-                accountId: userId, machineId, socket, capabilities: parsed.data.capabilities,
-            });
-            let observed = await inReadSnapshot(readPublication, { transactionClass: "machine-operation-capabilities-read" });
-            if (observed.kind === 'unchanged') {
-                // Equal refreshes publish nothing. Readmit the socket and the
-                // exact installation after the coherent capture closes; a
-                // changed projection still enters the fenced write below.
-                if (!await hasCurrentSocketCredential(userId, socket)) {
-                    callback?.({ v: 1, result: 'error', code: 'machine_unavailable' });
-                    socket.disconnect(true);
-                    return;
-                }
-                observed = await inReadSnapshot(readPublication, { transactionClass: "machine-operation-capabilities-read" });
-            }
-            if (observed.kind !== 'change_required') {
-                callback?.(observed.kind === 'unchanged'
-                    ? { v: 1, result: 'success', revision: observed.revision }
-                    : { v: 1, result: 'error', code: 'machine_unavailable' });
-                return;
-            }
-            await inTx(async (tx) => {
-                const recipientAccountIds = await acquireMachinePublicationLocksInTx(tx, machineId);
-                const admitted = await readPublication(tx);
-                if (admitted.kind === 'unavailable') {
-                    afterTx(tx, () => callback?.({ v: 1, result: 'error', code: 'machine_unavailable' }));
-                    return null;
-                }
-                if (admitted.kind === 'unchanged') {
-                    // A full refresh rejoins the current projection without
-                    // changing its revision or invalidating Account readers.
-                    afterTx(tx, () => callback?.({
-                        v: 1,
-                        result: 'success',
-                        revision: admitted.revision,
-                    }));
-                    return null;
-                }
-                const { expectedRevision, installationId } = admitted;
-                const nextRevision = (expectedRevision ?? 0) + 1;
-                const { count } = await tx.machine.updateMany({
-                    where: {
-                        accountId: userId,
-                        id: machineId,
-                        installationId,
-                        revokedAt: null,
-                        replacedByMachineId: null,
-                        operationProtocolCapabilitiesRevision: expectedRevision,
-                    },
-                    data: {
-                        operationProtocolCapabilities: parsed.data.capabilities,
-                        operationProtocolCapabilitiesRevision: nextRevision,
-                    },
-                });
-                if (count !== 1) {
-                    const fresh = await tx.machine.findFirst({
-                        where: { accountId: userId, id: machineId },
-                        select: { revokedAt: true, replacedByMachineId: true, installationId: true },
-                    });
-                    afterTx(tx, () => callback?.({
-                        v: 1,
-                        result: 'error',
-                        code: classifyMachineAvailabilityState(fresh) === 'available'
-                            && fresh?.installationId === installationId
-                            ? 'internal_error'
-                            : 'machine_unavailable',
-                    }));
-                    return null;
-                }
-
-                for (const accountId of recipientAccountIds) {
-                    await markAccountChanged(tx, { accountId, kind: 'machine', entityId: machineId });
-                }
-                afterTx(tx, () => callback?.({
-                    v: 1,
-                    result: 'success',
-                    revision: nextRevision,
-                }));
-                return null;
-            }, {
-                isolationLevel: "ReadCommitted",
-                transactionClass: "machine-operation-capabilities",
-            });
-        } catch {
-            log(
-                {
-                    module: 'websocket',
-                    level: 'error',
-                    event: MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
-                    errorCode: 'internal_error',
-                },
-                'Machine operation protocol capability update failed.',
-            );
-            callback?.({ v: 1, result: 'error', code: 'internal_error' });
-        }
-    });
+    registerMachineOperationCapabilitiesHandler(userId, socket, { isCurrent: options.isMachineSocketCurrent });
 
     // Machine metadata update with optimistic concurrency control
     socket.on('machine-update-metadata', async (
@@ -1010,7 +890,7 @@ export function machineUpdateHandler(
             }
             const { metadata, expectedVersion, expectedDataEncryptionKey } = parsed.data;
 
-            if (!await hasCurrentSocketCredential(userId, socket)) {
+            if (!socket.connected) {
                 callback?.({ result: 'error', message: 'Forbidden' });
                 socket.disconnect(true);
                 return;
@@ -1123,10 +1003,12 @@ export function machineUpdateHandler(
 
                 const metadataUpdate = { value: metadata, version: expectedVersion + 1 };
                 const child = await readMachineDevcontainerChildInTx(tx, machineId);
-                for (const accountId of recipientAccountIds) {
-                    const access = await resolveMachineAccessInTx(tx, { actorAccountId: accountId, machineId });
+                const recipientAccess = await resolveMachineAccessForActorsInTx(tx, { machineId, actorAccountIds: recipientAccountIds });
+                const publications = await markAccountsChanged(tx, { accountIds: recipientAccountIds, kind: 'machine', entityId: machineId });
+                for (const cursor of publications) {
+                    const accountId = cursor.accountId;
+                    const access = recipientAccess.get(accountId);
                     const devcontainerChild = access?.accessState === 'ready' ? child : null;
-                    const cursor = await markAccountChanged(tx, { accountId, kind: 'machine', entityId: machineId });
                     afterTx(tx, () => {
                         const updatePayload = buildUpdateMachineUpdate(machineId, cursor.resolveCursor(), randomKeyNaked(12), metadataUpdate, undefined, {
                             keyBasis: serializeMachineKeyBasis({ ...machine, metadataVersion: expectedVersion + 1 }),

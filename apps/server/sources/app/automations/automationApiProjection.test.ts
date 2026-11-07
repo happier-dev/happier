@@ -228,7 +228,7 @@ function eventStatusProjection() {
         sourceCatalogStatus: {
             observedRevision: "9",
             adoptedRevision: "7",
-            state: "reconciliationLate" as const,
+            state: "reconciling" as const,
             scanStartedAt: DATE.getTime(),
             nextRetryAt: DATE.getTime() + 60_000,
         },
@@ -375,6 +375,16 @@ function conversationRun() {
 }
 
 describe("Automation API projections", () => {
+    it("retains the Environment relation for non-executable observation enrollment", () => {
+        const deploymentEnvironment = { serverId: 'server', projectSourceId: 'source', environmentId: 'environment' };
+        const row = { ...scheduleAutomation(), targetType: null, assignments: [], triggers: [],
+            deploymentEnvironmentId: deploymentEnvironment.environmentId, deploymentPreviewRole: null,
+            templateCiphertext: JSON.stringify({ kind: 'observationOnly', templateVersion: 2, deploymentEnvironment }) };
+        expect(toAutomationDefinitionDetailApiDto(row, ACCOUNT_CURRENTNESS, null)).toMatchObject({
+            deploymentEnvironment, observationOnly: { kind: 'observationOnly', deploymentEnvironment }, assignments: [],
+        });
+    });
+
     it("opens unknown stored result fields through exact Run detail without widening structural lists", () => {
         const run = { ...eventRun(), executionInputEnvelope: strictEventExecutionRecipe() };
         const envelope = JSON.parse(run.resultEnvelope);
@@ -398,14 +408,14 @@ describe("Automation API projections", () => {
             id: triggerId, kind, scheduleKind: null, everyMs: null, nextRunAt: null,
             sourceSessionId: "session-1", definitionEnvelope: envelope,
         }] };
-        const listed = toAutomationDefinitionListItemApiDto(item);
+        const listed = toAutomationDefinitionListItemApiDto(item, null);
         expect(listed.triggers[0]).toMatchObject({ kind, sourceSessionId: "session-1" });
         expect(JSON.stringify(listed)).not.toContain("owner/repo");
         expect(listed.triggers[0]).not.toHaveProperty("triggerDefinitionEnvelope");
-        expect(toAutomationDefinitionDetailApiDto(item, ACCOUNT_CURRENTNESS).triggers[0])
+        expect(toAutomationDefinitionDetailApiDto(item, ACCOUNT_CURRENTNESS, null).triggers[0])
             .toMatchObject({ kind, sourceSessionId: "session-1", triggerDefinitionEnvelope: envelope });
         expect(() => toAutomationDefinitionDetailApiDto(item, { mode: "e2ee", version: 7,
-            contentKeyFingerprint: "f".repeat(43) })).toThrow();
+            contentKeyFingerprint: "f".repeat(43) }, null)).toThrow();
     });
     it("projects the current trigger union without source leakage", () => {
         const schedule = scheduleAutomation();
@@ -413,7 +423,7 @@ describe("Automation API projections", () => {
 
         expect(toAutomationDefinitionDetailApiDto(
             event,
-            ACCOUNT_CURRENTNESS,
+            ACCOUNT_CURRENTNESS, null,
             new Map([["trigger-event", eventStatusProjection()]]),
             new Map(),
         )).toEqual(expect.objectContaining({
@@ -448,15 +458,15 @@ describe("Automation API projections", () => {
                 sourceCatalogStatus: {
                     observedRevision: "9",
                     adoptedRevision: "7",
-                    state: "reconciliationLate",
+                    state: "reconciling",
                     scanStartedAt: DATE.getTime(),
                     nextRetryAt: DATE.getTime() + 60_000,
                 },
             })],
         }));
-        expect(toAutomationDefinitionDetailApiDto(event, ACCOUNT_CURRENTNESS)).not.toHaveProperty("schedule");
+        expect(toAutomationDefinitionDetailApiDto(event, ACCOUNT_CURRENTNESS, null)).not.toHaveProperty("schedule");
         const listItem = toAutomationDefinitionListItemApiDto(
-            event,
+            event, null,
             new Map([["trigger-event", eventStatusProjection()]]),
         );
         expect(listItem).toMatchObject({
@@ -510,8 +520,12 @@ describe("Automation API projections", () => {
     it.each(['waiting_for_review', 'pause_requested', 'paused', 'interrupted'] as const)(
         "projects a Workflow %s Run through the retained Automation receipt and detail vocabulary", state => {
             const run = { ...manualRun(), state, workflowCustodyState: 'pending' as const, resultEnvelope: null };
-            expect(toAutomationRunV3ListApiDto(run)).toMatchObject({ id: run.id, state: 'running' });
-            expect(toAutomationRunV3DetailApiDto(run, 'plain')).toMatchObject({ id: run.id, state: 'running' });
+            expect(toAutomationRunV3ListApiDto(run)).toMatchObject({ id: run.id, state: 'running', workflowRunState: state });
+            expect(toAutomationRunV3DetailApiDto(run, 'plain')).toMatchObject({
+                id: run.id,
+                state: 'running',
+                workflowRunState: state,
+            });
         },
     );
 
@@ -533,11 +547,11 @@ describe("Automation API projections", () => {
             templateCiphertext: serialized.serialized,
         };
 
-        const listItem = toAutomationDefinitionListItemApiDto(current);
+        const listItem = toAutomationDefinitionListItemApiDto(current, null);
         expect(listItem.existingSessionId).toBe("session-77");
         expect(listItem).not.toHaveProperty("templateCiphertext");
         expect(listItem).not.toHaveProperty("executionRecipe");
-        expect(toAutomationDefinitionDetailApiDto(current, ACCOUNT_CURRENTNESS).existingSessionId)
+        expect(toAutomationDefinitionDetailApiDto(current, ACCOUNT_CURRENTNESS, null).existingSessionId)
             .toBe("session-77");
 
         // A stale recipe revision and a retained predecessor template are both
@@ -545,19 +559,19 @@ describe("Automation API projections", () => {
         expect(toAutomationDefinitionListItemApiDto({
             ...current,
             templateVersion: 3,
-        }).existingSessionId).toBeNull();
+        }, null).existingSessionId).toBeNull();
         expect(toAutomationDefinitionListItemApiDto({
             ...current,
             templateCiphertext: V2_TEMPLATE_CIPHERTEXT,
-        }).existingSessionId).toBeNull();
-        expect(toAutomationDefinitionListItemApiDto(scheduleAutomation()).existingSessionId)
+        }, null).existingSessionId).toBeNull();
+        expect(toAutomationDefinitionListItemApiDto(scheduleAutomation(), null).existingSessionId)
             .toBeNull();
     });
 
     it("does not manufacture Event status without the batch projection owner", () => {
         const event = eventAutomation();
 
-        expect(toAutomationDefinitionListItemApiDto(event)).toMatchObject({
+        expect(toAutomationDefinitionListItemApiDto(event, null)).toMatchObject({
             triggers: [{ sourceStatus: null, sourceCatalogStatus: null }],
         });
     });
@@ -570,7 +584,7 @@ describe("Automation API projections", () => {
             eventLocalId: "pull-request-opened",
         };
         const list = toAutomationDefinitionListItemApiDto(
-            { ...event, triggers: [event.triggers[0], secondTrigger] },
+            { ...event, triggers: [event.triggers[0], secondTrigger] }, null,
             new Map([["trigger-event", eventStatusProjection()]]),
         );
 
@@ -614,7 +628,7 @@ describe("Automation API projections", () => {
         };
 
         expect(toAutomationDefinitionListItemApiDto(
-            automation,
+            automation, null,
             new Map(),
             new Map([["trigger-lifecycle", { state: "waiting" as const, runId: null }]]),
         ).triggers).toEqual([
@@ -624,7 +638,7 @@ describe("Automation API projections", () => {
                 status: { state: "waiting", runId: null },
             }),
         ]);
-        expect(() => toAutomationDefinitionListItemApiDto(automation))
+        expect(() => toAutomationDefinitionListItemApiDto(automation, null))
             .toThrow("Automation row has no sessionLifecycle status for its declared arm");
     });
 
