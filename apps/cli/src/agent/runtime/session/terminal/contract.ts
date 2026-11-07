@@ -84,7 +84,7 @@ export class HostTerminalTranscriptFollowAdmissionError extends Error {
      */
     readonly phase: 'bind' | 'active';
 
-    constructor(followCode: string, phase: 'bind' | 'active') {
+    constructor(followCode: string, phase: 'bind' | 'active', readonly retryable = true) {
         super(
             `Terminal transcript follow admission failed (${phase}): ${followCode}`,
         );
@@ -233,6 +233,8 @@ export type HostTerminalTranscriptFollowBindResult =
     | Readonly<{
         status: 'unavailable';
         code: string;
+        /** The follow owner decides whether unchanged evidence can be retried. */
+        retryable?: boolean;
     }>;
 
 export type HostTerminalTranscriptFollowService = Readonly<{

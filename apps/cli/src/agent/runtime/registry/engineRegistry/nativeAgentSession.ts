@@ -421,12 +421,14 @@ function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTurnOperat
                                 throw new HostTerminalTranscriptFollowAdmissionError(
                                     'plugin_external_follow_unavailable',
                                     'bind',
+                                    false,
                                 );
                             }
                             if (!providerSessionId) {
                                 throw new HostTerminalTranscriptFollowAdmissionError(
                                     'native_agent_terminal_provider_session_unavailable',
                                     'bind',
+                                    false,
                                 );
                             }
                             let follow: HostTerminalTranscriptFollowBindResult;
@@ -446,6 +448,7 @@ function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTurnOperat
                                 throw new HostTerminalTranscriptFollowAdmissionError(
                                     follow.code,
                                     'bind',
+                                    follow.retryable,
                                 );
                             }
                             transcriptFollowBinding = follow.binding;
@@ -5832,7 +5835,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     followSource: async (request) => {
                         assertGenerationCurrent();
                         if (!terminalTranscriptFollowService) {
-                            throw new HostTerminalTranscriptFollowAdmissionError('plugin_external_follow_unavailable', 'bind');
+                            throw new HostTerminalTranscriptFollowAdmissionError('plugin_external_follow_unavailable', 'bind', false);
                         }
                         await hostRuntimeParams.waitForProviderSessionIdPublication?.(request.providerSessionId, signal);
                         const result = await terminalTranscriptFollowService.bindProviderSession({
@@ -5842,7 +5845,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             signal,
                         });
                         if (result.status === 'unavailable') {
-                            throw new HostTerminalTranscriptFollowAdmissionError(result.code, 'bind');
+                            throw new HostTerminalTranscriptFollowAdmissionError(result.code, 'bind', result.retryable);
                         }
                         let active = true;
                         void result.binding.failure.then((error) => {

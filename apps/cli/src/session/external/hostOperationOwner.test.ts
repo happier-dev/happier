@@ -135,28 +135,28 @@ describe('external-session daemon host-operation owner', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
+            retryable: false,
         });
         expect(resolveTarget).toHaveBeenCalledOnce();
         expect(followExecute).toHaveBeenCalledOnce();
     });
 
-    it('distinguishes a never-installed owner from a retired generation', async () => {
-        // The owner is constructed unconditionally at daemon startup; a generation is
-        // installed into it only during machine-RPC registration. A binding taken in
-        // between has no generation, which is NOT the same as having had one retired.
+    it('reports unavailable until an operation is installed and retires old bindings', async () => {
         const owner = createExternalSessionHostOperationOwner();
         const binding = owner.bind(createBindingInput());
 
         expect(owner.canFollowNow()).toBe(false);
         await expect(binding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
-            code: 'plugin_external_follow_host_operations_uninstalled',
+            code: 'plugin_external_follow_unavailable',
+            retryable: false,
         });
         await expect(
             binding.executeProviderSessionFollow(providerSessionFollowRequest()),
         ).resolves.toEqual({
             status: 'unavailable',
-            code: 'plugin_external_follow_host_operations_uninstalled',
+            code: 'plugin_external_follow_unavailable',
+            retryable: false,
         });
 
         // Once installed, the same owner reports follow as runnable.
@@ -165,13 +165,12 @@ describe('external-session daemon host-operation owner', () => {
         });
         expect(owner.canFollowNow()).toBe(true);
 
-        // ...and a generation that WAS installed and then went away is genuinely retired,
-        // so that code must not be replaced by the uninstalled one.
         await installation.dispose();
         expect(owner.canFollowNow()).toBe(false);
         await expect(binding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
-            code: 'plugin_external_follow_host_operations_uninstalled',
+            code: 'plugin_external_follow_unavailable',
+            retryable: false,
         });
         await owner.retire();
     });
@@ -201,6 +200,7 @@ describe('external-session daemon host-operation owner', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
+            retryable: false,
         });
         await expect(binding.executeProviderSessionFollow({
             ...providerSessionFollowRequest(),
@@ -208,6 +208,7 @@ describe('external-session daemon host-operation owner', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
+            retryable: false,
         });
         expect(resolveTarget).toHaveBeenCalledOnce();
         expect(followExecute).not.toHaveBeenCalled();
@@ -242,6 +243,7 @@ describe('external-session daemon host-operation owner', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_unavailable',
+            retryable: false,
         });
         expect(resolveTarget).toHaveBeenCalledOnce();
         expect(followExecute).not.toHaveBeenCalled();
@@ -283,6 +285,7 @@ describe('external-session daemon host-operation owner', () => {
         await expect(result).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
         expect(followExecute).not.toHaveBeenCalled();
     });
@@ -316,6 +319,7 @@ describe('external-session daemon host-operation owner', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
+            retryable: false,
         });
         expect(followExecute).toHaveBeenCalledTimes(1);
 
@@ -328,6 +332,7 @@ describe('external-session daemon host-operation owner', () => {
         ).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
         expect(followExecute).toHaveBeenCalledTimes(1);
     });
@@ -352,6 +357,7 @@ describe('external-session daemon host-operation owner', () => {
         await expect(oldBinding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
         expect(firstFollow).not.toHaveBeenCalled();
         expect(replacementFollow).not.toHaveBeenCalled();
@@ -409,12 +415,13 @@ describe('external-session daemon host-operation owner', () => {
         },
     );
 
-    it('bounds replacement and owner retirement when a follow disposer never settles', async () => {
+    it('waits for physical cleanup when replacement and retirement exceed the former local deadline', async () => {
         vi.useFakeTimers();
         try {
-            const firstDispose = vi.fn(
-                async () => await new Promise<void>(() => undefined),
-            );
+            let finishFirstCleanup!: () => void;
+            const firstDispose = vi.fn(() => new Promise<void>((resolve) => {
+                finishFirstCleanup = resolve;
+            }));
             const owner = createExternalSessionHostOperationOwner();
             await installOperations(owner, {
                 followOperation: unavailableFollowOperation(
@@ -440,16 +447,18 @@ describe('external-session daemon host-operation owner', () => {
                 return installation;
             });
             await Promise.resolve();
-            await vi.advanceTimersByTimeAsync(5_000);
+            await vi.advanceTimersByTimeAsync(6_001);
             await Promise.resolve();
 
-            expect(replacementSettled).toBe(true);
+            expect(replacementSettled).toBe(false);
+            finishFirstCleanup();
             await replacement;
             expect(firstDispose).toHaveBeenCalledOnce();
 
-            const secondDispose = vi.fn(
-                async () => await new Promise<void>(() => undefined),
-            );
+            let finishSecondCleanup!: () => void;
+            const secondDispose = vi.fn(() => new Promise<void>((resolve) => {
+                finishSecondCleanup = resolve;
+            }));
             await installOperations(owner, {
                 followOperation: unavailableFollowOperation(
                     vi.fn(async () => Object.freeze({
@@ -474,10 +483,11 @@ describe('external-session daemon host-operation owner', () => {
                 retirementSettled = true;
             });
             await Promise.resolve();
-            await vi.advanceTimersByTimeAsync(5_000);
+            await vi.advanceTimersByTimeAsync(6_001);
             await Promise.resolve();
 
-            expect(retirementSettled).toBe(true);
+            expect(retirementSettled).toBe(false);
+            finishSecondCleanup();
             await retirement;
             expect(secondDispose).toHaveBeenCalledOnce();
         } finally {
@@ -515,21 +525,15 @@ describe('external-session daemon host-operation owner', () => {
                 throw new Error('expected follow');
             }
 
-            // Cleanup that has not settled by the ceiling is unresolved cleanup,
-            // not finished cleanup. Resolving here is what let the retained-Agent
-            // follow close delete a still-live provider subscription and report
-            // success for it.
+            // Elapsed time is not physical cleanup. Both callers retain the
+            // same subscription and observe its eventual settlement.
             const first = Promise.resolve(followed.subscription.dispose());
             const firstSettled = first.catch(() => undefined);
-            await vi.advanceTimersByTimeAsync(4_999);
+            await vi.advanceTimersByTimeAsync(6_001);
             let settled = false;
             void firstSettled.finally(() => { settled = true; });
             await Promise.resolve();
             expect(settled).toBe(false);
-            await vi.advanceTimersByTimeAsync(1);
-            await expect(first).rejects.toThrow(
-                'plugin_external_follow_cleanup_deadline_exceeded',
-            );
 
             // A retry joins the invocation the provider is still running instead
             // of disposing the same handle a second time.
@@ -541,6 +545,7 @@ describe('external-session daemon host-operation owner', () => {
             // The failure that arrives after the ceiling is surfaced, not
             // discarded beside the state machine.
             failFirstCleanup(new Error('provider cleanup rejected'));
+            await expect(first).rejects.toThrow('provider cleanup rejected');
             await expect(second).rejects.toThrow('provider cleanup rejected');
             await secondSettled;
 
@@ -555,6 +560,54 @@ describe('external-session daemon host-operation owner', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('closes delivery before physical disposal without requiring a disposed-event acknowledgement', async () => {
+        let deliver!: Parameters<ExternalSessionFollowHostOperation['execute']>[0]['listener'];
+        let finishCleanup!: () => void;
+        const cleanup = new Promise<void>((resolve) => { finishCleanup = resolve; });
+        const dispose = vi.fn(async () => await cleanup);
+        const owner = createExternalSessionHostOperationOwner();
+        await owner.install({
+            followOperation: {
+                async execute(request) {
+                    deliver = request.listener;
+                    return { status: 'following', startingCursor: 'cursor-1', subscription: { dispose } };
+                },
+            },
+        });
+        const listener = vi.fn();
+        const followed = await owner.bind(createBindingInput()).executeFollow({ ...followRequest(), listener });
+        if (followed.status !== 'following') throw new Error('expected follow');
+        const disposal = followed.subscription.dispose();
+        await Promise.resolve();
+        await expect(deliver({ kind: 'terminated', reason: 'disposed', cursor: 'cursor-1' }))
+            .rejects.toThrow('plugin_external_follow_unavailable');
+        expect(listener).not.toHaveBeenCalled();
+        finishCleanup();
+        await disposal;
+        expect(dispose).toHaveBeenCalledOnce();
+        await owner.retire();
+    });
+
+    it.each(['installation', 'owner'] as const)('retains rejected %s retirement cleanup for the next attempt', async (kind) => {
+        const dispose = vi.fn<() => Promise<void>>()
+            .mockRejectedValueOnce(new Error('cleanup rejected'))
+            .mockResolvedValue(undefined);
+        const owner = createExternalSessionHostOperationOwner();
+        const installation = await owner.install({
+            followOperation: {
+                async execute() {
+                    return { status: 'following', startingCursor: 'cursor-1', subscription: { dispose } };
+                },
+            },
+        });
+        await owner.bind(createBindingInput()).executeFollow(followRequest());
+        const retire = kind === 'owner' ? () => owner.retire() : () => installation.dispose();
+        await expect(retire()).rejects.toThrow('cleanup rejected');
+        await expect(retire()).resolves.toBeUndefined();
+        expect(dispose).toHaveBeenCalledTimes(2);
+        await owner.retire();
     });
 
     it('disposes a listener-failed provisional follow without retiring sibling follows', async () => {
@@ -662,15 +715,14 @@ describe('external-session daemon host-operation owner', () => {
             }));
             let deliverySettled = false;
             void heldDelivery.then(() => { deliverySettled = true; }, () => { deliverySettled = true; });
-            const heldDeliveryAssertion = kind === 'terminal'
-                ? expect(heldDelivery).rejects.toThrow('plugin_operation_aborted')
-                : expect(heldDelivery).rejects.toMatchObject({ code: 'plugin_external_follow_listener_deadline_exceeded' });
-            await vi.advanceTimersByTimeAsync(5_100);
-            if (kind === 'terminal') {
-                expect(deliverySettled).toBe(false);
-                expect(firstDispose).not.toHaveBeenCalled();
-                cancellation.abort();
-            }
+            const heldDeliveryAssertion = expect(heldDelivery)
+                .rejects.toThrow('plugin_operation_aborted');
+            await vi.advanceTimersByTimeAsync(0);
+            expect(vi.getTimerCount()).toBe(0);
+            await vi.advanceTimersByTimeAsync(6_001);
+            expect(deliverySettled).toBe(false);
+            expect(firstDispose).not.toHaveBeenCalled();
+            cancellation.abort();
             await heldDeliveryAssertion;
             expect(firstDispose).toHaveBeenCalledOnce();
             expect(secondDispose).not.toHaveBeenCalled();
@@ -782,7 +834,7 @@ describe('external-session daemon host-operation owner', () => {
             .toBe(true);
     });
 
-    it('rejects oversized events without retiring sibling follows', async () => {
+    it('delivers valid large events without a second host byte ceiling or retiring sibling follows', async () => {
         const disposals: Array<ReturnType<typeof vi.fn>> = [];
         const operationListeners: Array<
             Parameters<ExternalSessionFollowHostOperation['execute']>[0]['listener']
@@ -810,14 +862,21 @@ describe('external-session daemon host-operation owner', () => {
         expect(followExecute).toHaveBeenCalledTimes(2);
 
         await expect(operationListeners[0]!({
-            kind: 'terminated',
-            reason: 'providerFailure',
-            cursor: 'cursor-1',
-            code: 'x'.repeat(1024 * 1024),
-        })).rejects.toMatchObject({
-            code: 'plugin_external_follow_event_too_large',
-        });
-        await vi.waitFor(() => expect(disposals[0]).toHaveBeenCalledOnce());
+            kind: 'data',
+            items: [{
+                id: 'large', kind: 'event',
+                data: {
+                    role: 'agent',
+                    content: {
+                        type: 'codex',
+                        data: { type: 'tool-call-result', callId: 'call-1', output: 'x'.repeat(1024 * 1024) },
+                    },
+                },
+            }],
+            fromCursor: 'cursor-1',
+            nextCursor: 'cursor-2',
+        })).resolves.toBeUndefined();
+        expect(disposals[0]).not.toHaveBeenCalled();
         expect(disposals[1]).not.toHaveBeenCalled();
 
         await Promise.all(
@@ -921,6 +980,7 @@ describe('external-session daemon host-operation owner', () => {
         await expect(binding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
         expect(replacementFollow).not.toHaveBeenCalled();
 
@@ -952,6 +1012,7 @@ describe('external-session daemon host-operation owner', () => {
         await expect(binding.executeFollow(followRequest())).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
         expect(followExecute).not.toHaveBeenCalled();
         await expect(owner.install({

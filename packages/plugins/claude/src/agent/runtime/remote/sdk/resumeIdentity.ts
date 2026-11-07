@@ -31,7 +31,7 @@ type ActiveTranscriptCandidate = {
     invalidated: boolean;
     promoted: boolean;
     promotionInFlight: Promise<void> | null;
-    promotionRefusal: 'plugin_external_follow_unavailable' | null;
+    promotionRefused: boolean;
     promotionRetryRequested: boolean;
     followHandle: AgentTranscriptFileFollowHandle | null;
     proofReadFailure: unknown;
@@ -192,7 +192,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
 
     async function maybePromote(candidate: ActiveTranscriptCandidate): Promise<void> {
         if (disposed || activeCandidate !== candidate || candidate.invalidated || candidate.promoted) return;
-        if (candidate.promotionRefusal && !candidate.promotionRetryRequested) return;
+        if (candidate.promotionRefused && !candidate.promotionRetryRequested) return;
         if (candidate.promotionInFlight) return await candidate.promotionInFlight;
         const evidence = candidate.evidence.find((item) => findAcceptedIntent(candidate, item) !== null);
         if (!evidence) return;
@@ -214,11 +214,11 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
                 if (error instanceof Error
                     && Reflect.get(error, 'code') === 'native_agent_terminal_transcript_follow_admission_failed'
                     && Reflect.get(error, 'phase') === 'bind'
-                    && Reflect.get(error, 'followCode') === 'plugin_external_follow_unavailable') {
-                    if (candidate.promotionRefusal === null) {
-                        candidate.promotionRefusal = 'plugin_external_follow_unavailable';
+                    && Reflect.get(error, 'retryable') === false) {
+                    if (!candidate.promotionRefused) {
+                        candidate.promotionRefused = true;
                         params.ctx.logger.warn('[ClaudeAgentSdk] transcript identity promotion refused', {
-                            code: candidate.promotionRefusal,
+                            code: Reflect.get(error, 'followCode'),
                         });
                     }
                     return;
@@ -361,7 +361,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
                 invalidated: false,
                 promoted: false,
                 promotionInFlight: null,
-                promotionRefusal: null,
+                promotionRefused: false,
                 promotionRetryRequested: false,
                 followHandle: null,
                 proofReadFailure: null,

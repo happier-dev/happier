@@ -26,6 +26,14 @@ function request(operation: unknown) {
 }
 
 describe('Agent runtime daemon-owned session facets protocol', () => {
+  it.each([false, true])('transports the follow owner refusal classification (%s)', retryable => {
+    const response = { ok: true, result: {
+      kind: 'external_session.follow.open', followId: 'follow-refusal',
+      result: { status: 'unavailable', code: 'source_refusal', retryable },
+    } };
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(response)).toEqual(response);
+  });
+
   it('transports the exact host request cause with its turn admission witness', () => {
     const actionRequestAttributionV1 = { requestRef: 'input-1',
       requester: { serverId: 'home', accountId: 'bob' },

@@ -68,7 +68,7 @@ type FollowLeaseManager = ReturnType<typeof createExternalSessionFollowLeaseMana
 type ObservationProjection = ReturnType<typeof createExternalSessionObservationDaemonProjection>;
 
 function unavailable(code: string): HostExternalTranscriptFollowResult {
-    return Object.freeze({ status: 'unavailable', code });
+    return Object.freeze({ status: 'unavailable', code, retryable: false });
 }
 
 function terminalAdmissionFailure(code: string, message: string): Error {
@@ -560,9 +560,10 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 }
             } catch (error) {
                 await release();
+                const terminalAdmissionFailureCode = readTerminalAdmissionFailureCode(error);
                 const code = isPluginError(error)
                     ? error.code
-                    : readTerminalAdmissionFailureCode(error)
+                    : terminalAdmissionFailureCode
                         ?? (
                             combinedSignal.aborted
                                 ? request.options.signal?.aborted
@@ -572,7 +573,9 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                         );
                 const data = reportExternalSessionFollowAcquisitionFailure({ error, code, phase: failurePhase,
                     ...(replayFailure ? { replay: replayFailure } : {}) });
-                return Object.freeze({ status: 'unavailable', code, data });
+                return Object.freeze({ status: 'unavailable', code, data,
+                    retryable: terminalAdmissionFailureCode === null && !combinedSignal.aborted,
+                });
             }
             if (!isRequestCurrent(request)) {
                 await terminate(

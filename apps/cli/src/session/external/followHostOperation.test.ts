@@ -528,6 +528,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_acquisition_failed',
+            retryable: true,
             data: expect.objectContaining({ code: 'plugin_external_follow_acquisition_failed',
                 details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'replay' }) }) }),
         });
@@ -590,6 +591,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_acquisition_failed',
+            retryable: true,
             data: expect.objectContaining({ code: 'plugin_external_follow_acquisition_failed',
                 details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'replay' }) }) }),
         });
@@ -646,6 +648,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_resync_required',
+            retryable: false,
             data: expect.objectContaining({ code: 'plugin_external_follow_resync_required',
                 details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'replay' }) }) }),
         });
@@ -1088,6 +1091,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_resync_required',
+            retryable: false,
         });
         expect(pageTranscript).not.toHaveBeenCalled();
     });
@@ -1910,6 +1914,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
+            retryable: false,
         });
         await expect(operation.execute({
             pluginId: 'synthetic.non-bundled',
@@ -1925,6 +1930,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
     });
 
@@ -1970,6 +1976,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_generation_retired',
+            retryable: false,
         });
 
         expect(hPageTranscript).not.toHaveBeenCalled();
@@ -2007,6 +2014,7 @@ describe('createExternalSessionFollowHostOperation', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_identity_mismatch',
+            retryable: false,
         });
 
         expect(mocks.loadLinkedExternalSession).toHaveBeenCalledWith({
@@ -2181,6 +2189,7 @@ describe('createExternalSessionFollowHostOperation', () => {
             await expect(pending).resolves.toEqual({
                 status: 'unavailable',
                 code: expectedCode,
+                retryable: false,
                 data: expect.objectContaining({ code: expectedCode,
                     details: expect.objectContaining({ cause: expect.objectContaining({ phase: 'admission' }) }) }),
             });

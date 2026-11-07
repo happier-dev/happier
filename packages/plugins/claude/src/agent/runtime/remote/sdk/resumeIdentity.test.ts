@@ -12,9 +12,12 @@ import { createClaudeAgentSdkResumeIdentityOwner } from './resumeIdentity.js';
 import { createDeferred } from '../../../../../../../../apps/cli/src/testkit/async/deferred.js';
 
 describe('createClaudeAgentSdkResumeIdentityOwner', () => {
-    it('leaves transient promotion failures eligible for JSONL redelivery', async () => {
+    it.each([false, true])('leaves transient promotion failures eligible for JSONL redelivery (typed: %s)', async typed => {
         let follow: TranscriptFileFollowInputV1 | undefined;
-        const transient = Object.assign(new Error('temporary transport failure'), { code: 'EIO' });
+        const transient = Object.assign(new Error('temporary transport failure'), typed ? {
+            code: 'native_agent_terminal_transcript_follow_admission_failed',
+            phase: 'bind', followCode: 'plugin_external_follow_unavailable', retryable: true,
+        } : { code: 'EIO' });
         let attempts = 0;
         const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
             transcripts: {

@@ -37,10 +37,11 @@ describe('createExternalSessionFollowLeaseManager', () => {
         vi.restoreAllMocks();
     });
 
-    it.each([false, true])('does not rewrite unchanged failed follow status when a real recovery attempt is refused again (write rejects: %s)', async writeRejects => {
+    it.each([false, true])('deduplicates acknowledged follow status and retries a failed write on source recovery (initial write rejects: %s)', async writeRejects => {
         const refusal = new ExternalSessionFollowFailureError('follow_unavailable', 'private refusal', 'follow_observer_not_observing');
         const acquireFollowLease = vi.fn(async () => { throw refusal; });
-        const writeFollowStatus = vi.fn(async (_input: FollowStatusWriteInput) => { if (writeRejects) throw new Error('metadata unavailable'); });
+        const writeFollowStatus = vi.fn(async (_input: FollowStatusWriteInput) => {});
+        if (writeRejects) writeFollowStatus.mockRejectedValueOnce(new Error('metadata unavailable'));
         const manager = createExternalSessionFollowLeaseManager({ writeFollowStatus });
         try {
             for (let index = 0; index < 4; index += 1) {
@@ -49,7 +50,10 @@ describe('createExternalSessionFollowLeaseManager', () => {
                 })).rejects.toBe(refusal);
             }
             expect(acquireFollowLease).toHaveBeenCalledTimes(4);
-            expect(writeFollowStatus).toHaveBeenCalledTimes(1);
+            expect(writeFollowStatus).toHaveBeenCalledTimes(writeRejects ? 2 : 1);
+            if (writeRejects) expect(writeFollowStatus.mock.calls[1]?.[0]).toMatchObject({
+                followStatusV1: { status: 'error', reason: 'lease_acquire_failed' },
+            });
             expect(writeFollowStatus.mock.calls[0]?.[0]).toMatchObject({ lastFollowIssueV1: { retryable: false } });
         } finally {
             await manager.dispose();

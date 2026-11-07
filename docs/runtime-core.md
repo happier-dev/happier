@@ -2811,11 +2811,29 @@ code and HTTP status. Correlated Codex JSON-RPC application rejections also
 retain `providerErrorMessage`, redacted by the existing bug-report secret
 redactor. This is diagnostic presentation, not classification or retry
 authority; response data and generic native error messages stay excluded.
-The redactor deliberately preserves filesystem paths in provider prose.
-The native adapter and public Run projection carry that same evidence. A recognized
+The redactor deliberately preserves filesystem paths in provider prose, so
+redaction does not make that prose safe for server-readable Session state.
+For E2EE Accounts, the client-side `deliverSessionTurnMutation` owner consults the
+Account encryption-mode owner before sending the mutation, including durable
+replay and socket-to-HTTP fallback. Its
+server-readable issue and resulting `Session.lastRuntimeIssue` omit
+`failureCause.providerErrorMessage` and replace native `sanitizedPreview` with
+a static preview for the closed code, localized by the client's existing code
+presentation. The original diagnostic remains available to the person through
+an E2EE-carried projection; an encrypted Session transcript already carries its
+full text and `runtimeIssueV1`. Transcript rendering, Find and copy retain that carried native detail
+alongside the localized startup cause. Account mode is the authority for this policy,
+not key presence or Session transcript mode. A retained Plain Session transcript
+is not a private channel merely because its Account now uses E2EE; private
+detail there requires an Account-encrypted projection. Plain Accounts retain
+their existing diagnostic publication behavior. The server must never receive
+E2EE Account native prose in the runtime-issue mutation; server filtering is
+not the privacy boundary.
+The native adapter and public Run projection carry the original diagnostic evidence. A recognized
 native OS error retains its closed errno in `failureCause.code` beneath the
-public startup category, including after repeated sanitization; neither paths
-nor native output are included. Version and feature discovery preserve typed
+public startup category, including after repeated sanitization. That closed
+OS cause excludes paths and native output; diagnostic prose follows the Account
+privacy policy above. Version and feature discovery preserve typed
 failures independently of SDK class identity. Realtime launch diagnostics keep
 their initiating exception internally, so startup sanitization can retain its
 typed cause while Voice retains its existing unavailable result. Failed startup
@@ -2909,13 +2927,16 @@ histories still acquire their historical baseline at SessionStart. This source
 correction requires a fresh loaded-runtime replay; it does not clear a running
 Session's retained observation loss.
 
-Claude's accepted-prompt proof consumer acknowledges a typed unavailable follow
-admission instead of throwing it back into JSONL delivery. The candidate retains
+The host follow owner classifies admission refusals as deterministic or retryable,
+carrying that fact through the private daemon/runner result and terminal bind error.
+Claude's accepted-prompt proof consumer acknowledges a deterministic refusal
+instead of throwing it back into JSONL delivery. The candidate retains
 that refusal and logs its closed cause once. New relevant transcript evidence,
 an authenticated SessionStart, or a new accepted turn permits another admission;
-elapsed polling time does not. Transient proof delivery errors retain ordinary
-at-least-once redelivery. The follow lease owner publishes metadata on semantic
-status changes, with explicit persistence recovery retaining the failed update.
+elapsed polling time does not. Retryable and unclassified failures retain ordinary
+at-least-once redelivery. The follow lease owner deduplicates only acknowledged
+metadata writes, retaining failed updates for retry at the existing source recovery
+boundary without a new timer.
 Private replay diagnostics distinguish page reads from listener delivery and
 initial from continuation cursors without recording cursor bytes or content.
 

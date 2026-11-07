@@ -165,6 +165,7 @@ export const AgentRuntimeDaemonExternalSessionFollowOpenResultV1Schema =
     z.strictObject({
       status: z.literal('unavailable'),
       code: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+      retryable: z.optional(z.boolean()),
     }),
   ]));
 

@@ -24,6 +24,18 @@ const loadCompleteBaseline = async () => ({
 });
 
 describe('createHostTerminalTranscriptFollowService', () => {
+    it.each([false, true])('preserves the source refusal retry classification (%s)', async retryable => {
+        const service = createHostTerminalTranscriptFollowService({
+            signal: new AbortController().signal,
+            loadCommittedLocalIdBaseline: loadCompleteBaseline,
+            followProviderSession: async () => ({ status: 'unavailable', code: 'source_refusal', retryable }),
+            publish: async () => {},
+        });
+        await expect(service.bindProviderSession({ agentId: 'claude', providerSessionId: 'native' })).resolves.toEqual({
+            status: 'unavailable', code: 'source_refusal', retryable,
+        });
+    });
+
     it('reuses user custody and its exact delivery result when native source replay has an older timestamp', async () => {
         const writes: unknown[] = [];
         const session: RuntimeTranscriptProjectionSession = { sessionId: 'user-custody',
@@ -424,6 +436,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         expect(result).toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_unavailable',
+            retryable: false,
         });
         expect(followProviderSession).not.toHaveBeenCalled();
         expect(publish).not.toHaveBeenCalled();
@@ -457,6 +470,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         expect(result).toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_unavailable',
+            retryable: false,
         });
         expect(requests).toEqual([]);
         expect(publish).not.toHaveBeenCalled();
@@ -537,6 +551,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
             })).resolves.toEqual({
                 status: 'unavailable',
                 code: 'plugin_external_follow_resync_required',
+                retryable: false,
             });
 
             expect(followProviderSession).not.toHaveBeenCalled();
@@ -596,6 +611,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
             await expect(binding).resolves.toEqual({
                 status: 'unavailable',
                 code: 'plugin_external_follow_resync_required',
+                retryable: false,
             });
             const baselineInput = baselineInputs.at(0);
             if (!baselineInput) {
@@ -670,6 +686,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
             await expect(binding).resolves.toEqual({
                 status: 'unavailable',
                 code: 'plugin_external_follow_resync_required',
+                retryable: false,
             });
             expect(publish).toHaveBeenCalledWith(
                 expect.objectContaining({ kind: 'data', phase: 'initial_replay' }),
@@ -724,6 +741,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_resync_required',
+            retryable: false,
         });
         expect(followSignal.current?.aborted).toBe(true);
     });
@@ -905,6 +923,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
             expect(outcome).toEqual({
                 status: 'unavailable',
                 code: 'plugin_external_follow_resync_required',
+                retryable: true,
             });
             expect(resolverSignal.current?.aborted).toBe(true);
             expect(resolveLinkIdentity).toHaveBeenCalledOnce();
@@ -973,6 +992,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
             await expect(binding).resolves.toEqual({
                 status: 'unavailable',
                 code: 'plugin_operation_aborted',
+                retryable: false,
             });
             const baselineSignal = baselineSignals.at(0);
             if (!baselineSignal) {
@@ -1005,6 +1025,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         })).resolves.toEqual({
             status: 'unavailable',
             code: 'plugin_external_follow_unavailable',
+            retryable: false,
         });
         expect(followProviderSession).not.toHaveBeenCalled();
     });

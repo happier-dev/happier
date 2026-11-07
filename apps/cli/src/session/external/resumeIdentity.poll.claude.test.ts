@@ -8,7 +8,12 @@ import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/sess
 import { createClaudeAgentSdkResumeIdentityOwner } from '../../../../../packages/plugins/claude/src/agent/runtime/remote/sdk/resumeIdentity';
 import { createEventsFixture, createPluginContextFixture, createTerminalHostFixture } from '../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 
-it('acknowledges a refused promotion through real file polling and retries once for new evidence', async () => {
+it.each([
+    'plugin_external_follow_unavailable',
+    'plugin_external_follow_resync_required',
+    'plugin_external_follow_identity_mismatch',
+    'future_host_deterministic_refusal',
+])('acknowledges %s through real file polling and retries once for new evidence', async code => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const root = await mkdtemp(join(tmpdir(), 'follow-refusal-'));
     const path = join(root, 'native.jsonl');
@@ -18,7 +23,7 @@ it('acknowledges a refused promotion through real file polling and retries once 
     const source = createHostTerminalTranscriptFollowService({ signal: lifetime.signal,
         loadCommittedLocalIdBaseline: async () => ({ localIds: new Set<string>(), complete: true }),
         // Daemon transport boundary: a deterministic source admission refusal.
-        followProviderSession: async () => { attempts++; return { status: 'unavailable', code: 'plugin_external_follow_unavailable' }; },
+        followProviderSession: async () => { attempts++; return { status: 'unavailable', code, retryable: false }; },
         publish: async () => {},
     });
     const fileFollow = createPluginTranscriptFileFollowService({ allowedPaths: [path] });
@@ -28,7 +33,7 @@ it('acknowledges a refused promotion through real file polling and retries once 
     const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, onProviderSessionId: () => {},
         onTranscriptPromoted: async ({ providerSessionId }) => {
             const result = await source.bindProviderSession({ agentId: 'claude', providerSessionId });
-            if (result.status === 'unavailable') throw new HostTerminalTranscriptFollowAdmissionError(result.code, 'bind');
+            if (result.status === 'unavailable') throw new HostTerminalTranscriptFollowAdmissionError(result.code, 'bind', result.retryable);
         },
     });
     const row = (uuid: string) => JSON.stringify({ type: 'user', uuid, sessionId: 'native', message: { role: 'user', content: 'hello' } }) + '\n';

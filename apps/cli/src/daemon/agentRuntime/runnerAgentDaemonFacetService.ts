@@ -903,7 +903,9 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
                 status: 'following',
                 startingCursor: result.startingCursor,
               }
-            : { status: result.status, code: result.code },
+            : { status: result.status, code: result.code,
+                ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+              },
         }) as FollowOpenResult;
         const waiter = detachWaiter(state);
         if (waiter) waiter.resolve(openResult);

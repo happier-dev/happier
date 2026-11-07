@@ -298,6 +298,7 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                     ? {}
                     : { lastFollowIssueV1: pending.lastFollowIssueV1 }),
             });
+            state.lastFollowStatusPublication = pending;
             if (state.pendingFollowStatus === pending) {
                 state.pendingFollowStatus = null;
             }
@@ -330,9 +331,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
         sourceUnavailableOccurrenceAtMs?: number,
     ): Promise<boolean> => {
         const state = stateFor(sessionId);
-        const previous = state.lastFollowStatusPublication;
+        const previous = state.pendingFollowStatus ?? state.lastFollowStatusPublication;
         // Timestamps describe a transition, not another attempt at the same status.
-        // Explicit persistence recovery still uses retryPendingFollowStatus below.
+        // Only acknowledged writes deduplicate; pending writes retry at recovery.
         if (previous
             && previous.resource?.linkGeneration === resource?.linkGeneration
             && previous.followStatusV1.status === status
@@ -341,9 +342,9 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             && previous.lastFollowIssueV1?.message === lastFollowIssueV1?.message
             && previous.lastFollowIssueV1?.retryable === lastFollowIssueV1?.retryable
             && sourceUnavailableOccurrenceAtMs === undefined) {
-            return state.pendingFollowStatus?.sourceUnavailableOccurrenceAtMs !== undefined
+            return state.pendingFollowStatus
                 ? await retryPendingFollowStatus(sessionId, state)
-                : state.pendingFollowStatus === null;
+                : true;
         }
         const retainedOccurrenceAtMs = state.pendingFollowStatus?.followStatusV1.reason === reason
             ? state.pendingFollowStatus.sourceUnavailableOccurrenceAtMs
@@ -356,7 +357,6 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
                 ? { sourceUnavailableOccurrenceAtMs }
                 : retainedOccurrenceAtMs !== undefined ? { sourceUnavailableOccurrenceAtMs: retainedOccurrenceAtMs } : {}),
         };
-        state.lastFollowStatusPublication = state.pendingFollowStatus;
         return await retryPendingFollowStatus(sessionId, state);
     };
 

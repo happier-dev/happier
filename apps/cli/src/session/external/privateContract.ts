@@ -94,6 +94,8 @@ export type HostExternalTranscriptFollowResult =
       code: string;
       /** Host-private failure data, projected to status/code at public wire boundaries. */
       data?: PluginErrorData;
+      /** False settles this admission evidence; unclassified failures remain retryable. */
+      retryable?: boolean;
     }>;
 
 export type HostExternalSessionFollowTarget = Readonly<{

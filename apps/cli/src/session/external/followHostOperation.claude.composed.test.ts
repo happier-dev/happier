@@ -42,7 +42,7 @@ function createBufferedNativeTranscript() {
   };
 }
 
-it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_terminal_pending_followup', 'runner_http_fresh_terminal_catalog_refresh', 'runner_transport', 'runner_transport_admission_failure', 'runner_transport_retired_acquisition', 'runner_http', 'runner_http_fresh', 'runner_http_fresh_publisher', 'runner_http_fresh_terminal_service', 'runner_http_fresh_terminal_e2ee', 'runner_http_fresh_terminal_concurrent_commit', 'runner_http_cancelled_acquisition', 'runner_http_retired_acquisition', 'thinking_text', 'cold_history', 'oversized_native_row', 'admission_failure', 'observer_retired', 'runner_retired', 'listener_failure', 'observer_refused'] as const)('admits a runner-carried Claude codec through real observation and scoped follow (%s)', async kind => {
+it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_terminal_interrupt_recovery', 'runner_http_fresh_terminal_pending_followup', 'runner_http_fresh_terminal_catalog_refresh', 'runner_transport', 'runner_transport_observer_refused', 'runner_transport_admission_failure', 'runner_transport_retired_acquisition', 'runner_http', 'runner_http_fresh', 'runner_http_fresh_publisher', 'runner_http_fresh_terminal_service', 'runner_http_fresh_terminal_e2ee', 'runner_http_fresh_terminal_concurrent_commit', 'runner_http_cancelled_acquisition', 'runner_http_retired_acquisition', 'thinking_text', 'cold_history', 'oversized_native_row', 'admission_failure', 'observer_retired', 'runner_retired', 'listener_failure', 'observer_refused'] as const)('admits a runner-carried Claude codec through real observation and scoped follow (%s)', async kind => {
   const interruptRecovery = kind === 'runner_http_fresh_terminal_interrupt_recovery';
   const pendingFollowup = kind === 'runner_http_fresh_terminal_pending_followup';
   const liveAppend = interruptRecovery || pendingFollowup || kind === 'runner_http_fresh_terminal_catalog_refresh' || kind === 'runner_http_fresh_terminal_inventory_refresh';
@@ -364,7 +364,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         providerOps: { pageTranscript: surface.providerOps.pageTranscript, readAfterTranscript: surface.providerOps.readAfterTranscript },
         options: { projection: 'terminal', initialReplay: true }, isCurrent: () => true,
         listener: consume });
-      if (kind === 'observer_refused') await projection.dispose();
+      if (kind === 'observer_refused' || kind === 'runner_transport_observer_refused') await projection.dispose();
       const result = !kind.startsWith('runner_') || kind === 'runner_retired' ? await execute() : await (async () => {
         const { createRunnerAgentDaemonFacets } = await import('@/agent/runtime/session/process/runnerAgentDaemonFacets');
         const { createRunnerAgentDaemonFacetService } = await import('@/daemon/agentRuntime/runnerAgentDaemonFacetService');
@@ -829,15 +829,21 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         return port.executeProviderSessionFollow({ agentId: 'claude', providerSessionId: remoteSessionId,
           options: { projection: 'terminal', initialReplay: true, ...(kind === 'runner_http_fresh' || kind === 'runner_http_fresh_publisher' ? { replay: 'fresh' as const } : {}) }, listener });
       })();
+      if (kind === 'runner_transport_observer_refused') {
+        expect(result).toEqual({ status: 'unavailable', code: 'plugin_external_follow_unavailable', retryable: false });
+        expect(manager.countActiveLeases(sessionId)).toBe(0);
+        return;
+      }
       if (kind === 'observer_refused') {
         expect(result).toMatchObject({ status: 'unavailable', code: 'plugin_external_follow_unavailable',
+          retryable: false,
           data: { details: { cause: { phase: 'admission', errorClass: 'ExternalSessionFollowFailureError',
             errorCode: 'follow_observer_not_observing' } } } });
         expect(manager.countActiveLeases(sessionId)).toBe(0);
         return;
       }
       if (kind === 'runner_transport_admission_failure') {
-        expect(result).toEqual({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed' });
+        expect(result).toEqual({ status: 'unavailable', code: 'plugin_external_follow_acquisition_failed', retryable: true });
         const failures = failureLog.mock.calls.filter(([message]) => message === '[externalSessions.follow] acquisition_failed');
         expect(followOpenRequestId).toEqual(expect.any(String));
         expect(failures).toHaveLength(1);

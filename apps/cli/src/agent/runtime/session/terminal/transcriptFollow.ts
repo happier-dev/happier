@@ -18,8 +18,9 @@ import type {
 
 function unavailable(
     code: string,
+    retryable = false,
 ): Extract<HostTerminalTranscriptFollowBindResult, { status: 'unavailable' }> {
-    return Object.freeze({ status: 'unavailable', code });
+    return Object.freeze({ status: 'unavailable', code, retryable });
 }
 
 function terminalFollowFailure(
@@ -276,7 +277,7 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                 const code = result.code === 'plugin_operation_deadline_exceeded'
                     ? 'plugin_external_follow_resync_required'
                     : result.code;
-                return unavailable(code);
+                return unavailable(code, result.retryable ?? true);
             }
             if (result.failure) {
                 void result.failure.then(

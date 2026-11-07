@@ -153,7 +153,7 @@ function fail(code: string): never {
 }
 
 function unavailableFollow(code: string): HostExternalTranscriptFollowResult {
-    return Object.freeze({ status: 'unavailable', code });
+    return Object.freeze({ status: 'unavailable', code, retryable: false });
 }
 
 function readResolvedFollowTarget(
