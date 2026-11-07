@@ -188,6 +188,30 @@ describe('Home Bot moons (lab R6 "Bots orbit Home")', () => {
     }
   });
 
+  // Voice 13:33Z: a waiting moon's face rested just above the greeting line, and its name, drawn under
+  // the face, sat over the headline and Brief me. The name is part of where the moon stands.
+  it("keeps a waiting moon's name clear of the hero content too, not only its face", () => {
+    const bots = [{ key: 'waits', activity: 'needsYou' as const }];
+    const LABEL_LINE_PX = HAPPIER_TYPE_SCALE.meta.lineHeight;
+    const first = layoutHomeOrbitBots(area, corner, bots).bots!.moons[0]!;
+    expect(first.park).not.toBeNull();
+    // The greeting row starts just under the face, where only the name reaches.
+    const faceBottom = first.park!.y + first.size / 2;
+    const headlineRow = { x: first.park!.x - 200, y: faceBottom + 4, width: 400, height: 40 };
+    const moon = layoutHomeOrbitBots(area, corner, bots, { keepOut: [headlineRow] }).bots!.moons[0]!;
+    expect(moon.park).not.toBeNull();
+    const name = {
+      x: moon.park!.x - moon.labelWidth / 2,
+      y: moon.park!.y + moon.size / 2,
+      width: moon.labelWidth,
+      height: LABEL_LINE_PX + 4,
+    };
+    const crosses = name.x < headlineRow.x + headlineRow.width && headlineRow.x < name.x + name.width
+      && name.y < headlineRow.y + headlineRow.height && headlineRow.y < name.y + name.height;
+    expect(moon.labelWidth).toBeGreaterThan(0);
+    expect(crosses).toBe(false);
+  });
+
   // Owner 11-06: 50 Bots piled up in the hero with their names over each other. The hero shows the Bots
   // that fit, names that never overlap, and counts the rest for one "+N".
   it('shows the Bots that fit with names that never overlap, and counts the rest (50 Bots on a phone)', () => {

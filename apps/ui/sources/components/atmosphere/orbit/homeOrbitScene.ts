@@ -323,6 +323,8 @@ export const HOME_ORBIT_BOT_MOON_LIMIT = 4;
 
 /** A moon's name is at most this wide (its label box), and keeps within the room to its neighbours. */
 export const HOME_ORBIT_BOT_LABEL_MAX_WIDTH_PX = 160;
+/** The gap between a waiting moon's face and its name under it. */
+export const HOME_ORBIT_BOT_LABEL_GAP_PX = 2;
 
 
 export type HomeOrbitBotOptions = Readonly<{
@@ -347,6 +349,21 @@ export type HomeOrbitRect = Readonly<{ x: number; y: number; width: number; heig
 function blocked(keepOut: readonly HomeOrbitRect[], p: Readonly<{ x: number; y: number }>, size: number): boolean {
   const half = size / 2;
   return keepOut.some((r) => p.x + half > r.x && p.x - half < r.x + r.width && p.y + half > r.y && p.y - half < r.y + r.height);
+}
+
+/**
+ * Whether a waiting moon at `p` overlaps the content boxes: its face, and the name drawn under it
+ * (`HomeOrbitBotMoon`), whose box is never wider than the label box.
+ */
+function parkedBlocked(keepOut: readonly HomeOrbitRect[], p: Readonly<{ x: number; y: number }>, size: number): boolean {
+  if (blocked(keepOut, p, size)) return true;
+  const name = {
+    x: p.x - HOME_ORBIT_BOT_LABEL_MAX_WIDTH_PX / 2,
+    y: p.y + size / 2 + HOME_ORBIT_BOT_LABEL_GAP_PX,
+    width: HOME_ORBIT_BOT_LABEL_MAX_WIDTH_PX,
+    height: HAPPIER_TYPE_SCALE.meta.lineHeight,
+  };
+  return keepOut.some((r) => name.x < r.x + r.width && r.x < name.x + name.width && name.y < r.y + r.height && r.y < name.y + name.height);
 }
 
 /** Lab R6: the orbits lean by this share of their width. */
@@ -464,7 +481,7 @@ export function layoutHomeOrbitBots(
   // Measured on the arc's tighter side, so neighbours on the short axis keep their room too.
   const parkStep = (parkedSize * 1.4) / Math.max(1, Math.min(parkOrbit.rx, parkOrbit.ry));
   const margin = parkedSize / 2 + 4;
-  // The slots along the arc a waiting moon can take: wholly on the page and clear of the hero content.
+  // The slots along the arc a waiting moon can take: wholly on the page, its face and name clear of the hero content.
   // Past them a moon would be pushed onto another (the 50-Bot pile-up), so the rest count toward "+N".
   const slotCount = Math.max(1, Math.floor((2 * Math.PI) / parkStep));
   const parkStart = o.parkAngle ?? 0.72 * Math.PI;
@@ -473,7 +490,7 @@ export function layoutHomeOrbitBots(
     const angle = parkStart + slot * parkStep;
     const at = homeOrbitBotPoint(px, py, parkOrbit, angle);
     const inside = at.x >= margin && at.x <= area.width - margin && at.y >= margin && at.y <= area.height - margin;
-    if (inside && !blocked(keepOut, at, parkedSize)) free.push({ angle, at });
+    if (inside && !parkedBlocked(keepOut, at, parkedSize)) free.push({ angle, at });
   }
   // With Bots left over, the slot after the shown waiting moons holds their "+N" instead of one more face.
   const leftOver = bots.length > shown.length || unplaced + Math.max(0, parked.length - free.length) > 0;

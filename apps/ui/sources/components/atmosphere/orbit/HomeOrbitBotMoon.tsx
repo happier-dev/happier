@@ -19,6 +19,7 @@ import { Text } from '@/components/ui/text/Text';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 
 import {
+  HOME_ORBIT_BOT_LABEL_GAP_PX,
   homeOrbitBotPoint,
   isHomeOrbitBotBehindPlanet,
   type HomeOrbitBotMoon as HomeOrbitBotMoonLayout,
@@ -203,7 +204,7 @@ export const HomeOrbitBotMoon = React.memo(function HomeOrbitBotMoon(
             pointerEvents="none"
             style={[
               styles.label,
-              { top: size + 2, left: size / 2 - moon.labelWidth / 2, width: moon.labelWidth },
+              { top: size + HOME_ORBIT_BOT_LABEL_GAP_PX, left: size / 2 - moon.labelWidth / 2, width: moon.labelWidth },
             ]}
           >
             <Text
