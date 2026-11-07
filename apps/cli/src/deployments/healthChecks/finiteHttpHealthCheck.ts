@@ -84,6 +84,7 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
     const target = endpoint(check);
     if (!target) return result(check, kind, context, startedAt, 'unknown', {
         reason: 'not_checked', disclosure: 'No HTTP health probe is configured',
+        requiredFact: 'healthProbeEndpoint', remedy: 'Configure the check endpoint before running the health probe.',
     });
     const { url, expectStatus } = target;
     let response: HttpResponse;
@@ -121,12 +122,24 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
         if (error instanceof Error && error.name === 'AbortError') throw error;
         const failure = nativeFailure(error, url);
         if (failure === 'tls' || (failure === 'connection' && kind === 'http')) {
-            return result(check, kind, context, startedAt, 'down', { reason: failure });
+            return result(check, kind, context, startedAt, 'down', { reason: failure,
+                requiredFact: failure === 'tls' ? 'validEndpointTlsConnection' : 'reachableHealthEndpoint',
+                remedy: failure === 'tls'
+                    ? 'Check the endpoint TLS configuration, certificate chain, hostname and validity from the selected observer.'
+                    : 'Check endpoint DNS, service availability and network or firewall access from the selected observer.' });
         }
         return result(check, kind, context, startedAt, 'unknown', { reason: 'transport_incomplete' });
     }
     await assertCurrent(context);
     if (kind === 'http') {
+        // Cloudflare's 521–526 family reports failure between its edge and the
+        // origin (including origin TLS), rather than an application response.
+        if (response.status >= 521 && response.status <= 526) {
+            return result(check, kind, context, startedAt, 'down', { httpStatus: response.status, expectStatus,
+                reason: 'cloudflare_origin_unavailable', providerCode: response.status, requiredFact: 'originServingResponse',
+                disclosure: 'Cloudflare could not obtain the origin application response',
+                remedy: 'Check origin availability, DNS, firewall rules and origin TLS configuration so Cloudflare can reach it and receive an HTTP response.' });
+        }
         if (response.status === 403 && response.headers.server?.toLowerCase() === 'cloudflare'
             && /^error code: 1010(?:\s|$)/.test(errorPrefix)) {
             return result(check, kind, context, startedAt, 'down', { httpStatus: response.status, expectStatus,

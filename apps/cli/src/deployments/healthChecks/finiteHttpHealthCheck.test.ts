@@ -101,7 +101,35 @@ describe('finite saved HTTP and certificate health', () => {
         }
     });
 
-    it('requests body bytes only for keyword checks, and never discloses the keyword or body', async () => {
+    it('explains Cloudflare origin connection and TLS refusals without treating an expected proxy error as application health', async () => {
+        let status = 522;
+        const url = await endpoint((_request, response) => response.writeHead(status, { server: 'cloudflare' }).end('private-origin-error'));
+        for (const originStatus of [521, 522, 523, 524, 525, 526]) {
+            status = originStatus;
+            const check = admitted(url);
+            const observed = HealthCheckResultV1Schema.parse(await readHttpHealthCheckV1(check, context(url)));
+            expect(observed.status).toBe('down');
+            expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).toMatchObject({
+                httpStatus: originStatus, providerCode: originStatus, reason: 'cloudflare_origin_unavailable',
+                requiredFact: 'originServingResponse', remedy: expect.any(String),
+            });
+            expect(JSON.stringify(observed)).not.toContain('private-origin-error');
+        }
+        status = 522;
+        const check = admitted(url);
+        expect((await readHttpHealthCheckV1({ ...check,
+            target: { ...check.target, expectStatus: 522 } }, context(url))).status).toBe('down');
+        for (const ordinaryStatus of [520, 503]) {
+            status = ordinaryStatus;
+            const check = admitted(url);
+            const observed = await readHttpHealthCheckV1({ ...check,
+                target: { ...check.target, expectStatus: ordinaryStatus } }, context(url));
+            expect(observed.status).toBe('up');
+            expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).not.toHaveProperty('providerCode');
+        }
+    });
+
+    it('reads response bytes only for keyword checks, and never discloses the keyword or body', async () => {
         let pulls = 0;
         const url = 'https://service.example/health';
         stubFetch(async () => new Response(new ReadableStream<Uint8Array>({
@@ -172,6 +200,9 @@ describe('finite saved HTTP and certificate health', () => {
             const invalid = await readCertificateHealthCheckV1(admitted(url), f);
             expect({ valid: HealthCheckResultV1Schema.parse(valid).status, invalid: invalid.status },
                 `Native TLS refusal: ${failureCode}`).toEqual({ valid: 'up', invalid: 'down' });
+            expect(JSON.parse(invalid.evidence.items[0]?.text ?? '{}')).toMatchObject({
+                reason: 'tls', requiredFact: 'validEndpointTlsConnection', remedy: expect.any(String),
+            });
             expect(valid.evidence.items[0]?.text).toContain('fingerprint256');
             expect(JSON.stringify(valid)).not.toContain('private-auth-body');
             expect(requests).toBe(1);
@@ -190,9 +221,24 @@ describe('finite saved HTTP and certificate health', () => {
         if (!address || typeof address === 'string') throw new Error('TCP listener required');
         await new Promise<void>(resolve => server.close(() => resolve()));
         const url = `http://127.0.0.1:${address.port}/health`;
-        expect((await readHttpHealthCheckV1(admitted(url), context(url))).status).toBe('down');
+        const refused = await readHttpHealthCheckV1(admitted(url), context(url));
+        expect(refused.status).toBe('down');
+        expect(JSON.parse(refused.evidence.items[0]?.text ?? '{}')).toMatchObject({
+            reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy: expect.any(String),
+        });
         // A connection failure has no certificate evidence of its own.
         expect((await readCertificateHealthCheckV1(admitted(url), context(url))).status).toBe('unknown');
+        // The network adapter boundary also exposes the native DNS failure seen
+        // when a previously observed Pages hostname no longer resolves.
+        stubFetch(async () => { throw new TypeError('private-transport-message', {
+            cause: Object.assign(new Error('private-hostname'), { code: 'ENOTFOUND' }),
+        }); });
+        const unresolved = await readHttpHealthCheckV1(admitted(url), context(url));
+        expect(unresolved.status).toBe('down');
+        expect(JSON.parse(unresolved.evidence.items[0]?.text ?? '{}')).toMatchObject({
+            reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy: expect.any(String),
+        });
+        expect(JSON.stringify(unresolved)).not.toContain('private-');
     });
 
     it('keeps the Domain public authority and expected authentication challenge with same-Machine disclosure', async () => {
@@ -226,7 +272,10 @@ describe('finite saved HTTP and certificate health', () => {
         for (const read of [readHttpHealthCheckV1, readCertificateHealthCheckV1]) {
             const observed = await read(check, observation);
             expect(observed.status).toBe('unknown');
-            expect(observed.evidence.items[0]?.text).toContain('not_checked');
+            expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).toMatchObject({
+                reason: 'not_checked', requiredFact: 'healthProbeEndpoint',
+                remedy: expect.stringMatching(/configure.*endpoint/i),
+            });
         }
         expect(requests).toBe(0);
         if (check.target.kind !== 'domain') throw new Error('Expected Domain');
