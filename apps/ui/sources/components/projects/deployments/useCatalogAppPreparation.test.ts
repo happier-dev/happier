@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { act, renderHook, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 vi.mock('react-native', async () => {
@@ -53,7 +53,11 @@ describe('catalog App preparation entry', () => {
             await act(async () => { await waitForTestEvent(screen.subscribe,
                 () => screen.findByTestId('project-deployments.environment.settings.controller'), node => node !== null); });
             expect(screen.findByTestId('project-deployments.environment.settings.controller')).not.toBeNull();
-            expect(homes.requests.some(request => request.path.includes('/projects/') || request.path.includes('workspace'))).toBe(false);
+            // The Source identity is Account data; opening this route never needs a checkout or workspace.
+            const sourcePath = `/v1/projects/sources/${detail.environment.projectSourceId}`;
+            expect(homes.requests.filter(request => (request.path.includes('/projects/') || request.path.includes('workspace'))
+                && !(request.method === 'GET' && request.path.split('?')[0] === sourcePath))
+                .map(request => `${request.method} ${request.path}`)).toEqual([]);
         } finally { await act(async () => { account.dispose(); }); }
     });
 
@@ -62,10 +66,7 @@ describe('catalog App preparation entry', () => {
         const serverId = await homes.addHome({ name: 'Catalog entry', serverUrl: 'https://catalog-entry.test',
             serverIdentityId: `srv_${'b'.repeat(32)}`, accountId: 'owner', currentAccount: true });
         const account = await captureLazyActionAccountContext(serverId);
-        const machine = createPlainMachineRowFixture({ id: 'target', accountId: 'owner' });
-        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-        }) });
+        const machine = { id: 'target', installationId: 'installed' };
         const template = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'App',
             compose: { document: 'services:\n  app:\n    image: nginx:1\n', profiles: [], services: ['app'] },
             variables: [], generatedSecrets: [], domains: [], volumes: [], firstRunSetup: true });
@@ -88,12 +89,13 @@ describe('catalog App preparation entry', () => {
             creationDefaults: { values: { controllerMachineId: machine.id, buildMachineId: machine.id, retainPreviousDeployments: 1 },
                 sources: { controllerMachineId: 'builtin', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } } });
         const requests: unknown[] = [];
-        homes.answer(serverId, '/v1/actions/deployments.publish.prepare', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            requests.push(envelope.input);
-            return { body: { v: 1, actionId: 'deployments.publish.prepare', requestId: envelope.requestId,
-                execution: { ok: true, result: prepared } } };
-        } });
+        await answerExternalActionAccountForHome(homes, serverId, {
+            machineId: machine.id, installationId: machine.installationId,
+            actionId: 'deployments.publish.prepare', tokenEpoch: 0, execute: operand => {
+                requests.push(DeploymentPublishPrepareInputV1Schema.parse(operand));
+                return prepared;
+            },
+        });
         const hook = await renderHook(() => useCatalogAppPreparation(account.accountLifetime));
         try {
             expect(requests).toHaveLength(0);

@@ -25,16 +25,20 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/acco
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
-import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { parseToken } from '@/utils/auth/parseToken';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { waitForNetworkResponseForTests } from '../mocks/runtimeFetch';
 import { loadSyncSingletonForTests } from './syncSingletonLoader';
+import { testResetsForTests } from '@/dev/vitestTestResets';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
-import { createSessionReadBatchHttpBoundary } from './sessionReadBatchHttpBoundary';
+import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema,
+    AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createUsageQueryBatchHttpBoundary } from './usageQueryBatchHttpBoundary';
 import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ActionExecutorContext, WorkflowActionExecute } from '@happier-dev/protocol';
+import type { ActionExecutorContext, WorkflowActionExecute } from '@happier-dev/protocol/actions/executor/types';
 import { DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionPostRequestV1Schema,
     type DiscussionCreateResponseV1 } from '@happier-dev/protocol/discussions/api';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoverInputV1Schema,
@@ -86,6 +90,12 @@ export function answerDiscussionThreadForTests(homes: HomeGovernanceHarness, ser
                 id: 'committed-thread', ownerAccountId: accountId, encryptionMode: options.mode ?? 'plain', anchor: request.anchor ?? null, access: 'owner',
                 keyReadiness: true, dataEncryptionKey: request.dataEncryptionKey ?? null, creationLocalId: request.creationLocalId,
                 titleContent: request.titleContent, latestMessage, messageSeq: 1, lastReadSeq: 0, unreadCount: 1, unreadMentionCount: 0,
+                // Mirror the server's write-time Doc-root fact, including E2EE
+                // roots whose public reply target carries the admitted source.
+                openCommentCount: request.anchor?.kind === 'doc'
+                    ? request.firstMessage.replyTarget?.kind === 'doc_passage'
+                        && request.firstMessage.replyTarget.doc.ref.artifactId === request.anchor.doc.ref.artifactId ? 1 : 0
+                    : null,
                 recentAuthorAccountIds: [accountId], archivedAt: null, capabilities: { postMessages: true, rename: true, archive: true,
                     restore: false, askAgent: true, sendToSession: true, manageAccess: true, leave: false },
             }, firstMessage });
@@ -110,6 +120,10 @@ export function answerDiscussionThreadForTests(homes: HomeGovernanceHarness, ser
                 mentionedAccountIds: request.mentionedAccountIds,
                 ...(request.docEditProposal ? { docEditProposalDispositionV1: { state: 'open' as const } } : {}) };
             messages.push(message);
+            if (stored.discussion.anchor?.kind === 'doc' && request.replyTarget?.kind === 'doc_passage'
+                && request.replyTarget.doc.ref.artifactId === stored.discussion.anchor.doc.ref.artifactId) {
+                stored.discussion.openCommentCount = (stored.discussion.openCommentCount ?? 0) + 1;
+            }
         }
         if (losePost) { losePost = false; return { dispatchThenFail: true }; }
         return { body: { message, messageSeq: messages.length } };
@@ -180,10 +194,13 @@ export type HomeDomainAnswer = Readonly<{
         init: RequestInit | undefined;
     }>) => HomeDomainAnswer | undefined | Promise<HomeDomainAnswer | undefined>;
     status?: number;
+    headers?: HeadersInit;
     /** Sent as the JSON body. Omit for an empty body. */
     body?: unknown;
     /** Holds this genuine network boundary open until the test releases it. */
     respondAfter?: PromiseLike<void>;
+    /** Delivers headers immediately while holding the JSON response body. */
+    bodyAfter?: PromiseLike<void>;
     /**
      * The request reaches the network and then no answer comes back.
      *
@@ -237,6 +254,8 @@ export type AddHomeOptions = Readonly<{
     credentialResourcesExternalApiAvailability?: unknown;
     /** Seeds the canonical personal Machine Pool decision for that Home. */
     machinePoolsEnabled?: boolean;
+    /** Seeds the canonical Bot template admission decision for that Home. */
+    botsEnabled?: boolean;
     /** Whether this Home becomes the active one. Defaults to true. */
     active?: boolean;
     /**
@@ -328,6 +347,17 @@ export type HomeGovernanceHarness = Readonly<{
 }>;
 
 const installed = vi.hoisted(() => ({ current: null as HomeGovernanceHarness | null }));
+
+function bindHomeGovernanceHttpBoundary(harness: HomeGovernanceHarness): void {
+    installed.current = harness;
+    setRuntimeFetch((input, init) => requireHarness().request(input, init));
+}
+
+// The global test cleanup clears runtimeFetch after every case. Reclaim the
+// installed HTTP boundary before the next case without clearing its fixtures.
+testResetsForTests.set('homeGovernanceHttpBoundary', () => {
+    if (installed.current) bindHomeGovernanceHttpBoundary(installed.current);
+});
 
 function base64Url(value: string): string {
     return globalThis.btoa(value).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
@@ -429,7 +459,32 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             record.answers.set(`GET ${AUTHORING_MEMORY_ROUTE_V1}`, { body: AuthoringMemoryListResponseV1Schema.parse({ rows: [] }) });
             // Workflow library summaries ask only for one structural page's
             // definition ids; an unseeded Home has no Automation rows.
-            record.answers.set('POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
+            record.answers.set('POST /v3/automations/query', { select: async (input, request) => {
+                if (!input || typeof input !== 'object' || !('details' in input) || input.details !== true) {
+                    return { body: { automations: [], nextCursor: null } };
+                }
+                const { details: _details, ...selection } = AutomationDefinitionDetailsRequestSchema.parse(input);
+                // Compose one physical private-page response from the existing HTTP row fixtures.
+                // Resolving fixture parts below does not issue synthetic network requests.
+                const search = new URLSearchParams(Object.entries(selection).map(([key, value]) => [key, String(value)]));
+                const path = `/v3/automations?${search}`;
+                const seed = await selectHomeDomainAnswer(record, path, 'GET', null, new URL(path, request.url).href, request.init);
+                if (!seed) return { body: { automations: [], nextCursor: null } };
+                const response = await renderHomeDomainAnswer(seed, path, 'GET', null, request.signal);
+                if (!response.ok) return { status: response.status, body: await response.json() };
+                const page = AutomationDefinitionListResponseSchema.parse(await response.json());
+                const rows = [];
+                for (const row of page.automations) {
+                    const exactPath = `/v3/automations/${encodeURIComponent(row.id)}`;
+                    const detail = await selectHomeDomainAnswer(record, exactPath, 'GET', null,
+                        new URL(exactPath, request.url).href, request.init);
+                    if (!detail) return { status: 404, body: { error: 'automation_not_found' } };
+                    const result = await renderHomeDomainAnswer(detail, exactPath, 'GET', null, request.signal);
+                    if (!result.ok) return { status: result.status, body: await result.json() };
+                    rows.push(await result.json());
+                }
+                return { body: AutomationDefinitionDetailsResponseSchema.parse({ automations: rows, nextCursor: page.nextCursor }) };
+            } });
             if ((options.accountEncryptionMode ?? 'plain') === 'plain') {
                 record.answers.set(`POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture() });
             }
@@ -441,7 +496,12 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
                 || options.credentialResourcesEnabled !== undefined
                 || options.credentialResourcesExternalApiEnabled !== undefined
                 || options.credentialResourcesExternalApiAvailability !== undefined
-                || options.machinePoolsEnabled !== undefined) {
+                || options.machinePoolsEnabled !== undefined
+                || options.botsEnabled !== undefined) {
+                if (options.botsEnabled !== undefined
+                    && !tryWriteServerEnabledBitInPlace(features, 'bots', options.botsEnabled)) {
+                    throw new Error('The bots feature bit could not be written by its own writer');
+                }
                 if (options.teamsEnabled !== undefined
                     && !tryWriteServerEnabledBitInPlace(features, 'teams', options.teamsEnabled)) {
                     throw new Error('The teams feature bit could not be written by its own writer');
@@ -632,13 +692,13 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             return homesByServerUrl.get(serverUrl) ?? null;
         },
         async reset(): Promise<void> {
+            compactSessionLists.delete(harness);
             // Vitest may collect several Home-governance suites in one worker.
             // Each suite installs its own harness at module evaluation, so the
             // last collected suite would otherwise own every shared boundary.
             // `beforeEach` always resets the suite-local harness; reclaim the
             // boundary here so execution order cannot redirect its requests.
-            installed.current = harness;
-            setRuntimeFetch((input, init) => requireHarness().request(input, init));
+            bindHomeGovernanceHttpBoundary(harness);
             const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
             const active = getActiveServerAccountScope();
             if (seededApprovalRequirement && active?.serverId === seededApprovalRequirement.serverId
@@ -703,8 +763,19 @@ async function renderHomeDomainAnswer(answer: HomeDomainAnswer, path: string, me
         && !Array.isArray(answer.body)
         ? { ...(answer.body as Record<string, unknown>), id: (input as { id?: unknown }).id }
         : answer.body;
-    return new Response(responseBody === undefined ? '' : JSON.stringify(responseBody),
-        { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } });
+    const serialized = responseBody === undefined ? '' : JSON.stringify(responseBody);
+    const bodyAfter = answer.bodyAfter;
+    const body = bodyAfter ? new ReadableStream<Uint8Array>({
+        start(controller) {
+            void waitForNetworkResponseForTests(bodyAfter, signal).then(() => {
+                controller.enqueue(new TextEncoder().encode(serialized));
+                controller.close();
+            }, error => controller.error(error));
+        },
+    }) : serialized;
+    const headers = new Headers(answer.headers);
+    if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+    return new Response(body, { status: answer.status ?? 200, headers });
 }
 
 /**
@@ -713,14 +784,25 @@ async function renderHomeDomainAnswer(answer: HomeDomainAnswer, path: string, me
  * Shared by both network boundaries so a Home has exactly one set of answers no
  * matter which transport a path arrives on.
  */
+const compactSessionLists = new WeakMap<HomeGovernanceHarness, RuntimeFetch>();
+
 async function answerForEndpoint(
     current: HomeGovernanceHarness,
-    serverUrl: string,
+    _serverUrl: string,
     url: string,
     init: RequestInit | undefined,
-    token: string | null,
+    _token: string | null,
 ): Promise<Response> {
-    try { return await answerForEndpointBody(current, serverUrl, url, init, token); }
+    let request = compactSessionLists.get(current);
+    if (!request) {
+        request = createCompactSessionListFetchBoundary(async (path, requestInit) => {
+            const origin = new URL(path).origin;
+            const bearer = new Headers(requestInit.headers).get('authorization');
+            return answerForEndpointBody(current, origin, path, requestInit, bearer?.replace(/^Bearer /, '') ?? null);
+        }, { preferExactSnapshot: true });
+        compactSessionLists.set(current, request);
+    }
+    try { return await request(url, init ?? {}); }
     finally { notifyHomeRequests(current); }
 }
 
@@ -730,7 +812,7 @@ async function answerForEndpointBody(
     url: string,
     init: RequestInit | undefined,
     token: string | null,
-): Promise<Response> {
+): Promise<Response | undefined> {
     const body = init?.body;
     const record = current.findByServerUrl(serverUrl);
     const path = url.startsWith(serverUrl) ? url.slice(serverUrl.length) : url;
@@ -754,6 +836,16 @@ async function answerForEndpointBody(
 
     const route = new URL(path, serverUrl).pathname;
     const answer = await selectHomeDomainAnswer(record, path, method, input, url, init);
+    if (!answer && record && method === 'POST' && route === '/v2/usage/query-batch') {
+        const batch = createUsageQueryBatchHttpBoundary(async request => {
+            if (request.path === '/v2/usage/query-batch') return undefined;
+            const selected = await selectHomeDomainAnswer(record, request.path, request.method, request.body,
+                request.url.href, init);
+            return selected ? renderHomeDomainAnswer(selected, request.path, request.method, request.body, request.signal) : undefined;
+        }, []);
+        return batch({ home: record.serverId, method, path: route, url: new URL(url), accountId: record.accountId,
+            headers: new Headers(init?.headers), body: input, signal: init?.signal });
+    }
     if (!answer && record && method === 'POST' && route === '/v1/machines/read-batch') {
         const demand = MachineReadBatchRequestV1Schema.parse(input);
         const results: unknown[] = [];
@@ -775,16 +867,7 @@ async function answerForEndpointBody(
         return Response.json(MachineReadBatchResponseV1Schema.parse({ results }));
     }
     if (!answer && record && method === 'POST' && route === '/v2/sessions/read-batch') {
-        // Session parts are the same external facts the per-Session paths answer; each part is recorded as its own request.
-        const parts = createSessionReadBatchHttpBoundary(async component => {
-            const partPath = `${component.url.pathname}${component.url.search}`;
-            current.requests.push(Object.freeze({ serverId: record.serverId, serverUrl, path: partPath, method: 'GET', input: null, token }));
-            notifyHomeRequests(current);
-            const selected = await selectHomeDomainAnswer(record, partPath, 'GET', null, component.url.href, { ...init, method: 'GET', body: undefined });
-            return selected ? await renderHomeDomainAnswer(selected, partPath, 'GET', null, init?.signal) : undefined;
-        });
-        return (await parts.handle({ home: serverUrl, method, path: route, url: new URL(url), accountId: null,
-            headers: new Headers(init?.headers), body: input, signal: init?.signal }))!;
+        return undefined;
     }
     if (!answer && path === '/v1/account/profile') {
         let accountId: string | null = null;
@@ -796,6 +879,7 @@ async function answerForEndpointBody(
         const artifactResponse = record?.artifacts.handle(path, init);
         if (artifactResponse) return await artifactResponse;
     }
+    if (!answer && /^\/v2\/sessions\/[^/]+$/.test(route)) return undefined;
     // A Home that was given no answer for this path behaves like one that does
     // not serve it, rather than silently succeeding.
     if (!answer) return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
@@ -808,8 +892,7 @@ async function answerForEndpointBody(
  * captured-Account retirement cannot be bypassed by this fixture.
  */
 export function installHomeGovernanceBoundaries(harness: HomeGovernanceHarness): void {
-    installed.current = harness;
-    setRuntimeFetch((input, init) => requireHarness().request(input, init));
+    bindHomeGovernanceHttpBoundary(harness);
 
     vi.doUnmock('@/sync/http/client');
     vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');

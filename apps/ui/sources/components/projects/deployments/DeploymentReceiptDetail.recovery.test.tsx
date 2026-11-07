@@ -4,11 +4,11 @@ import { createDeploymentReadControllerV1, projectDeploymentReceiptFactsV1 } fro
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1,
   createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema, type OwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployment-protocol/v1';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { act, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -42,8 +42,6 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
-// The app shell's one Account investigation owner, which every failure page borrows.
-const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
 const { PluginSurfaceDestinationNavigationBindingProvider } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
@@ -51,7 +49,7 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 const snapshotId = 'c'.repeat(64);
 
 describe('failed deployment migration recovery', () => {
-  beforeEach(() => { homes.reset(); triage.runs.length = 0; });
+  beforeEach(async () => { await homes.reset(); triage.runs.length = 0; });
   afterEach(standardCleanup);
 
   it.each([
@@ -131,17 +129,14 @@ describe('failed deployment migration recovery', () => {
       homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
         environment: detail.environment, targetLinks: detail.targetLinks.map(link => link.targetLink) } });
       homes.answer(serverId, `/v1/deployments/receipts/${incumbent.deployment.id}`, { body: { ok: true, deployment: incumbent.deployment } });
-      const machine = createPlainMachineRowFixture({ id: 'machine-a', accountId: scope.accountId });
-      homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-      }) });
       let observed: unknown;
-      homes.answer(serverId, '/v1/actions/deployments.rollback', { select: body => {
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-        observed = DeploymentActionInputSchemasV1['deployments.rollback'].parse(envelope.input);
-        return { body: { v: 1, actionId: 'deployments.rollback', requestId: envelope.requestId,
-          execution: { ok: true, result: { ok: false, error: 'deployment_conflict' } } } };
-      } });
+      await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.rollback',
+        machineId: 'machine-a', installationId: 'installation-a', tokenEpoch: 0,
+        deploymentSource: { id: detail.environment.projectSourceId, revision: 1 },
+        requesterInvocation: 'required', execute: input => {
+          observed = DeploymentActionInputSchemasV1['deployments.rollback'].parse(input);
+          return { ok: false, error: 'deployment_conflict' };
+        } });
       const actions = createDeploymentActions(lifetime, scope.projectSourceId);
       let finished: (result: unknown) => void = () => {};
       const completion = new Promise<unknown>(resolve => { finished = resolve; });
@@ -154,10 +149,10 @@ describe('failed deployment migration recovery', () => {
       const editorOpens: unknown[] = [];
       const navigation = { targetKind: 'app' as const, registerOwner: () => () => {},
         openSurface: (request: unknown) => { editorOpens.push(request); return { ok: true as const }; } };
-      const screen = await renderScreen(<PluginSurfaceDestinationNavigationBindingProvider binding={navigation}><AccountNoticeInvestigationBoundary><DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+      const screen = await renderScreen(<PluginSurfaceDestinationNavigationBindingProvider binding={navigation}><DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
         deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
         accountId={scope.accountId} serverId={serverId} readLogs={null} onBack={() => {}} rollback={rollback}
-        cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} /></AccountNoticeInvestigationBoundary></PluginSurfaceDestinationNavigationBindingProvider>);
+        cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} /></PluginSurfaceDestinationNavigationBindingProvider>);
       const actionId = 'project-deployments.receipt.outcome.failed.action';
       await act(async () => { await waitForTestEvent(screen.subscribe,
         () => screen.findByTestId('project-deployments.receipt.outcome.failed'), value => value !== null); });
@@ -214,11 +209,13 @@ describe('failed deployment migration recovery', () => {
         expect(homes.requestsFor('/v1/actions/deployments.rollback')).toHaveLength(1);
       }
     } finally {
-      await act(async () => { controller.retire(); account.dispose(); });
-      if (choice === 'unavailable') {
-        storage.setState({ profileScope: previousScope });
-        runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
-      }
+      await act(async () => {
+        controller.retire(); account.dispose();
+        if (choice === 'unavailable') {
+          storage.setState({ profileScope: previousScope });
+          runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+        }
+      });
     }
   });
 });

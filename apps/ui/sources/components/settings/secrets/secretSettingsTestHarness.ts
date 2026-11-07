@@ -1,23 +1,32 @@
 import { vi, type Mock } from 'vitest';
 import {
-    AccountSettingsStoredContentEnvelopeSchema,
-    AccountSettingsV2UpdateResponseSchema,
+    AccountSettingsStoredContentEnvelopeSchema} from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
+import {
+    AccountSettingsV2UpdateResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import {
+    SessionOrganizationSnapshotResponseSchema} from '@happier-dev/protocol/sessions/organization/snapshot';
+import {
     SavedSecretCatalogEntryV1Schema,
-    SavedSecretResourceEnvelopeRepairInputV1Schema,
     SavedSecretResourceMaterialV1Schema,
-    SharedSavedSecretDeleteInputV1Schema,
-    SharedSavedSecretCreateInputV1Schema,
-    SharedSavedSecretUpdateInputV1Schema,
-    computeAccountEncryptionMigrateKeyFingerprintV1,
-    computeContentPublicKeyFingerprint,
-    sealAccountScopedBlobCiphertext,
-    sealSavedSecretResourceStoredContentV1,
-    openSavedSecretResourceStoredContentV1,
-    tryWriteServerEnabledBitInPlace,
     type SavedSecretResourceEnvelopeCensusRecipientV1,
     type SavedSecretResourceMaterialV1,
-} from '@happier-dev/protocol';
-import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
+} from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import {
+    SavedSecretResourceEnvelopeRepairInputV1Schema,
+    SharedSavedSecretDeleteInputV1Schema,
+    SharedSavedSecretCreateInputV1Schema,
+    SharedSavedSecretUpdateInputV1Schema} from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import {
+    computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
+    computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import {
+    sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    sealSavedSecretResourceStoredContentV1,
+    openSavedSecretResourceStoredContentV1} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import {
+    tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
@@ -70,6 +79,7 @@ export type SecretSettingsTestHarness = {
     subscribe(listener: () => void): () => void;
     setRejectSettingsWrites(next: boolean): void;
     setLosePromotionResponse(next: boolean): void;
+    setLoseCreationResponse(next: boolean): void;
     replaceSettings(next: Settings, options?: Readonly<{ version?: number; publish?: boolean }>): void;
     readonly persistedSettings: Settings;
     readonly persistedRawSettings: OpenedAccountSettingsStoredContent['raw'];
@@ -136,6 +146,7 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     let settingsVersion = 1;
     let referenceGuardRevision = 3;
     let losePromotionResponse = false;
+    let loseCreationResponse = false;
     let rejectSettingsWrites = options.rejectSettingsWrites ?? false;
     const resources: SavedSecretResourceMaterialV1[] = [];
     const recipients: SavedSecretResourceEnvelopeCensusRecipientV1[] = [];
@@ -216,8 +227,9 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
                     recipientContentPublicKeyFingerprint:ownerEnvelope.recipientContentPublicKeyFingerprint}:null,
                 entry:{ref:`happier:shared-secret:v1:${body.resourceId}`,source:'shared_resource',relationship:'owner',ownerAccountId:accountId,
                     name:body.displayName,kind:body.kind,encryptionMode:body.encryptionMode,revision:1,materialStatus:'ready',
-                    audience:{accounts:[],teams:[],groups:[]},capabilities:{use:true,rename:true,rotate:true,manageAccess:true,delete:true}},
+                    audience:{accounts:[],teams:[],groups:[]},capabilities:{use:true,reveal:true,rename:true,rotate:true,manageAccess:true,delete:true}},
             }));
+            if (loseCreationResponse) throw new TypeError('Response lost after accepting resource creation');
             return Response.json({resourceId:body.resourceId,revision:1});
         }
         if (path === PROFILE_ROWS_ROUTE_V1) return Response.json(catalogRows.get(path) ?? { status: 'listed', rows: [], nextCursor: null,
@@ -245,7 +257,7 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
                         relationship: 'owner', ownerAccountId: accountId, name: content.name, kind: content.kind,
                         encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
                         audience: { accounts: [], teams: [], groups: [] },
-                        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                        capabilities: { use: true, reveal: true, rename: true, rotate: true, manageAccess: true, delete: true } },
                 }));
             }
             promotions.push(input);
@@ -342,6 +354,7 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         setRejectSettingsWrites(next: boolean) { rejectSettingsWrites = next; },
         setLosePromotionResponse(next: boolean) { losePromotionResponse = next; },
+        setLoseCreationResponse(next: boolean) { loseCreationResponse = next; },
         replaceSettings(next: Settings, options?: Readonly<{ version?: number; publish?: boolean }>) {
             const previousVersion = settingsVersion;
             settingsVersion = options?.version ?? settingsVersion;
@@ -385,7 +398,7 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             const entry = SavedSecretCatalogEntryV1Schema.parse({ ref: 'happier:shared-secret:v1:resource-a',
                 source: 'shared_resource', relationship: 'owner', name: content.name, kind: content.kind,
                 encryptionMode: resourceMode, ownerAccountId: accountId, revision: 3, materialStatus: 'ready',
-                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+                capabilities: { use: true, reveal: true, rename: true, rotate: true, manageAccess: true, delete: true },
             });
             resources.push(SavedSecretResourceMaterialV1Schema.parse({ resourceId: 'resource-a', encryptionMode: resourceMode, entry, storedContent, recipientEnvelope }));
             notify();

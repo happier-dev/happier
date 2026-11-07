@@ -12,10 +12,12 @@ afterEach(standardCleanup);
 
 it('renders the missing Source repository remedy from the plugin refusal without offering a provider Git grant', async () => {
   const outcome = readPlatformInspectOutcome({ ok: false, code: 'repository_required' });
-  const screen = await renderScreen(<DeploymentPlatformInspectState outcome={outcome} />);
+  const onOpenRecovery = vi.fn();
+  const screen = await renderScreen(<DeploymentPlatformInspectState outcome={outcome} onOpenRecovery={onOpenRecovery} />);
   const visible = screen.root.findAll(node => typeof node.type === 'string')
     .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
-  expect(visible).toContain('Connect a repository to this Source');
+  await screen.pressByTestId('project-deployments.platform.refused.next');
+  expect(onOpenRecovery).toHaveBeenCalledWith('source');
   expect(visible).not.toContain('repository_required');
   expect(screen.findByTestId('project-deployments.platform.needsGitAccess')).toBeNull();
   expect(screen.findByTestId('project-deployments.platform.ready')).toBeNull();

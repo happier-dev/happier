@@ -148,3 +148,60 @@ it('welcomes an Account with no platform account to add a token in place, then c
     context.dispose();
   }
 });
+
+it('says a repository refusal with the shared remedy after another target was inspected in this module', async () => {
+  const pluginId = 'com.example.repository-deploy';
+  const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
+  const { PluginError } = await import('@happier-dev/plugin-sdk');
+  const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+  const inspections: string[] = [];
+  let refuse = () => {};
+  const refused = new Promise<void>(resolve => { refuse = resolve; });
+  const authored = createDeploymentTargetsTestPlugin(pluginId, async target => {
+    inspections.push(target);
+    await refused;
+    throw new PluginError({ code: 'repository_required' });
+  });
+  const serverId = await homes.addHome({ name: 'Repository target', serverUrl: 'https://repository-target.test', accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+    activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
+  const opened: string[] = [];
+  try {
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
+      initialTargetKey: `${pluginId}/beta`, onOpenRecoveryDestination: destination => opened.push(destination) }));
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1);
+    });
+    await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account: { service, accountId: 'cloud-account' } }, null));
+    const field = () => screen.root.findAllByType(ActionInputFields)[0]!;
+    await act(async () => field().props.onPatch({ beta: 'beta-west' }));
+    await act(async () => field().props.onPatch({ providerAccountId: 'cloud' }));
+    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'production' } }));
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(false);
+    });
+    await screen.pressByTestIdAsync('project-deployments.platform.check');
+    const recovery = readDeploymentRefusalRecoveryV1('repository_required')!;
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(inspections, screen.getTextContent()).toEqual(['beta']);
+    });
+    await act(async () => refuse());
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(screen.findByTestId('project-deployments.platform.refused.next')).not.toBeNull();
+    });
+    expect(screen.getTextContent()).toContain(recovery.remedy);
+    expect(screen.getTextContent()).toContain(recovery.nextAction.label);
+    await screen.pressByTestIdAsync('project-deployments.platform.refused.next');
+    expect(opened).toEqual([recovery.nextAction.destination]);
+  } finally {
+    await installed.dispose();
+    context.dispose();
+  }
+});

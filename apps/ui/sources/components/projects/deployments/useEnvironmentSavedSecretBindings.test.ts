@@ -170,25 +170,26 @@ describe('Environment Saved Secret creation through the existing owner', () => {
         } finally { release.resolve(); }
     });
 
-    it('projects an existing Action approval wait and cancels it without creating or binding a resource', async () => {
+    it('uses the admitted UI creation once even when Account policy asks first', async () => {
         home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [], actionsSettingsV1: {
             v: 1, actions: { 'secrets.create': { approvalRequiredSurfaces: ['ui'] } },
         } }) });
-        const pending = createDeferred<void>();
-        const onApprovalPending = vi.fn(() => { pending.resolve(); });
+        const onApprovalPending = vi.fn();
         const hook = await mount();
-        const creating = hook.getCurrent().creation.createAndBind({ name: 'TOKEN', value: 'local-approval', phase: 'runtime' }, { onApprovalPending });
-        try {
-            await pending.promise;
-            await act(async () => {});
-            expect(hook.getCurrent().creation.status).toBe('waitingApproval');
-            expect(hook.getCurrent().creation.busy).toBe(true);
-            expect(onApprovalPending).toHaveBeenCalledOnce();
-            expect(home.creations).toEqual([]);
-            await act(async () => { hook.getCurrent().creation.cancel(); });
-            await act(async () => { expect(await creating).toMatchObject({ ok: false, error: 'canceled' }); });
-            expect(hook.getCurrent().bindings).toEqual([]);
-            expect(hook.getCurrent().creation.busy).toBe(false);
-        } finally { hook.getCurrent().creation.cancel(); }
+        await act(async () => {
+            expect(await hook.getCurrent().creation.createAndBind(
+                { name: 'TOKEN', value: 'local-approval', phase: 'runtime' }, { onApprovalPending },
+            )).toMatchObject({ ok: true });
+        });
+        expect(onApprovalPending).not.toHaveBeenCalled();
+        expect(home.creations).toHaveLength(1);
+        const resource = home.resources.find(row => 'resourceId' in row);
+        if (!resource || !('resourceId' in resource)) throw new Error('Missing created resource');
+        expect(hook.getCurrent().bindings).toEqual([{
+            purpose: 'variable', name: 'TOKEN', phase: 'runtime',
+            source: { kind: 'secret', ref: resource.entry.ref, resourceRevision: 1 },
+        }]);
+        expect(hook.getCurrent().creation.status).toBe('idle');
+        expect(hook.getCurrent().creation.busy).toBe(false);
     });
 });

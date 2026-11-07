@@ -11,10 +11,11 @@ import { DeploymentBackupActionInputSchemasV1 } from '@happier-dev/protocol/depl
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
   act,
-  renderScreen,
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
@@ -55,19 +56,6 @@ const { DeploymentDatabasePage } = await import('./DeploymentDatabasePage');
 const { actionOperationStore } =
   await import('@/sync/domains/actionOperations/actionOperationStore');
 const { ModalProvider } = await import('@/modal');
-const {
-  ExternalActionRequestEnvelopeV1Schema,
-  ExternalActionResponseEnvelopeV1Schema,
-  ExternalActionExecutionAuthorizationRequestV1Schema,
-  ExternalActionExecutionAuthorizationV1Schema,
-  projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
-} = await import('@happier-dev/protocol/actions/externalActionApi');
-const { computeExternalActionRequestEnvelopeDigestV1 } =
-  await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-const { createPlainMachineRowFixture } =
-  await import('@/dev/testkit/fixtures/machineFixtures');
-const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
-const { default: nacl } = await import('tweetnacl');
 
 afterEach(async () => {
   const { Modal } = await import('@/modal');
@@ -121,7 +109,6 @@ async function renderDatabase(
     shared?: boolean;
   }> = {},
 ) {
-  const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
   await homes.reset();
   // A fresh Home per case.
   const serverIdentityId = `srv_database_${++homeCount}`;
@@ -134,16 +121,6 @@ async function renderDatabase(
     currentAccount: true,
   });
   const account = await captureLazyActionAccountContext(serverId);
-  const machine = {
-    ...createPlainMachineRowFixture({
-      id: machineId,
-      accountId: 'account-owner',
-    }),
-    installationId: 'installation-a',
-    installationPublicKey: encodeBase64(installation.publicKey),
-  };
-  homes.answer(serverId, '/v1/machines', { body: [machine] });
-  homes.answer(serverId, `GET /v1/machines/${machineId}`, { body: { machine } });
   const base = createDeploymentEnvironmentDetailV1();
   const environmentId = base.environment.id;
   const backup = {
@@ -256,70 +233,22 @@ async function renderDatabase(
 
   const effects: Array<{ actionId: string; input: Record<string, unknown> }> =
     [];
-  const respond = (
-    actionId: string,
-    envelope: { requestId: string },
-    result: unknown,
-  ) => ({
-    body: ExternalActionResponseEnvelopeV1Schema.parse({
-      v: 1,
-      actionId,
-      requestId: envelope.requestId,
-      execution: { ok: true, result },
-    }),
-  });
   for (const actionId of [
     'deployments.backups.history',
     'deployments.backups.run',
     'deployments.backups.inventory',
   ] as const) {
-    homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, {
-      select: (body) => {
-        const request =
-          ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-        return {
-          body: ExternalActionExecutionAuthorizationV1Schema.parse({
-            v: 1,
-            token: 'database-root',
-            binding: {
-              accountId: 'account-owner',
-              authentication: { kind: 'account', tokenEpoch: 0 },
-              serverIdentityId,
-              machineId: machine.id,
-              installationId: machine.installationId,
-              custodianAccountId: 'account-owner',
-              accountEncryptionMode: 'plain',
-              actionId,
-              requestId: request.envelope.requestId,
-              target: request.envelope.target,
-              requestEnvelopeDigest:
-                computeExternalActionRequestEnvelopeDigestV1(request.envelope),
-              environmentId,
-              deploymentNativeAdmission:
-                projectExternalActionDeploymentNativeEnvelopeAdmissionV1({
-                  actionId,
-                  envelope: request.envelope,
-                }),
-            },
-          }),
-        };
-      },
-    });
-    homes.answer(serverId, `/v1/actions/${actionId}`, {
-      select: (body) => {
-        const authorized =
-          ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
-        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(
-          authorized.success ? authorized.data.envelope : body,
-        );
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId,
+      installationId: 'installation-a',
+      actionId,
+      tokenEpoch: 0,
+      execute: (operand) => {
         effects.push({
           actionId,
-          input: envelope.input as Record<string, unknown>,
+          input: DeploymentBackupActionInputSchemasV1[actionId].parse(operand),
         });
-        return respond(
-          actionId,
-          envelope,
-          actionId === 'deployments.backups.inventory'
+        return actionId === 'deployments.backups.inventory'
             ? { kind: 'inventory', environmentId, configRevision: 1, repositoryId: 'a'.repeat(64), snapshots: [
               { snapshot: manifest(environmentId, snapshotId, '2026-11-01T12:00:00Z').snapshot,
                 source: { sourceId: 'database', kind: 'dump' },
@@ -345,8 +274,7 @@ async function renderDatabase(
                 environmentId,
                 configRevision: 1,
                 history: { entries: [] },
-              }),
-        );
+              });
       },
     });
   }
@@ -423,7 +351,7 @@ async function renderDatabase(
 }
 
 describe('Environment → Data → Add (P10)', () => {
-  it('gives an Environment defined in its repository one real next step: Store databases on its Machine', async () => {
+  it('gives an Environment defined in its repository one real next step: the Store catalog picker on its Machine', async () => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, runtimeTargetLink: null, memberVersions: {},
@@ -438,8 +366,11 @@ describe('Environment → Data → Add (P10)', () => {
       routerMock.spies.push.mockClear();
       await screen.pressByTestIdAsync('project-deployments.add.openStore');
       const pushed = String(routerMock.spies.push.mock.calls[0]?.[0] ?? '');
+      // The canonical Store app catalog picker (the list Add embeds), not a text search for "database".
       expect(pushed).toContain('kind=app');
-      expect(pushed).toContain('database');
+      expect(pushed).not.toMatch(/[?&]q=/);
+      // Filtered to the catalog's database category through the Store's own filter condition.
+      expect(JSON.parse(decodeURIComponent(/[?&]filters=([^&]+)/.exec(pushed)?.[1] ?? 'null'))).toEqual({ category: { include: ['database'], exclude: [] } });
     } finally { await screen.unmount(); }
   });
 });

@@ -24,7 +24,8 @@ import {
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, standardCleanup } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import {
   createMachineReadBatchResponseFixture,
   createPlainMachineRowFixture,
@@ -294,9 +295,13 @@ describe('Environment service row ⋯ (P1 §3)', () => {
       ok: true, environment: { ...detail.environment, serverId: serverIdentityId }, targetLinks: detail.targetLinks.map(row => row.targetLink),
     } });
     const restarts: unknown[] = [];
-    answerAction('deployments.restart', (envelope) => {
-      restarts.push(envelope.input);
-      return { kind: 'accepted', operation: { operationId: 'restart-1' } };
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'deployments.restart', machineId, installationId: 'installation-a', tokenEpoch: 0,
+      execute: input => {
+        restarts.push(input);
+        return { kind: 'accepted', operation: { operationId: 'restart-1' } };
+      },
     });
     const lifetime = {
       scope,

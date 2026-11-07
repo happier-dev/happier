@@ -4,8 +4,7 @@ import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-prot
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentReadSnapshotV1 } from '@happier-dev/deployments';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -60,24 +59,19 @@ describe('Environment Variables consumer draft', () => {
             source: { kind: 'value' as const, value: '3000' } };
         const detail = { ...base, environment: { ...base.environment, serverId: homeId },
             content: { ...base.content, bindings: change === 'set' ? [] : [runtime] } };
-        const machine = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'owner' });
-        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-        }) });
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
             ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
         } });
-        homes.answer(serverId, '/v1/actions/deployments.bindings.set', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            const input = DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(envelope.input);
-            expect(input).toEqual({ serverId: homeId, environmentId: detail.environment.id,
-                expectedRevision: detail.environment.revision,
-                set: change === 'set' ? [runtime] : change === 'both' ? [{ ...runtime, phase: 'build' }] : [],
-                remove: change === 'remove' ? [{ purpose: runtime.purpose, name: runtime.name, phase: runtime.phase }] : [] });
-            return { body: { v: 1, actionId: 'deployments.bindings.set', requestId: envelope.requestId,
-                execution: { ok: true, result: { ok: true, environmentId: detail.environment.id,
-                    revision: detail.environment.revision + 1 } } } };
-        } });
+        await answerExternalActionAccountForHome(homes, serverId, {
+            machineId: 'machine-a', actionId: 'deployments.bindings.set', tokenEpoch: 0, execute: operand => {
+                const input = DeploymentActionInputSchemasV1['deployments.bindings.set'].parse(operand);
+                expect(input).toEqual({ serverId: homeId, environmentId: detail.environment.id,
+                    expectedRevision: detail.environment.revision,
+                    set: change === 'set' ? [runtime] : change === 'both' ? [{ ...runtime, phase: 'build' }] : [],
+                    remove: change === 'remove' ? [{ purpose: runtime.purpose, name: runtime.name, phase: runtime.phase }] : [] });
+                return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+            },
+        });
         const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
         const hook = await renderHook(() => useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id,
             lifetime, snapshot: ready(detail), setBindings: actions.setBindings ?? null }));

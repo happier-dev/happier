@@ -16,7 +16,8 @@ import {
   createDeploymentReceiptHeaderV1,
   createDeploymentSecretVariableBindingV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { act, renderScreen as renderTestScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -68,10 +69,6 @@ const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
 const { DeploymentEnvironmentDetail } =
   await import('./DeploymentEnvironmentDetail');
 const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
-const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
-const renderScreen = (element: React.ReactNode) => renderTestScreen(
-  <AccountNoticeInvestigationBoundary>{element}</AccountNoticeInvestigationBoundary>,
-);
 async function waitForContent(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
   await waitForHomeGovernance(async () => {
     await act(async () => {});
@@ -1304,8 +1301,8 @@ describe('Deployment receipt header actions', () => {
       const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps}
         environmentId={detail.environment.id} deploymentId={receipt.deployment.id} cancel={null} deploy={deploy as never} />);
       await act(async () => { await waitForTestEvent(screen.subscribe,
-        () => screen.findByTestId('project-deployments.receipt.deployAgain'), node => node !== null); });
-      await screen.pressByTestIdAsync('project-deployments.receipt.deployAgain');
+        () => screen.findByTestId('project-deployments.receipt.outcome.failed.action'), node => node !== null); });
+      await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
       expect(sha).not.toBeNull();
       expect(deploy).toHaveBeenCalledWith({ environmentId: detail.environment.id, targetLinkId: 'target-link', sha });
     } finally { controller.retire(); }

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1,
     createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -20,8 +20,7 @@ const { createDeploymentActions } = await import('./deploymentActions');
 const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
 const { buildApprovalHref } = await import('@/components/approvals/approvalNavigation');
 
-afterEach(() => { homes.reset(); route.resetParams(); route.spies.push.mockClear(); });
-afterEach(standardCleanup);
+afterEach(async () => { await standardCleanup(); await homes.reset(); route.resetParams(); route.spies.push.mockClear(); });
 
 describe('Environment Deploy review wiring', () => {
     it('opens the canonical review page from the real Deploy button before any deploy effect', async () => {
@@ -30,23 +29,19 @@ describe('Environment Deploy review wiring', () => {
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
         const scope = { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId };
         const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
-        const machine = createPlainMachineRowFixture({ id: detail.environment.controllerMachineId, accountId: scope.accountId });
-        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-        }) });
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
             ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
         } });
         // The installed controller is the network boundary: it prepares and persists the review.
-        homes.answer(serverId, '/v1/actions/deployments.deploy', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.target).toEqual({ kind: 'machine', machineId: machine.id });
-            expect(envelope.input).toMatchObject({ serverId, environmentId: detail.environment.id,
-                targetLinkId: detail.targetLinks[0]!.targetLink.id });
-            return { body: { v: 1, actionId: 'deployments.deploy', requestId: envelope.requestId,
-                execution: { ok: true, result: { kind: 'approval_request_created', actionId: 'deployments.deploy',
-                    artifactId: 'prepared-deploy-review' } } } };
-        } });
+        await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.deploy',
+            machineId: detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            deploymentSource: { id: detail.environment.projectSourceId, revision: 1 },
+            requesterInvocation: 'required', execute: (input, context) => {
+                expect(context.target).toEqual({ kind: 'machine', machineId: detail.environment.controllerMachineId });
+                expect(input).toMatchObject({ serverId, environmentId: detail.environment.id,
+                    targetLinkId: detail.targetLinks[0]!.targetLink.id });
+                return { kind: 'approval_request_created', actionId: 'deployments.deploy', artifactId: 'prepared-deploy-review' };
+            } });
         const receipt = createDeploymentReceiptDetailV1();
         const controller = createDeploymentReadControllerV1({ scope, transport: {
             listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment,

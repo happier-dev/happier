@@ -1,4 +1,5 @@
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
@@ -117,7 +118,7 @@ import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/
 import { readSkillRulesForItemV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
 import { readSkillUsageCatalogV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOverrideInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
-import { getActionSpec, resolveActionExecutionPlacementForInput, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, resolveActionExecutionPlacementForInput, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -923,6 +924,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         credentialKey: resolveAuthCredentialsScopeKey(accountContext.credentials) } } : {}),
     },
   }, accountContext?.accountLifetime, async (args) => {
+    if (isComputerRuntimeActionId(args.actionId) && accountContext) {
+      return await createUiAccountAction({ account: accountContext })({ ...args,
+        context: { ...args.context, actionCaller: args.context.actionCaller ?? { kind: 'host' } } });
+    }
     const target = args.context.externalActionTarget;
     if (!accountContext || target?.kind !== 'machine' || !target.machineId.trim()) return { ok: false, errorCode: 'runtime_action_disabled', error: 'browser_automation_unavailable' };
     const result = await executeOriginalAccountMachineAction({ account: accountContext, actionId: args.actionId,
@@ -990,7 +995,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // not reinterpret that surface as a host Agent/CLI requester invocation.
     const needsInvocation = machineOwnedAction && context.surface !== 'plugin'
       && (relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
-        || context.presentUserApproval?.actionId === args.actionId);
+        || context.presentUserApproval?.actionId === args.actionId
+        || doesExternalActionConsumeRequesterAccountContentV1({ actionId: args.actionId, input: args.input,
+          target: context.externalActionTarget }));
     const invocation = needsInvocation ? projectUiAccountRequesterInvocation({ actionId: args.actionId,
       context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' } }, account: accountContext,
       target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },

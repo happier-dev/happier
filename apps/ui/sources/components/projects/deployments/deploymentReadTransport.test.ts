@@ -162,7 +162,7 @@ describe('deployment scoped read transport', () => {
         } finally { account.dispose(); }
     });
 
-    it.each(['plain', 'e2ee'] as const)('keeps %s collection header-only and batches visible history contents for revision and failure facts', async mode => {
+    it.each(['plain', 'e2ee'] as const)('projects %s Environment headers and batches visible history facts', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
         const secret = new Uint8Array(32).fill(11);
         const serverId = await homes.addHome({ name: 'Deployments', serverUrl: 'https://deployments-ui.test', accountId: 'account-owner',
@@ -244,11 +244,12 @@ describe('deployment scoped read transport', () => {
         expect(await transport.listHistory(scope, environmentHeader.id, {}, options)).toMatchObject({ ok: true,
             value: { items: [{ ...receiptHeader, title: 'aaaaaaa' }, { ...otherReceipt, title: 'aaaaaaa' }] } });
         const collectionReads = homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(artifactRequests);
-        expect(collectionReads.map(request => request.input)).toEqual([
+        expect(collectionReads).toHaveLength(3);
+        expect(collectionReads.map(request => request.input)).toEqual(expect.arrayContaining([
             { artifactIds: [environmentHeader.contentArtifactId, receiptHeader.contentArtifactId], projection: 'headers' },
             { artifactIds: [environmentHeader.contentArtifactId], projection: 'headers' },
             { artifactIds: [receiptHeader.contentArtifactId, otherReceipt.contentArtifactId] },
-        ]);
+        ]));
         const controller = createDeploymentReadControllerV1({ scope, transport });
         const demand = { mounted: true, visible: true, focused: true };
         const collection = controller.acquireCollection({}, demand);

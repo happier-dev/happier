@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
     createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -60,17 +59,12 @@ describe('Environment deletion client over the Action owner', () => {
         } });
         controllers.push(controller);
         const done = vi.fn();
-        const machine = createPlainMachineRowFixture({ id: f.detail.environment.controllerMachineId!, accountId: 'owner' });
-        homes.answer(f.serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-        }) });
-        homes.answer(f.serverId, '/v1/actions/deployments.teardown', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
-                execution: { ok: false, errorCode: 'deployment_domain_native_unavailable', error: 'deployment_domain_native_unavailable',
-                    details: { environmentId: f.detail.environment.id, domainId: 'tools', domainHostname: 'tools.example.test',
-                        step: 'removeDomain', partial: true, requiredFact: 'domainIngress', remedy: 'Restore ingress and retry Stop and remove.' } } } };
-        } });
+        const refusal = { errorCode: 'deployment_domain_native_unavailable', error: 'deployment_domain_native_unavailable',
+            details: { environmentId: f.detail.environment.id, domainId: 'tools', domainHostname: 'tools.example.test',
+                step: 'removeDomain', partial: true, requiredFact: 'domainIngress', remedy: 'Restore ingress and retry Stop and remove.' } };
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: () => refusal, failure: () => refusal });
         const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
             lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
             controller: null, demand: shown }));
@@ -196,19 +190,15 @@ describe('Environment deletion client over the Action owner', () => {
     it.each([false, true])('consumes final Environment removal from the one root teardown (whole Environment %s)', async wholeEnvironment => {
         const f = await setup();
         const link = f.detail.targetLinks[0]!.targetLink;
-        const machine = createPlainMachineRowFixture({ id: f.detail.environment.controllerMachineId!, accountId: 'owner' });
-        homes.answer(f.serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
-        }) });
         let input: unknown;
-        homes.answer(f.serverId, '/v1/actions/deployments.teardown', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            input = envelope.input;
-            return { body: { v: 1, actionId: 'deployments.teardown', requestId: envelope.requestId,
-                execution: { ok: true, result: { ok: true, environmentId: f.detail.environment.id,
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: raw => {
+                input = raw;
+                return { ok: true, environmentId: f.detail.environment.id,
                     revision: f.detail.environment.revision + 3, deploymentId: 'teardown-1', deploymentRevision: 1,
-                    state: 'succeeded', environmentRemoved: true } } } };
-        } });
+                    state: 'succeeded', environmentRemoved: true };
+            } });
         const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
             lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
             controller: null, demand: shown }));
@@ -267,16 +257,17 @@ describe('Environment deletion client over the Action owner', () => {
 
     it('returns a teardown that is still running as its receipt and removes nothing yet', async () => {
         const f = await setup();
-        const teardown = vi.fn(async () => ({ ok: true as const, environmentId: f.detail.environment.id,
-            revision: f.detail.environment.revision, deploymentId: 'teardown-2', deploymentRevision: 1, state: 'running' as const }));
-        const deleteEnvironment = vi.fn();
-        const actions = { ...f.actions, teardown, deleteEnvironment } as unknown as typeof f.actions;
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: () => ({ ok: true, environmentId: f.detail.environment.id,
+                revision: f.detail.environment.revision, deploymentId: 'teardown-2', deploymentRevision: 1, state: 'running' }) });
         const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
-            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
             controller: null, demand: shown }));
         await act(async () => {
             expect(await hook.getCurrent().stopAndRemove(null)).toEqual({ kind: 'receipt', deploymentId: 'teardown-2' });
         });
-        expect(deleteEnvironment).not.toHaveBeenCalled();
+        expect(homes.requestsFor(`/v1/deployments/environments/${f.detail.environment.id}/delete`)).toHaveLength(0);
+        expect(homes.requestsFor(`/v1/deployments/environments/${f.detail.environment.id}/targets/${f.detail.targetLinks[0]!.targetLink.id}/unlink`)).toHaveLength(0);
     });
 });

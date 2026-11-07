@@ -29,23 +29,44 @@ type HomeActionBoundaryInput<T = Parameters<typeof createExternalActionAccountHt
 
 /** Publish one installed controller and its real private requester carrier on the captured Home. */
 export async function answerExternalActionAccountForHome(homes: Pick<HomeGovernanceHarness, 'answer'>,
-    serverId: string, params: HomeActionBoundaryInput) {
+    serverId: string, params: HomeActionBoundaryInput & Readonly<{
+        /** Preparation may resolve a different controller for the admitted invocation. */
+        additionalMachines?: readonly Readonly<{ machineId: string; installationId?: string }>[];
+    }>) {
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const account = await captureLazyActionAccountContext(serverId);
     try {
         const { encryption } = await account.resolveAccountEncryption();
-        if (!account.serverIdentityId) throw new Error('Expected external Action Home identity');
-        const boundary = await createExternalActionAccountHttpBoundary({ ...params, serverUrl: account.endpointUrl,
-            serverIdentityId: account.serverIdentityId, accountId: account.accountId, ...(encryption ? { encryption } : {}) });
-        for (const path of [`GET /v1/machines/${encodeURIComponent(params.machineId)}`, 'POST /v1/machines/read-batch',
-            `POST ${bindExternalActionExecutionAuthorizationHttpPathV1(params.actionId)}`, `POST /v1/actions/${params.actionId}`]) {
-            homes.answer(serverId, path, { select: async (_body, request) => {
+        const serverIdentityId = account.serverIdentityId;
+        if (!serverIdentityId) throw new Error('Expected external Action Home identity');
+        const { additionalMachines = [], ...primary } = params;
+        const boundaries = await Promise.all([primary, ...additionalMachines.map(machine => ({ ...primary, ...machine }))]
+            .map(machine => createExternalActionAccountHttpBoundary({ ...machine, serverUrl: account.endpointUrl,
+                serverIdentityId, accountId: account.accountId, ...(encryption ? { encryption } : {}) })));
+        for (const boundary of boundaries) {
+            homes.answer(serverId, `GET /v1/machines/${encodeURIComponent(boundary.machine.id)}`, { select: async (_body, request) => {
+                const response = await boundary.handle(new URL(request.url), request.init);
+                if (!response) throw new Error('Expected external Action Machine HTTP boundary');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body,
+                id => boundaries.find(boundary => boundary.machine.id === id)?.machine ?? null).json(),
+        }) });
+        for (const path of [`POST ${bindExternalActionExecutionAuthorizationHttpPathV1(params.actionId)}`, `POST /v1/actions/${params.actionId}`]) {
+            homes.answer(serverId, path, { select: async (body, request) => {
+                const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+                const envelope = ExternalActionRequestEnvelopeSchema.parse(authorized.success ? authorized.data.envelope : body);
+                const target = envelope.target;
+                const boundary = target?.kind === 'machine' ? boundaries.find(entry => entry.machine.id === target.machineId) : null;
+                if (!boundary) throw new Error('Unexpected external Action Home fixture target');
                 const response = await boundary.handle(new URL(request.url), request.init);
                 if (!response) throw new Error('Expected external Action HTTP boundary');
                 return { status: response.status, body: await response.json() };
             } });
         }
-        return boundary;
+        return boundaries[0]!;
     } finally { account.dispose(); }
 }
 
@@ -76,6 +97,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             requesterAccountContext: NonNullable<ReturnType<typeof openExternalActionRequesterAccountContextV1>>;
             pluginInvocation?: ExternalActionRequestEnvelopeV1['pluginInvocation'];
             requestId?: string;
+            /** Actual network headers, for policy assertions at the HTTP boundary. */
+            requestHeaders: Headers;
             signal?: AbortSignal | null;
         }>): Promise<unknown> | unknown;
     }
@@ -86,6 +109,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             target: Extract<NonNullable<ExternalActionRequestEnvelopeV1['target']>, { kind: 'machine' }>;
             requesterAccountContext: NonNullable<ReturnType<typeof openExternalActionRequesterAccountContextV1>>;
             requestId?: string;
+            /** Actual network headers, for policy assertions at the HTTP boundary. */
+            requestHeaders: Headers;
             signal?: AbortSignal | null;
         }>): Promise<unknown> | unknown;
     }
@@ -95,6 +120,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
         execute(input: unknown, context: Readonly<{
             target: Extract<NonNullable<ExternalActionRequestEnvelopeV1['target']>, { kind: 'machine' }>;
             requestId?: string;
+            /** Actual network headers, for policy assertions at the HTTP boundary. */
+            requestHeaders: Headers;
             signal?: AbortSignal | null;
         }>): Promise<unknown> | unknown;
     }
@@ -179,10 +206,11 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             const input = envelope.v === 1 ? envelope.input
                 : material ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: { ...binding, requestId: envelope.requestId }, material })?.input : undefined;
             if (input === undefined) throw new Error('Invalid encrypted external Action fixture request');
+            const requestHeaders = new Headers(init?.headers);
             let result: unknown;
             if (params.requesterInvocation === 'none') {
                 if (request?.executionAuthorization?.requesterAccountContext) throw new Error('Unexpected private requester Account carrier');
-                result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal });
+                result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else {
                 if (!request) throw new Error('Expected an authorized private requester Account carrier');
                 const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
@@ -190,13 +218,13 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                     serverIdentityId: params.serverIdentityId, installationPrivateKey: installation.privateKey, includeInvocation: true });
                 if (!opened) throw new Error('Invalid private requester Account carrier');
                 if (params.requesterInvocation === 'credentials') result = await params.execute(input, {
-                    target, requesterAccountContext: opened.credentials, requestId: envelope.requestId, signal: init?.signal,
+                    target, requesterAccountContext: opened.credentials, requestId: envelope.requestId, signal: init?.signal, requestHeaders,
                 });
                 else {
                     if (!opened.invocation) throw new Error('Missing private requester invocation');
                     result = await params.execute(input, { target, invocation: opened.invocation, requesterAccountContext: opened.credentials,
                     ...(envelope.pluginInvocation ? { pluginInvocation: envelope.pluginInvocation } : {}),
-                    requestId: envelope.requestId, signal: init?.signal });
+                    requestId: envelope.requestId, signal: init?.signal, requestHeaders });
                 }
             }
             const failure = params.failure?.(result);
