@@ -674,7 +674,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
   resolveRequesterSessionBootstrap?: (sessionId: string, attribution: AdmittedRequesterSessionBootstrap['attribution']) => Promise<RequesterSessionInputCustody | null>;
   /** Manager-owned recheck of the exact Home-verified signed SOURCE request, private to preparation. */
   verifyWorkspaceSyncPrepareCurrent?: () => Promise<boolean>;
-  /** Manager-owned proof of the exact forwarded Move child, including current destination access. */
+  /** Manager-owned admission of the exact forwarded finite child. */
   verifyServiceMoveChildCurrent?: () => Promise<boolean>;
   deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
   resolveCurrentMachineExecutionOriginContext(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
@@ -737,7 +737,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
       || input.purpose.kind === 'workspace_sync_prepare'
       || input.purpose.kind === 'machine_rpc' && input.purpose.method === RPC_METHODS.STOP_SESSION
         && binding.actionId === 'session.stop'
-      || input.purpose.kind === 'machine_rpc' && input.purpose.recipient ? { isCustodyCurrent } : {}),
+      || input.purpose.kind === 'machine_rpc' && (input.purpose.recipient || input.verifyServiceMoveChildCurrent) ? { isCustodyCurrent } : {}),
     isCurrent: async () => {
       if (!await isCustodyCurrent()) return false;
       const current = await trace('requester.fresh_origin', () => input.resolveCurrentMachineExecutionOriginContext(input.signal));
@@ -745,7 +745,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
       if (input.purpose.kind === 'workspace_sync_prepare') {
         return input.verifyWorkspaceSyncPrepareCurrent !== undefined && await input.verifyWorkspaceSyncPrepareCurrent();
       }
-      if (input.purpose.kind === 'machine_rpc' && input.purpose.recipient) {
+      if (input.purpose.kind === 'machine_rpc' && (input.purpose.recipient || input.verifyServiceMoveChildCurrent)) {
         return input.verifyServiceMoveChildCurrent !== undefined && await input.verifyServiceMoveChildCurrent();
       }
       return await trace('requester.root_verification', () => verifyExternalActionExecutionAuthorizationCurrent({ authorization: input.authorization,

@@ -8,6 +8,7 @@ import {
 import {
   resolveMachineRpcRoutePolicy,
   resolveMachineRpcExternalActionEffectV1,
+  readSessionAgentReadinessChildActionV1,
 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import {
   isHostRequesterUnrestrictedOwner,
@@ -493,6 +494,7 @@ export type PrivateWorkspaceSyncTargetAdmission = Readonly<{
 
 export type PrivateWorkspaceSyncTargetExecutionResolution =
   | Readonly<{ kind: 'matched'; capture: RetainedWorkspaceSyncPrivateExecution }>
+  | Readonly<{ kind: 'native_admitted' }>
   | Readonly<{ kind: 'private_unavailable' }>
   | Readonly<{ kind: 'no_private_capture' }>;
 
@@ -727,9 +729,14 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
       deploymentRouting?.actionId === sourceExecution?.externalActionExecution.effectActionId &&
       deploymentRouting?.machineId === context.machineId &&
       deploymentRouting.installationId === context.installationId;
+    const readinessChild = readSessionAgentReadinessChildActionV1(originalRoot?.binding,
+      sourceExecution?.externalActionExecution.reviewedChild, context);
+    const readinessSource = readinessChild !== null && sourceExecution?.externalActionExecution.effectActionId === readinessChild
+      && resolveMachineRpcExternalActionEffectV1(input.method?.slice(input.method.indexOf(':') + 1) ?? '',
+        originalRoot?.binding, context, sourceExecution?.externalActionExecution.reviewedChild) === readinessChild;
     const moveChild = Boolean(
       originalRoot &&
-      (originalRoot.binding.actionId === 'projects.service.relocate' ||
+      (readinessSource || originalRoot.binding.actionId === 'projects.service.relocate' ||
         deploymentChild ||
         (originalRoot?.binding.actionId === 'discussion.second_opinion.start' &&
           sourceExecution?.externalActionExecution.effectActionId ===
@@ -1736,6 +1743,7 @@ export async function authorizeMachineRpcRequest(
         rpcMethod,
         request.callerInputAuthorization?.binding,
         { machineId: machine.machineId, installationId },
+        request.workspaceSyncSourceExecution?.externalActionExecution.reviewedChild,
       );
       // These registered owners already consume the P11 payload finalizer.
       // Session creation leaves the trusted runner unchanged and records birth
@@ -1804,6 +1812,7 @@ export async function authorizeMachineRpcRequest(
             targetWorkspaceRefId: privateRecovery.data.targetWorkspaceRefId,
           }) ?? null : null;
       const privateSyncExecution = privateSyncLookup?.kind === 'matched' ? privateSyncLookup.capture : null;
+      if (privateRecovery?.success && privateSyncLookup?.kind === 'native_admitted') return { ok: true };
       if (privateSyncLookup?.kind === 'private_unavailable' || privateRecovery && !privateSyncExecution) {
         return { ok: false, errorCode: 'agent_isolation_unavailable', error: 'Private workspace Sync execution is unavailable' };
       }

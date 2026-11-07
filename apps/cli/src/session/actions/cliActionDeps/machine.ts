@@ -262,12 +262,14 @@ export function createCliMachineActionDeps(
         ...(signal ? { signal } : {}),
       }));
     },
-    machineAgentInstallRead: async ({ machineId, signal, serverId, ...request }) => {
+    machineAgentInstallRead: async ({ machineId, signal, serverId, context, effectActionId, ...request }) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'install_unavailable', error: 'An authenticated machine transport is required.' };
       }
       return DaemonAgentInstallReadResponseSchema.parse(await callMachineAction({
         machineId, serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, request,
+        context, effectActionId, authority: context?.authority,
+        ...(request.waitForTerminal ? { timeoutMs: null } : {}),
         ...(signal ? { signal } : {}),
       }));
     },

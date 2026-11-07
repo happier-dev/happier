@@ -27,6 +27,7 @@ import { SessionAttestedContextV1Schema } from './sessionAttestedContextV1.js';
 import { SessionSectionPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 import { PluginUiNewSessionSeedOriginV1Schema } from '../../plugins/ui/newSessionSeedOrigin.js';
 import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { AgentInstallJobConsentSchema } from '../../daemon/agentInstallJobs.js';
 export { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from './sessionAttestedContextV1.js';
 
 /**
@@ -63,6 +64,8 @@ export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObje
   creationKey: zMini.optional(SessionCreationKeyV1Schema),
   /** Reviewed software setup completes on the selected Machine before Agent startup. */
   machineSetupPlanInput: z.optional(SessionSpawnMachineSetupInputV1Schema),
+  /** Create's consent for the chosen Agent's existing reviewed install Action. */
+  agentInstallConsent: z.optional(AgentInstallJobConsentSchema),
   /** Transport observer preference; send only after negotiating Session-spawn epoch three. */
   observeSessionCommit: z.optional(z.literal(true)),
   /** Owner-private original authoring destination, negotiated with the target daemon. */

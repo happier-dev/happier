@@ -28,7 +28,7 @@ import { AgentPermissionIntentV1Schema } from '../runtime/permissionIntentV1.js'
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { isSessionStopChildV1 } from '../actions/sessionSectionArchive.js';
-import { isMachineSetupPlanRpcChildV1 } from '../machines/managed/actionIdsV1.js';
+import { isMachineSetupPlanRpcChildV1, readSessionAgentReadinessChildActionV1 } from '../machines/managed/actionIdsV1.js';
 
 import type { ExternalActionMachineRpcExecutionV1, ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '../actions/externalActionApi.js';
 import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../actions/externalActionApi.js';
@@ -177,6 +177,9 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
   || value.externalActionExecution.authorization.binding.actionId === 'projects.service.relocate'
   || isMachineSetupPlanRpcChildV1({ rootActionId: value.externalActionExecution.authorization.binding.actionId,
     effectActionId: value.externalActionExecution.effectActionId, method: value.method.slice(value.method.indexOf(':') + 1) })
+  || readSessionAgentReadinessChildActionV1(value.externalActionExecution.authorization.binding,
+    value.externalActionExecution.reviewedChild, { machineId: value.method.slice(0, value.method.indexOf(':')),
+      installationId: value.externalActionExecution.installationId }) === value.externalActionExecution.effectActionId
   || value.externalActionExecution.authorization.binding.actionId === 'discussion.second_opinion.start'
     && value.externalActionExecution.effectActionId === 'session.spawn_new'
     && (value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)

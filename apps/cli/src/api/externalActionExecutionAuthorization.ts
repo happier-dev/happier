@@ -1,8 +1,13 @@
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
+import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -78,6 +83,7 @@ import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { ExternalActionRequesterInvocationV1Schema, projectRequesterSessionCredentialDisclosure, sealExternalActionRequesterAccountContextV1, sealManagedCreationActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeStoredCredentials } from '@/persistence';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
@@ -211,6 +217,58 @@ export async function readReviewedDeploymentChildRoot(input: Readonly<{
 
 export async function isReviewedDeploymentChild(input: Parameters<typeof readReviewedDeploymentChildRoot>[0]): Promise<boolean> {
   return await readReviewedDeploymentChildRoot(input) !== null;
+}
+
+/** Bind the signed child digest to the Agent selected in the opened Session root. */
+export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
+}>): Promise<boolean> {
+  const binding = input.authorization.binding;
+  const actionId = readSessionAgentReadinessChildActionV1(binding, input.reviewedChild);
+  if (!actionId || actionId !== input.actionId || binding.machineId !== input.machineId
+    || resolveMachineRpcExternalActionEffectV1(input.method ?? '', binding, undefined, input.reviewedChild) !== actionId) return false;
+  const root = SessionSpawnNewInputV2Schema.safeParse(await readReviewedExternalActionInput(input));
+  if (!root.success || root.data.executionTarget.machineId !== input.machineId) return false;
+  const selected = resolveSessionCreationAgentTarget(root.data.agentTarget);
+  if (!selected) return false;
+  const agent = { agentId: selected.agentId,
+    ...(root.data.agentTarget.definitionId === undefined ? {} : { definitionId: root.data.agentTarget.definitionId }) };
+  let childInput: unknown;
+  if (actionId === SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action) {
+    childInput = { machineId: input.machineId, serverId: root.data.executionTarget.serverId, ...agent, refresh: true };
+    if (input.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+      if (!sameStrictJsonValue(input.params, { machineId: input.machineId, selection: 'agents' })) return false;
+    } else {
+      const requests: unknown = input.params && typeof input.params === 'object' ? Reflect.get(input.params, 'requests') : undefined;
+      if (!Array.isArray(requests)) return false;
+      const definitionRequest: unknown = requests.find(request => request && typeof request === 'object'
+        && Reflect.get(request, 'id') === 'tool.acpAgentInventory');
+      const definitions = definitionRequest && typeof definitionRequest === 'object'
+        ? MachineAcpInventoryRequestSchema.safeParse(Reflect.get(definitionRequest, 'params')) : null;
+      if (definitions && (!definitions.success || !agent.definitionId || definitions.data.definitions.length !== 1
+        || definitions.data.definitions[0]?.definitionId !== agent.definitionId)) return false;
+      const hasAgentProbe = requests.some(request => request && typeof request === 'object'
+        && Reflect.get(request, 'id') === `cli.${agent.agentId}`);
+      const expected = buildMachineAgentsDetectRequest({ agents: hasAgentProbe ? [{ agentId: agent.agentId, title: agent.agentId }] : [],
+        ...(definitions?.success ? { definitions: definitions.data.definitions } : {}), refresh: true });
+      if (!expected.requests?.length || !sameStrictJsonValue(input.params, expected)) return false;
+    }
+  } else if (actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action) {
+    const request = DaemonAgentInstallStartRequestSchema.safeParse(input.params);
+    if (!request.success || (request.data.intent !== 'install' && request.data.intent !== 'update')) return false;
+    childInput = { machineId: input.machineId, ...agent, intent: request.data.intent,
+      ...(root.data.agentInstallConsent === undefined ? {} : { consent: root.data.agentInstallConsent }) };
+    if (!sameStrictJsonValue(input.params, { ...agent, intent: request.data.intent,
+      consent: root.data.agentInstallConsent ?? { vendorRecipe: false } })) return false;
+  } else {
+    const request = DaemonAgentInstallReadRequestSchema.safeParse(input.params);
+    if (!request.success || request.data.cursor !== 0) return false;
+    childInput = { machineId: input.machineId, jobId: request.data.jobId, waitForTerminal: request.data.waitForTerminal };
+  }
+  const normalized = getActionSpec(actionId).inputSchema.safeParse(childInput);
+  return normalized.success && computeActionInputApprovalDigestV1(actionId, normalized.data) === input.reviewedChild?.inputDigest;
 }
 
 /** Initial native delivery spends only the Team selection in the approved spawn. */
@@ -1174,9 +1232,15 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   const nativeCredentialChild = readSessionSpawnNativeCredentialChildV1({ rootActionId: binding.actionId,
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1),
     managedAdmission: input.managedAdmission, params: input.params });
+  const readinessProof = readHostAdmittedReviewedChildV1(input.context) ?? undefined;
+  const readinessChild = readSessionAgentReadinessChildActionV1(binding, readinessProof,
+    { machineId: input.sourceMachineId, installationId: input.sourceInstallationId });
+  const signedReadinessChild = readinessChild === input.effectActionId
+    && resolveMachineRpcExternalActionEffectV1(input.method.slice(input.method.indexOf(':') + 1), binding,
+      { machineId: input.sourceMachineId, installationId: input.sourceInstallationId }, readinessProof) === readinessChild;
   if (!source || source.machineId !== input.sourceMachineId
     || source.installationId !== input.sourceInstallationId
-    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild
+    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild
     || isSessionStopChildRootV1(binding.actionId) && !stopChild
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)
@@ -1303,6 +1367,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || authorization.binding.actionId === 'localServices.launcher.start'
     || authorization.binding.actionId === 'projects.worker.status' ? requesterContext : undefined;
   const projectRowReadCustody = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, authorization.binding.actionId)
+    || isProjectWorkspaceSyncPreparationActionV1(authorization.binding.actionId)
     || isMachineTerminalOpenOrRestartActionIdV1(authorization.binding.actionId)
     || authorization.binding.actionId === 'projects.inspect'
     || authorization.binding.actionId === 'projects.worker.status'

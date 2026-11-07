@@ -26,6 +26,7 @@ import { readDeploymentArchiveRpcEffectV1 } from '../../deployments/deploymentAr
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '../../actions/sessionSectionArchive.js';
 import { isMachineSetupPlanRpcChildV1 } from '../managed/actionsV1.js';
+import { readSessionAgentReadinessChildActionV1 } from '../managed/actionIdsV1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SessionPermissionAccountUserDecisionActorV1Schema } from '../../sessions/permissions/v1.js';
 import { ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema, ExternalActionWorkflowOriginV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '../../actions/externalActionApi.js';
@@ -210,7 +211,16 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
             && admission.workspaceSyncSourceExecution.externalActionExecution.authorization.token === admission.callerInputAuthorization.token
             && createCanonicalJsonSigningInput(admission.workspaceSyncSourceExecution.externalActionExecution.authorization.binding)
                 === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding);
-        const moveChild = (deploymentChild || admission.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
+        const readinessExecution = admission.workspaceSyncSourceExecution?.externalActionExecution;
+        const readinessChild = readinessExecution !== undefined && admission.callerInputAuthorization !== undefined
+            && admission.method === admission.workspaceSyncSourceExecution?.method
+            && admission.method?.startsWith(`${admission.context.machineId}:`)
+            && readSessionAgentReadinessChildActionV1(admission.callerInputAuthorization.binding,
+                readinessExecution.reviewedChild, admission.context) === readinessExecution.effectActionId
+            && readinessExecution.authorization.token === admission.callerInputAuthorization.token
+            && createCanonicalJsonSigningInput(readinessExecution.authorization.binding)
+                === createCanonicalJsonSigningInput(admission.callerInputAuthorization.binding);
+        const moveChild = (deploymentChild || readinessChild || admission.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
             || admission.context.role === 'manage' && admission.workspaceSyncSourceExecution
                 && admission.method === `${admission.context.machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}`
                 && isMachineSetupPlanRpcChildV1({ rootActionId: admission.callerInputAuthorization?.binding.actionId,

@@ -346,6 +346,8 @@ describe('New managed durable workflow continuation', () => {
 
 function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; setupFails?: boolean; setupSucceeds?: boolean; custodianAccountId?: string; denyCrossMachine?: boolean; preset?: ManagedMachinePresetV1; accountExecution?: boolean;
     requesterConsent?: boolean; trustBeforeConsent?: boolean; administratorAsk?: boolean; serverId?: string; homeId?: string;
+    agentStartFailure?: { code: string; machineId: string; agentId: string };
+    agentUpdate?: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionAgentUpdateNoticeV1;
     createConfirmation?: boolean; pairingReview?: 'admitted' | 'absent' | 'forged' | 'unrelated';
     machineSetup?: ManagedMachineV1['machineSetup'] }> = {}) {
     // Persisted actor policy is fixture input, not a mocked policy decision or production waiver.
@@ -502,11 +504,14 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
             if (input.setupSucceeds && machine.machineSetup) machine = { ...machine,
                 machineSetup: { ...machine.machineSetup, state: 'succeeded', errorCode: undefined } };
             return { kind: 'found', operation: { version: 1, operationId: 'install', revision: 2,
-                actionId: 'machines.managed.acquire', state: input.failed || input.setupFails ? 'failed' : 'succeeded',
+                actionId: 'machines.managed.acquire', state: input.failed || input.setupFails || input.agentStartFailure ? 'failed' : 'succeeded',
                 scope: { accountId: 'account', machineId: 'controller' }, title: 'Install',
                 createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
-                ...(input.requesterConsent ? { domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller } } : {}),
-                ...(input.failed || input.setupFails ? { error: { errorCode: input.setupFails ? 'setup_failed' : 'installation_failed', error: 'Creation stage failed' } } : {}) } };
+                ...(input.requesterConsent || input.agentUpdate ? { domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
+                    ...(input.agentUpdate ? { agentUpdate: input.agentUpdate } : {}) } } : {}),
+                ...(input.agentStartFailure ? { error: { errorCode: input.agentStartFailure.code, error: 'Agent is not ready',
+                    details: { kind: 'managedAgentStart', machineId: input.agentStartFailure.machineId, agentId: input.agentStartFailure.agentId } } }
+                    : input.failed || input.setupFails ? { error: { errorCode: input.setupFails ? 'setup_failed' : 'installation_failed', error: 'Creation stage failed' } } : {}) } };
         },
     }));
     let acquisition = initial;
@@ -588,6 +593,34 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
 }
 
 describe('ordinary managed creation continuation', () => {
+    it('retains the actual enrolled Agent setup target and names its owner for setup refusal', async () => {
+        const { presentMachineAgentStartRefusal } = await import('@/components/machines/agents/presentMachineAgentStartRefusal');
+        const { machineCollectionHref } = await import('@/components/settings/machines/collection/machineCollectionModel');
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+        const openSetup = vi.fn();
+        try {
+            expect(presentMachineAgentStartRefusal({ code: 'agent_cli_not_ready', agentTitle: 'Claude', machineName: 'Guest',
+                setupOwnerName: 'Alex', setupTarget: { serverId: 'server', machineId: 'guest' }, openSetup })).toBe(true);
+            expect(alert.mock.calls[0]?.slice(0, 2).join(' ')).toContain('Alex');
+            const setupButton = alert.mock.calls[0]?.[2]?.find(button => button.onPress);
+            expect(setupButton).toBeDefined();
+            setupButton?.onPress?.();
+            expect(openSetup).toHaveBeenCalledWith(machineCollectionHref({ serverId: 'server', machineId: 'guest' }));
+        } finally { alert.mockRestore(); }
+    });
+    it('retains the actual enrolled Agent setup target from a failed controller operation', async () => {
+        const boundary = transport({ agentStartFailure: { code: 'agent_cli_missing', machineId: 'guest', agentId: 'claude' } });
+        const result = await boundary.run({ acquisition: { ...initial, managedId: baseMachine.id, operation: { operationId: 'install' } } });
+        expect(result, JSON.stringify({ actions: boundary.actions.map(action => action.actionId), confirmations: boundary.additionalConfirmations })).toMatchObject({ kind: 'failed', code: 'agent_cli_missing',
+            agentStartFailure: { kind: 'managedAgentStart', machineId: 'guest', agentId: 'claude' } });
+    });
+    it.each(['pending', 'failed'] as const)('retains the optional Agent update notice from successful managed creation (%s)', async status => {
+        const agentUpdate = { agentId: 'claude', status };
+        const boundary = transport({ agentUpdate });
+        expect(await boundary.run({ acquisition: { ...initial, managedId: baseMachine.id, operation: { operationId: 'install' } } }))
+            .toMatchObject({ kind: 'enrolled', machine: { enrolledMachineId: 'guest' }, agentUpdate });
+    });
     it('creates and resumes an Account resource without selecting a controller Machine', async () => {
         const { controller: _receiptController, ...receipt } = draft.receipt;
         if (draft.selection.kind !== 'one-off') throw new Error('Expected a one-off creation');

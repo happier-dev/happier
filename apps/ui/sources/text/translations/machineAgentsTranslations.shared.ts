@@ -114,7 +114,13 @@ export type MachineAgentsTranslation = Readonly<{
     blockSignedOutShort: (params: Readonly<{ agent: string }>) => string;
     useConnectedAccount: (params: Readonly<{ account: string }>) => string;
     spawnCliMissing: (params: Readonly<{ agent: string; machine: string }>) => string;
+    spawnCliNotReady: (params: Readonly<{ agent: string; machine: string }>) => string;
     spawnSignedOut: (params: Readonly<{ agent: string; machine: string }>) => string;
+    setupOwner: (params: Readonly<{ owner: string }>) => string;
+    setupMachineOwner: string;
+    updatePendingNotice: (params: Readonly<{ agent: string }>) => string;
+    updateFailedNotice: (params: Readonly<{ agent: string }>) => string;
+    sessionStartedWithInstalledVersion: (params: Readonly<{ machine: string }>) => string;
     draftKept: string;
     alreadySetUp: (params: Readonly<{ machine: string; home: string }>) => string;
     startSession: string;
@@ -237,7 +243,13 @@ export const en: MachineAgentsTranslation = {
     blockSignedOutShort: ({ agent }) => `${agent} needs sign-in.`,
     useConnectedAccount: ({ account }) => `Use ${account}`,
     spawnCliMissing: ({ agent, machine }) => `${agent} isn’t installed on ${machine}.`,
+    spawnCliNotReady: ({ agent, machine }) => `${agent} needs setup on ${machine}.`,
     spawnSignedOut: ({ agent, machine }) => `${agent} is signed out on ${machine}.`,
+    setupOwner: ({ owner }) => `Ask ${owner} to set it up.`,
+    setupMachineOwner: 'Ask this Machine’s owner to set it up.',
+    updatePendingNotice: ({ agent }) => `${agent} update is pending`,
+    updateFailedNotice: ({ agent }) => `${agent} could not be updated`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `Your Session started on ${machine} with the installed version.`,
     draftKept: 'Your message is kept.',
     alreadySetUp: ({ machine, home }) => `${machine} is already connected to ${home}`,
     startSession: 'Start a session',

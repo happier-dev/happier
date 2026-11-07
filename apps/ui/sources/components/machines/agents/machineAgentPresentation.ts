@@ -4,6 +4,7 @@ import type {
 } from '@/agents/machineAgents/machineAgentTypes';
 import type { AgentInstallJobFailurePresentationInput } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
+import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 
 /** A reported installer failure or the presentation owner's uncertainty fallback. */
 export type MachineAgentJobFailure = AgentInstallJobFailurePresentationInput;
@@ -214,9 +215,9 @@ export function resolveMachineAgentPickerPlacement(
         case 'manualInstall':
             return { group: 'notOnMachine', marker: 'download', opensSetup: true };
         case 'installing':
-            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'installing', opensSetup: true };
+            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'installing', opensSetup: !isMachineAgentReady(agent) };
         case 'installFailed':
-            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'failed', opensSetup: true };
+            return { group: agent.installed ? 'onMachine' : 'notOnMachine', marker: 'failed', opensSetup: !isMachineAgentReady(agent) };
         case 'unsupported':
             return { group: 'cantRun', marker: 'unsupported', opensSetup: true };
     }
@@ -254,7 +255,7 @@ export function splitMachineAgents(
  * when the agent can start (or nothing is known yet: the spawn's typed failure still speaks then).
  */
 export function resolveAgentSessionStartBlock(agent: MachineAgent | null): 'notInstalled' | 'signedOut' | null {
-    if (!agent || agent.stale) return null;
+    if (!agent || agent.stale || isMachineAgentReady(agent)) return null;
     switch (resolveAgentSetupPhase(agent)) {
         case 'install':
         case 'manualInstall':

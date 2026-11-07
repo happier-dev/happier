@@ -51,7 +51,7 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
   if (!started.success || !started.data.ok) return optionalUpdate('pending');
   const observed = await input.invoke(children.status.action, {
     machineId: input.machineId, jobId: started.data.jobId, waitForTerminal: !runnable,
-  });
+  }, runnable ? { result: 'optional' } : undefined);
   if (input.signal?.aborted) return cancelled();
   if (!observed.ok) return optionalUpdate('pending');
   const terminal = DaemonAgentInstallReadResponseSchema.safeParse(observed.result);

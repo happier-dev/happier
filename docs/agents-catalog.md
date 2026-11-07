@@ -95,6 +95,34 @@ This describes unreleased 0.3 development behavior, not loaded-runtime or releas
 certification. Nondeclaring Agents and finite Execution Runs have no idle
 Session preference or scheduler.
 
+## Settings home (0.3 development)
+
+`AgentSettingsIndex` renders the existing `AgentCollectionList` as a home beside
+the rail or a page on narrow layouts. The root no longer redirects to a
+last-visited or first Agent. The rail's All entry returns to that root;
+explicit Agent routes retain their current details, setup, authentication and
+model owners.
+
+`useAgentAdministrationCatalog` remains the definition and exact administration
+target authority. `useAgentCollection` joins that catalog with the selected
+Machine's inventory; an Account definition does not prove an installed or
+authenticated binary. The home reuses this collection rather than probing each
+card. Beside the home, only the rail exposes the mounted filter/query Action
+owner; the home withdraws its registration's presentation demand so one Action
+cannot ambiguously select between two visible copies. See
+[Settings column filters](actions.md#settings-column-filters-03-development).
+
+The home’s Models section projects Provider rows from the same admitted
+`projectProviderDeclarationDetail(...).worksWith` facts used by Provider Add.
+It considers the home’s enabled Agent targets and exact selected-Machine
+declarations, or bundled Account declarations when no Machine is selected.
+An unanswered Machine projection supplies no compatibility evidence. Each row
+retains the supporting Agent/model and experimental compatibility result; a
+positive fit does not certify every model or an installed, authenticated Agent.
+Opening a row uses the existing Provider authoring route. This projection adds
+no connection read, model probe or catalog refresh; final Models composition
+and loaded-runtime acceptance remain part of the 0.3 development UI work.
+
 ## Key concepts (shared language)
 
 - **AgentId**: canonical routing id for an agent across packages (CLI + app + server).
@@ -129,6 +157,74 @@ is separate from executable adapter version, authorization, endpoint health and
 runtime confirmation; Account-only rows do not prove that the Agent can run on
 any machine. See [Providers](providers.md#provider-connections) for the Account
 catalog writer and declaration-only model projection.
+
+### Additional Provider bindings (0.3 development)
+
+Gemini CLI, Kilo, Droid and Copilot CLI contribute Provider
+adapters through the same Agent registration and Protocol compatibility owner
+as Claude Code, Codex and OpenCode. These are development-source integrations,
+not claims about stable release availability or authenticated native CLI QA.
+The Agent's declared wire protocols and credential transports determine which
+connections it can use; a gateway's brand alone does not establish compatibility.
+
+Kilo maps the selected model to its native qualified Provider/model id and maps native facts
+back through the existing model projection hooks. Droid supplies private native
+settings through process-only launch arguments and resolves the injected model
+through the native ACP catalog. Gemini and Copilot consume process-only
+environment overlays. Provider changes use restart semantics.
+
+DeepSec review Runs also consume this binding through the existing Execution
+Run launch owner, rather than becoming general coding Sessions. Its development
+adapter accepts credentialed OpenAI Responses through the Codex harness only;
+the endpoint must end in `/v1`, with no query or fragment. Arbitrary public
+headers, unauthenticated routes and other wire protocols are refused. The
+selected key stays in the child environment; native private Codex configuration
+contains an environment-key reference. Explicit conflicting harness choices
+fail with `deepsec_provider_harness_mismatch`. Unbound gateway runs retain their
+existing launch path.
+
+Gemini selects API-key auth in the copied User settings only. Its native
+System/defaults/workspace auth facts must preserve that selection, otherwise
+the launch returns a typed refusal. Bound no-tools launches do not displace
+native System policy. Gemini uses the native ACP `session/set_model` method,
+not an assumed model config-option method.
+
+Agent Provider adapter registration remains tied to the admitted plugin
+occurrence and generation. Plugin-owned wrappers use the existing host ACP
+composer when native configuration requires process-only launch arguments;
+they do not create another Session lifecycle owner. Native configuration
+substitution syntax in catalog data is refused where it would expand an
+environment variable or file; only the adapter authors credential references.
+
+Custom ACP definitions do not inherit another Agent's Provider adapter merely
+because their command launches that executable. Pi and Oh My Pi have native
+custom Providers, but an arbitrary model's complete native metadata and
+Session-isolated configuration/state continuity are not established by the
+current binding. Qwen's native Provider catalog can override process endpoint
+choices, while replacing its System settings file would discard managed policy;
+its native custom Provider support therefore does not yet supply a safe generic
+binding. Kimi's current multi-Session ACP server requires native OAuth
+before opening a Session. CodeBuddy's native managed product configuration can
+override routing and also carries security policy, so it cannot simply be
+cleared to force a binding. Cursor editor BYOK does not establish CLI support.
+These paths retain native configuration rather than advertising a generic
+Provider binding. See [Providers](providers.md#protocol-and-capability-matchmaking).
+
+Cloudflare's development Responses contribution uses Codex's existing custom
+header materializer and native OpenAI model spelling. Its isolated Codex
+0.162.1/Linux check covers native model listing, streamed tool continuation and
+explicit reasoning effort without an OpenAI key. Vendor/model capability stays
+experimental until independently established. OpenCode's Responses driver
+requires an upstream Authorization key; its Agent declaration and materializer
+refuse gateway-only custom-header authentication through the shared matcher.
+Chat retains its arbitrary validated secret-header support. OpenCode
+1.19.0/Linux also completed isolated account Chat streaming, a real Read and
+tool-result continuation with the exact `openai/gpt-4.1` wire id, account bearer
+token, gateway-id and three public policies. This is native feasibility for
+that configuration; vendor/model capabilities and other Agents stay unverified.
+Copilot's current binding has no
+Responses protocol or custom policy-header support; FX and Gemini retain their
+own existing restrictions. See [Cloudflare Provider contracts](providers.md#cloudflare-ai-gateway-03-development).
 
 ### Session skills (0.3 development)
 
@@ -269,6 +365,12 @@ strict current target.
 
 Configured definitions can declare `runtime.permissionModeMapping`, using the
 same strict permission-intent mapping schema as authored ACP contributions.
+Each value may be a native mode id, `null`, or an ordered nonempty list of
+native mode ids. Lists choose the first candidate advertised in the opened
+Session's `availableModes`; an absent advertisement or no matching candidate
+refuses configuration before prompting. The order is the declaration's
+preference, independent of the Agent's advertised order. A native mode override
+continues to take precedence until cleared.
 The Account launch owner projects it through
 `configuredAcpRuntimeConfiguration` into the existing ACP definition; catalog
 edits and transfers preserve it. `runtime.stderrRules` remains optional and
@@ -278,6 +380,11 @@ a concrete native mapping for its resolved intent and refuses before prompting
 when that mapping is absent or null; a default native mode or capability hint
 does not establish permission semantics. This is a 0.3 development-source
 extension of the existing Account catalog, not another policy or runtime owner.
+Candidate lists require the matching development host; older strict readers
+reject this new authority-bearing shape rather than ignoring it. The Manifest V2
+declaration and SDK runtime API 1 remain closed under the unpublished
+[SDK direct-cut contract](compatibility.md#sdk-protocol-evolution); this adds no
+released client update floor or rollback adapter.
 
 Custom ACP currently declares no Connected Account purposes. In 0.3 development,
 Connected Account discovery and launch options therefore return no compatible
@@ -299,6 +406,11 @@ Agent CLI installer and its declared package bin, while archive definitions use
 the descriptor-taking runtime installables adapter. Session launch installs a
 missing managed definition on first use, then resolves it again before spawning.
 Probes resolve installed launches without installing a missing definition.
+The development command editor's **On your machines** check invokes
+`agents.acp.backends.upsert` with `dryRun: true`. It checks the unsaved command
+through the existing machine capability probe and writes no definition or
+install. Each row distinguishes found, missing, offline and unknown; an explicit
+check retries the probes, and editing the draft invalidates the displayed result.
 Pinned uv definitions use host-managed uv with managed Python and tool directories
 inside the definition's version root; a system uv or Python is not required.
 Managed launches use Account + definition id + version roots. Pin changes acquire
@@ -638,11 +750,15 @@ In development source, native execution-run structured-output admission uses tha
 with the Run's Connected Account selection and Saved Secret overlay. A retained
 Run probes under its requester Account and plugin occurrence, rather than the
 daemon's foreground credentials. The host-private offered-model request carries
-those selections. A failed or unreadable catalog returns `model_catalog_unavailable`,
-and typed snapshot or transport failures retain their cause; these failures are
-not reported as `model_structured_output_unsupported`. A successful observation
-still requires supported structured output for the selected model. Failed refreshes
-can retain usable last-good capability evidence, as the picker does.
+those selections. Its offered-model reader returns the published descriptor,
+including a last-good descriptor after a failed refresh even when structured-output
+support is unknown. Voice reads the same descriptor's published context window;
+an absent window does not acquire a default. An unreadable catalog, or a failed
+refresh with no selected-model fact, returns `model_catalog_unavailable`.
+Typed snapshot or transport failures retain their cause. Only the separate
+structured-output admission gate requires supported structured output and returns
+`model_structured_output_unsupported` for unknown or unsupported capability;
+reading a model fact does not make that admission decision.
 A launch profile used only for prompt composition does not
 become an independent environment selection for this probe.
 
@@ -664,9 +780,35 @@ separate scopes. OpenCode ACP discovery uses the host's native Session-controls 
 In development source, a declared stdio ACP preflight command also supplies model, mode and
 config-option discovery through the same host process and authentication owner. These reads
 use the initial `session/new` snapshot immediately; command discovery alone waits for the
-matching `available_commands_update`. Model and mode choices fall back to config options when
-legacy arrays are empty or malformed, using the existing ACP control normalizers. Explicit Agent-owned
-control callbacks override this shared ACP behavior.
+matching `available_commands_update`. Model choices fall back to config options only when the native
+model snapshot is absent or invalid; an explicitly empty native model catalog is authoritative.
+Mode choices retain their config-option fallback for empty or malformed legacy arrays, using the
+existing ACP control normalizers. Explicit Agent-owned control callbacks override this shared ACP behavior.
+The same config-option owner resolves the model selector for preflight and running Sessions:
+an explicitly declared `modelConfigOptionId` is authoritative; without one, a dedicated model
+id/name takes precedence and a category fallback is usable only when unambiguous. Categories
+(`mode`, `model`, `model_config`, `thought_level`) are optional presentation hints, not required
+correctness inputs. Other `category: 'model'` options remain ordinary adjacent controls. For example,
+a Provider selector scopes the available models without becoming a model choice itself.
+The full advertised catalog keeps its array order, native ids, labels, descriptions, categories and
+groups. Controls for the observed current model project into that model's existing `modelOptions`;
+session-wide selectors remain independently discoverable in the config catalog.
+Native model ids are nonblank opaque strings: in development source, the model Action, Session
+selection references and transition coordinator preserve their exact bytes, including surrounding
+spaces. Provider-connection model ids retain their separate Provider validation rules.
+The catalog's optional `modelConfigOptionId` carries the producer-resolved selector identity through
+runtime events, Session metadata and preflight. An absent identity remains unresolved; clients do
+not infer it from category, names or a literal `model` id.
+Draft discovery carries optional `configOptionOverrides` through the existing preflight request and
+cache scope. The host applies standalone controls in native advertised order to its temporary
+`session/new`, consumes each successful setter's complete snapshot before the next control, then
+derives the model catalog again. The canonical model selector and model-scoped controls are excluded
+from this standalone pass. A failed setter returns the last accepted config/model observations with
+`refreshError` and the native `refreshErrorMessage`, preserving actionable guidance instead of
+presenting a static fallback as an applied choice.
+An accepted model snapshot, including an empty catalog, remains authoritative if a later setter
+fails; the existing same-scope cache cannot resurrect earlier choices. Its existing observation
+timestamp records that accepted snapshot, not a separate freshness or ordering guarantee.
 An Agent choosing ACP at runtime can use the optional host
 `probeDeclaredAcpSessionControls` method to consume that same normalized snapshot. Codex uses
 this path for ACP and its native `model/list` reader for App Server; a host without the optional
@@ -739,6 +881,18 @@ the existing plugin occurrence, so replacing that occurrence cannot reuse the pr
 result. Standalone CLI probing without an authoritative runtime retains its declaration-only
 behavior. Capability ingress normalizes current V2 and predecessor V1 backend targets through the
 canonical target normalizer before resolving probe context.
+
+In development source, native Claude model preflight resolves one endpoint and credential target
+from the Agent's ordered declaration. Explicit auth environment values precede the user settings
+`apiKeyHelper`; setup OAuth and the saved native login follow it. The plugin interprets effective
+settings sources through the canonical Claude settings reader. Only an enabled user settings helper
+runs during preflight, since project and managed helpers require separate workspace authority.
+Malformed JSON, a non-object user settings root, or a non-string helper setting is skipped, matching Claude's noninteractive settings behavior.
+The host executes an eligible helper as a shell command on the execution machine in the selected workspace directory. A configured helper failure shows the built-in catalog and an unavailable refresh without selecting another account.
+The host retains the containing request's cancellation and deadline through helper execution and HTTP
+body completion. Gateway prefixes and declared auth headers share the existing observation and cache
+owner; a saved native login is eligible only for the default endpoint. An explicitly selected Connected
+Account continues through its existing authenticated observation path.
 
 Native model discovery in the app shares `sync/ops/modelDiscovery.ts` between the existing preflight
 hook and voice catalog requests. The same hook serves new-session details and the current session's
@@ -1005,9 +1159,60 @@ binding uses its own credential transport rather than requiring native CLI login
 
 #### Claude plugin runtime contracts (development)
 
+Claude session retention is owned by the Claude plugin's Account settings declaration,
+settings contribution and runtime account-settings hook. The generic daemon controller
+reads the existing scoped Account settings service, inventories native and materialized
+profile/group homes through their existing owners, and publishes hook results in machine
+state. Startup, reconnect, Account changes and completed materialization refresh the same
+controller; requester-bound materialization consumes the requester’s scoped settings service.
+The nullable policy leaves existing files unmanaged until explicitly selected. Applying a
+policy changes only user-level `cleanupPeriodDays` through the existing physical-file
+settings guard, preserving unrelated values and reporting malformed/unwritable files.
+Reports identify configured file values and their daemon source; they are not proof of
+running-process, project or organization policy. Local managed declarations are warnings,
+and offline reports remain last confirmed facts.
+
+An isolated Agent-member home receives the host-captured Account choice immediately
+before the member launches its provider, through the existing plugin editor. The private
+launch frame carries only that Agent's declared nonsecret callback settings. The member
+admits the selected bundled plugin from its executing CLI, checks plugin/Agent identity and
+plugin/CLI versions, and activates only that plugin. Missing or mismatched bundled code,
+and external callbacks without this same-build authority, produce a sanitized warning and
+skip this optional application without borrowing ambient Account settings. Persisted member
+settings survive transient credential cleanup; stopping management leaves them in place,
+and provider default removes only the retention key. The daemon's live report covers its
+host-owned native/profile homes, not an unobserved member launch or member-home success.
+
+Claude launch settings share one merger for raw `--settings`, required permissions and the
+shared-transcript-store retention safeguard. A separate configuration home sharing native
+`projects` cannot launch with a shorter period than an explicit native user-level value.
+The same physical settings authority retains deliberate launch overrides; isolated stores
+have no cross-home maximum. Native-home provenance follows the generic materialized
+environment contract, including direct terminal launches, rather than a Claude branch in
+host dispatch. Retention does not change Happier transcript storage or restore deleted files.
+
+Explicit Claude effort selections in 0.3 development remain explicit native launch
+arguments even when they equal the model catalog default, including exact admitted
+Provider options. An absent selection still inherits native settings. Launch and
+live controls share the plugin's effort resolver. Unified terminal convergence
+requires native effort evidence; model changes and disabling Ultracode carry the
+selected regular effort, and applying regular effort restores an enabled Ultracode
+selection in the same ordered controller update. Accepted deferred effort selections
+remain desired launch settings for subsequent controls, without becoming native evidence.
+
 The Claude plugin owns the native JSON-stream Agent SDK protocol integration with
 the Claude Code CLI. It does not depend on the `@anthropic-ai/claude-agent-sdk`
 npm package; the SDK changelog below documents the upstream message contract.
+
+In 0.3 development source, SDK lifecycle observations use the native stream's
+`initialize` / `hook_callback` protocol. Ordinary SDK queries do not create a
+command-hook forwarder, loopback hook server, or hook-secret files. Before an
+observation reaches the Claude adapter, the public Session hook service's
+`observeSessionHook` method passes it through the same host-owned transcript-path
+grant rule used by authenticated command hooks. Resume therefore retains its
+native transcript evidence. Confined SDK permission hooks and unified terminal
+command hooks keep their existing handlers; native callback cancellation retires
+the corresponding in-process observation without sending a late response.
 
 In 0.3 development, native SDK Sessions and detached runs request Claude Code's
 `--include-partial-messages` output on the existing JSON stream. The SDK codec
@@ -1032,6 +1237,15 @@ user explicitly selects YOLO/bypass. Default, Auto and Plan do not add the nativ
 warning for that flag even without starting in bypass mode. A later mode change
 that the running native mode cycle cannot reach remains unapplied and requires
 a restart; it never silently widens the launch mode.
+
+In 0.3 development source, the SDK's shared foreground/control/compaction launch
+builder pre-enables live bypass switching only where Claude Code permits it.
+POSIX uid 0 without an existing `IS_SANDBOX=1` or `CLAUDE_CODE_BUBBLEWRAP=1` in
+the effective child environment omits the capability flag. The selected permission
+mode is preserved, including native refusal for explicit bypass under unsandboxed
+root. Happier never manufactures a sandbox assertion. Non-root and explicitly
+declared sandbox SDK launches retain live switching; terminal launch policy above
+is unchanged.
 
 Native startup questions retain their occurrence until an applied answer is
 acknowledged and settled in the Session. Advancing from workspace trust to the
@@ -1066,9 +1280,14 @@ journey; launch-environment assertions alone do not prove that evidence.
 In development source, the existing native effective-model evidence feed also
 projects observed effort onto admitted model controls. The SDK pairs captured
 launch effort with the first actual main-assistant model from that same query;
-initialization alone supplies no model or effort proof. An interrupted query
-retains its unpublished launch effort when reused. Statusline and verified
-terminal-control results report native effective truth.
+initialization and historical replay supply no model or effort proof. An interrupted
+query retains its unpublished launch effort when reused. Statusline and verified
+terminal-control results report native effective truth. An effort-only observation
+refines the last observed model; it cannot promote a launch selection. A model change
+without new effort evidence clears effort associated with the previous model. The
+terminal convergence path reads this same observed-model owner, including verified
+model-only controls and main-assistant evidence. Failure to publish the durable
+model-change event does not roll back that runtime observation.
 Pending configuration, deferred controls, and unverified delivery do not supply
 an observed effort. Context-only evidence and model catalog enrichment retain
 the last observation without advancing catalog freshness. When no effort has
@@ -1293,6 +1512,19 @@ does not weaken strict native resume: an established id whose native state is un
 fails closed without silently starting fresh or consuming its queued prompt. Loaded-runtime
 release validation is separate from these development-source contracts.
 
+Compressed rollout continuation (development source) recognises `.jsonl` and
+`.jsonl.zst` through the Codex plugin's canonical filename/search owner. Session
+imports preserve physical bytes and exact thread mapping, and discovery prefers
+a plain sibling. SQLite retains Codex's logical `.jsonl` path while its compressed
+sibling exists; an existing stale path is repaired through the same exact-row
+compare-and-set. Host-owned file custody and plugin-owned provider identity stay
+at their existing boundaries.
+
+[Codex 0.166.0 owns compressed reads and append-time materialisation](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rollout/src/compression.rs).
+Happier does not decode rollouts during reachability checks. Raw-byte transcript
+paging, diagnostics and prefix-based handoff still require plain JSONL; this
+continuation correction does not add a separate compressed reader for them.
+
 ### Where the id lives, for an Agent with no flat vendor key
 
 The flat `<vendor>SessionId` keys are **generated for bundled Agents only**. A contributed Agent
@@ -1426,9 +1658,32 @@ are explicit unavailable results: retained named rows become stale, while a
 successful ready-empty catalog withdraws them through the existing cache owner.
 
 Only the affected Agent becomes unknown and stale, retaining any last-known facts
-for display; a successful probe clears that reason. Session admission continues to
-require the canonical fresh ready state. Latest-version lookup failure alone yields
+for display; a successful probe clears that reason. New Session uses the shared
+Agent start-block classifier: unknown, failed or stale inventory permits a launch
+attempt; only positively known unavailability blocks Start. The daemon remains
+responsible for launch admission and its typed failures. Latest-version lookup failure alone yields
 `latestVersion: null` and does not invalidate installation or readiness facts.
+
+In the development app, failed whole-inventory reads also retain their classified
+failure on the Account-qualified snapshot, even before any Agent row is known.
+The existing capability transport and projection owners supply the code; inventory
+does not infer a native sign-in refusal from an RPC completion or Machine presence.
+Retained rows carry that failure into the shared unavailable status rather than
+discarding it as an unclassified unknown. Private transport messages are not copied.
+An explicit refresh uses the same roster and detection owners, and a successful
+observation clears the failure without changing credential or launch admission.
+
+The development app persists only compact last-known display inputs per
+Home/Account/Machine: Agent identity and title, installation/managed state,
+versions and update hints, native sign-in display state, platform fit, and keys
+of missing dependencies. Installer details and complete dependency/probe objects
+are not stored. Saved rows remain offline/stale and cannot authorize a Session
+or enable Agent actions; a fresh inventory read restores live detail. The reader
+accepts the earlier full-item snapshots and projects them without writing during
+read; the next ordinary write replaces them with the compact shape. Persistence
+is optional: a quota or storage-write failure returns not-persisted and does not
+discard live inventory or interrupt New Session. It does not clear other saved
+state or introduce an eviction policy.
 
 In development source, New Session's selected-Agent read omits
 `includeLatestVersion` but retains native sign-in detection. Full Agent-picker
@@ -1452,9 +1707,17 @@ validate their selected command.
 
 The optional inventory `signIn.required` fact can be false only after that
 CLI-less factory is proved current and no native or connected authentication is
-declared. Its status remains `unknown`, not fabricated `signedIn`. Missing or true
-facts retain the existing sign-in requirement. Explicit connected credentials,
-selected Profiles and Provider purposes keep their independent admission checks.
+declared. Its status remains `unknown`, not fabricated `signedIn`.
+`resolveMachineAgentExecutionStateV1` owns the shared native-login prerequisite:
+when `required` is absent, `loginSupport: 'unsupported'` needs no native sign-in.
+An installed Agent with supported platform/fit and installed dependencies can
+therefore be ready while its native sign-in status remains unknown or signed out.
+An explicit `required: true` keeps sign-in required. Omitting both requirement and
+login-support facts also retains that requirement. UI and CLI readers delegate
+this native decision to the same resolver.
+Explicit connected credentials, selected Profiles and Provider purposes keep their
+independent admission checks; an unread selection or refused Provider route stays
+unknown. A `cant_run` fit stays unsupported regardless of authentication.
 These are 0.3 development-source contracts, not loaded-runtime certification.
 
 Its concrete availability refusals carry typed reasons through
@@ -1509,6 +1772,13 @@ visible but non-executable, and an answering identity divergence blocks only tha
 service. Partial reads refresh answered identities and their conflict facts while
 retaining unanswered services for display. Strict Machine descriptor validation
 is unchanged; an unsupported or malformed Machine cannot admit its own entries.
+In 0.3 development, AppShell publishes ready retained-offline descriptors from
+its projection targets as display-only supplies. Sleeping Machines therefore
+keep service names, usage capability and Plans rows without authorizing
+execution or turning sleep alone into a registry failure. A current Machine's
+explicit removal and Account retirement still withdraw the declaration; a cold
+unknown service retains the ordinary fallback name. Plans reads this registry
+directly rather than retaining its own history of names.
 Machine-scoped readiness uses only the selected
 Machine's published descriptors, deduplicated by the same projection owner. An
 unanswered or internally conflicted Machine remains unknown; it cannot borrow
@@ -1543,7 +1813,11 @@ demanded capability reads reuse `detectCliSnapshotOnDaemonPath`; no homepage pro
 or second detector is involved. The shared strict Machine publication schema
 excludes executable paths, dependencies and authentication facts from this
 projection. A failed individual probe retains that Agent's last-known positive
-install fact; a successful negative observation removes it. These are install
+install fact. An unavailable daemon-applied runtime is an unknown observation,
+not a negative native-Agent install fact; successful physical CLI probes remain
+independent of that runtime read. A failed full census also retains omitted
+last-known members instead of treating its partial catalog as exhaustive.
+Successful negative observations and complete-catalog removals remain visible. These are install
 observations, not launch readiness or skill support. Passive reach readers use
 the published facts on a fresh device and offline. Older retained metadata without the optional projection
 can still use its device cache; malformed optional stored facts read as absent.
@@ -1584,6 +1858,22 @@ that the CLI runs and reports a version. Progress includes step transitions and 
 bytes where the source supplies them; an unknown total stays `null`. Antigravity's CLI and
 managed ACP server are steps of the same job. Vendor-recipe execution requires explicit
 consent, enforced by the canonical install/update path.
+
+Ordinary Session creation checks the chosen Agent after Machine wake and setup,
+before Session birth and Agent prerequisite hooks. Managed create-and-start reaches
+that same owner through its independently admitted guest Session continuation.
+A runnable installed CLI launches with Use access on its installed version.
+A missing CLI or a known available update invokes the ordinary
+`machines.agents.install` Action, retaining its Manage admission and review, then
+observes the existing job's terminal result. When no runnable installed version
+exists, a requester without Manage receives typed Machine setup recovery;
+creation never borrows the controller's authority. A deferred, busy or failed
+optional update preserves launch and carries a typed pending/failed notice through
+Session success and the managed operation's existing domain reference. The app
+shows that notice and retains existing job progress/failure presentation without
+treating optional update status as execution readiness. The Create screen collects
+vendor-recipe consent before dispatch. Required acquisition failure keeps the
+selected Agent and actual guest identity in the existing setup recovery.
 
 V2 managed dependencies can declare a `githubReleaseBinary` source through that
 same projection. Release asset targets and archive layout are data consumed by
@@ -1630,8 +1920,11 @@ observation use that same root. Project-directory escapes and transcript-file
 symlinks remain refused; a completed turn cannot settle Activity when ordered
 source admission fails.
 
-Claude's metadata reader keeps title interpretation in the plugin and resumes
-from the host's persisted candidate-index checkpoints. Concurrent reads share
+Claude's metadata reader keeps title and native working-directory interpretation
+in the plugin and resumes from the host's persisted candidate-index checkpoints.
+The same scan publishes candidate `cwd` for browse linking; unchanged checkpoints
+need no additional transcript read. Older title-only checkpoints are re-derived
+once to establish working-directory knowledge. Concurrent reads share
 only in-flight JSONL pages for the same path, file identity and byte offset;
 each invocation applies its own prompt interpretation and title precedence.
 Page entries disappear when the read settles, including failures. Root listing,
@@ -1649,6 +1942,14 @@ also used by target-state handoff and bundle import. Transcript-location metadat
 remains resolved. These development-source rules do not recover the original
 authentication environment of older links.
 
+Existing linked Sessions with an empty path can recover their agent and machine
+roots from a valid `sessionWorkspaceLocationV1` mapping for the same Machine.
+The shared Protocol resolver owns this recovery; machine targeting preserves
+owner-metadata and Home scope, and the CLI workspace owner supplies the machine
+root to fork. Nonempty unrelated roots and invalid or foreign mappings retain
+their existing behavior. This development-source correction leaves native fork
+availability under the Agent's existing capability contract.
+
 The process singleton admits one active built-in job per Agent target; configured
 jobs additionally distinguish the admitted Account and pinned version. Another
 start for the same target/version returns its job id. Configured definitions resolve
@@ -1663,9 +1964,11 @@ job creation, so both spellings share one active job and managed installation.
 
 - `start({agentId, definitionId?, expectedDefinitionVersion?, intent: 'install' | 'update' | 'uninstall', consent: {vendorRecipe: boolean}, force?})`
   returns `{ok: true, jobId}`. `force` requests reinstall rather than skip-if-installed.
-- `read({jobId, cursor})` returns `{ok: true, steps, progress, events, nextCursor, done, outcome}`. Events are
+- `read({jobId, cursor, waitForTerminal?})` returns `{ok: true, steps, progress, events, nextCursor, done, outcome}`. Events are
   `step`, `progress`, or `log`; the cursor advances through that job's event stream.
   The step/progress snapshots also serve Action status callers without replaying events.
+  `waitForTerminal: true` waits on that job's completion promise, without polling or
+  a separate phase deadline; omission retains immediate snapshot reads.
 - `cancel({jobId})` requests cancellation and waits for the running operation to settle.
 - `list({})` returns active jobs and the latest completed attempt for each target.
 
@@ -1755,7 +2058,16 @@ detect of every `cli.<agentId>` capability (wrapped by
 native install with a declared updater) and `updateCommand` (the copyable command, or null).
 With `includeLatestVersion: true` it also adds `latestVersion` (null = unknown), read from the
 managed GitHub release or npm `latest` over HTTP and cached for the installables update-check
-interval; failures are not cached and `bypassCache: true` refetches.
+interval. In current 0.3 development source, GitHub release reads share the daemon's
+`apps/cli/src/capabilities/cliUpdate/githubReleaseLookup.ts` owner across Agent facts,
+installable dependency probes, installers and relay checks. Reopening or refreshing
+Machine agents reuses release facts within that interval; it does not spend another
+GitHub request. An exhausted REST budget blocks further release requests across
+repositories until GitHub's reset header permits them. Other failures are not cached.
+For npm facts, `bypassCache: true` still refetches. Relay doctor repair retains its
+explicit fresh-check behavior, subject to the same GitHub reset. Reads start only on
+demand, without a new timer; managed-runtime launch checks keep their existing policy
+and persisted cooldown.
 
 The job's `intent: 'update'` targets the executable detect reported:
 managed → managed reinstall; native → the vendor updater, which needs
@@ -1794,12 +2106,18 @@ owner environment. A missing member binding or unavailable native probe reports
 unknown without falling back to the owner or provisioning from a status read.
 The same identity-free projection applies to `cli.*` capability detection
 (including `machines.agents.list`), both its `signIn` and `authStatus` facts,
-Azure CLI dependency detection and daemon-service task results. Azure dependency
-results retain install and login state while omitting the native account name
-and tenant ID. Use task completion data keeps only fixed technical fields; new
-fields do not become disclosures automatically. These projections consume the
-admitted role without another permission evaluation; owner/Manage output and
-native execution placement stay unchanged.
+Azure CLI dependency detection, daemon-service task results, and the auth facts
+in bug-report doctor snapshots. Azure dependency results retain install and login
+state while omitting the native account name and tenant ID.
+Use task completion data and diagnostics keep only fixed technical fields;
+new fields do not become disclosures automatically. Use diagnostics omit the
+doctor's current and known Account identities, other-server inventories,
+free-form doctor sections, local paths, stack context and collected log artifacts.
+Log sources are reported disabled for Use; direct bug-report and daemon log-tail
+reads return a visible omission rather than log bytes. Credential redaction does
+not remove ordinary Account labels, emails or IDs from arbitrary log text. These
+projections consume the admitted role without another permission evaluation;
+owner/Manage output and native execution placement stay unchanged.
 
 Inventory passes its existing login-status probe budget to the native command
 boundary. On-demand sign-in uses the same budget policy; an omitted command
@@ -1817,6 +2135,13 @@ share `agents/machineAgents/signIn/useAgentSignIn.ts`'s Account-scoped custody.
 Closing a presenter does not transfer process ownership to its terminal renderer.
 This is current development behavior, not a released availability claim.
 
+### Checklist id conventions
+
+Checklist ids are treated as stable API between daemon and app:
+- `new-session`
+- `machine-details`
+- `resume.<agentId>`
+
 ### Member-runnable Agent startup failures (0.3 development)
 
 When the selected Agent cannot run as the separated member, startup refuses with
@@ -1826,12 +2151,25 @@ Happier-managed runtime. This refusal is nonretryable; repeating the same creati
 request observes its settled result without another launch or nonce poll.
 Executable paths and native error text remain private.
 
-### Checklist id conventions
+### ACP startup failures (0.3 development)
 
-Checklist ids are treated as stable API between daemon and app:
-- `new-session`
-- `machine-details`
-- `resume.<agentId>`
+The generic ACP owner passes the selected MCP servers directly to the Agent.
+It does not probe them before starting. If a definite startup rejection names
+exactly one passed MCP server that failed to start, it retries `session/new` or
+`session/load` once without that server. Other servers remain selected. A
+successful retry writes the existing capability notice to the Session transcript,
+including the server name and sanitized reason. An unnamed rejection or failed
+retry surfaces the provider's sanitized message. Ambiguous transport loss and
+timeouts never cause an automatic repeat of session creation or loading.
+Initialization and authentication also stop on JSON-RPC invalid-request,
+missing-method and invalid-parameter rejections; genuinely transient failures
+retain their existing retry policy.
+
+Initial model selection uses the Agent's observed catalog after configuration
+that scopes it has applied. A selection absent from an advertised catalog leaves
+the Agent's default; an unavailable live selection is rejected before its model
+setter is sent. Agent-native model ids remain opaque: for example, FX can itself
+advertise models also offered by Codex. This is development-source behavior.
 
 ### ACP resume (no runtime probes)
 
@@ -1901,11 +2239,57 @@ content blocks; it does not by itself prove that an Agent accepts concurrent ste
 advertise steer only when that Agent has a real capability contract rather than merely because the
 shared composer can encode a prompt.
 
+In 0.3 development, standard `session_info_update` titles seed the existing
+`display.title` summary owner only when no title is present. A user rename always
+keeps precedence, including when later native timestamps are newer. Session info
+is observed outside active prompts too; `updatedAt` does not become host liveness.
+
+The single ACP tool accumulator retains the optional standard `name` across
+partial updates and uses it before legacy kind/title/id inference. The connection
+registration preserves raw updates after SDK 1.2.1's always-on notification
+validation: its default second parse otherwise drops initial `tool_call.name`.
+The real connection regression also pins malformed-frame rejection. Remove that
+boundary adapter when the SDK decoder retains the standard field; it is not an
+Agent-specific transport or a second accumulator. A custom
+Agent's `AgentAcpRuntimeDefinition.sessionUpdates.project` is a thin native
+metadata codec: explicit MCP server/tool identity and internal provenance enter
+that same accumulator; diagnostics use the host's existing informational Session
+event publisher. The codec does not settle turns or own retries. fx recovery
+active/paused/recovered/failed/cleared observations retain attempt, delay and
+required-action detail through that diagnostic path. Operational assistant text
+is not filtered. The client currently does not advertise `session.notices`.
+
+Prompt-result usage aliases are normalized only by
+`apps/cli/src/usage/usageObservation.ts`. fx's prompt-usage projection supplies
+`totalTokens = inputTokens + outputTokens`, since cache write/read and reasoning
+are details of those totals. The generic host recognizes only ACP v1 stop
+reasons. A plugin may translate an equivalent native value through
+`sessionUpdates.projectStopReason`; fx owns its temporary upstream aliases.
+Any remaining unknown value ends through the existing unknown-cause terminal
+carrier with its raw value retained in diagnostics, without classifying the
+outcome as success or failure or waiting for an idle timeout.
+Capability diagnostic snapshots retain `mcpCapabilities.acp`; this does not by
+itself establish an MCP-over-ACP execution transport.
+
 A declarative ACP definition may also name a model config option, map Happier permission intents to
 provider modes, and pass or drop Happier MCP descriptors. The host applies that data through the same
 session composer used by normal Sessions and Session-adapted execution runs. A `null` permission
 mapping deliberately performs no mode request, preserving the Agent's own configured default; this
 policy remains plugin-owned data rather than an Agent-id branch in the host.
+
+In development source, the public ACP runtime publishes the complete catalog through the strict
+observational `config-options` runtime event, and the host projects it into the existing
+`sessionConfigOptionsV1` Session metadata. This event has no turn identity and grants no mutation
+authority. Initial new/load snapshots, successful setter response snapshots and config notifications
+all use the same config owner. A returned full snapshot replaces the previous catalog, including
+dependent model choices and controls; clients do not wait for a notification an Agent may never
+send. A failed setter preserves the last observed catalog. Select values such as native `"true"`
+and `"false"` remain strings, and unknown option ids and presentation text retain their exact bytes.
+This describes unreleased 0.3 source, not a promise that an older SDK binary accepts the new event.
+Failed or unsupported config intents settle once: the intent owner clears only the matching
+candidate across the current and retained aliases, preserves newer edits and the accepted catalog,
+and commits the native failure reason through the existing visible transcript. Deferred outcomes
+and `requires_interactive_control` remain pending for their existing continuation path.
 
 In current development, an ACP definition's `usageLimitDiagnostic` declares the provider's exact
 assistant diagnostic. The public ACP host turns that diagnostic into a typed failed-turn issue even
@@ -2118,6 +2502,11 @@ In current 0.3 development source, Codex External Sessions paging and follow sha
 one transcript-source selection in the plugin. Legacy rollout storage remains the
 first choice; missing or paginated rollout storage uses read-only native
 `thread/items/list` pagination through the invocation's existing `exec` service.
+Native history reads launch a scoped app-server through the existing Codex runtime
+owner, using the admitted home and resolved executable, and dispose it after the
+read. They do not require an external Agent's live control socket and never resume
+the thread or start a turn. Native startup may initialize or migrate its store;
+read-only history requests are not a guarantee of filesystem-read-only startup.
 Listing previews never become transcript rows. An empty native head alongside a
 paginated rollout is unavailable: Codex can recreate an empty SQL projection
 without its original history. Unavailable history, unsupported
@@ -2129,7 +2518,8 @@ not ambient user SQLite storage. This adds no SDK service or host-side Codex pol
 
 Native `webSearch`, `imageView`, and `sleep` items project as `WebSearch`,
 `view_image`, and `sleep` tool rows through the Codex app-server projector shared
-by live Sessions, native children, and External Sessions history. Web searches
+by live Sessions, native children, and External Sessions history. Compaction
+markers, like reasoning lifecycle items, do not create conversation rows. Web searches
 publish on completion, when their query is known, and preserve structured results.
 The separate rollout projection still omits `web_search_call` response items.
 
@@ -2326,6 +2716,38 @@ If you’re running this repo via happy-stacks, prefer:
 
 ---
 
+## Connected-account quota recovery (0.3 development)
+
+The host Session lifecycle reports classified accepted turn failures, including
+provider-started Codex goal turns. A missing credential identity stays unknown:
+daemon intake authorizes recovery against the tracked pool without assigning a
+limiter to its current member. Sessions without a Connected Account binding
+retain Session-owned native-login recovery. See
+[usage-limit recovery](cli-architecture.md#usage-limit-recovery-03-development)
+for wait ownership and reset checks.
+
+Claude subscription pools declare in-turn application through the plugin runtime
+auth adapter. The catalog projects that declaration into `supported_in_turn`,
+which the shared predictive policy consumes for both soft-threshold switching
+and healthy-sibling generation application. The host rewrites the shared Claude
+home and verifies its selected profile, generation, credential revision and native
+auth before accepting application. Claude re-reads those credentials between
+requests, so the current request finishes on the old account and the next request
+uses the selected account (maintainer live evidence, 2026-07-08).
+
+Codex retains its in-turn runtime-application and exact adoption proof. Other
+Agents retain their declared restart or turn-boundary behavior; predictive
+switching cannot fall back to a restart. The pool threshold measures percentage
+remaining on its most constrained tracked allowance, including any configured
+usage-limit selection, rather than percentage used.
+
+The quota coordinator records suppressed group reads, switch evaluation and
+switch requests through its existing diagnostics. Default-on daemon file logging
+retains these reasons and proactive switch results without credential payloads.
+Fresh authoritative V4 quota observations hydrate canonical profile and group
+usage sources through the response's validated provider-account identity; they
+do not require a legacy quota lease or another provider request.
+
 ## Node-safe imports (tests)
 
 Some tests import the app agents catalog in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
@@ -2342,3 +2764,22 @@ Patterns we use:
 - Don’t do side-effect self-registration (“import this file and it registers itself”). It makes ordering brittle and behavior hard to audit.
 - Don’t hardcode Agent-specific logic in generic screens; add a typed hook in the Agent plugin's `uiBehavior.ts` instead.
 - Don’t import native assets from code that must run in Node tests (keep assets in `registry/registryUi.ts` and lazy-load).
+
+## Code placement (moved from root AGENTS.md)
+
+Root `AGENTS.md` "Agent and Provider architecture" points here.
+
+- Agent contributions live in `packages/plugins/<agentId>/src/agent/**` and project through `apps/cli/src/agent/catalog/**`. Agent UI contributions live in `packages/plugins/<agentId>/src/ui/**` and project through `apps/ui/sources/agents/catalog/**` and `registry/**`.
+- Do not recreate the retired `apps/cli/src/backends/**` or `apps/ui/sources/agents/providers/**` host trees.
+- Protocol-owned Agent policy/defaults belong in `packages/protocol/src/agents/<agentId>/**`.
+- Provider contributions live in `packages/plugins/<providerId>/src/provider/**` and project through `contributes.providers`.
+- Provider definitions, connections, grants, selections, catalogs, and migrations belong in `packages/protocol/src/providers/**`.
+- Provider-agnostic CLI resolution/probing/materialization belongs in `apps/cli/src/providers/**`; Provider UI composition belongs in `apps/ui/sources/providers/**`.
+- Internal packages may use `src/providers/<providerId>` only when “provider” is that package’s genuine bounded-domain term, not an alias for executable Agents.
+
+## Agent and Provider architecture
+
+Agents are executable coding backends such as Claude Code and Codex. Providers are model sources such as OpenRouter, DeepSeek, Ollama, and LM Studio. Do not use one term for the other. Read `docs/providers.md` when changing these domains.
+
+- Generic host code must not branch on Agent or Provider ids when a typed contribution, catalog hook, registry result, or Agent provider-binding adapter can own the variation.
+

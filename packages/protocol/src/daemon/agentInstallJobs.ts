@@ -3,7 +3,10 @@ import { z } from 'zod/mini';
 
 // Development install-job operation, independent of the package version. Every
 // envelope is closed: caller-supplied commands and consent extensions are rejected.
-export const AgentInstallJobIntentSchema = lazyZodSchema(() => z.enum(['install', 'update', 'uninstall']));
+// Acquire intents are the install-job intents minus 'uninstall'; one list feeds both enums.
+const AGENT_ACQUIRE_JOB_INTENTS = ['install', 'update'] as const;
+export const AgentInstallJobIntentSchema = lazyZodSchema(() => z.enum([...AGENT_ACQUIRE_JOB_INTENTS, 'uninstall']));
+export const AgentAcquireJobIntentSchema = lazyZodSchema(() => z.enum(AGENT_ACQUIRE_JOB_INTENTS));
 export const AgentInstallJobConsentSchema = lazyZodSchema(() => z.strictObject({ vendorRecipe: z.boolean() }));
 export const AgentInstallJobStepSchema = lazyZodSchema(() => z.strictObject({
   stepId: z.string().check(z.minLength(1)),
@@ -67,6 +70,7 @@ export const DaemonAgentInstallStartResponseSchema = lazyZodSchema(() => z.union
 ]));
 export const DaemonAgentInstallReadRequestSchema = lazyZodSchema(() => z.strictObject({
   jobId: z.string().check(z.minLength(1)), cursor: z.number().check(z.int(), z.nonnegative()),
+  waitForTerminal: z.optional(z.boolean()),
 }));
 export const DaemonAgentInstallReadResponseSchema = lazyZodSchema(() => z.union([
   z.strictObject({

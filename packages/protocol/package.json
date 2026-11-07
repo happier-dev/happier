@@ -5060,6 +5060,11 @@
       "types": "./dist/deployments/deploymentPreviewReferenceV1.d.ts",
       "default": "./dist/deployments/deploymentPreviewReferenceV1.js"
     },
+    "./deployments/deploymentPreviewTemplateV1": {
+      "happier-source": "./src/deployments/deploymentPreviewTemplateV1.ts",
+      "types": "./dist/deployments/deploymentPreviewTemplateV1.d.ts",
+      "default": "./dist/deployments/deploymentPreviewTemplateV1.js"
+    },
     "./deployments/deploymentPromoteIntentV1": {
       "happier-source": "./src/deployments/deploymentPromoteIntentV1.ts",
       "types": "./dist/deployments/deploymentPromoteIntentV1.d.ts",

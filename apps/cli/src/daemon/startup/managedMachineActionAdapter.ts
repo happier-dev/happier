@@ -213,13 +213,19 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     const spawn = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
                     if (!spawn.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
                     if (spawn.success && spawn.data.type === 'error') {
-                        throw Object.assign(new Error(spawn.data.code), { code: spawn.data.code });
+                        throw new ManagedMachineControllerError(spawn.data.code, undefined,
+                            typeof spawn.data.agentId === 'string'
+                                ? { kind: 'managedAgentStart', machineId: machine.enrolledMachineId, agentId: spawn.data.agentId }
+                                : undefined);
                     }
                     if (spawn.success && spawn.data.type === 'pending') {
                         if (!context.operationOwnerUpdate) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
                         context.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' } });
                     } else if (spawn.success && spawn.data.type === 'success') {
-                        context.operationOwnerUpdate?.update({ observation: null });
+                        context.operationOwnerUpdate?.update({ observation: null,
+                            ...(spawn.data.agentUpdate ? { domainRef: { kind: 'managedMachine', id: machine.id,
+                                agentUpdate: spawn.data.agentUpdate } } : {}),
+                        });
                     }
                 } } : {}),
             }));

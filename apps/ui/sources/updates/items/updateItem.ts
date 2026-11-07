@@ -1,4 +1,4 @@
-import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
+export { isNewerVersion } from '@happier-dev/protocol/updates/versionComparison';
 import type { UpdateSubject, UpdateItemState, UpdateItemActionVerb } from '@happier-dev/protocol/actions/updatesActionFamily';
 export type { UpdateSubject, UpdateItemState } from '@happier-dev/protocol/actions/updatesActionFamily';
 
@@ -39,6 +39,10 @@ export type UpdateItem = Readonly<{
     title: string;
     currentVersion: string | null;
     latestVersion: string | null;
+    /** A cached release lookup is not refreshed by the Updates capability request. */
+    cachedRelease?: Readonly<{ channel: string | null }>;
+    /** The remote runtime reports the update target running; independent of release-check freshness. */
+    updateCompleted?: boolean;
     /**
      * `checking`: the first answer has not arrived; nothing is known yet.
      * `upToDate`: the producer proved the latest version runs.
@@ -70,13 +74,6 @@ export function isUpdateItemActionable(item: UpdateItem): boolean {
     return (item.state === 'available' || item.state === 'required')
         && item.action.kind === 'run'
         && !item.skipped;
-}
-
-/** `true` only when both versions parse and `latest` is newer. Unparseable input never claims an update. */
-export function isNewerVersion(current: string | null, latest: string | null): boolean {
-    if (!current || !latest) return false;
-    if (!parseVersion(current) || !parseVersion(latest)) return false;
-    return compareVersions(current, latest) < 0;
 }
 
 export function buildUpdateItemId(machineKey: string, subject: UpdateSubject): string {

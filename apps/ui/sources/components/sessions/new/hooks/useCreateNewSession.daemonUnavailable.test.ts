@@ -770,6 +770,70 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }
   });
 
+  it('requires vendor consent before managed acquire and retains the draft when declined', async () => {
+    const context = await setupCurrentAccountSessionActionHarness();
+    const { useCreateNewSession, storageState, sessionSpawnNewActionBoundarySpy, scope } = context;
+    const { Modal } = await import('@/modal');
+    const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+    const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { createManagedMachineSelectionDraft } = await import('@/sync/domains/state/newSessionManagedMachineDraft');
+    const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+    const { ManagedAcquireInputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+    const { getSessionDraftSnapshot, writeNewSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const profile = getServerProfileById(scope.serverId);
+    if (!profile?.serverIdentityId) throw new Error('Expected the restored Home identity');
+    const acquireRequests: import('@happier-dev/protocol/machines/managed/actionsV1').ManagedAcquireInputV1[] = [];
+    const boundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: profile.serverUrl, serverIdentityId: profile.serverIdentityId, accountId: scope.accountId,
+      machineId: 'controller', actionId: 'machines.managed.acquire', tokenEpoch: 0,
+      execute: input => { acquireRequests.push(ManagedAcquireInputV1Schema.parse(input)); return null; },
+      failure: () => ({ errorCode: 'policy_denied_field', error: 'policy_denied_field' }),
+    });
+    const managedActionRequests: string[] = [];
+    context.additionalBoundary.http = async (url, init) => {
+      if (url.pathname.startsWith('/v1/actions/machines.managed.') || url.pathname.startsWith('/v1/actions/action.operations.')) managedActionRequests.push(url.pathname);
+      return boundary.handle(url, init);
+    };
+    const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} };
+    const controller = { machineId: boundary.machine.id, installationId: boundary.machine.installationId! };
+    const selection = createManagedMachineSelectionDraft({
+      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+      selection: { kind: 'one-off', homeId: profile.serverIdentityId, launch, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+      receipt: { launch, controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+        retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+    });
+    const draftId = 'declined-managed-vendor-consent';
+    const text = 'Read this project on the new Machine';
+    writeNewSessionDraft({ scope, draftId, patch: { text }, materializationIntent: 'userEdit' });
+    const promptStore = createNewSessionPromptStore(text);
+    const target = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } as const;
+    const confirm = vi.mocked(Modal.confirm);
+    confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const onEnrolled = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, {
+      draftId, draftScope: scope, targetAccountScope: scope, targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+      agentType: 'claude', backendTarget: target, spawnBackendTarget: target, promptStore,
+      managedMachineSelection: selection, managedMachineAcquisition: null, selectedMachineId: null, selectedMachine: null,
+      authoringDraft: buildNewSessionAuthoringDraftFromResolvedInputs({ directory: '/tmp', prompt: text, agentTarget: target, connectedServices: null }),
+      onManagedMachineAcquisitionChange: () => {}, onManagedMachineEnrolled: onEnrolled,
+    })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(managedActionRequests).toEqual([]);
+      expect(acquireRequests).toEqual([]);
+      expect(sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(onEnrolled).not.toHaveBeenCalled();
+      expect(promptStore.getPrompt()).toBe(text);
+      expect(readDraftComposerText(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }))).toBe(text);
+      promptStore.setPrompt('Read the project and explain it');
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(acquireRequests, JSON.stringify({ progress: hook.getCurrent().managedMachineCreationProgress, managedActionRequests })).toHaveLength(1);
+      expect(acquireRequests[0]).toMatchObject({ agentStart: { agentInstallConsent: { vendorRecipe: true } } });
+      expect(onEnrolled).not.toHaveBeenCalled();
+    } finally { await hook.unmount(); }
+  });
+
   it.each(['pending', 'failed'] as const)('creates the Session and shows the optional Agent update notice (%s)', async status => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, modalAlertSpy, scope } = await setupCurrentAccountSessionActionHarness();
     const sessionId = `session-update-${status}`;

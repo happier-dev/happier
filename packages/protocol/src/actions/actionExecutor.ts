@@ -5825,13 +5825,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               return invokeHostReviewedChildV1({
                 parent: { actionId, input: projectNativeJsonValueForTransport(admittedSpawnInput) as Record<string, JsonValue> },
                 context: ctx, child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
-                // An optional update has no blocking review recipient. Ordinary
-                // admission still refuses it when review is required; Setup can
-                // later invoke the existing Manage Action with a review surface.
+                // Optional update work has no blocking review recipient.
+                // Ordinary admission still refuses review-required work; Setup
+                // can later invoke the existing Manage Action with review.
                 execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput,
                   childOptions?.result === 'optional'
-                    && childId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
-                    && readRecord(normalized).intent === 'update'
+                    && (childId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
+                      && readRecord(normalized).intent === 'update'
+                      || childId === SESSION_AGENT_READINESS_CHILDREN_V1.status.action
+                        && readRecord(normalized).waitForTerminal === false)
                     ? { ...childContext, interactivePresentation: 'unavailable' } : childContext),
               });
             } };

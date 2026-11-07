@@ -31,6 +31,11 @@ They live in one generated place:
 
 ## Getting an agent running
 
+For the unreleased Gateway model-source integration, see
+[Vercel AI Gateway](/agents/vercel-ai-gateway).
+For the development Cloudflare model-source integration, see
+[Cloudflare AI Gateway](/agents/cloudflare-ai-gateway).
+
 For reusable instructions and execution choices in 0.3 development, see
 [Roles](/agents/roles), including shared and plugin roles and **Roles for this run**.
 
@@ -56,6 +61,12 @@ Installing an agent and authenticating it are separate steps. After a managed
 install, follow that agent's page to complete its own sign-in before starting a
 session.
 
+In unreleased 0.3 development, **Settings → Agents** opens the catalog home
+instead of automatically selecting an Agent. Open an entry for its existing
+setup and details; the column's All entry returns to the home. Selecting a
+machine shows that machine's observed readiness. Seeing an Agent in the Account
+catalog alone does not mean its CLI is installed or signed in.
+
 ### Install and update jobs in 0.3 development
 
 <Callout>
@@ -77,6 +88,16 @@ follow the installation instructions on that agent's page.
 Agent updates on the Updates page use the same job. Happier can check the latest
 version only where the agent declares an npm or managed GitHub release source;
 an unknown latest version does not mean the installed version is current.
+
+Starting a Session also checks the chosen Agent on the selected machine, including
+one just created from a preset. A missing CLI installs through the same job before
+launching. Installation requires Manage access to that machine; when it is needed
+and you cannot install, setup recovery names the machine owner who can help.
+An installed, runnable Agent can start with Use access on its installed version.
+Happier attempts known available updates through the same Manage-reviewed Action;
+a busy, deferred or failed optional update leaves a visible pending or failed
+notice while the Session starts. Vendor recipes still require confirmation on the
+Create screen.
 
 From the CLI, use the same development flow:
 

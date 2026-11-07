@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
 import { formatMachineAgentStatus } from './machineAgentCopy';
 import { t } from '@/text';
+import { resolveMachineAgentState, isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 
 import {
     isMachineAgentUnchecked,
@@ -38,6 +39,22 @@ function agent(overrides: Partial<MachineAgent> = {}): MachineAgent {
 }
 
 describe('machine agent presentation', () => {
+    it('keeps a runnable installed Agent selectable while its optional update is pending or failed', () => {
+        const installed = agent({ installed: true, version: '1.0.0', latestVersion: '2.0.0',
+            update: { supported: true, command: null },
+            signIn: { status: 'signedIn', via: { kind: 'native', accountLabel: null }, nativeLogin: 'terminal', connectedServices: [] } });
+        for (const outcome of [null, { kind: 'failed', code: 'download_failed', stepId: null, message: 'Update failed' }] as const) {
+            const job: NonNullable<MachineAgent['job']> = { jobId: 'optional-update', intent: 'update',
+                startedAtMs: 1, steps: [], logLine: null, outcome };
+            const row = { ...installed, job, state: resolveMachineAgentState({ ...installed, job }) };
+            expect(row.state).toBe('updateAvailable');
+            expect(isMachineAgentReady(row)).toBe(true);
+            expect(resolveAgentSessionStartBlock(row)).toBeNull();
+            expect(resolveMachineAgentPickerPlacement(row)).toMatchObject({ group: 'onMachine', opensSetup: false });
+            // The existing job presentation still makes the optional update outcome visible.
+            expect(resolveMachineAgentStatus(row).kind).toBe(outcome === null ? 'installing' : 'failed');
+        }
+    });
     it('keeps transport diagnostics out of the shared status copy used by the composer and Machine rows', () => {
         expect(formatMachineAgentStatus({ kind: 'unavailable', tone: 'quiet',
             reason: { reason: 'projection_unavailable', errorCode: 'transport-error' } })).toBe(t('machineAgents.unknown'));

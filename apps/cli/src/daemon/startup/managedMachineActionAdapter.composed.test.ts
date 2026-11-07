@@ -1391,7 +1391,9 @@ describe('daemon managed Machine Action factory', () => {
         expect(JSON.stringify(bodies)).not.toContain('Private task');
     });
 
-    it.each(['success', 'error', 'cancel'] as const)('retains a pending guest start and observes %s on the same parent request without buying again', async settlement => {
+    it.each(['success', 'success-update-pending', 'success-update-failed', 'error', 'not-ready', 'cancel'] as const)('retains a pending guest start and observes %s on the same parent request without buying again', async settlement => {
+        const updateNotice = settlement === 'success-update-pending' ? { agentId: 'coding', status: 'pending' as const }
+            : settlement === 'success-update-failed' ? { agentId: 'coding', status: 'failed' as const } : undefined;
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
@@ -1412,12 +1414,15 @@ describe('daemon managed Machine Action factory', () => {
         // owners, the acquisition driver and ordinary Action admission stay real.
         const spawn = createActionExecutor({ ...createUnavailableActionTransportDeps(),
             sessionSpawnNew: async (input: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0]) => {
+            expect(input.executionTarget).toEqual({ serverId: configuration.activeServerId, machineId: 'actual-guest' });
             nativeModes.push(input.resumeActionRequest);
             if (!input.resumeActionRequest) return { type: 'pending' as const, retryWithSameCreationKey: true as const, outcome: 'unknown' as const };
             if (settlement === 'error') return { type: 'error' as const, code: 'agent_cli_missing' as const, retryable: false, agentId: 'coding' };
+            if (settlement === 'not-ready') return { type: 'error' as const, code: 'agent_cli_not_ready' as const, retryable: false, agentId: 'coding' };
             if (settlement === 'cancel') return { type: 'error' as const, code: 'cancelled' as const, retryable: false };
             return { type: 'success' as const, disposition: 'rejoined' as const, sessionId: 'actual-session', executionTarget: input.executionTarget,
-                organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' as const } };
+                organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' as const },
+                ...(updateNotice ? { agentUpdate: updateNotice } : {}) };
         } });
         const managedMachineAction = adapter(true, (input, context) => childOperations.observeExecution({
             actionId: 'session.spawn_new', input, actionRequestId: 'request', execute: childContext => spawn.execute('session.spawn_new', input,
@@ -1451,8 +1456,10 @@ describe('daemon managed Machine Action factory', () => {
         await invoke();
         const terminal = await parent.handlers.getV2({ operationId: 'actual-parent-operation', waitForTerminal: true });
         expect(terminal).toMatchObject({ kind: 'found', operation: {
-            state: settlement === 'success' ? 'succeeded' : settlement === 'cancel' ? 'cancelled' : 'failed',
-            ...(settlement === 'error' ? { error: { errorCode: 'agent_cli_missing' } } : {}),
+            state: settlement.startsWith('success') ? 'succeeded' : settlement === 'cancel' ? 'cancelled' : 'failed',
+            ...(updateNotice ? { domainRef: { kind: 'managedMachine', id: 'managed', agentUpdate: updateNotice } } : {}),
+            ...(settlement === 'error' || settlement === 'not-ready' ? { error: { errorCode: settlement === 'error' ? 'agent_cli_missing' : 'agent_cli_not_ready',
+                details: { kind: 'managedAgentStart', machineId: 'actual-guest', agentId: 'coding' } } } : {}),
         } });
         if (terminal.kind === 'found') expect(terminal.operation).not.toHaveProperty('observation');
         expect(nativeModes).toEqual([undefined, true]);

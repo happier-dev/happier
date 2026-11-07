@@ -49,12 +49,12 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schem
     WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
-import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild, isReviewedDeploymentChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { isDiscussionSecondOpinionModelRpcMethodV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -590,9 +590,17 @@ export class RpcHandlerManager {
                 || request.callerAuthority === 'present_user'
                     && resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data) === 'present_user')
             && isDeepStrictEqual(request.sessionActionOrigin, parsedInputAuthorization.data.binding.sessionActionOrigin));
+        const sessionAgentReadinessChild = parsedInputAuthorization?.success && workspaceSyncSourceExecution?.success && machineAdmission?.success
+            ? readSessionAgentReadinessChildActionV1(parsedInputAuthorization.data.binding,
+                workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild, machineAdmission.data) : null;
+        const readinessEffect = sessionAgentReadinessChild && parsedInputAuthorization?.success && workspaceSyncSourceExecution?.success
+            ? resolveMachineRpcExternalActionEffectV1(targetMethod, parsedInputAuthorization.data.binding,
+                machineAdmission?.success ? machineAdmission.data : undefined, workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild) : null;
         const serviceMoveChild = Boolean(parsedInputAuthorization?.success && originalActionEnvelope?.success
             && workspaceSyncSourceExecution?.success && machineAdmission?.success && this.authorizeRequest
-            && (parsedInputAuthorization.data.binding.actionId === 'projects.service.relocate'
+            && (sessionAgentReadinessChild !== null && readinessEffect === sessionAgentReadinessChild
+                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === sessionAgentReadinessChild
+              || parsedInputAuthorization.data.binding.actionId === 'projects.service.relocate'
                 && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readProjectServiceMoveChildEffectV1(targetMethod)
               || parsedInputAuthorization.data.binding.actionId === 'discussion.second_opinion.start'
                 && isDiscussionSecondOpinionModelRpcMethodV1(targetMethod)
@@ -957,8 +965,9 @@ export class RpcHandlerManager {
                     diagnostic.failure = { failedPhase, cancelled: false, phaseDurationsMs: { ...phaseDurationsMs } };
                     diagnostic.admissionDenied = true;
                     if (authorization.admissionPredicate) this.reportAdmissionDenial(diagnostic, authorization.admissionPredicate);
+                    // Admission failed before the domain handler. Use the
+                    // manager's error envelope, not a domain result flag.
                     return await respond(request, {
-                        ok: false,
                         error: confidential ? 'confidential_continuation_failed' : authorization.error,
                         ...(confidential ? { errorCode: 'confidential_continuation_failed' } : authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                         ...(!confidential && authorization.failureCause ? { failureCause: authorization.failureCause } : {}),
@@ -1098,7 +1107,7 @@ export class RpcHandlerManager {
                         ? { kind: 'workspace_sync_prepare', controller: { machineId: this.scopePrefix, installationId: installation.installationId },
                             request: preparationRequest.data }
                         : { kind: 'machine_rpc', method: this.readUnprefixedMethod(request.method), params: decryptedParams,
-                            ...(serviceMoveChild && installation ? { recipient: { machineId: this.scopePrefix, installationId: installation.installationId } } : {}) },
+                            ...(serviceMoveChild && !sessionAgentReadinessChild && installation ? { recipient: { machineId: this.scopePrefix, installationId: installation.installationId } } : {}) },
                     // The exact signed child/SOURCE request was admitted above.
                     // Private preparation shares its local cancellation lifetime.
                     ...(serviceMoveChild ? { verifyServiceMoveChildCurrent: async () => !controller.signal.aborted } : {}),
@@ -1131,20 +1140,20 @@ export class RpcHandlerManager {
                     || !machineAdmission?.success || deploymentChild.installationId !== machineAdmission.data.installationId)) {
                     return await deny('caller_input_authorization');
                 }
-                const child = setupPlanChild ? 'machines.setup.plan'
+                const child = sessionAgentReadinessChild ?? (setupPlanChild ? 'machines.setup.plan'
                     : deploymentChild ? deploymentChild.actionId : stopChild ? targetMethod === RPC_METHODS.STOP_SESSION ? 'session.stop' : null
                     : opinionChild ? isDiscussionSecondOpinionModelRpcMethodV1(targetMethod) ? 'session.spawn_new' : null
-                    : readProjectServiceMoveChildEffectV1(targetMethod);
-                const review = setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
+                    : readProjectServiceMoveChildEffectV1(targetMethod));
+                const review = sessionAgentReadinessChild ? isReviewedSessionAgentReadinessChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
                     : opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
                 if (!child || !await review({ authorization: callerInputAuthorization,
                     envelope: originalActionEnvelope.data, signal: controller.signal,
                     actionId: child, machineId: this.scopePrefix, params: decryptedParams,
-                    ...(deploymentChild && workspaceSyncSourceExecution?.success
+                    ...((deploymentChild || sessionAgentReadinessChild) && workspaceSyncSourceExecution?.success
                         ? { reviewedChild: workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild } : {}),
                     ...(stopChild ? { target: workspaceSyncSourceExecution?.success
                         ? workspaceSyncSourceExecution.data.externalActionExecution.target : undefined } : {}),
-                    ...(opinionChild || deploymentChild || setupPlanChild ? { method: targetMethod } : {}) })) {
+                    ...(opinionChild || deploymentChild || setupPlanChild || sessionAgentReadinessChild ? { method: targetMethod } : {}) })) {
                     return await deny('caller_input_authorization');
                 }
                 if (child === 'localServices.launcher.start') {
@@ -1351,7 +1360,7 @@ export class RpcHandlerManager {
                     signal,
                 });
                 signal.throwIfAborted();
-                if (!authorization.ok) return { ok: false, error: authorization.error,
+                if (!authorization.ok) return { error: authorization.error,
                     ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                     ...(authorization.failureCause ? { failureCause: authorization.failureCause } : {}), effectAttempted: false };
             }

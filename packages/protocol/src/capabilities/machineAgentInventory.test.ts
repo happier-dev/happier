@@ -8,6 +8,7 @@ import {
   MachineAcpInventoryRequestSchema,
   projectAcpCatalogForMachineInventory,
 } from './index.js';
+import { resolveMachineAgentAcquireIntentV1, resolveMachineAgentExecutionStateV1 } from './machineAgentInventory.js';
 
 const agents = [{ agentId: 'antigravity', title: 'Antigravity' }, { agentId: 'acme/helper', title: 'Helper' }];
 const facts = {
@@ -18,6 +19,72 @@ const facts = {
   install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },
   dependencies: [{ key: 'antigravity-acp', installed: true, version: '1.0' }],
 } as const;
+
+describe('machine Agent execution prerequisites', () => {
+  it('acquires missing Agents and comparable updates while preserving installed unknown versions', () => {
+    const installed = { installed: true, version: '1.2.3', latestVersion: '1.2.4', update: { supported: true } };
+    expect(resolveMachineAgentAcquireIntentV1({ ...installed, installed: false })).toBe('install');
+    expect(resolveMachineAgentAcquireIntentV1(installed)).toBe('update');
+    expect(resolveMachineAgentAcquireIntentV1({ ...installed, version: '1.2.4' })).toBeNull();
+    expect(resolveMachineAgentAcquireIntentV1({ ...installed, version: '1.2.3-beta.1' })).toBeNull();
+    expect(resolveMachineAgentAcquireIntentV1({ ...installed, latestVersion: '1.2.4-beta.1' })).toBeNull();
+    expect(resolveMachineAgentAcquireIntentV1({ ...installed, update: null })).toBeNull();
+    expect(resolveMachineAgentAcquireIntentV1({ ...installed, version: null })).toBeNull();
+  });
+
+  const runnable = { installed: true, platform: { supported: true },
+    fit: { kind: 'can_run', via: 'npm' }, dependencies: [] } as const;
+
+  it('normalizes inventory lifecycle overlays without re-deciding selected authentication', () => {
+    for (const inventoryState of ['ready', 'needsSignIn', 'notInstalled', 'unsupported', 'checking', 'unknown'] as const) {
+      expect(resolveMachineAgentExecutionStateV1({ inventoryState })).toBe(inventoryState);
+    }
+    expect(resolveMachineAgentExecutionStateV1({ inventoryState: 'updateAvailable' })).toBe('ready');
+    for (const inventoryState of ['installing', 'failed'] as const) {
+      expect(resolveMachineAgentExecutionStateV1({ inventoryState })).toBe('notInstalled');
+    }
+    expect(resolveMachineAgentExecutionStateV1({ inventoryState: 'ready', known: false })).toBe('unknown');
+    expect(resolveMachineAgentExecutionStateV1({ inventoryState: 'unknown', checking: true })).toBe('checking');
+    expect(resolveMachineAgentExecutionStateV1({ inventoryState: 'ready', checking: true })).toBe('ready');
+    expect(resolveMachineAgentExecutionStateV1({ inventoryState: 'ready', known: false, checking: true })).toBe('unknown');
+  });
+
+  it.each(['unknown', 'signedOut'] as const)('admits runnable no-login Agents with %s native status', status => {
+    const signIn = { status, loginSupport: 'unsupported' } as const;
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn })).toBe('ready');
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: { status, native: signIn } })).toBe('ready');
+  });
+
+  it('preserves required sign-in and selected credential admission', () => {
+    const signIn = { status: 'signedOut', loginSupport: 'unsupported', required: true } as const;
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn })).toBe('needsSignIn');
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: { status: signIn.status, native: signIn } })).toBe('needsSignIn');
+    const noLogin = { status: 'unknown', loginSupport: 'unsupported' } as const;
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: noLogin, authenticationRequired: true })).toBe('unknown');
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: noLogin, credentialRouteReady: false })).toBe('unknown');
+  });
+
+  it('preserves supported and legacy login requirements', () => {
+    for (const loginSupport of ['login_terminal', 'status_only', 'manual_only'] as const) {
+      const signedOut = { status: 'signedOut', loginSupport } as const;
+      expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: signedOut })).toBe('needsSignIn');
+      expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: { ...signedOut, status: 'signedIn' } })).toBe('ready');
+    }
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: { status: 'unknown' } })).toBe('unknown');
+    expect(resolveMachineAgentExecutionStateV1({ ...runnable, signIn: { status: 'signedOut' } })).toBe('needsSignIn');
+  });
+
+  it('keeps executable prerequisites authoritative for no-login Agents', () => {
+    const input = { ...runnable, signIn: { status: 'unknown', loginSupport: 'unsupported' } } as const;
+    expect(resolveMachineAgentExecutionStateV1({ ...input, known: false })).toBe('unknown');
+    expect(resolveMachineAgentExecutionStateV1({ ...input, known: false, checking: true })).toBe('checking');
+    expect(resolveMachineAgentExecutionStateV1({ ...input, installed: false })).toBe('notInstalled');
+    expect(resolveMachineAgentExecutionStateV1({ ...input, dependencies: [{ installed: false }] })).toBe('notInstalled');
+    expect(resolveMachineAgentExecutionStateV1({ ...input, platform: { supported: false, reason: 'arch' } })).toBe('unsupported');
+    expect(resolveMachineAgentExecutionStateV1({ ...input, fit: { kind: 'unknown', reason: 'arch_unknown' } })).toBe('unknown');
+    expect(resolveMachineAgentExecutionStateV1({ ...input, fit: { kind: 'cant_run', reason: 'no_build_for_platform' } })).toBe('unsupported');
+  });
+});
 
 describe('machine Agent inventory projection', () => {
   it('preserves explicit optional authentication without inventing a signed-in status', () => {

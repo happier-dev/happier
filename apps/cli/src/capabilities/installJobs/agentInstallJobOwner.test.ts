@@ -18,7 +18,7 @@ import type { ResolvedInstallableContribution } from '@/plugins/projection/regis
 import { createAgentInstallJobOwner as createProductionAgentInstallJobOwner, type AgentInstallJobOwner } from './agentInstallJobOwner';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
-import { DaemonAgentInstallReadResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 
 const fixtureWaitTimeout = cliTestConfig.test?.testTimeout;
 if (typeof fixtureWaitTimeout !== 'number') throw new Error('CLI unit test timeout must be configured');
@@ -68,13 +68,17 @@ async function stopFixture(owner: AgentInstallJobOwner | undefined, allowTermina
   }
 }
 
-const httpsFixture = vi.hoisted(() => ({ origin: '' }));
+const httpsFixture = vi.hoisted(() => ({ origin: '', pnpmOrigin: '' }));
 vi.mock('node:https', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:https')>();
   const http = await import('node:http');
   return { ...actual, request: (url: URL, options: RequestOptions, callback: (response: IncomingMessage) => void) => {
     // Only the external HTTPS transport is substituted; schema, download,
     // digest verification, extraction and promotion remain real.
+    const target = new URL(String(url));
+    if (httpsFixture.pnpmOrigin && target.hostname === 'api.github.com' && target.pathname === '/repos/pnpm/pnpm/releases/latest') {
+      return http.request(new URL(target.pathname, httpsFixture.pnpmOrigin), options, callback);
+    }
     if (url.hostname !== 'agent-job-fixture.invalid') return actual.request(url, options, callback);
     if (!httpsFixture.origin) throw new Error('Missing isolated HTTPS fixture transport');
     return http.request(new URL(url.pathname, httpsFixture.origin), options, callback);
@@ -98,6 +102,43 @@ function registryWith(runtimeSpec: AgentCliRuntimeDescriptor) {
   // descriptor owner as an installed plugin. No installer or job logic is mocked.
   return { agents: [{ id: runtimeSpec.id, runtimeSpec, pluginId: 'fixture.plugin' }], managedDependencies: [] };
 }
+
+test('managed pnpm bootstrap retains a typed rate-limit cause in the install job', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-job-pnpm-ratelimit-'));
+  const spec: AgentCliRuntimeDescriptor = {
+    id: 'fixture-pnpm', title: 'Fixture pnpm', binaryName: 'fixture-pnpm',
+    sourcePreferenceDefault: 'managed-first', acceptsJavaScriptFileOverride: false,
+    manualInstallKind: 'none', manualInstallRecipes: null,
+    managedInstall: { kind: 'managed_package', packageName: '@fixture/agent@1.2.3', binaryName: 'fixture-pnpm' },
+  };
+  // Only HTTP is substituted. Bootstrap, release parsing, install failure
+  // classification, job settlement and the daemon response schema remain real.
+  const server = createServer((_request, response) => {
+    response.writeHead(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1792364400' });
+    response.end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing fixture address');
+  httpsFixture.pnpmOrigin = `http://127.0.0.1:${address.port}`;
+  const owner = createAgentInstallJobOwner({
+    env: { HOME: root, HAPPIER_HOME_DIR: root, PATH: '' }, readRegistry: () => registryWith(spec),
+  });
+  try {
+    const started = owner.start({ agentId: spec.id, intent: 'install', consent: { vendorRecipe: false } });
+    if (!started.ok) throw new Error('Expected install admission');
+    expect(await outcome(owner, started.jobId)).toMatchObject({ kind: 'failed', code: 'rate_limited',
+      message: expect.stringContaining('2026-10-18T23:00:00.000Z'),
+    });
+    expect(DaemonAgentInstallReadResponseSchema.parse(owner.read({ jobId: started.jobId, cursor: 0 }))).toMatchObject({
+      ok: true, done: true, outcome: { kind: 'failed', code: 'rate_limited' },
+    });
+  } finally {
+    await owner.shutdown(); httpsFixture.pnpmOrigin = ''; server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('an exhausted GitHub REST install retains a typed rate-limit outcome and reset time', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-job-ratelimit-'));
@@ -459,6 +500,51 @@ test.skipIf(process.platform === 'win32')('vendor cancellation waits until its d
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32').each(['fresh', 'outdated', 'refused', 'failed'] as const)(
+  'first Session readiness installs or updates the chosen Agent on a %s guest', async state => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-job-first-session-'));
+    let owner: AgentInstallJobOwner | undefined;
+    try {
+      const bin = join(root, '.local', 'bin');
+      await mkdir(bin, { recursive: true });
+      const executable = join(bin, 'fixture-ready');
+      const versionFile = join(root, 'version');
+      const script = `#!/bin/sh\nif [ "$1" = update ]; then printf '2.0.0' > '${versionFile}'; else printf 'fixture-ready '; /bin/cat '${versionFile}'; fi\n`;
+      if (state === 'outdated' || state === 'refused') {
+        await writeFile(executable, script, { mode: 0o755 });
+        await writeFile(versionFile, '1.0.0');
+      }
+      const spec: AgentCliRuntimeDescriptor = {
+        id: 'fixture-ready', title: 'Fixture ready', binaryName: 'fixture-ready',
+        sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'vendor_recipe',
+        manualInstallRecipes: { [process.platform]: [{ cmd: '/bin/sh', args: ['-c',
+          state === 'failed' ? 'exit 1' : `/bin/cat > '${executable}' <<'AGENT'\n${script}\nAGENT\n/bin/chmod +x '${executable}'; printf '2.0.0' > '${versionFile}'`] }] },
+        nativeUpdate: { args: ['update'], installPaths: ['.local/bin/fixture-ready'] }, acceptsJavaScriptFileOverride: false,
+      };
+      owner = createAgentInstallJobOwner({ readRegistry: () => registryWith(spec),
+        env: { HOME: root, HAPPIER_HOME_DIR: root, PATH: bin } });
+      const request = DaemonAgentInstallStartRequestSchema.safeParse({ agentId: spec.id,
+        intent: state === 'outdated' || state === 'refused' ? 'update' : 'install', consent: { vendorRecipe: state !== 'refused' } });
+      expect(request.success).toBe(true);
+      if (!request.success) return;
+      const started = owner.start(request.data);
+      expect(started).toMatchObject({ ok: true });
+      if (!started.ok) return;
+      const read = await owner.read(DaemonAgentInstallReadRequestSchema.parse({ jobId: started.jobId, cursor: 0, waitForTerminal: true }));
+      expect(read).toMatchObject({ ok: true, done: true });
+      if (!read.ok) return;
+      expect(read.outcome).toMatchObject(state === 'refused'
+        ? { kind: 'failed', code: 'consent_required' } : state === 'failed'
+          ? { kind: 'failed', code: 'install_failed' } : { kind: 'succeeded', version: '2.0.0' });
+      if (state === 'failed') await expect(access(versionFile)).rejects.toMatchObject({ code: 'ENOENT' });
+      else expect(await readFile(versionFile, 'utf8')).toBe(state === 'refused' ? '1.0.0' : '2.0.0');
+    } finally {
+      await stopFixture(owner);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test.skipIf(process.platform === 'win32')('update runs and verifies the existing vendor executable through the canonical update owner', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-job-update-'));

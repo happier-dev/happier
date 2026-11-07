@@ -8,6 +8,7 @@ import {
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
+import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -39,10 +40,12 @@ export type ManagedMachineCreationProgress =
         machineSetup?: NonNullable<ManagedMachineV1['machineSetup']>; retrySetupAvailable?: boolean }>;
 
 export type ManagedMachineCreationResult =
-    | Readonly<{ kind: 'enrolled'; machine: ManagedMachineV1 & { enrolledMachineId: string } }>
+    | Readonly<{ kind: 'enrolled'; machine: ManagedMachineV1 & { enrolledMachineId: string }; agentUpdate?: SessionAgentUpdateNoticeV1 }>
     | Readonly<{ kind: 'pending'; managedId: string }>
     | Readonly<{ kind: 'delete_requested'; managedId: string }>
-    | Readonly<{ kind: 'failed'; code: string }>;
+    | Readonly<{ kind: 'failed'; code: string; agentStartFailure?: Extract<
+        NonNullable<NonNullable<ActionOperationSnapshotV1['error']>['details']>, { kind: 'managedAgentStart' }
+    > }>;
 
 /** Receipt fields disclose consequences; only the strict reviewed effect enters admission. */
 export function buildManagedMachineAcquireInput(
@@ -77,6 +80,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     const execute = input.executeAction ?? createFrontDoorActionExecute();
     let acquisition = input.acquisition;
     let observedOperation: ActionOperationSnapshotV1 | undefined;
+    let agentUpdate: SessionAgentUpdateNoticeV1 | undefined;
     let setupMachine: ManagedMachineV1 | undefined;
     const fail = (code: string, retryInstallationAvailable?: boolean): ManagedMachineCreationResult => {
         const setup = setupMachine ? managedCreationSetup(setupMachine) : null;
@@ -87,7 +91,10 @@ export async function runManagedMachineCreation(input: Readonly<{
             ...(setup ? { machineSetup: setupMachine!.machineSetup,
                 retrySetupAvailable: setup.recoveryActions.includes('retrySetup') } : {}),
         });
-        return { kind: 'failed', code };
+        const details = observedOperation?.error?.details;
+        return { kind: 'failed', code,
+            ...(details && 'kind' in details && details.kind === 'managedAgentStart' ? { agentStartFailure: details } : {}),
+        };
     };
     const current = () => input.isCurrent() && !input.signal.aborted;
     if (!current()) return fail('continuation_retired');
@@ -216,6 +223,7 @@ export async function runManagedMachineCreation(input: Readonly<{
                 || found.operation.scope.accountId !== input.scope.accountId
                 || requesterMachine && !managedMachineOperationMatchesResource(requesterMachine, found.operation)) return fail('operation_scope_mismatch');
             observedOperation = found.operation;
+            if (found.operation.domainRef?.kind === 'managedMachine') agentUpdate = found.operation.domainRef.agentUpdate;
             input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId, operation: found.operation });
             const question = requesterMachine ? readManagedInstallationPromptSnapshot(found.operation) : null;
             if (requesterMachine && question) {
@@ -359,5 +367,5 @@ export async function runManagedMachineCreation(input: Readonly<{
         return { kind: 'pending', managedId: machine.id };
     }
     input.onProgress({ kind: 'ready', managedId: machine.id, machineId: enrolledMachineId });
-    return { kind: 'enrolled', machine: { ...machine, enrolledMachineId } };
+    return { kind: 'enrolled', machine: { ...machine, enrolledMachineId }, ...(agentUpdate ? { agentUpdate } : {}) };
 }

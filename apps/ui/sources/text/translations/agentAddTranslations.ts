@@ -80,7 +80,6 @@ const en = {
     checkedByRegistry: 'Checked by the ACP Registry',
     checkedByRegistryBody:
       'The registry checks that it starts and offers sign-in. It is not signed.',
-    sourceAndLicence: 'Source and licence',
     installsTitle: 'What it installs',
     installsArchive: ({ file }: Readonly<{ file: string }>) => file,
     installsArchiveBody:
@@ -157,8 +156,8 @@ const en = {
     done: 'Done',
   },
   confirm: {
-    title: ({ name, version }: Readonly<{ name: string; version: string }>) =>
-      `Add ${name} ${version}?`,
+    title: ({ name, version }: Readonly<{ name: string; version?: string }>) =>
+      `Add ${name}${version ? ` ${version}` : ''}?`,
     now: ({ machines }: Readonly<{ machines: string }>) =>
       `Downloads now on ${machines}.`,
     firstUse: ({ machines }: Readonly<{ machines: string }>) =>

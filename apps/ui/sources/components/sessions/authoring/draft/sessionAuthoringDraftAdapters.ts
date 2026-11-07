@@ -75,6 +75,7 @@ type ExistingSessionAuthoringSnapshotSession = Pick<
     | 'metadataLayoutVersion'
     | 'metadata'
     | 'ownerMetadataView'
+    | 'composerOptionsInput'
     | 'permissionMode'
     | 'permissionModeUpdatedAt'
     | 'modelMode'
@@ -566,8 +567,9 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
                 : null
         ),
         temporaryComputerActivationRef: source.source.temporaryComputerActivationRef,
-        // A no-folder seed has no folder to remember; any other seed without one keeps the old fallback.
-        directory: resolveNewSessionSourceDirectory(source) ?? (source.source.directoryKind === 'managed' ? '' : '/'),
+        // An unchosen folder stays unresolved so Machine placement can select
+        // that Machine's recent folder or home; a seed must not invent a root.
+        directory: resolveNewSessionSourceDirectory(source) ?? '',
         ...(source.source.directoryKind === 'managed' ? { directoryKind: 'managed' as const } : {}),
         checkoutCreationDraft: source.source.checkoutCreationDraft ?? null,
         organizationPlacement: source.source.organizationPlacement ?? { folderId: null, tagIds: [] },
@@ -1310,6 +1312,7 @@ type SessionSpawnNewInputFromAuthoringParams = Readonly<
          * whole request rather than silently creating an unseeded Session.
          */
         sourceContext?: SessionSpawnSourceContextV1 | null;
+        agentInstallConsent?: SessionSpawnNewInputV2['agentInstallConsent'];
         secretReferenceOverlay?: SecretReferenceOverlayV1;
     }
 >;
@@ -1330,6 +1333,7 @@ function resolveSessionAuthoringCreationInput(params: SessionSpawnNewInputFromAu
             } }
             : {}),
         ...(params.sourceContext ? { sourceContext: params.sourceContext } : {}),
+        ...(params.agentInstallConsent ? { agentInstallConsent: params.agentInstallConsent } : {}),
         ...(params.secretReferenceOverlay ? { secretReferenceOverlay: params.secretReferenceOverlay } : {}),
         ...(params.draft.access?.grants.length ? { initialAccess: params.draft.access } : {}),
         ...(params.draft.initialTriggers?.length ? { initialTriggers: params.draft.initialTriggers } : {}),

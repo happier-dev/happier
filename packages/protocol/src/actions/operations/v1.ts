@@ -8,7 +8,7 @@ import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAcc
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
-import { SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionAgentUpdateNoticeV1Schema, SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -336,6 +336,8 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
   }),
   z.strictObject({ kind: z.literal('spawnAttempt'), id: ActionOperationIdentifierV1Schema }),
   z.strictObject({ kind: z.literal('managedMachine'), id: ActionOperationIdentifierV1Schema,
+    /** The guest Session launched with its runnable CLI while an optional update remains visible. */
+    agentUpdate: z.optional(SessionAgentUpdateNoticeV1Schema),
     /** Enrollment and native boot recovery share this exact retained resource. */
     controller: z.optional(z.lazy(() => ManagedControllerV1Schema)),
     resource: z.optional(z.lazy(() => ManagedResourceV1Schema)),

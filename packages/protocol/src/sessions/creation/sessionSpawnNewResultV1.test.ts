@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   projectSessionSpawnNewActionResultV1,
   readSessionSpawnNewActionResultV1,
@@ -6,8 +6,15 @@ import {
   SessionSpawnNewResultV1Schema,
 } from './sessionSpawnNewResultV1.js';
 import { createProviderErrorV1 } from '../../providers/errors.js';
+import { SessionSpawnNewResultV1Schema as preObservationResultSchema } from './testFixtures/sessionSpawnResultBeforeCommitObservation.js';
 
 describe('Session creation fork files', () => {
+  it('preserves Agent setup recovery identity when an installed Agent needs attention', () => {
+    const failure = { type: 'error', code: 'agent_cli_not_ready', agentId: 'fixture-agent', retryable: false };
+    expect(SessionSpawnNewResultV1Schema.parse(failure)).toEqual(failure);
+    expect(SessionSpawnNewActionResultV1Schema.parse(failure)).toEqual(failure);
+  });
+
   it('preserves only canonical content-free runtime causes on launch failures', () => {
     const legacy = { type: 'error', code: 'spawn_failed', retryable: true,
       launchError: { kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK', message: 'Runner exited' } };
@@ -27,6 +34,56 @@ describe('Session creation fork files', () => {
     }
   });
 
+  it('bounds child exit diagnostics without a platform TextEncoder', () => {
+    vi.stubGlobal('TextEncoder', undefined);
+    try {
+      const result = { type: 'error', code: 'spawn_failed', retryable: true,
+        launchError: { kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK', message: 'Runner exited',
+          childExit: { code: null, signal: 'SIGTERM', stderrHead: '🙂'.repeat(512) } } };
+      expect(SessionSpawnNewResultV1Schema.parse(result)).toEqual(result);
+      expect(SessionSpawnNewResultV1Schema.safeParse({ ...result,
+        launchError: { ...result.launchError, childExit: { ...result.launchError.childExit,
+          stderrHead: `${result.launchError.childExit.stderrHead}🙂` } } }).success).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('preserves optional closed child exit presentation while accepting legacy launch failures', () => {
+    const legacy = { type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK', message: 'Runner exited' } };
+    expect(SessionSpawnNewResultV1Schema.parse(legacy)).toEqual(legacy);
+    const childExit = { code: null, signal: 'SIGTERM', stderrHead: 'Cannot find module [REDACTED]',
+      cause: { kind: 'module_not_found', specifierBasename: 'nacl-fast.js' } };
+    const current = { ...legacy, launchError: { ...legacy.launchError, childExit } };
+    expect(SessionSpawnNewResultV1Schema.parse(current)).toEqual(current);
+    expect(SessionSpawnNewActionResultV1Schema.parse(current)).toEqual(current);
+    const unicode = { ...current, launchError: { ...current.launchError,
+      childExit: { ...childExit, cause: { ...childExit.cause, specifierBasename: '缺少.js' } } } };
+    expect(SessionSpawnNewResultV1Schema.parse(unicode)).toEqual(unicode);
+    for (const invalid of [
+      { ...childExit, cwd: '/private/person' },
+      { ...childExit, cause: { ...childExit.cause, specifierBasename: '/private/nacl-fast.js' } },
+      { ...childExit, stderrHead: '🙂'.repeat(2_048) },
+    ]) {
+      expect(SessionSpawnNewResultV1Schema.safeParse({ ...legacy,
+        launchError: { ...legacy.launchError, childExit: invalid } }).success).toBe(false);
+    }
+  });
+
+  it('carries committed Session proof only on an accepted pending receipt', () => {
+    const accepted = { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId: 'session-1',
+      operation: { serverId: 'home', machineId: 'machine', operationId: 'operation' } };
+    expect(SessionSpawnNewResultV1Schema.parse(accepted)).toEqual(accepted);
+    expect(SessionSpawnNewActionResultV1Schema.parse(accepted)).toEqual(accepted);
+    expect(preObservationResultSchema.safeParse(accepted).success).toBe(false);
+    const { sessionId: _committedProof, ...legacyPending } = accepted;
+    expect(preObservationResultSchema.parse(legacyPending)).toEqual(legacyPending);
+    expect(SessionSpawnNewResultV1Schema.safeParse({ ...accepted, outcome: 'unknown' }).success).toBe(false);
+    expect(SessionSpawnNewActionResultV1Schema.safeParse({ ...accepted, outcome: 'unknown' }).success).toBe(false);
+    expect(SessionSpawnNewResultV1Schema.parse({ type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }))
+      .not.toHaveProperty('sessionId');
+  });
   it('projects the public Action section vocabulary and restores the internal placement', () => {
     const internal = SessionSpawnNewResultV1Schema.parse({
       type: 'success', disposition: 'created', sessionId: 'session-1',

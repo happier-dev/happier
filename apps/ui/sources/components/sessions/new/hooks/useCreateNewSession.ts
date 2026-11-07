@@ -7,7 +7,7 @@ import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 import { Modal } from '@/modal';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
-import { presentMachineAgentStartRefusal } from '@/components/machines/agents/presentMachineAgentStartRefusal';
+import { presentMachineAgentStartRefusal, presentMachineAgentUpdateNotice } from '@/components/machines/agents/presentMachineAgentStartRefusal';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { confirmAgentInstallChange } from '@/components/settings/agents/install/agentInstallChangeConfirm';
 import { readMachineAgentsForScope, type MachineAgentsSnapshot } from '@/agents/machineAgents/useMachineAgents';
@@ -62,7 +62,7 @@ import type { AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/m
 import type { ComposerSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
 import type { RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import type { SessionSpawnNewInitialInputV1, SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import type { SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionAgentUpdateNoticeV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { awaitManualSessionSpawnOperation, readManualSessionSpawnOperation } from '@/sync/domains/session/spawn/manualSessionSpawnOperation';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import type { SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -709,6 +709,7 @@ export function useCreateNewSession(params: Readonly<{
         };
         const settings = storage.getState().settings;
         let managedCreation: SessionManagedCreationV1 | undefined;
+        let managedAgentUpdate: SessionAgentUpdateNoticeV1 | undefined;
         let agentInstallConsent: SessionSpawnNewInputV2['agentInstallConsent'];
         const collectAgentInstallConsent = async (machineName: string, knownAgents?: MachineAgentsSnapshot): Promise<boolean> => {
             if (agentInstallConsent?.vendorRecipe) return true;
@@ -935,6 +936,7 @@ export function useCreateNewSession(params: Readonly<{
                 }
                 managedCreation = { homeId: result.machine.homeId, managedId: result.machine.id,
                     controller: result.machine.controller };
+                managedAgentUpdate = result.agentUpdate;
                 await onManagedMachineEnrolled(result.machine.enrolledMachineId, cancellation.signal);
                 const enrolled = latestParamsRef.current;
                 if (!isCurrent() || enrolled.selectedMachineId !== result.machine.enrolledMachineId
@@ -2208,6 +2210,14 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 createdSessionId = actionResult.result.sessionId;
+                const agentUpdate = actionResult.result.agentUpdate ?? managedAgentUpdate;
+                if (agentUpdate) {
+                    presentMachineAgentUpdateNotice({
+                        status: agentUpdate.status,
+                        agentTitle: resolveAgentCatalogProjection(agentUpdate.agentId, { enabledAgentIds: [] }).title,
+                        machineName: current.selectedMachine ? getMachineSentenceName(current.selectedMachine) : selectedMachineId,
+                    });
+                }
                 initialInputLocalId = (
                     actionResult.result.initialInput.status === 'accepted'
                     || actionResult.result.initialInput.status === 'alreadyAccepted'

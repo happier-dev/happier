@@ -200,11 +200,12 @@ export async function runObservedWorkflowSessionStartup(
                   ...(args.agentInstallConsent === undefined ? {} : { consent: args.agentInstallConsent }),
                   invoke: args.invokeAgentReadinessAction, signal: operation.signal,
                 });
-                if (readiness) return readiness.result;
+                if (readiness && 'result' in readiness) return readiness.result;
                 const created = await create();
                 return { type: 'success', disposition: created.disposition, sessionId: created.sessionId,
                   executionTarget: { serverId: host.serverId, machineId: host.machineId },
-                  organizationPlacement: created.organizationPlacement, initialInput: created.initialInput };
+                  organizationPlacement: created.organizationPlacement, initialInput: created.initialInput,
+                  ...(readiness ? { agentUpdate: readiness.agentUpdate } : {}) };
               },
             });
             const prepared = await executor.prepare('session.spawn_new', actionInput, {
@@ -224,7 +225,8 @@ export async function runObservedWorkflowSessionStartup(
             if (!created.success || created.data.type !== 'success') {
               throw new WorkflowSessionCompositionError('workflow_session_startup_unavailable');
             }
-            return { ok: true, result: { sessionId: created.data.sessionId } };
+            return { ok: true, result: { sessionId: created.data.sessionId,
+              ...(created.data.agentUpdate ? { agentUpdate: created.data.agentUpdate } : {}) } };
           } catch (error) {
             try { await host.cleanupOnFailure(); } catch { /* Preserve the original startup refusal. */ }
             if (operation.signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };

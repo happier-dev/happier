@@ -57,6 +57,7 @@ export function normalizeSpawnSessionNonceResolution(value: unknown): SpawnSessi
     const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
     if (!errorCode.success || !errorMessage) return { status: 'not_found' };
     const agentPrecondition = errorCode.data === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
+      || errorCode.data === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_NOT_READY
       || errorCode.data === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT;
     const errorDetail = isSpawnSessionErrorDetail(record.errorDetail) ? record.errorDetail : undefined;
     const agentRuntimeRefusal = errorCode.data === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED

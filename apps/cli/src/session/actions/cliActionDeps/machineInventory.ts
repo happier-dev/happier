@@ -12,6 +12,8 @@ import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, DaemonTerminalCloseResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import type { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 export function createCliMachineInventoryActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
   { callMachineAction, inventoryDeps }: Readonly<{
@@ -46,8 +48,10 @@ export function createCliMachineInventoryActionDeps(
       }
       try {
         const readInventory = async () => {
+          const readinessAction = readSessionAgentReadinessChildActionV1(
+            context.externalActionExecutionAuthorization?.binding, readHostAdmittedReviewedChildV1(context) ?? undefined);
           const protectedRequest = context.externalActionCredential || context.externalActionExecutionAuthorization
-            ? { context, effectActionId: context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.list' } : {};
+            ? { context, effectActionId: readinessAction ?? context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.list' } : {};
           if (args.draftDefinitions) {
             const definitions = args.definitionId
               ? args.draftDefinitions.filter(definition => definition.definitionId === args.definitionId) : args.draftDefinitions;

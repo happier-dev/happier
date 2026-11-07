@@ -362,6 +362,20 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     settle(job, result);
   };
 
+  function read(input: DaemonAgentInstallReadRequest & { waitForTerminal: true }, requestedAccountId?: string): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
+  function read(input: DaemonAgentInstallReadRequest & { waitForTerminal?: false }, requestedAccountId?: string): DaemonAgentInstallReadResponse;
+  function read(input: DaemonAgentInstallReadRequest, requestedAccountId?: string): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
+  function read(input: DaemonAgentInstallReadRequest, requestedAccountId = accountId): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse> {
+    if (!DaemonAgentInstallReadRequestSchema.safeParse(input).success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install read request.' };
+    const job = jobs.get(input.jobId);
+    if (!job || job.accountId && requestedAccountId !== undefined && job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
+    if (input.cursor > job.events.length) return { ok: false, errorCode: 'invalid_request', error: 'Install cursor is beyond the available events.' };
+    const snapshot = (): DaemonAgentInstallReadResponse => ({ ok: true, events: structuredClone(job.events.slice(input.cursor)), nextCursor: job.events.length,
+      steps: structuredClone(job.snapshot.steps), progress: structuredClone(job.snapshot.progress),
+      done: job.snapshot.done, outcome: structuredClone(job.snapshot.outcome) });
+    return input.waitForTerminal ? job.completion.then(snapshot) : snapshot();
+  }
+
   return {
     activity,
     isDefinitionJob(jobId: string): boolean { return jobs.get(jobId)?.snapshot.definitionId !== undefined; },
@@ -445,15 +459,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       notifyActivity();
       return { ok: true, jobId: job.snapshot.jobId };
     },
-    read(input: DaemonAgentInstallReadRequest, requestedAccountId = accountId): DaemonAgentInstallReadResponse {
-      if (!DaemonAgentInstallReadRequestSchema.safeParse(input).success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install read request.' };
-      const job = jobs.get(input.jobId);
-      if (!job || job.accountId && requestedAccountId !== undefined && job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
-      if (input.cursor > job.events.length) return { ok: false, errorCode: 'invalid_request', error: 'Install cursor is beyond the available events.' };
-      return { ok: true, events: structuredClone(job.events.slice(input.cursor)), nextCursor: job.events.length,
-        steps: structuredClone(job.snapshot.steps), progress: structuredClone(job.snapshot.progress),
-        done: job.snapshot.done, outcome: structuredClone(job.snapshot.outcome) };
-    },
+    read,
     async cancel(input: DaemonAgentInstallCancelRequest, requestedAccountId = accountId): Promise<DaemonAgentInstallCancelResponse> {
       if (!DaemonAgentInstallCancelRequestSchema.safeParse(input).success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install cancellation request.' };
       const job = jobs.get(input.jobId);

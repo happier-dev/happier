@@ -1,15 +1,13 @@
 import { completeActionResult } from '../resultProjection.js';
-import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema, MachinesAgentsSignInCancelInputSchema } from '../../../daemon/agentSignIn.js';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '../../../daemon/agentInstallJobs.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../../scm/diffSummary.js';
 import { resolveActionBackendTargetSelection } from '../../resolveActionBackendTargetSelection.js';
 import { readOptionalString } from '../inputReading.js';
-import { AgentInventoryProbeInputSchema } from '../../actionSpecs.js';
+import { AgentInventoryProbeInputSchema, type AdmittedActionInputById } from '../../actionSpecs.js';
 import { buildAgentInventorySelectionArgs } from '../../../inputs/inputOptions.js';
 import { resolveProfileSkillSeedsAtAdmissionV1 } from '../agentStartAdmission.js';
-import { SessionCapabilitiesGetInputV1Schema, SessionCapabilitiesGetOutputV1Schema, SessionCapabilitiesSetInputV1Schema, SessionCapabilitiesSetOutputV1Schema, SpawnCapabilitiesPreviewInputV1Schema, SpawnCapabilitiesPreviewOutputV1Schema } from '../../specs/sessionCapabilities.js';
+import { SessionCapabilitiesGetOutputV1Schema, SessionCapabilitiesSetOutputV1Schema, SpawnCapabilitiesPreviewInputV1Schema, SpawnCapabilitiesPreviewOutputV1Schema } from '../../specs/sessionCapabilities.js';
 import { setSessionCapabilityV1 } from '../sessionCapabilities.js';
-import { SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS } from '../../sessionAgentTransitionActionFamily.js';
 import { resolveServerIdForSession } from '../sessionScope.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
@@ -31,7 +29,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
 
         if (actionId === 'machines.agents.signIn.start') {
           if (!deps.machineAgentSignInStart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-          const request = MachinesAgentsSignInStartInputSchema.parse(parsed.data);
+          const request = parsed.data as AdmittedActionInputById[typeof actionId];
           return completeActionResult(await deps.machineAgentSignInStart({ ...request,
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
           }), { treatReturnedErrorEnvelopeAsFailure: true });
@@ -39,14 +37,14 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
         if (actionId === 'machines.agents.signIn.status') {
           if (!deps.machineAgentSignInStatus) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           return completeActionResult(await deps.machineAgentSignInStatus({
-            ...MachinesAgentsSignInStatusInputSchema.parse(parsed.data),
+            ...(parsed.data as AdmittedActionInputById[typeof actionId]),
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
           }, ctx));
         }
         if (actionId === 'machines.agents.signIn.cancel' || actionId === 'machines.agents.signIn.restart') {
           const operation = actionId === 'machines.agents.signIn.cancel' ? deps.machineAgentSignInCancel : deps.machineAgentSignInRestart;
           if (!operation) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-          return completeActionResult(await operation({ ...MachinesAgentsSignInCancelInputSchema.parse(parsed.data),
+          return completeActionResult(await operation({ ...(parsed.data as AdmittedActionInputById[typeof actionId]),
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
           }), { treatReturnedErrorEnvelopeAsFailure: true });
         }
@@ -60,15 +58,18 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
           });
           return completeActionResult(await deps.machineAgentInstallStart({
             ...request, machineId: String(data.machineId),
+            context: ctx, effectActionId: actionId,
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           }), { treatReturnedErrorEnvelopeAsFailure: true });
         }
         if (actionId === 'machines.agents.install.status') {
           if (!deps.machineAgentInstallRead) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-          const request = DaemonAgentInstallReadRequestSchema.parse({ jobId: data.jobId, cursor: data.cursor ?? 0 });
+          const request = DaemonAgentInstallReadRequestSchema.parse({ jobId: data.jobId, cursor: data.cursor ?? 0,
+            ...(data.waitForTerminal === undefined ? {} : { waitForTerminal: data.waitForTerminal }) });
           return completeActionResult(await deps.machineAgentInstallRead({
             ...request, machineId: String(data.machineId),
+            context: ctx, effectActionId: actionId,
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           }), { treatReturnedErrorEnvelopeAsFailure: true });
@@ -180,6 +181,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
             ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.includeUnavailable === 'boolean' ? { includeUnavailable: data.includeUnavailable } : {}),
+            ...(typeof data.includeDefaults === 'boolean' ? { includeDefaults: data.includeDefaults } : {}),
           }, ctx);
           return completeActionResult(res);
         }
@@ -195,12 +197,12 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
         if (actionId === 'session.capabilities.get') {
           if (!deps.sessionCapabilitiesGet) return completeActionResult({ ok: false, code: 'session_unavailable' });
           return completeActionResult(SessionCapabilitiesGetOutputV1Schema.parse(await deps.sessionCapabilitiesGet(
-            SessionCapabilitiesGetInputV1Schema.parse(parsed.data), ctx)));
+            parsed.data as AdmittedActionInputById[typeof actionId], ctx)));
         }
         if (actionId === 'session.capabilities.set') {
           if (!deps.sessionCapabilities) return completeActionResult({ ok: false, code: 'session_unavailable' });
           return completeActionResult(SessionCapabilitiesSetOutputV1Schema.parse(await setSessionCapabilityV1({
-            port: deps.sessionCapabilities, request: SessionCapabilitiesSetInputV1Schema.parse(parsed.data), context: ctx,
+            port: deps.sessionCapabilities, request: parsed.data as AdmittedActionInputById[typeof actionId], context: ctx,
           })));
         }
         if (actionId === 'sessions.spawn.mcp_servers.preview') {
@@ -226,7 +228,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
 
         if (actionId === 'session.continuation.inspect') {
           if (!deps.sessionContinuationInspect) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-          const input = SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS[actionId].parse(parsed.data);
+          const input = parsed.data as AdmittedActionInputById[typeof actionId];
           const serverId = resolveServerIdForSession(deps, ctx, input.sessionId);
           return completeActionResult(await deps.sessionContinuationInspect({ input, context: ctx,
             ...(serverId ? { serverId } : {}),

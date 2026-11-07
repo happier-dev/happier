@@ -8,18 +8,25 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
     WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
     verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
-    hasCurrentExternalActionSessionSource, readCurrentWorkspaceSyncSeedAuthorization, verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
+    hasCurrentExternalActionSessionSource, readCurrentWorkspaceSyncSeedAuthorization, verifyExternalActionMachineRpcExecution,
+    resolveReceivingMachineRpcAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
+import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { inTx } from '@/storage/inTx';
 import { db } from '@/storage/db';
 import { RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { hasCurrentSessionScopedMachineAccessInTx } from '@/app/api/socket/sessionScopedBinding';
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
+import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import { auth } from '@/app/auth/auth';
+import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
+import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import type { Fastify } from '../../types';
 
 /** Rechecks existing installation-signed RPC or requester Session facts; never issues an admission credential. */
@@ -67,10 +74,13 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             }
             const current = await resolveMachineAdmission({ actorAccountId: request.userId, machineId: machine.id, requiredRole: 'manage' });
             const session = await db.session.findUnique({ where: { id: sessionDecision.sessionId }, select: { accountId: true } });
+            const committedTarget = await readCurrentCommittedSessionInputMachineTargetInTx(db, sessionDecision.sessionId);
+            const currentSessionMachineId = committedTarget?.accountId === request.userId
+                ? committedTarget.machineId
+                : await app.resolveCurrentSessionMachine?.({ accountId: request.userId, sessionId: sessionDecision.sessionId });
             if (current.kind !== 'admitted' || current.installationId !== context.installationId
                 || current.encryptionMode !== context.encryptionMode || session?.accountId !== request.userId
-                || !app.resolveCurrentSessionMachine
-                || await app.resolveCurrentSessionMachine({ accountId: request.userId, sessionId: sessionDecision.sessionId }) !== machine.id) {
+                || currentSessionMachineId !== machine.id) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             if (!await auth.isSignedCredentialCurrent(db, sessionDecision.actor.accountId, sessionDecision.authentication.tokenEpoch)) {
@@ -89,16 +99,28 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             }
             return reply.send({ v: 1, ok: true });
         }
-        if (workspaceSyncSourceExecution?.originalActionEnvelope) {
+        if (workspaceSyncSourceExecution?.originalActionEnvelope || workspaceSyncSourceExecution?.externalActionExecution.deploymentChildExecution) {
             const packet = workspaceSyncSourceExecution;
+            const archiveMethod = packet.externalActionExecution.deploymentChildExecution
+                ? readDeploymentArchiveRpcEffectV1(method.slice(method.indexOf(':') + 1)) : null;
             if (!callerInputAuthorization || !(callerInputAuthorization.binding.actionId === 'projects.service.relocate'
+                || readSessionAgentReadinessChildActionV1(callerInputAuthorization.binding,
+                    packet.externalActionExecution.reviewedChild, context) === packet.externalActionExecution.effectActionId
+                || (callerInputAuthorization.binding.deploymentChildRoot === true)
+                    && (packet.externalActionExecution.deploymentChildRouting !== undefined
+                        && method === `${request.params.id}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}` || archiveMethod !== null)
                 || callerInputAuthorization.binding.actionId === 'discussion.second_opinion.start'
                     && packet.externalActionExecution.effectActionId === 'session.spawn_new'
                     && (method === `${request.params.id}:${RPC_METHODS.SESSION_SPAWN_NEW}`
-                      || method === `${request.params.id}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
+                      || method === `${request.params.id}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`)
+                || isSessionStopChildRootV1(callerInputAuthorization.binding.actionId)
+                    && method === `${request.params.id}:${RPC_METHODS.STOP_SESSION}`
+                    && isSessionStopChildV1({ rootActionId: callerInputAuthorization.binding.actionId,
+                        effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.STOP_SESSION,
+                        target: packet.externalActionExecution.target, params: packet.params }))
                 || !isDeepStrictEqual(packet.externalActionExecution.authorization, callerInputAuthorization)
                 || packet.method !== method || !method.startsWith(`${request.params.id}:`)
-                || context.machineId !== request.params.id || context.actorAccountId !== callerInputAuthorization.binding.accountId
+                || context.machineId !== request.params.id
                 || purpose || custodySubjectAccountId || workspaceSyncSourceRouting || workspaceSyncTargetRouting || writerRouting || workspaceSyncSeedRouting) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
@@ -109,15 +131,40 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || !verifyMachineInstallationProof({ payload: { version: 1, machineId: receiver.id,
                     installationId: receiver.installationId, accountId: request.userId,
                     rpcAdmission: { context, method, callerInputAuthorization, workspaceSyncSourceExecution: packet } },
-                    proof, publicKey: encodeBase64(receiver.installationPublicKey, 'base64url') })
-                || !await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
-                    method: packet.method, requestId: packet.requestId, params: packet.params,
-                    originalActionEnvelope: packet.originalActionEnvelope, resolveCurrentSessionMachine: app.resolveCurrentSessionMachine })) {
+                    proof, publicKey: encodeBase64(receiver.installationPublicKey, 'base64url') })) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const current = await resolveMachineAdmission({ actorAccountId: context.actorAccountId, machineId: receiver.id, requiredRole: context.role });
+            const verified = await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
+                    method: packet.method, requestId: packet.requestId, params: packet.params,
+                    originalActionEnvelope: packet.originalActionEnvelope, resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
+            if (!verified || context.actorAccountId !== (verified.deploymentChildSigner?.custodianAccountId ?? verified.binding.accountId)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            if (verified.sessionAgentReadinessAdmission) {
+                const { kind: _kind, ...expected } = verified.sessionAgentReadinessAdmission;
+                return isDeepStrictEqual(context, expected) ? reply.send({ v: 1, ok: true })
+                    : reply.code(403).send({ error: 'access_denied' });
+            }
+            if (archiveMethod && verified.deploymentChildCodecAdmission) {
+                const expected = { ...verified.deploymentChildCodecAdmission, actorAccountId: context.actorAccountId, role: 'use' as const };
+                return isDeepStrictEqual(context, expected) ? reply.send({ v: 1, ok: true })
+                    : reply.code(403).send({ error: 'access_denied' });
+            }
+            const child = verified.deploymentChildAdmission;
+            if (child && child.routing.kind !== 'prepare' && child.routing.kind !== 'review' && child.routing.kind !== 'domainDiscover'
+                && (child.routing.kind !== 'domain' || child.routing.actionId !== 'deployments.domains.verify')) {
+                // This exact job was already admitted above. The receiver proves
+                // its own installation; the original requester is attribution.
+                return reply.send({ v: 1, ok: true });
+            }
+            const current = await resolveMachineAdmission({ actorAccountId: context.actorAccountId, machineId: receiver.id,
+                callerAuthority: verified.effectiveAuthority, sessionActionOrigin: verified.binding.sessionActionOrigin,
+                executionBinding: verified.binding,
+                operationRpcMethod: method.slice(method.indexOf(':') + 1),
+                ...(archiveMethod ? { rpcMethod: method.slice(method.indexOf(':') + 1) } : { requiredRole: context.role }) });
             if (current.kind !== 'admitted' || current.installationId !== context.installationId
-                || current.custodianAccountId !== context.custodianAccountId || current.encryptionMode !== context.encryptionMode) {
+                || current.custodianAccountId !== context.custodianAccountId || current.encryptionMode !== context.encryptionMode
+                || archiveMethod && current.role !== context.role) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             return reply.send({ v: 1, ok: true });
@@ -126,7 +173,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
             release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE };
         if (workspaceSyncSeedRouting) {
-            if (!callerInputAuthorization || !workspaceSyncSourceExecution || purpose || custodySubjectAccountId
+            if (!callerInputAuthorization || purpose || custodySubjectAccountId
                 || workspaceSyncSourceRouting || workspaceSyncTargetRouting || writerRouting
                 || !isDeepStrictEqual(context, workspaceSyncSeedRouting.sourceWriterTarget.source.sourceContext.machineAdmission)) {
                 return reply.code(403).send({ error: 'access_denied' });
@@ -151,7 +198,12 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
+            const receivingMachineAdmission = signer.id === destination.id ? await resolveReceivingMachineRpcAdmission({
+                actorAccountId: admitted.verified.binding.accountId, rpcMethod: method.slice(method.indexOf(':') + 1),
+                receiver: { machineId: destination.id, installationId: destination.installationId },
+                admitted: admitted.receivingMachineAdmission }) : null;
+            return reply.send({ v: 1, ok: true, ...(receivingMachineAdmission ? { receivingMachineAdmission } : {}),
+                destinationInstallation: { machineId: destination.id,
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
         }
         if (!writerRouting && (workspaceSyncSourceExecution || workspaceSyncSourceRouting?.originalActionEnvelope)) {
@@ -193,7 +245,12 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             if (!destination?.installationId || !destination.installationPublicKey
                 || destination.installationId !== admitted.route.parentInstallationId
                 || classifyMachineAvailabilityState(destination) !== 'available') return reply.code(403).send({ error: 'access_denied' });
-            return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
+            const receivingMachineAdmission = await resolveReceivingMachineRpcAdmission({
+                actorAccountId: admitted.verified.binding.accountId, rpcMethod: method.slice(method.indexOf(':') + 1),
+                receiver: { machineId: destination.id, installationId: destination.installationId },
+                admitted: admitted.receivingMachineAdmission });
+            return reply.send({ v: 1, ok: true, ...(receivingMachineAdmission ? { receivingMachineAdmission } : {}),
+                destinationInstallation: { machineId: destination.id,
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
         }
         if (writerRouting) {
@@ -288,8 +345,11 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         const childRootPath = workspaceSyncSourceRouting?.sourceRootPath ?? workspaceSyncTargetRouting?.targetRootPath;
         const isWorkspaceSyncChildRelease = isWorkspaceSyncChild && (workspaceSyncRouting?.phase === 'commit'
             || workspaceSyncRouting?.phase === 'abort' || workspaceSyncRouting?.phase === 'release');
+        const requester = { callerAuthority: workspaceSyncContext?.callerAuthority
+                ?? readTeamOperationAuthenticationFromRequest(request).authenticationAuthority,
+            sessionActionOrigin: workspaceSyncContext?.sessionActionOrigin };
         if ((!isWorkspaceSyncChild && context.machineId !== request.params.id)
-            || request.userId !== context.custodianAccountId
+            || !isWorkspaceSyncChild && request.userId !== context.custodianAccountId
             || (isRequesterSessionCurrentness
                 ? request.body.method !== undefined || custodySubjectAccountId !== undefined
                     || workspaceSyncSourceRouting !== undefined || workspaceSyncTargetRouting !== undefined
@@ -307,13 +367,13 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         const machine = await db.machine.findUnique({ where: { id: request.params.id },
             select: { accountId: true, installationId: true, installationPublicKey: true } });
         if (!machine
-            || machine.accountId !== context.custodianAccountId
+            || machine.accountId !== request.userId
             || !machine.installationId
             || (!isWorkspaceSyncChild && machine.installationId !== context.installationId)
             || !machine.installationPublicKey
             || !verifyMachineInstallationProof({
                 payload: { version: 1, machineId: request.params.id, installationId: machine.installationId,
-                    accountId: context.custodianAccountId, rpcAdmission: { context,
+                    accountId: machine.accountId, rpcAdmission: { context,
                         ...(purpose ? { purpose } : { method }),
                         ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),
                         ...(workspaceSyncTargetRouting ? { workspaceSyncTargetRouting } : {}),
@@ -328,11 +388,16 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             || !await verifyWorkspaceSyncHandoffSourceAuthorization(callerInputAuthorization, workspaceSyncSourceRouting, app.resolveCurrentSessionMachine))) {
             return reply.code(403).send({ error: 'access_denied' });
         }
-        const current = await resolveMachineAdmission({ actorAccountId: isWorkspaceSyncChildRelease
+        const current = callerInputAuthorization?.binding.handoffAdmission
+            ? await readAdmittedExternalActionHandoffMachineInTx(db, callerInputAuthorization.binding, context.machineId, context)
+            : await resolveMachineAdmission({ actorAccountId: isWorkspaceSyncChildRelease
             ? context.custodianAccountId : context.actorAccountId,
+            ...requester,
             machineId: context.machineId,
+            operationRpcMethod: method.slice(prefix.length),
+            ...(isRequesterSessionCurrentness ? { actionId: 'session.open' } : {}),
             ...(isWorkspaceSyncChild || isRequesterSessionCurrentness ? { requiredRole: 'use' as const } : { rpcMethod: method.slice(prefix.length) }) });
-        if (current.kind !== 'admitted'
+        if (!current || current.kind !== 'admitted'
             || current.custodianAccountId !== context.custodianAccountId
             || current.installationId !== context.installationId
             || current.encryptionMode !== context.encryptionMode
@@ -345,7 +410,8 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 if (!await hasCurrentSessionScopedMachineAccessInTx({ tx,
                     accountId: context.actorAccountId, machineId: context.machineId, sessionId: purpose.sessionId })) return false;
                 const final = await resolveMachineAdmissionInTx(tx, { actorAccountId: context.actorAccountId,
-                    machineId: context.machineId, requiredRole: context.role });
+                    ...requester,
+                    machineId: context.machineId, requiredRole: context.role, actionId: 'session.open' });
                 return final.kind === 'admitted' && final.custodianAccountId === context.custodianAccountId
                     && final.installationId === context.installationId && final.encryptionMode === context.encryptionMode;
             });
@@ -354,11 +420,14 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         if (workspaceSyncRouting && childMachineId && childRootPath) {
             const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, {
                 accountServerId: workspaceSyncRouting.accountServerId,
+                operation: { actorAccountId: isWorkspaceSyncChildRelease ? context.custodianAccountId : context.actorAccountId,
+                    ...requester,
+                    rpcMethod: method.slice(prefix.length) },
                 childMachineId, childRootPath,
                 parentMachineId: request.params.id,
                 releaseOnly: isWorkspaceSyncChildRelease,
             });
-            if (!route || route.custodianAccountId !== context.custodianAccountId
+            if (!route || route.custodianAccountId !== machine.accountId
                 || route.parentInstallationId !== machine.installationId) {
                 return reply.code(403).send({ error: 'access_denied' });
             }

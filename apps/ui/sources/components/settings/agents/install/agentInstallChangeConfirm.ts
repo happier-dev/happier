@@ -8,7 +8,7 @@ import { formatAgentNameList } from '@/components/capabilities/identity/agentNam
 /** What an agent install changes, in the words of the one confirm (P9 row 21a, D22). */
 export type AgentInstallChange = Readonly<{
   name: string;
-  version: string;
+  version?: string;
   /** Machines downloading as soon as the person confirms. */
   nowMachines: readonly string[];
   /** Machines that download it the first time a session uses it. */

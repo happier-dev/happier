@@ -1,4 +1,4 @@
-import type { ManagedAgentIsolationFailureDetailsV1, ManagedBootstrapFailureDetailsV1, ManagedControllerRequestFailureDetailsV1, ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ManagedMachineFailureDetailsV1, ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { projectActionFailureCauseV1,
     type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -6,7 +6,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 export class ManagedMachineControllerError extends Error {
     constructor(readonly code: string, readonly status?: number,
-        readonly details?: ManagedControllerRequestFailureDetailsV1 | ManagedNativeFailureDetailsV1 | ManagedBootstrapFailureDetailsV1 | ManagedAgentIsolationFailureDetailsV1,
+        readonly details?: ManagedMachineFailureDetailsV1,
         readonly failureCause?: ActionFailureCauseV1) {
         super(code);
         this.name = 'ManagedMachineControllerError';

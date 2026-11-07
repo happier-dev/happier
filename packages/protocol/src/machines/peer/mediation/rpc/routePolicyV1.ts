@@ -5,8 +5,9 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
 import { resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
-import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
-import type { ExternalActionExecutionAuthorizationV1 } from '../../../../actions/externalActionApi.js';
+import { MANAGED_MACHINE_ACTION_IDS_V1, SESSION_AGENT_READINESS_CHILDREN_V1, readSessionAgentReadinessChildActionV1 } from '../../../managed/actionIdsV1.js';
+export { readSessionAgentReadinessChildActionV1 } from '../../../managed/actionIdsV1.js';
+import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../../../../actions/externalActionApi.js';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
@@ -398,6 +399,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT, 'The installed Computer owner admits one authenticated person to their exact personal source occurrence before grant minting.', 'use', undefined, true),
   directEphemeral(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START, 'Start the existing capture relay only for the exact personal source and viewer in the signed Home admission. Older receivers lack this scoped method.', 'use', undefined, true),
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, 'Session-filtered browser view discovery projects the daemon control owner and live capture readiness without server persistence or mutation.', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH, 'Session-filtered browser discovery parks on native view membership changes at the same daemon control owner, with cancellation and no periodic reads.', 'use'),
   ...([RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
     RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY, RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY] as const).map(method => (directEphemeral(method,
       'Private native browser login exchange. Manage grants access to the Machine OS user and its browser stores.', 'manage') satisfies MachineRpcRoutePolicyV1)),
@@ -1144,7 +1146,16 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
 /** Proof-aware effect projection; raw resume never becomes public fresh-spawn input. */
 export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
-  selectedTarget?: Readonly<{ machineId: string; installationId: string }>): string | null {
+  selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
+  reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
+  const readiness = readSessionAgentReadinessChildActionV1(binding, reviewedChild, selectedTarget);
+  if (readiness) {
+    if (readiness === SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action) {
+      return method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE || method === RPC_METHODS.CAPABILITIES_DETECT ? readiness : null;
+    }
+    return readiness === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
+      || readiness === SESSION_AGENT_READINESS_CHILDREN_V1.status.action && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? readiness : null;
+  }
   if (binding?.actionId === 'machines.agents.list'
     && (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
       || method === RPC_METHODS.CAPABILITIES_DETECT)) {

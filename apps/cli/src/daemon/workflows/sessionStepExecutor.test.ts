@@ -117,7 +117,7 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-function installSessionCreationTransport(events?: string[], agentMissing = false) {
+function installSessionCreationTransport(events?: string[], agentMissing = false, agentOutdated = false) {
   // Only filesystem readiness, Home HTTP and exact-machine process transport
   // are replaced. Target preparation, creator, nonce settlement and schemas run.
   vi.spyOn(fs, 'access').mockResolvedValue(undefined);
@@ -137,8 +137,8 @@ function installSessionCreationTransport(events?: string[], agentMissing = false
     }
     if (method === RPC_METHODS.CAPABILITIES_DETECT) {
       return { protocolVersion: 1, results: Object.fromEntries(agentIds.map(id => [`cli.${id}`, {
-        ok: true, checkedAt: 1, data: { installed: !agentMissing, version: null, latestVersion: null,
-          update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+        ok: true, checkedAt: 1, data: { installed: !agentMissing, version: agentOutdated ? '1.2.3' : null, latestVersion: agentOutdated ? '1.2.4' : null,
+          update: { supported: agentOutdated, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
           platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
       }])) };
     }
@@ -588,11 +588,14 @@ describe('workflow Session step executor', () => {
     { name: 'swapped Agent install operand', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install', tamper: 'operand' },
     { name: 'swapped Agent install origin request', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install', tamper: 'origin' },
     { name: 'refused Agent install before Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'refused' },
+    { name: 'pending optional Agent update does not hold Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: 'update' },
+    { name: 'optional update status review does not hold Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: 'update-status' },
   ] as const)('admits native Workflow Session profile selection: $name', async testCase => {
     const { approvalProfileId, review } = testCase;
     const readinessEvents: string[] = [];
     const launches = installSessionCreationTransport(readinessEvents, 'readiness' in testCase
-      && (testCase.readiness === 'install' || testCase.readiness === 'refused'));
+      && (testCase.readiness === 'install' || testCase.readiness === 'refused'),
+      'readiness' in testCase && (testCase.readiness === 'update' || testCase.readiness === 'update-status'));
     if ('readiness' in testCase && testCase.readiness === 'refused') {
       const originalRpc = readiness.callMachineRpc.getMockImplementation()!;
       readiness.callMachineRpc.mockImplementation(async request => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ
@@ -647,8 +650,12 @@ describe('workflow Session step executor', () => {
       String(url).includes('/features') ? features : { id: 'account-1' }), { status: 200 })));
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
     const settings = accountSettingsParse({ actionsSettingsV1: { v: 1,
-      actions: { 'machines.agents.install': { approvalRequiredSurfaces: ['agent'] } },
-      approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } } });
+      actions: 'readiness' in testCase && testCase.readiness === 'update-status'
+        ? { 'machines.agents.install.status': { approvalRequiredSurfaces: ['agent'] } }
+        : { 'machines.agents.install': { approvalRequiredSurfaces: ['agent'] } },
+      approvalWaivedSurfaces: { 'session.spawn_new': ['agent'],
+        ...('readiness' in testCase && testCase.readiness === 'update-status'
+          ? { 'machines.agents.install': ['agent'] } : {}) } } });
     setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network', settings,
       rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: Date.now(),
       promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
@@ -737,8 +744,17 @@ describe('workflow Session step executor', () => {
     expect(launches).toHaveLength(1);
     expect(launches[0]?.approvalProfileId).toBe(approvalProfileId === undefined ? 'builtin:full-trust' : approvalProfileId);
     expect(artifacts.size).toBe(review === 'approve' ? 1 : 0);
+    if ('readiness' in testCase && (testCase.readiness === 'update' || testCase.readiness === 'update-status')) {
+      const startup = operations.store.list({ accountId: 'account-1', machineId }).items.find(
+        operation => operation.requestId === `workflow:profile:${testCase.name}`);
+      expect(startup).toBeDefined();
+      expect(operations.store.get({ accountId: 'account-1', machineId }, startup!.operationId)).toMatchObject({
+        state: 'succeeded', result: { sessionId: 'new-session', agentUpdate: { agentId: 'claude', status: 'pending' } },
+      });
+    }
     if ('readiness' in testCase) expect(readinessEvents).toEqual(testCase.readiness === 'install'
-      ? ['inventory', 'install', 'terminal', 'spawn'] : ['inventory', 'spawn']);
+      ? ['inventory', 'install', 'terminal', 'spawn'] : testCase.readiness === 'update-status'
+        ? ['inventory', 'install', 'spawn'] : ['inventory', 'spawn']);
   });
 
   it.each([false, true])('creates Workflow birth correspondence accepted by requester custody (miswired=%s)', async miswired => {
