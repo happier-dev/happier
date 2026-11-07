@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent, AgentSessionRealtimeConversation } from '@happier-dev/plugin-sdk/agents/runtime';
 import { configuration } from '@/configuration';
@@ -32,15 +33,16 @@ describe('native Realtime Start input admission', () => {
                 locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
                 normalizedModulePath: '/immutable/native/runtime.mjs', loadMode: 'immutable-js',
             }) };
-        const published = await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001, capability: 'A'.repeat(43) });
         vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
         let admission = { admissionId: 'start-input', occurrenceId: 'native-occurrence', attemptId: 'attempt-1' };
         const requests: string[] = [];
         let releaseRetirement!: () => void;
         const retirementReply = new Promise<void>(resolve => { releaseRetirement = resolve; });
         // Daemon HTTP is the system boundary. Its real admission/currentness is tested in controlServer's composed suite.
-        vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-            const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+        const daemon = createServer(async (incoming, response) => {
+            let body = '';
+            for await (const chunk of incoming) body += chunk;
+            const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(body));
             expect(request.context.sessionId).toBe(sessionId);
             if (request.operation.kind !== 'native_realtime.input.admit' && request.operation.kind !== 'native_realtime.input.retire') {
                 throw new Error('Unexpected native admission operation');
@@ -52,10 +54,15 @@ describe('native Realtime Start input admission', () => {
                 currentNative = replacement;
             }
             if (request.operation.kind === 'native_realtime.input.retire' && ending === 'end') await retirementReply;
-            return new Response(JSON.stringify({ ok: true, result: request.operation.kind === 'native_realtime.input.admit'
+            response.setHeader('content-type', 'application/json');
+            response.end(JSON.stringify({ ok: true, result: request.operation.kind === 'native_realtime.input.admit'
                 ? { kind: 'native_realtime.input.admission', admission }
-                : { kind: 'native_realtime.input.retired' } }), { status: 200 });
+                : { kind: 'native_realtime.input.retired' } }));
         });
+        await new Promise<void>(resolve => daemon.listen(0, '127.0.0.1', resolve));
+        const address = daemon.address();
+        if (!address || typeof address === 'string') throw new Error('Expected daemon fixture address');
+        const published = await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'A'.repeat(43) });
         let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
         const stop = vi.fn(async () => ({ status: 'stopped' as const }));
         const conversation: AgentSessionRealtimeConversation = { inspect: async () => ({ status: 'available', transport: 'webrtc' }),
@@ -141,6 +148,7 @@ describe('native Realtime Start input admission', () => {
             await replacement.resetOrDisposeRuntime();
             await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ happyHomeDir: authority.happyHomeDir,
                 publicReleaseRing: authority.publicReleaseRing, path, capabilityDigest: published.capabilityDigest });
+            await new Promise<void>((resolve, reject) => daemon.close(error => error ? reject(error) : resolve()));
         }
     });
 });
