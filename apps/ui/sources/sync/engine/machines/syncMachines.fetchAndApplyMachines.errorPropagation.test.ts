@@ -262,10 +262,11 @@ describe('fetchAndApplyMachines error propagation', () => {
                     ];
                 },
             } as any)),
-            cachedMachineDisplayEntries: {
-                m1: { metadataVersion: 1, displayName: 'one', host: 'h1', homeDir: '/h1' } as any,
-                m2: { metadataVersion: 2, displayName: 'two', host: 'h2', homeDir: '/h2' } as any,
-            },
+            getCachedMachineDisplayEntry: (machineId) => machineId === 'm1'
+                ? { metadataVersion: 1, displayName: 'one', host: 'h1', homeDir: '/h1' } as any
+                : machineId === 'm2'
+                    ? { metadataVersion: 2, displayName: 'two', host: 'h2', homeDir: '/h2' } as any
+                    : undefined,
             applyMachineDisplayEntries,
             applyMachines,
         });

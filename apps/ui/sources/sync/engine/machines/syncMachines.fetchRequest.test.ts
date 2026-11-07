@@ -13,7 +13,8 @@ import type { StorageState } from '@/sync/store/types';
 import { createDeferred } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
-import { resolveCanonicalMachineId } from '@happier-dev/protocol';
+import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
+import { hasCurrentMachineContent, readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
 
 function createMachineStore() {
     type State = MachinesDomain & Pick<StorageState, 'sessions' | 'sessionListRowsByServerId'
@@ -73,7 +74,7 @@ async function createEncryptionHarness() {
         }
     });
     const decryptMetadata = vi.fn(async (_version: number, value: string): Promise<unknown> => ({ decrypted: value }));
-    const decryptDaemonState = vi.fn(async (_version: number, value: string | null) => {
+    const decryptDaemonState = vi.fn(async (_version: number, value: string | null): Promise<unknown> => {
         if (!value) return null;
         return { decrypted: value };
     });
@@ -274,6 +275,7 @@ describe('fetchAndApplyMachines request override', () => {
         const existing = createMachineFixture({
             id: 'm_unchanged',
             kind: 'persistent',
+            operationProtocolCapabilitiesRevision: null,
             daemonState: { status: 'running' },
             daemonStateVersion: 7,
             storageMode: 'e2ee',
@@ -293,7 +295,6 @@ describe('fetchAndApplyMachines request override', () => {
                 ...existing, metadata: 'unchanged-metadata', daemonState: 'unchanged-daemon', dataEncryptionKey: null,
             }]),
             getExistingMachine: () => existing,
-            cachedMachineDisplayEntries: {},
             applyMachineDisplayEntries: (machines) => { displayed.push(machines); },
             applyMachines: (machines, _replace, rows: readonly FetchedMachineRow[] = []) => {
                 applied.push(machines);
@@ -358,7 +359,6 @@ describe('fetchAndApplyMachines request override', () => {
             machineDataKeys: new Map(),
             request: async () => jsonResponse([{ ...existing, metadata: 'next-ciphertext', metadataVersion: 2, dataEncryptionKey: null }]),
             getExistingMachine: () => current,
-            cachedMachineDisplayEntries: {},
             applyMachineDisplayEntries: () => {},
             applyMachines: (machines) => { current = machines[0]!; },
         });
@@ -455,19 +455,17 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             ...( {
-                cachedMachineDisplayEntries: {
-                    m_cached: {
-                        machineId: 'm_cached',
-                        metadataVersion: 5,
-                        updatedAt: 10,
-                        active: true,
-                        activeAt: 10,
-                        revokedAt: null,
-                        displayName: 'Cached machine',
-                        host: 'mbp',
-                        homeDir: '/home/u',
-                    },
-                },
+                getCachedMachineDisplayEntry: (machineId: string) => machineId === 'm_cached' ? {
+                    machineId: 'm_cached',
+                    metadataVersion: 5,
+                    updatedAt: 10,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    displayName: 'Cached machine',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                } : undefined,
                 applyMachineDisplayEntries,
             } as any),
         } as any);
@@ -542,7 +540,7 @@ describe('fetchAndApplyMachines request override', () => {
             machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
             request: requestSpy,
             applyMachines,
-            cachedMachineDisplayEntries,
+            getCachedMachineDisplayEntry: (machineId: string) => cachedMachineDisplayEntries[machineId],
             applyMachineDisplayEntries,
         } as any);
         await Promise.resolve();
@@ -558,6 +556,105 @@ describe('fetchAndApplyMachines request override', () => {
         // Four concurrent crypto operations finish together. Their canonical
         // store publication must fan out once per cohort, not once per row.
         expect(notifications).toBeLessThanOrEqual(1 + Math.ceil(rows.length / 4));
+    });
+
+    it.each([true, false])('publishes all cold names, including offline Machines, before held daemon state (display-first=%s)', async displayFirst => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const encryption = await createEncryptionHarness();
+        const store = createMachineStore();
+        const daemonRelease = createDeferred<void>();
+        const rows = Array.from({ length: 137 }, (_, index) => ({
+            ...createMachineFixture({ id: 'cold-' + index, metadataVersion: 2, active: index < 68, activeAt: Date.now() }),
+            metadata: 'cold-' + index, daemonState: 'cold-' + index, daemonStateVersion: 2, dataEncryptionKey: 'cold-envelope',
+            keyBasis: { dataEncryptionKey: 'cold-envelope', metadataVersion: 2, daemonStateVersion: 2 },
+        }));
+        const names: string[] = [];
+        let notifications = 0;
+        const unsubscribe = store.subscribe(state => {
+            notifications++;
+            for (const row of rows) {
+                if (state.machineDisplayById[row.id]?.metadata?.displayName === row.id && !names.includes(row.id)) names.push(row.id);
+            }
+        });
+        encryption.decryptMetadata.mockImplementation(async (_version, id) => ({ ...createMachineFixture().metadata!, displayName: id }));
+        encryption.decryptDaemonState.mockImplementation(async (_version, id) => {
+            await daemonRelease.promise;
+            return { status: 'running', pid: Number(id?.split('-')[1]) + 1 };
+        });
+        const request = vi.fn(async () => jsonResponse(rows));
+        const started = performance.now();
+        const loading = fetchAndApplyMachines({
+            credentials: legacyCredentials, sourceServerId: 'home-1', encryption, machineDataKeys: new Map(), request,
+            getExistingMachine: id => store.getState().machines[id], getMachineSnapshot: () => store.getState().machines,
+            ...(displayFirst ? { applyMachineDisplayEntries: (entries: MachineDisplayRenderable[]) => store.getState().replaceMachineDisplays(entries) } : {}),
+            applyMachines: (machines, replace) => store.getState().applyMachines(machines, replace),
+        });
+        try {
+            await vi.waitFor(() => expect(names).toHaveLength(rows.length));
+            console.info('[MACHNAME] metadata ready', { displayFirst, names: names.length, elapsedMs: performance.now() - started, daemonResolved: 0 });
+            expect(request).toHaveBeenCalledTimes(1);
+            expect(encryption.decryptMetadata).toHaveBeenCalledTimes(rows.length);
+            for (const row of rows) {
+                expect(store.getState().machineDisplayById[row.id]?.metadata?.displayName).toBe(row.id);
+                expect(store.getState().machines[row.id]?.daemonState).toBeNull();
+                expect(store.getState().machines[row.id]?.daemonStateVersion).toBe(0);
+                expect(readMachineInventoryRowReadiness(store.getState().machines[row.id]!)).toBe('pending');
+                expect(hasCurrentMachineContent(store.getState().machines[row.id]!)).toBe(false);
+            }
+        } finally {
+            console.info('[MACHNAME] before daemon release', { displayFirst, names: names.length,
+                offlineMetadataOpens: encryption.decryptMetadata.mock.calls.filter(([, id]) => rows.some(row => row.id === id && !row.active)).length });
+            daemonRelease.resolve();
+            await loading;
+            unsubscribe();
+        }
+        expect(encryption.decryptDaemonState).toHaveBeenCalledTimes(rows.length);
+        expect(Object.values(store.getState().machines).every(machine => machine.daemonStateVersion === 2 && machine.availability?.kind === 'available')).toBe(true);
+        expect(store.getState().machines['cold-136']?.daemonState).toMatchObject({ pid: 137 });
+        // Warm shells, then metadata and daemon completions share cohort publications.
+        expect(notifications).toBeLessThanOrEqual(2 + 2 * Math.ceil(rows.length / 4));
+    });
+
+    it.each((['metadata', 'daemon'] as const).flatMap(phase => (['withdraw', 'supersede', 'retire'] as const).map(action => ({ phase, action }))))(
+        'does not republish a $action Machine after held $phase decryption', async ({ phase, action }) => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const encryption = await createEncryptionHarness();
+        const store = createMachineStore();
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const fixture = createMachineFixture({ id: 'guarded', metadataVersion: 2, daemonStateVersion: 2 });
+        const row = { ...fixture, metadata: 'guarded', daemonState: 'guarded', dataEncryptionKey: null,
+            keyBasis: { dataEncryptionKey: null, metadataVersion: 2, daemonStateVersion: 2 } };
+        let current = true;
+        encryption.decryptMetadata.mockImplementation(async () => {
+            if (phase === 'metadata') { entered.resolve(); await release.promise; }
+            return { ...fixture.metadata!, displayName: 'guarded' };
+        });
+        encryption.decryptDaemonState.mockImplementation(async () => {
+            if (phase === 'daemon') { entered.resolve(); await release.promise; }
+            return { status: 'running', pid: 1 };
+        });
+        const loading = fetchAndApplyMachines({
+            credentials: legacyCredentials, sourceServerId: 'home-1', encryption, machineDataKeys: new Map(),
+            request: async () => jsonResponse([row]), shouldContinue: () => current,
+            getExistingMachine: id => store.getState().machines[id], getMachineSnapshot: () => store.getState().machines,
+            applyMachineDisplayEntries: entries => store.getState().replaceMachineDisplays(entries),
+            applyMachines: (machines, replace) => store.getState().applyMachines(machines, replace),
+        });
+        try {
+            await entered.promise;
+            if (phase === 'daemon') expect(store.getState().machineDisplayById.guarded?.metadata?.displayName).toBe('guarded');
+            if (action === 'withdraw') store.getState().applyMachines([], true);
+            if (action === 'supersede') store.getState().applyMachines([createMachineFixture({ id: row.id,
+                metadataVersion: 3, daemonStateVersion: 3, metadata: { ...fixture.metadata!, displayName: 'Current' } })]);
+            if (action === 'retire') current = false;
+            const expected = store.getState().machines[row.id];
+            const expectedDisplay = store.getState().machineDisplayById[row.id];
+            release.resolve();
+            await loading;
+            expect(store.getState().machines[row.id]).toBe(expected);
+            expect(store.getState().machineDisplayById[row.id]).toBe(expectedDisplay);
+        } finally { release.resolve(); await loading; }
     });
 
     it('publishes completed peers before a slow decrypt and preserves a newer row when that decrypt finishes', async () => {
@@ -588,10 +685,6 @@ describe('fetchAndApplyMachines request override', () => {
             store.getState().applyMachines([replacement]);
             slow.resolve();
             await loading;
-            await vi.waitFor(() => expect(encryption.decryptDaemonState).toHaveBeenCalledTimes(4));
-            // Yield to the next task so the real decrypt/publication continuations
-            // have settled; this is not a timeout for the owning operation.
-            await new Promise<void>(resolve => setTimeout(resolve, 0));
             expect(store.getState().machines.slow?.metadataVersion).toBe(3);
             expect(store.getState().machines.slow?.metadata).toEqual(replacement.metadata);
         } finally {
@@ -701,19 +794,17 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             ...( {
-                cachedMachineDisplayEntries: {
-                    m_cached: {
-                        machineId: 'm_cached',
-                        metadataVersion: 5,
-                        updatedAt: 10,
-                        active: true,
-                        activeAt: 10,
-                        revokedAt: null,
-                        displayName: 'Cached machine',
-                        host: 'mbp',
-                        homeDir: '/home/u',
-                    },
-                },
+                getCachedMachineDisplayEntry: (machineId: string) => machineId === 'm_cached' ? {
+                    machineId: 'm_cached',
+                    metadataVersion: 5,
+                    updatedAt: 10,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    displayName: 'Cached machine',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                } : undefined,
                 applyMachineDisplayEntries,
             } as any),
         } as any);
@@ -736,7 +827,7 @@ describe('fetchAndApplyMachines request override', () => {
         // Match the store's stable row identity so the real read-currentness guard stays active.
         const existing = createMachineFixture({ id: 'm_cached', metadataVersion: 5,
             daemonState: { status: 'running' }, daemonStateVersion: 7,
-            storageMode: 'e2ee', availability: { kind: 'available' } });
+            dataEncryptionKey: 'key-1', storageMode: 'e2ee', availability: { kind: 'available' } });
         const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
             jsonResponse([
                 {
@@ -774,19 +865,17 @@ describe('fetchAndApplyMachines request override', () => {
                 ? existing
                 : null,
             ...( {
-                cachedMachineDisplayEntries: {
-                    m_cached: {
-                        machineId: 'm_cached',
-                        metadataVersion: 5,
-                        updatedAt: 10,
-                        active: true,
-                        activeAt: 10,
-                        revokedAt: null,
-                        displayName: 'Cached machine',
-                        host: 'mbp',
-                        homeDir: '/home/u',
-                    },
-                },
+                getCachedMachineDisplayEntry: (machineId: string) => machineId === 'm_cached' ? {
+                    machineId: 'm_cached',
+                    metadataVersion: 5,
+                    updatedAt: 10,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    displayName: 'Cached machine',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                } : undefined,
                 applyMachineDisplayEntries,
             } as any),
         } as any);
@@ -846,19 +935,17 @@ describe('fetchAndApplyMachines request override', () => {
                 ? existing
                 : null,
             ...( {
-                cachedMachineDisplayEntries: {
-                    m_cached: {
-                        machineId: 'm_cached',
-                        metadataVersion: 5,
-                        updatedAt: 10,
-                        active: true,
-                        activeAt: 10,
-                        revokedAt: null,
-                        displayName: 'Cached machine',
-                        host: 'mbp',
-                        homeDir: '/home/u',
-                    },
-                },
+                getCachedMachineDisplayEntry: (machineId: string) => machineId === 'm_cached' ? {
+                    machineId: 'm_cached',
+                    metadataVersion: 5,
+                    updatedAt: 10,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    displayName: 'Cached machine',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                } : undefined,
                 applyMachineDisplayEntries,
             } as any),
         } as any);
@@ -907,7 +994,6 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             applyMachineDisplayEntries,
-            cachedMachineDisplayEntries: {},
         });
 
         try {
@@ -1167,7 +1253,6 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             applyMachineDisplayEntries,
-            cachedMachineDisplayEntries: {},
             shouldContinue: () => false,
         } as any);
 

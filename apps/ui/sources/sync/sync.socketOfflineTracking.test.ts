@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { encodePlainMachineStoredContent, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, projectLegacySessionAccessCapabilitiesV1, SessionCurrentProjectionRecordV1Schema, type SessionOrganizationSnapshot } from '@happier-dev/protocol';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { SessionSystemRecordStoredSchema} from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { type SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit';
 import type { Socket } from 'socket.io-client';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -117,10 +124,18 @@ vi.mock('@/log', () => ({
   log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Crash reporting is the external default-on error boundary; the real helper is inert without a DSN.
+const crashReports = vi.hoisted(() => ({ captureExceptionIfEnabled: vi.fn() }));
+vi.mock('@/utils/system/sentry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/system/sentry')>()),
+  captureExceptionIfEnabled: crashReports.captureExceptionIfEnabled,
+}));
+
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { disconnectActiveServerConnection, switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { invalidateServerReachabilitySupervisor } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { publishHomeAccountChange, subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 await loadSyncSingletonForTests();
 const { sync } = await import('./sync');
 import { storage } from './domains/state/storage';
@@ -138,9 +153,10 @@ import {
 } from '@/sync/runtime/sessionRealtimeScmConsumers';
 import {
   markSessionSurfaceVisible,
+  retainVisibleSessionListSurfaces,
   resetSessionSurfaceVisibilityForTests,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
-import { WEB_SYNC_INSTANCE_ID_SESSION_KEY } from '@/sync/runtime/webSyncClientIdentity';
+import type { WebSyncClientIdentity } from '@/sync/runtime/webSyncClientIdentity';
 import { syncReliabilityTelemetry } from '@/sync/runtime/syncReliabilityTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
@@ -151,8 +167,18 @@ import { normalizeRawMessages } from "@happier-dev/session-core/raw";
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import type { InvalidateSync } from '@/utils/sessions/sync';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createPlainV2SessionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { countStoreNotifications } from '@/dev/testkit/performance/counts';
+import { captureSessionFullPublicationBaseline, sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
+import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
+import { getSessionStatus, readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
+import { createDeferred, renderHook } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { useSessionListRenderableWithServerScope } from '@/sync/store/hooks';
+import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
+import { readSessionListRowRefreshAtMs } from '@/components/sessions/shell/sessionListRowViewModels';
 
 class MemoryWebStorage implements Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
   readonly values = new Map<string, string>();
@@ -372,11 +398,14 @@ async function applyTestCarrier(homeCarrier: HomeCarrier): Promise<void> {
   await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
 }
 
-async function restoreTestHome(serverUrl = 'http://localhost:53288', serverIdentityId?: string): Promise<void> {
+async function restoreTestHome(serverUrl = 'http://localhost:53288', serverIdentityId?: string,
+  onSessionReadBatch?: () => void): Promise<void> {
   await account?.dispose();
   account = await restoreServerAccountForTest({
     serverUrl, serverIdentityId, credentials: { token: TEST_TOKEN },
-    request: createSessionReadBatchFetchBoundary(async (url, init) => {
+    request: async (url, init) => {
+      if (new URL(String(url)).pathname === '/v2/sessions/read-batch') onSessionReadBatch?.();
+      return await createSessionReadBatchFetchBoundary(async (url, init) => {
       const requestUrl = new URL(String(url));
       const path = requestUrl.pathname + requestUrl.search;
       if (requestUrl.pathname === '/health') return Response.json({});
@@ -387,9 +416,46 @@ async function restoreTestHome(serverUrl = 'http://localhost:53288', serverIdent
       if (requestUrl.pathname === '/v2/changes') return (await fetchChangesMock(path, init)).clone();
       if (requestUrl.pathname === '/v2/cursor') return (await fetchCurrentChangesCursorMock(path, init)).clone();
       return (await apiSocketRequestMock(path, init)).clone();
-    }),
+      })(url, init);
+    },
   });
   await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+}
+
+async function observeSystemRecordForWakeTest(sessionId = 'observed-wake-record') {
+  const address = { serverId: getActiveServerSnapshot().serverId, sessionId };
+  const query = { type: 'list', namespace: 'activity', kind: 'workflow_run.v1' } as const;
+  const recordPath = `/v2/sessions/${address.sessionId}/system-records`;
+  let recordId = `${sessionId}-record-before-wake`;
+  const fallback = apiSocketRequestMock.getMockImplementation()!;
+  apiSocketRequestMock.mockImplementation(async (path, init) => {
+    const pathname = new URL(path, 'http://localhost').pathname;
+    if (pathname === `/v2/sessions/${address.sessionId}`) return Response.json({ session: currentOwnerSessionWireRow({
+      id: address.sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+      encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+      metadata: JSON.stringify({ path: '/observed-wake-record', host: 'localhost' }), metadataVersion: 1,
+      agentState: null, agentStateVersion: 0, share: null,
+    }) });
+    if (pathname === recordPath) return Response.json({ records: [SessionSystemRecordStoredSchema.parse({
+      id: recordId, address: { owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId: 'run-one' },
+      content: { t: 'plain', v: { v: 1 } }, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+      createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+    })], nextCursor: null, hasNext: false });
+    return fallback(path, init);
+  });
+  const result = await sync.withSessionSystemRecordRuntime(address, async runtime => {
+    onTestFinished(runtime.repository.subscribe(address, query, () => {}));
+    await runtime.repository.refresh(address, query);
+    return runtime.repository;
+  });
+  expect(result.status).toBe('ok');
+  if (result.status !== 'ok') throw new Error(`Observed record fixture failed: ${result.status}`);
+  expect(result.value.getSnapshot(address, query)).toMatchObject({ freshness: 'fresh', loading: 'idle',
+    data: { records: [{ id: recordId }] } });
+  return { address, query, repository: result.value,
+    setRecordId: (next: string) => { recordId = next; },
+    readCount: () => apiSocketRequestMock.mock.calls.filter(([path]) => new URL(path, 'http://localhost').pathname === recordPath).length,
+  };
 }
 
 describe('sync socket offline tracking', () => {
@@ -450,6 +516,647 @@ describe('sync socket offline tracking', () => {
     account = undefined;
     webLocks.restore();
     vi.unstubAllGlobals();
+  });
+
+  it.each(['socket ingress', 'row projection', 'cache-only ingress',
+    'empty observation hydrated', 'empty observation cache-only', 'empty observation durable-only',
+    'empty observation durable-then-ephemeral hydrated', 'empty observation durable-then-ephemeral cache-only',
+    'reset observation hydrated', 'reset observation cache-only',
+    'fresh hydration hydrated', 'fresh hydration cache-only'] as const)('recovers a mounted stale Session row from a late heartbeat without unrelated writes: %s', async (boundary) => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const serverId = getActiveServerSnapshot().serverId;
+    const session = createSessionFixture({ id: 'mounted-late-heartbeat', serverId, encryptionMode: 'plain',
+      active: true, activeAt: now, presence: 'online', updatedAt: now, meaningfulActivityAt: now,
+      thinking: false, thinkingAt: now, latestTurnStatus: 'completed', latestTurnStatusObservedAt: now });
+    if (boundary.includes('cache-only')) storage.getState().applyServerScopedSessionListRows(serverId,
+      [buildSessionListRenderableFromSession(session)], { source: 'ordinary', mode: 'append' });
+    else storage.getState().applySessions([session]);
+    const socket = sockets.at(-1);
+    if (!socket) throw new Error('Expected the restored Home socket');
+    const heartbeat = (activeAt: number) => {
+      for (const listener of socket.listenersAny()) listener('ephemeral', {
+        type: 'activity', id: session.id, active: true, activeAt, thinking: false,
+      });
+    };
+    if (!boundary.startsWith('empty observation')) heartbeat(now);
+    if (boundary.startsWith('reset observation')) {
+      const accumulator = Reflect.get(sync, 'activityAccumulator') as { reset(): void };
+      accumulator.reset();
+    }
+    if (boundary.startsWith('empty observation') || boundary.startsWith('reset observation')) {
+      expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })).toBeUndefined();
+    }
+    const hook = await renderHook(() => {
+      const row = useSessionListRenderableWithServerScope(serverId, session.id);
+      const runtimeNowMs = useSessionListRuntimeNowMs();
+      useSessionListRuntimeWake(readSessionListRowRefreshAtMs({ session: row, reminderAtMs: null }, runtimeNowMs));
+      return row ? getSessionStatus(row, runtimeNowMs) : null;
+    });
+    const notifications = countStoreNotifications(storage);
+    try {
+      expect(hook.getCurrent()?.awareness.freshness).toBe('live');
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
+      expect(hook.getCurrent()?.awareness.freshness).toBe('stale');
+      notifications.reset();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+        if (boundary.startsWith('fresh hydration')) {
+          if (boundary.includes('cache-only')) storage.getState().applyServerScopedSessionListRowPatches(serverId,
+            [{ sessionId: session.id, patch: { activeAt: now + 130_001 } }]);
+          else storage.getState().applySessions([{ ...session, activeAt: now + 130_001 }]);
+          notifications.reset();
+        }
+        if (boundary.includes('durable-')) {
+          for (const listener of socket.listenersAny()) listener('update', {
+            id: 'durable-only-late-beat', seq: 2, createdAt: now + 130_001,
+            body: { t: 'update-session', id: session.id, sid: session.id, active: true, activeAt: now + 130_001 },
+          });
+        } else heartbeat(now + 130_001);
+        await vi.advanceTimersByTimeAsync(loadSyncTuning().activityUpdateDebounceMs + 100);
+        if (boundary === 'row projection') storage.getState().applyServerScopedSessionListRowPatches(serverId,
+          [{ sessionId: session.id, patch: { activeAt: now + 130_001 } }]);
+      });
+      const durableOnly = boundary.includes('durable-');
+      const alreadyFresh = boundary.startsWith('fresh hydration');
+      expect(notifications.read().filter(keys => keys.includes('sessionListRowsByServerId'))).toHaveLength(durableOnly || alreadyFresh ? 0 : 1);
+      expect(hook.getCurrent()?.awareness.freshness).toBe(durableOnly ? 'stale' : 'live');
+      if (durableOnly) expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })?.presence).toBeUndefined();
+      if (boundary === 'empty observation durable-only') {
+        const row = storage.getState().sessionListRowsByServerId[serverId][session.id];
+        expect(getSessionStatus(row, Date.now()).awareness.freshness).not.toBe('live');
+      }
+      expect(storage.getState().sessionListRowsByServerId[serverId][session.id].updatedAt).toBe(now);
+      if (boundary.includes('durable-then-ephemeral')) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+          heartbeat(now + 130_002);
+          await vi.advanceTimersByTimeAsync(loadSyncTuning().activityUpdateDebounceMs + 100);
+        });
+        expect(notifications.read().filter(keys => keys.includes('sessionListRowsByServerId'))).toHaveLength(1);
+        expect(hook.getCurrent()?.awareness.freshness).toBe('live');
+      }
+    } finally {
+      notifications.stop();
+      await hook.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['hydrated', 'cache-only', 'absent'] as const)('keeps finished Session content quiet through two live heartbeats: %s', async (kind) => {
+    vi.useFakeTimers();
+    const now = 1_000_000;
+    vi.setSystemTime(now);
+    const serverId = getActiveServerSnapshot().serverId;
+    const session = createSessionFixture({
+      id: 'finished-heartbeat', serverId, encryptionMode: 'plain', updatedAt: now,
+      meaningfulActivityAt: now, active: true, activeAt: now, presence: 'online',
+      thinking: false, thinkingAt: now, latestTurnStatus: 'completed', latestTurnStatusObservedAt: now,
+    });
+    storage.getState().applySessions(Array.from({ length: 1_000 }, (_, index) =>
+      createSessionFixture({ ...session, id: `unrelated-finished-${index}` })));
+    if (kind === 'hydrated') storage.getState().applySessions([session]);
+    if (kind === 'cache-only') storage.getState().applyServerScopedSessionListRows(serverId,
+      [buildSessionListRenderableFromSession(session)], { source: 'ordinary', mode: 'append' });
+    const socket = sockets.at(-1);
+    if (!socket) throw new Error('Expected the restored Home socket');
+    const listeners = socket.listenersAny();
+    expect(listeners.length).toBeGreaterThan(0);
+    const heartbeat = (activeAt: number) => {
+      for (const listener of listeners) listener('ephemeral', {
+        type: 'activity', id: session.id, active: true, activeAt, thinking: false,
+      });
+    };
+    const notifications = countStoreNotifications(storage);
+    try {
+      for (let beat = 1; beat <= 2; beat += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        heartbeat(now + beat * 60_000);
+        // Released server-v0.2.16 (22ac8263cfdbcdb845441b9044ff18199cf7652e)
+        // builds this durable liveness envelope, including the sid identity alias.
+        // It carries no Session content update or Session-local sequence.
+        if (kind !== 'absent') for (const listener of listeners) listener('update', {
+          id: `alive-${beat}`, seq: beat + 1, createdAt: now + beat * 60_000,
+          body: { t: 'update-session', id: session.id, sid: session.id, active: true, activeAt: now + beat * 60_000 },
+        });
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      const contentKeys = new Set(['sessions', 'sessionListRowsByServerId', 'sessionListRenderableDelta']);
+      expect(notifications.read().filter(keys => keys.some(key => contentKeys.has(key)))).toEqual([]);
+      expect(notifications.read()).toEqual([]);
+      expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })).toMatchObject({
+        active: true, activeAt: now + 120_000, presence: 'online',
+      });
+      if (kind === 'absent') {
+        expect(storage.getState().sessions[session.id]).toBeUndefined();
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[session.id]).toBeUndefined();
+      } else {
+        const row = storage.getState().sessionListRowsByServerId[serverId][session.id];
+        expect(row.updatedAt).toBe(now);
+        expect(row.serverId).toBe(serverId);
+        expect(projectUiSessionAwareness(row, now + 239_999).freshness).toBe('live');
+        expect(projectUiSessionAwareness(row, now + 240_001).freshness).toBe('stale');
+        expect(readSessionStatusNextRefreshAtMs(row, now + 120_001)).toBe(now + 240_001);
+
+        // A delayed HTTP snapshot has equal content currentness but older runtime facts.
+        if (kind === 'hydrated') {
+          storage.getState().applySessions([{ ...session, metadataVersion: session.metadataVersion + 1,
+            metadata: { ...session.metadata!, path: '/fresh-semantic-content' } }]);
+          expect(storage.getState().sessions[session.id].metadata?.path).toBe('/fresh-semantic-content');
+          expect(projectUiSessionAwareness(storage.getState().sessions[session.id], now + 239_999).freshness).toBe('live');
+        }
+        // Contradictory aliases are rejected at the identity boundary, not
+        // classified as liveness after their original identity is discarded.
+        if (kind === 'hydrated') {
+          notifications.reset();
+          const beforeAlias = sessionRuntimeObservations.read({ serverId, sessionId: session.id });
+          for (const listener of listeners) listener('update', {
+            id: 'mismatched-alias', seq: 4, createdAt: now + 122_000,
+            body: { t: 'update-session', id: session.id, sid: 'different-session', active: true, activeAt: now + 122_000 },
+          });
+          await vi.advanceTimersByTimeAsync(1_000);
+          expect(notifications.read()).toEqual([]);
+          expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })).toBe(beforeAlias);
+        }
+        notifications.reset();
+        for (const listener of listeners) listener('ephemeral', {
+          type: 'activity', id: session.id, active: false, activeAt: now + 123_000, thinking: false,
+        });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(storage.getState().sessionListRowsByServerId[serverId][session.id].presence).toBe(now + 123_000);
+        expect(notifications.read().filter(keys => keys.some(key => contentKeys.has(key)))).toHaveLength(1);
+        notifications.reset();
+        heartbeat(now + 124_000);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(storage.getState().sessionListRowsByServerId[serverId][session.id].presence).toBe('online');
+        expect(notifications.read().filter(keys => keys.some(key => contentKeys.has(key)))).toHaveLength(1);
+        // A retained content row is older than the liveness budget by this point.
+        // Fresh observations, not that frozen content timestamp, define recovery.
+        notifications.reset();
+        for (let beat = 3; beat <= 6; beat += 1) {
+          await vi.advanceTimersByTimeAsync(60_000);
+          heartbeat(now + beat * 60_000);
+          await vi.advanceTimersByTimeAsync(loadSyncTuning().activityUpdateDebounceMs + 100);
+        }
+        expect(notifications.read().filter(keys => keys.some(key => contentKeys.has(key)))).toEqual([]);
+        expect(notifications.read()).toEqual([]);
+        expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })?.activeAt).toBe(now + 360_000);
+        storage.getState().deleteSession(session.id, serverId);
+        expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })).toBeUndefined();
+      }
+    } finally {
+      notifications.stop();
+      vi.useRealTimers();
+      await account?.dispose();
+      account = undefined;
+      heartbeat(now + 125_000);
+      expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })).toBeUndefined();
+    }
+  });
+
+  it.each(['Session', 'list row', 'row patch', 'row merge', 'inventory reconcile'] as const)('keeps full hydrated Session heartbeat publications quiet through the real Sync owner: %s', async (path) => {
+    vi.useFakeTimers();
+    const now = 1_000_000;
+    vi.setSystemTime(now);
+    const serverId = getActiveServerSnapshot().serverId;
+    const session = createSessionFixture({ id: 'hydrated-heartbeat-publication', serverId,
+      encryptionMode: 'plain', active: true, activeAt: now, presence: 'online', updatedAt: now,
+      thinking: false, thinkingAt: now, meaningfulActivityAt: now,
+      latestTurnStatus: 'completed', latestTurnStatusObservedAt: now });
+    storage.getState().applySessions(Array.from({ length: 1_000 }, (_, index) =>
+      createSessionFixture({ ...session, id: `unrelated-hydrated-heartbeat-${index}` })));
+    storage.getState().applySessions([session]);
+    storage.getState().applyServerScopedSessionListRows(serverId,
+      [storage.getState().sessionListRowsByServerId[serverId][session.id]], { source: 'ordinary', mode: 'append' });
+    const retained = storage.getState().sessions[session.id];
+    const row = storage.getState().sessionListRowsByServerId[serverId][session.id];
+    const apply = Reflect.get(sync, 'applySessions') as (sessions: Session[]) => void;
+    const notifications = countStoreNotifications(storage);
+    try {
+      for (let beat = 1; beat <= 2; beat += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        const clocks = { activeAt: now + beat * 60_000, updatedAt: now + beat * 60_000 };
+        if (path === 'Session') apply([{ ...retained, ...clocks }]);
+        else if (path === 'list row') storage.getState().applyServerScopedSessionListRows(serverId,
+          [{ ...row, ...clocks }], { source: 'ordinary', mode: 'append' });
+        else if (path === 'row patch') storage.getState().applyServerScopedSessionListRowPatches(serverId,
+          [{ sessionId: session.id, patch: clocks }]);
+        else if (path === 'row merge') storage.getState().mergeSessionListRowsForServerScope(serverId, [{ ...row, ...clocks }]);
+        else storage.getState().reconcileSessionListRowsForServerScope(serverId, [{ ...row, ...clocks }],
+          storage.getState().sessionListRowsByServerId[serverId], captureSessionFullPublicationBaseline(serverId, [session.id]));
+      }
+      if (path === 'Session') {
+        const duplicate = { ...retained, activeAt: now + 120_000, updatedAt: now + 120_000 };
+        apply([duplicate, duplicate]);
+      }
+      expect(notifications.read()).toEqual([]);
+      expect(storage.getState().sessions[session.id]).toBe(retained);
+      expect(storage.getState().sessionListRowsByServerId[serverId][session.id]).toBe(row);
+      expect(sessionRuntimeObservations.read({ serverId, sessionId: session.id })?.activeAt).toBe(now + 120_000);
+    } finally {
+      notifications.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('publishes one Rename commit, not its socket receipt or HTTP owner-projection echo', async () => {
+    const now = Date.now();
+    let row = createPlainV2SessionRecordFixture({ id: 'rename-echo-publication', active: true,
+      activeAt: now - 10_000, updatedAt: now - 5_000,
+      metadata: { path: '/rename-echo', host: 'localhost', summary: { text: 'Before', updatedAt: 1 } } });
+    const fallback = apiSocketRequestMock.getMockImplementation()!;
+    apiSocketRequestMock.mockImplementation(async (path, init) => {
+      if (new URL(path, 'http://localhost').pathname !== `/v2/sessions/${row.id}`) return fallback(path, init);
+      if (init?.method === 'PATCH') {
+        const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+        if (patch.mode !== 'owner') throw new Error('Expected a complete owner tuple Rename');
+        row = { ...row, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
+          agentState: patch.agentState.ciphertext, metadataVersion: patch.sharedMetadata.expectedVersion + 1,
+          agentStateVersion: patch.agentState.expectedVersion + 1, updatedAt: now };
+        return Response.json({ success: true, metadataLayoutVersion: 1,
+          sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } });
+      }
+      return Response.json({ session: currentOwnerSessionWireRow({ ...row, meaningfulActivityAt: row.createdAt }) });
+    });
+    await sync.ensureSessionVisibleForMessageRoute(row.id, { forceRefresh: true, hydrateMessages: false });
+    const socket = sockets.at(-1);
+    if (!socket) throw new Error('Expected the restored Home socket');
+    const notifications = countStoreNotifications(storage);
+    const contentPublications = () => notifications.read().filter(keys => keys.includes('sessions'));
+    try {
+      await sync.patchSessionMetadataWithRetry(row.id, metadata => ({ ...metadata,
+        summary: { text: 'Renamed', updatedAt: now } }));
+      const committed = storage.getState().sessions[row.id];
+      const afterCommit = contentPublications().length;
+      // The durable socket echo carries the same admitted tuple and a newer
+      // commit receipt clock, without another content or presence fact.
+      for (const listener of socket.listenersAny()) listener('update', {
+        id: 'rename-echo', seq: 1, createdAt: row.updatedAt,
+        body: { t: 'update-session', id: row.id, sid: row.id, metadataLayoutVersion: 1,
+          metadata: { value: row.metadata, version: row.metadataVersion },
+          agentState: { value: row.agentState, version: row.agentStateVersion } },
+      });
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      const afterSocket = contentPublications().length;
+      await sync.ensureSessionVisibleForMessageRoute(row.id, { forceRefresh: true, hydrateMessages: false });
+      console.info('Rename publication contract:', { afterCommit, afterSocket, afterHttp: contentPublications().length });
+      expect([afterCommit, afterSocket, contentPublications().length]).toEqual([1, 1, 1]);
+      expect(notifications.read().filter(keys => keys.includes('sessionListRowsByServerId'))).toHaveLength(1);
+      expect(storage.getState().sessions[row.id]).toBe(committed);
+      expect(storage.getState().sessions[row.id].ownerMetadataView?.summary?.text).toBe('Renamed');
+      notifications.reset();
+      row = createPlainV2SessionRecordFixture({ ...row, metadataVersion: row.metadataVersion + 1,
+        metadata: { path: '/rename-echo', host: 'localhost', summary: { text: 'Later real change', updatedAt: now + 1 } } });
+      await sync.ensureSessionVisibleForMessageRoute(row.id, { forceRefresh: true, hydrateMessages: false });
+      expect(contentPublications()).toHaveLength(1);
+      expect(notifications.read().filter(keys => keys.includes('sessionListRowsByServerId'))).toHaveLength(1);
+      expect(storage.getState().sessions[row.id].ownerMetadataView?.summary?.text).toBe('Later real change');
+    } finally { notifications.stop(); }
+  });
+
+  it('publishes semantic hydration facts even when both liveness carrier clocks advance', () => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const seed = createSessionFixture({ id: 'semantic-heartbeat-controls', serverId,
+      active: true, presence: 'online', activeAt: 1, updatedAt: 1, thinking: false, thinkingAt: 0 });
+    storage.getState().applySessions([seed]);
+    const apply = Reflect.get(sync, 'applySessions') as (sessions: Session[]) => void;
+    const changes: ReadonlyArray<Partial<Session>> = [
+      { pendingRequestObservedAt: 10 }, { transcriptShareable: false },
+      { hasOtherNamedCollaborator: true }, { composerOptionsInput: null },
+      { currentStorageState: 'machine_only' }, { acceptedThroughServerSeq: 10 },
+      { materializedThroughSourceAt: 10 }, { publishedThroughServerSeq: 10 },
+      { metadataProjection: 'sessionOnly' }, { receivedRuleCount: 2 },
+      { responsibleAccountId: 'responsible-account' }, { seq: 10 },
+      { metadataVersion: 2, metadata: { path: '/real-semantic-change', host: 'localhost' } },
+      { pendingCount: 2, pendingVersion: 2 },
+    ];
+    for (const [index, change] of changes.entries()) {
+      const previous = storage.getState().sessions[seed.id];
+      const clock = 20 + index;
+      apply([{ ...previous, ...change, activeAt: clock, updatedAt: clock }]);
+      expect(storage.getState().sessions[seed.id]).not.toBe(previous);
+      expect(storage.getState().sessions[seed.id]).toMatchObject(change);
+    }
+    const previous = storage.getState().sessions[seed.id];
+    apply([{ ...previous, updatedAt: 100 }]);
+    expect(storage.getState().sessions[seed.id]).toBe(previous);
+    expect(sessionRuntimeObservations.read({ serverId, sessionId: seed.id })?.fullPublicationUpdatedAt).toBe(100);
+    const activeAtOnly = storage.getState().sessions[seed.id];
+    apply([{ ...activeAtOnly, activeAt: 101 }]);
+    expect(storage.getState().sessions[seed.id].activeAt).toBe(101);
+    expect(storage.getState().sessions[seed.id]).not.toBe(activeAtOnly);
+    const authority = Symbol('publication-authority');
+    const withFutureFact = { ...storage.getState().sessions[seed.id], activeAt: 200, updatedAt: 200,
+      futureAuthorityFact: { allowed: false }, [authority]: { scope: 'exact' } };
+    apply([withFutureFact]);
+    expect(Reflect.get(storage.getState().sessions[seed.id], 'futureAuthorityFact')).toEqual({ allowed: false });
+    expect(Reflect.get(storage.getState().sessions[seed.id], authority)).toEqual({ scope: 'exact' });
+    const futurePrevious = storage.getState().sessions[seed.id];
+    const changedFutureFact = { ...futurePrevious, activeAt: 201, updatedAt: 201,
+      futureAuthorityFact: { allowed: true }, [authority]: { scope: 'changed' } };
+    apply([changedFutureFact]);
+    expect(storage.getState().sessions[seed.id]).not.toBe(futurePrevious);
+    expect(Reflect.get(storage.getState().sessions[seed.id], 'futureAuthorityFact')).toEqual({ allowed: true });
+    expect(Reflect.get(storage.getState().sessions[seed.id], authority)).toEqual({ scope: 'changed' });
+    const stopped = { ...storage.getState().sessions[seed.id], active: false, activeAt: 202, updatedAt: 202, presence: 202 };
+    apply([stopped]);
+    const offline = storage.getState().sessions[seed.id];
+    apply([{ ...offline, activeAt: 203, updatedAt: 203, presence: 203 }]);
+    expect(storage.getState().sessions[seed.id]).not.toBe(offline);
+    expect(storage.getState().sessions[seed.id].activeAt).toBe(203);
+  });
+
+  it('retains newer presence and raw receipt ordering without publishing timestamp-only echoes', () => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const seed = createSessionFixture({ id: 'delayed-carrier', serverId, active: true,
+      presence: 'online', activeAt: 100, updatedAt: 100, meaningfulActivityAt: 100 });
+    storage.getState().applyServerScopedSessionListRows(serverId,
+      [buildSessionListRenderableFromSession(seed)], { source: 'ordinary', mode: 'append' });
+    const patch = (value: Partial<SessionListRenderableSession>) => storage.getState().applyServerScopedSessionListRowPatches(serverId,
+      [{ sessionId: seed.id, patch: value }]);
+    const address = { serverId, sessionId: seed.id };
+    sessionRuntimeObservations.observe(address, { active: false, activeAt: 123, presence: 123 });
+    patch({ active: false, activeAt: 123, presence: 123 });
+    sessionRuntimeObservations.observe(address, { active: true, activeAt: 124, presence: 'online' });
+    patch({ active: true, activeAt: 124, presence: 'online' });
+    const retained = storage.getState().sessionListRowsByServerId[serverId][seed.id];
+    const notifications = countStoreNotifications(storage);
+    try {
+      patch({ active: true, activeAt: 120, updatedAt: 120 });
+      expect(storage.getState().sessionListRowsByServerId[serverId][seed.id]).toBe(retained);
+      expect(notifications.read()).toEqual([]);
+      expect(sessionRuntimeObservations.read(address)).toMatchObject({ activeAt: 124, presence: 'online' });
+      patch({ activeAt: 124, updatedAt: 125 });
+      expect(storage.getState().sessionListRowsByServerId[serverId][seed.id]).toBe(retained);
+      expect(sessionRuntimeObservations.read(address)?.fullPublicationUpdatedAt).toBe(125);
+      expect(notifications.read()).toHaveLength(0);
+      notifications.reset();
+      patch({ activeAt: 121, updatedAt: 126, hasOtherNamedCollaborator: true });
+      expect(storage.getState().sessionListRowsByServerId[serverId][seed.id]).toMatchObject({
+        activeAt: 124, updatedAt: 126, hasOtherNamedCollaborator: true,
+      });
+      expect(notifications.read()).toHaveLength(1);
+    } finally {
+      notifications.stop();
+    }
+  });
+
+  it.each(['advisory Session', 'advisory Account', 'legacy'] as const)(
+    'revalidates observed Session System Records before held catch-up answers: %s', async wake => {
+      const observed = await observeSystemRecordForWakeTest();
+      const unrelated = await observeSystemRecordForWakeTest('unrelated-wake-record');
+      Reflect.set(sync, 'isForeground', true);
+      Reflect.set(sync, 'changesCursor', '0');
+      const socket = sockets.at(-1);
+      if (!socket) throw new Error('Expected the restored Home socket');
+      let releaseFeed!: (response: Response) => void;
+      const heldFeed = new Promise<Response>(resolve => { releaseFeed = resolve; });
+      fetchChangesMock.mockImplementationOnce(async () => await heldFeed);
+      try {
+        // Start real catch-up and leave its first HTTP page unanswered. The
+        // initial coarse wake is allowed to settle the observed record first.
+        for (const listener of socket.listenersAny()) listener('update', {
+          id: 'held-record-catch-up', seq: 1, createdAt: 1, body: { t: 'account-change' },
+        });
+        await vi.waitFor(() => expect(fetchChangesMock).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(observed.repository.getSnapshot(observed.address, observed.query))
+          .toMatchObject({ freshness: 'fresh', loading: 'idle' }));
+        await vi.waitFor(() => expect(unrelated.repository.getSnapshot(unrelated.address, unrelated.query))
+          .toMatchObject({ freshness: 'fresh', loading: 'idle' }));
+        const before = observed.readCount();
+        const unrelatedBefore = unrelated.readCount();
+        const unrelatedSnapshot = unrelated.repository.getSnapshot(unrelated.address, unrelated.query);
+        observed.setRecordId('record-after-advisory-wake');
+        publishHomeAccountChange(observed.address.serverId, wake === 'legacy' ? undefined : [observed.address.sessionId], {
+          source: 'catch-up-pending',
+          ...(wake === 'advisory Session' ? { changeKinds: ['session'] as const }
+            : wake === 'advisory Account' ? { changeKinds: ['account'] as const } : {}),
+        });
+        await vi.waitFor(() => expect(observed.readCount()).toBe(before + 1));
+        expect(fetchChangesMock).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(observed.repository.getSnapshot(observed.address, observed.query))
+          .toMatchObject({ freshness: 'fresh', loading: 'idle', data: { records: [{ id: 'record-after-advisory-wake' }] } }));
+        if (wake === 'advisory Session') {
+          expect(unrelated.repository.getSnapshot(unrelated.address, unrelated.query)).toBe(unrelatedSnapshot);
+          expect(unrelated.readCount()).toBe(unrelatedBefore);
+        } else {
+          await vi.waitFor(() => expect(unrelated.readCount()).toBe(unrelatedBefore + 1));
+        }
+      } finally {
+        releaseFeed(changesResponse({ status: 'ok', nextCursor: '1', changes: [] }));
+        await (Reflect.get(sync, 'resumeInFlight') as Promise<unknown> | null);
+      }
+    },
+  );
+
+  it('routes committed socket wake facts to pending readers while legacy and security wakes remain coarse', async () => {
+    await restoreTestHome();
+    const observed = await observeSystemRecordForWakeTest();
+    Reflect.set(sync, 'isForeground', true);
+    Reflect.set(sync, 'changesCursor', '0');
+    const socket = sockets.at(-1);
+    if (!socket) throw new Error('Expected the restored Home socket');
+    const pending: HomeAccountChangeEvent[] = [];
+    const detailed: HomeAccountChangeEvent[] = [];
+    const release = subscribeHomeAccountChange(event => {
+      if (event.source === 'catch-up-pending') pending.push(event);
+      else detailed.push(event);
+    }, { includeCatchUpPending: true });
+    onTestFinished(release);
+    for (const [index, changeKinds] of [['session'], ['account'], ['future-kind'], [], undefined].entries()) {
+      const cursor = index + 1;
+      const before = observed.readCount();
+      observed.setRecordId(`record-after-sdk-wake-${cursor}`);
+      let releaseFeed!: (response: Response) => void;
+      const heldFeed = new Promise<Response>(resolve => { releaseFeed = resolve; });
+      fetchChangesMock.mockImplementationOnce(async () => await heldFeed);
+      try {
+        for (const listener of socket.listenersAny()) listener('update', {
+          id: `routing-wake-${cursor}`, seq: cursor, createdAt: 1,
+          body: { t: 'account-change', ...(changeKinds ? { changeKinds } : {}), entityIds: [observed.address.sessionId] },
+        });
+        expect(pending).toHaveLength(cursor);
+        expect(pending[index]).not.toHaveProperty('feedPageConsumed');
+        if (index === 0) expect(pending[index]).toMatchObject({ changeKinds: ['session'], entityIds: [observed.address.sessionId] });
+        else {
+          expect(pending[index].changeKinds).toBeUndefined();
+          expect(pending[index].entityIds).toBeUndefined();
+        }
+        await vi.waitFor(() => expect(fetchChangesMock).toHaveBeenCalledTimes(cursor));
+        await vi.waitFor(() => expect(observed.readCount()).toBe(before + 1));
+        await vi.waitFor(() => expect(observed.repository.getSnapshot(observed.address, observed.query))
+          .toMatchObject({ freshness: 'fresh', loading: 'idle', data: { records: [{ id: `record-after-sdk-wake-${cursor}` }] } }));
+      } finally {
+        releaseFeed(changesResponse({ status: 'ok', nextCursor: String(cursor), changes: index === 1
+          ? [{ cursor, kind: 'account', entityId: 'self', changedAt: 1, hint: { settingsVersion: 1 } }]
+          : [] }));
+        await (Reflect.get(sync, 'resumeInFlight') as Promise<unknown> | null);
+      }
+      if (index === 1) {
+        // This receipt comes from Sync's real detailed-page publisher. Its
+        // independent consumption proof must not re-read the observed record
+        // a second time merely because the advisory wake already supplied ids.
+        expect(detailed).toContainEqual(expect.objectContaining({ entityIds: ['self'], feedPageConsumed: true }));
+        await vi.waitFor(() => expect(observed.repository.getSnapshot(observed.address, observed.query))
+          .toMatchObject({ freshness: 'fresh', loading: 'idle' }));
+        expect(observed.readCount()).toBe(before + 1);
+      }
+    }
+  });
+
+  it.each(['listed', 'unlisted'] as const)('keeps visible Session content quiet when hintless AccountChange heartbeats demand real HTTP hydration: %s', async (membership) => {
+    const now = Date.now();
+    let batchRequests = 0;
+    const rows = Array.from({ length: membership === 'listed' ? 2 : 1 }, (_, index) => ({
+      id: `account-change-heartbeat-${index}`,
+      activeAt: now - 30_095 + index * 7_118,
+      updatedAt: now - 20_000 + index * 6_194,
+      metadataVersion: 9,
+      summary: 'READY',
+    }));
+    const fallback = apiSocketRequestMock.getMockImplementation()!;
+    apiSocketRequestMock.mockImplementation(async (path, init) => {
+      const pathname = new URL(path, 'http://localhost').pathname;
+      for (const row of rows) {
+        if (pathname === `/v2/sessions/${row.id}`) {
+          return Response.json({ session: currentOwnerSessionWireRow({
+            id: row.id, seq: 0, createdAt: 1, updatedAt: row.updatedAt, active: true, activeAt: row.activeAt,
+            encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+            metadata: JSON.stringify({ path: '/account-change-heartbeat', host: 'localhost',
+              summary: { text: row.summary, updatedAt: now - 20_000 } }), metadataVersion: row.metadataVersion,
+            latestTurnId: 'ready-turn', latestTurnStatus: 'completed', latestTurnStatusObservedAt: now - 35_000,
+            agentState: null, agentStateVersion: 0, share: null,
+          }) });
+        }
+      }
+      return fallback(path, init);
+    });
+    await restoreTestHome(undefined, undefined, () => { batchRequests += 1; });
+    const serverId = getActiveServerSnapshot().serverId;
+    for (const row of rows) {
+      await sync.ensureSessionVisibleForMessageRoute(row.id, { forceRefresh: true, hydrateMessages: false });
+      expect(storage.getState().sessions[row.id]).toMatchObject({ active: true, thinking: false,
+        metadataVersion: 9, latestTurnStatus: 'completed' });
+    }
+    if (membership === 'listed') {
+      storage.getState().applyServerScopedSessionListRows(serverId,
+        rows.map(row => buildSessionListRenderableFromSession(storage.getState().sessions[row.id])),
+        { source: 'ordinary', mode: 'append' });
+    }
+    for (const row of rows) expect((storage.getState().ordinarySessionListMembershipByServerId[serverId] ?? []).includes(row.id))
+      .toBe(membership === 'listed');
+    const release = retainVisibleSessionListSurfaces(rows.map(row => ({ serverId, sessionId: row.id })));
+    for (const row of rows) await sync.ensureSessionVisibleForMessageRoute(row.id, { hydrateMessages: false });
+    const socket = sockets.at(-1);
+    if (!socket) throw new Error('Expected the restored Home socket');
+    let cursor = 0;
+    const deliverChange = async (row: typeof rows[number]) => {
+      cursor += 1;
+      fetchChangesMock.mockResolvedValueOnce(changesResponse({ status: 'ok', nextCursor: String(cursor),
+        changes: [{ cursor, kind: 'session', entityId: row.id, changedAt: row.updatedAt, hint: null }] }));
+      for (const listener of socket.listenersAny()) listener('update', {
+        id: `account-change-${cursor}`, seq: cursor, createdAt: row.updatedAt,
+        body: { t: 'account-change', changeKinds: ['session'], entityIds: [row.id] },
+      });
+      const resume = Reflect.get(sync, 'resumeInFlight') as Promise<void> | null;
+      expect(resume).not.toBeNull();
+      await resume;
+    };
+    // Establish this visible owner's actual read shape before measuring idle
+    // beats, including the real socket witness and independent HTTP clock pair.
+    for (const row of rows) for (const listener of socket.listenersAny()) listener('ephemeral', {
+      type: 'activity', id: row.id, active: true, activeAt: row.activeAt, thinking: false,
+    });
+    await new Promise(resolve => setTimeout(resolve, loadSyncTuning().activityUpdateDebounceMs + 100));
+    for (const row of rows) await deliverChange(row);
+    const retained = rows.map(row => storage.getState().sessions[row.id]);
+    batchRequests = 0;
+    const notifications = countStoreNotifications(storage);
+    // Only the clock boundary is virtual: real HTTP/batch scheduling stays live.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(now);
+    try {
+      for (let beat = 1; beat <= 2; beat += 1) {
+        for (const [index, row] of rows.entries()) {
+          vi.setSystemTime(now + beat * 60_000 - 6_000 + index * 6_000);
+          // Capture-shaped deltas are not equal: heartbeat receipt follows its
+          // activity fact, and the two READY Sessions arrive six seconds apart.
+          row.activeAt += index === 0 ? 60_012 : 60_006;
+          row.updatedAt += index === 0 ? 60_131 : 60_110;
+          await deliverChange(row);
+        }
+        expect(notifications.read().filter(keys => keys.some(key => key === 'sessions'
+          || key === 'sessionListRowsByServerId' || key === 'sessionListRenderableDelta'))).toEqual([]);
+      }
+      expect(fetchChangesMock).toHaveBeenCalled();
+      expect(batchRequests).toBe(rows.length * 2);
+      for (const [index, row] of rows.entries()) {
+        expect(storage.getState().sessions[row.id]).toBe(retained[index]);
+        expect(sessionRuntimeObservations.read({ serverId, sessionId: row.id })?.activeAt).toBe(row.activeAt);
+      }
+      if (membership === 'listed') expect(notifications.read()).toEqual([]);
+      else {
+        expect(notifications.read()).toHaveLength(4);
+        expect(notifications.read().flat()).toEqual(Array<string>(4).fill('concurrentSessionListCacheByServerId'));
+      }
+      console.info('HTTP heartbeat publication contract:', { membership, sessionCount: rows.length,
+        batchRequests, rootPublications: notifications.read() });
+      if (membership === 'listed') {
+        notifications.reset();
+        vi.setSystemTime(now + 126_000);
+        rows[0].metadataVersion += 1;
+        rows[0].summary = 'real content change';
+        rows[0].updatedAt += 6_000;
+        rows[0].activeAt += 6_000;
+        await deliverChange(rows[0]);
+        expect(storage.getState().sessions[rows[0].id]).toMatchObject({ metadataVersion: 10,
+          metadata: { summary: { text: 'real content change' } } });
+        expect(storage.getState().sessions[rows[1].id]).toBe(retained[1]);
+        expect(notifications.read().filter(keys => keys.includes('sessions'))).toHaveLength(1);
+      }
+    } finally {
+      notifications.stop();
+      vi.useRealTimers();
+      release();
+    }
+  });
+
+  it.each(['online', 'unknown', 'newer stop'] as const)('keeps full hydration freshness tied to its actual observation witness: %s', async (witness) => {
+    vi.useFakeTimers();
+    const now = 1_000_000;
+    vi.setSystemTime(now);
+    const serverId = getActiveServerSnapshot().serverId;
+    const session = createSessionFixture({ id: 'hydration-observation-witness', serverId,
+      active: true, activeAt: now, updatedAt: now, meaningfulActivityAt: now,
+      presence: 'online', thinking: false, thinkingAt: 0 });
+    storage.getState().applySessions([session]);
+    const retained = storage.getState().sessions[session.id];
+    const address = { serverId, sessionId: session.id };
+    if (witness === 'online') sessionRuntimeObservations.observe(address, {
+      active: true, activeAt: now, thinking: false, presence: 'online',
+    });
+    if (witness === 'newer stop') sessionRuntimeObservations.observe(address, {
+      active: false, activeAt: now + 140_000, thinking: false, presence: now + 140_000,
+    });
+    const apply = Reflect.get(sync, 'applySessions') as (sessions: Session[]) => void;
+    const notifications = countStoreNotifications(storage);
+    try {
+      await vi.advanceTimersByTimeAsync(130_001);
+      apply([{ ...retained, activeAt: now + 130_001, updatedAt: now + 130_001 }]);
+      expect(notifications.read()).toHaveLength(witness === 'online' ? 1 : 0);
+      expect(storage.getState().sessions[session.id].updatedAt).toBe(retained.updatedAt);
+      const row = storage.getState().sessionListRowsByServerId[serverId][session.id];
+      if (witness === 'online') expect(getSessionStatus(row, Date.now()).awareness.freshness).toBe('live');
+      else expect(getSessionStatus(row, Date.now()).awareness.freshness).not.toBe('live');
+      notifications.reset();
+      await vi.advanceTimersByTimeAsync(60_000);
+      apply([{ ...storage.getState().sessions[session.id], activeAt: now + 190_001, updatedAt: now + 190_001 }]);
+      expect(notifications.read()).toEqual([]);
+      if (witness === 'newer stop') expect(sessionRuntimeObservations.read(address)?.presence).not.toBe('online');
+    } finally {
+      notifications.stop();
+      vi.useRealTimers();
+    }
   });
 
   it.each(['session', 'share'] as const)('retires an offscreen Session after a content-free %s change proves exact absence', async (kind) => {
@@ -535,6 +1242,33 @@ describe('sync socket offline tracking', () => {
 
     expect((sync as any).lastSocketDisconnectedAtMs ?? null).toBeNull();
   }, 60_000);
+
+  it('checks the Account Settings head once on the next read and on reconnect after a socket gap', async () => {
+    const { retainAccountSettingsRawSnapshot, readCurrentAccountSettingsRawSnapshot } = await import('@/sync/engine/settings/accountSettingsRawSnapshot');
+    const { bindAccountEncryptionObservation } = await import('@/sync/http/accountEncryptionObservationBinding');
+    const { resolveAuthCredentialsScopeKey } = await import('@/auth/storage/resolveAuthCredentialsScopeKey');
+    const scope = { serverId: getActiveServerSnapshot().serverId, accountId: 'socket-gap-account' };
+    const credentials = { token: 'socket-gap-token' };
+    let probes = 0;
+    const request = bindAccountEncryptionObservation(async () => {
+      probes++;
+      return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 5 }));
+    }, { credentials, credentialScopeKey: resolveAuthCredentialsScopeKey(credentials), isCurrent: () => true } as never);
+    const ports = { credentials, request, readBaseline: async () => { throw new Error('The unmoved head must not read the document'); } };
+    retainAccountSettingsRawSnapshot(scope, 5, { delivered: true });
+    await readCurrentAccountSettingsRawSnapshot(scope, ports);
+    expect(probes).toBe(0);
+    emitSocketStatus('connected');
+    const invalidate = vi.spyOn(Reflect.get(sync, 'settingsSync') as InvalidateSync, 'invalidate');
+    emitSocketStatus('disconnected');
+    expect(invalidate).not.toHaveBeenCalled();
+    emitSocketStatus('connected');
+    await readCurrentAccountSettingsRawSnapshot(scope, ports);
+    await readCurrentAccountSettingsRawSnapshot(scope, ports);
+    expect(probes).toBe(1);
+    expect(invalidate).toHaveBeenCalled();
+    invalidate.mockRestore();
+  });
 
   it('publishes active ordinary Session-list offline state without erasing its last success', () => {
     const serverId = getActiveServerSnapshot().serverId;
@@ -1623,6 +2357,47 @@ describe('sync socket offline tracking', () => {
     expect(storage.getState().sessions.s_deleted_while_offline).toBeUndefined();
   });
 
+  it.each([
+    [403, 'team_authentication_required'],
+    [503, 'team_authentication_unavailable'],
+  ] as const)('settles a required changed Team Session refused by Team authentication (%s) without failing catch-up', async (status, error) => {
+    const snapshotRefreshFetch = stubSnapshotRefreshFetch();
+    storage.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        s_team_auth: {
+          id: 's_team_auth',
+          seq: 7,
+          encryptionMode: 'plain',
+          metadata: {},
+          agentState: null,
+        } as any,
+      },
+    }), true);
+    apiSocketRequestMock.mockImplementation(async (path) => {
+      if (new URL(path, 'http://localhost').pathname === '/v2/sessions/s_team_auth') {
+        return new Response(JSON.stringify({ error }), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return snapshotRefreshFetch(path);
+    });
+
+    // The Team refuses this credential for this Session only. Catch-up settles
+    // it (the Account cursor can advance) and keeps the retained row; it is
+    // neither an Account sign-out nor proof of deletion.
+    await (sync as any).fetchSessions({
+      requiredHydrationSessionIds: ['s_team_auth'],
+      prioritizeSessionIds: ['s_team_auth'],
+      awaitSessionListHydration: true,
+      hydrationTelemetrySource: 'changesCatchUp',
+    });
+
+    expect(storage.getState().sessions.s_team_auth).toEqual(expect.objectContaining({ id: 's_team_auth' }));
+  });
+
   it('keeps a required changed session when exact hydration receives an unparseable 404', async () => {
     const snapshotRefreshFetch = stubSnapshotRefreshFetch();
     storage.setState((state) => ({
@@ -1653,9 +2428,7 @@ describe('sync socket offline tracking', () => {
       prioritizeSessionIds: ['s_compatibility_404'],
       awaitSessionListHydration: true,
       hydrationTelemetrySource: 'changesCatchUp',
-    })).rejects.toThrow(
-      'Required session shell hydration failed for s_compatibility_404: invalid_response',
-    );
+    })).rejects.toThrow('Required session shell hydration failed for s_compatibility_404: invalid_response');
 
     expect(apiSocketRequestMock).toHaveBeenCalledWith(
       '/v2/sessions/s_compatibility_404?accessProjectionVersion=1',
@@ -2029,24 +2802,92 @@ describe('sync socket offline tracking', () => {
     expect(storage.getState().nativeUpdateStatus).toEqual({ available: false });
   }, 60_000);
 
-  it.each([false, true])('reports a failed organization snapshot to the Session retry owner (cached=%s)', async (cached) => {
+  it.each([false, true])('keeps the Session list ready while organization fails and recovers (cached=%s)', async (cached) => {
     const serverId = getActiveServerSnapshot().serverId;
     const fetchMock = stubSnapshotRefreshFetch();
     const failure = new TypeError('Failed to fetch');
-    let failed = false;
+    const row = createPlainSessionCurrentProjectionRecordFixture({ id: 'ordinary-organization', metadata: { path: '/organization', host: 'fixture' } });
+    let organizationUnavailable = true;
+    let organizationReads = 0;
     apiSocketRequestMock.mockImplementation(async (path, init) => {
-      if (path.includes('/v2/session-organization') && !failed) {
-        failed = true;
-        throw failure;
+      const target = new URL(path, 'http://localhost');
+      if (target.pathname === '/v2/session-organization') {
+        organizationReads += 1;
+        if (organizationUnavailable) throw failure;
       }
+      if (target.pathname === '/v2/sessions') return Response.json({
+        sessions: [{ ...row, id: target.searchParams.has('cursor') ? 'next-organization' : row.id }],
+        nextCursor: target.searchParams.has('cursor') ? null : 'organization-next',
+        hasNext: !target.searchParams.has('cursor'),
+      });
       return fetchMock(path, init);
     });
     if (cached) storage.setState({ sessionOrganizationSnapshotVersionByServerId: { [serverId]: 0 } });
 
-    await expect(sync.refreshSessions({ awaitSessionListHydration: true })).rejects.toBe(failure);
-    expect(storage.getState().sessionOrganizationErrorByServerId[serverId]).toBeTruthy();
+    crashReports.captureExceptionIfEnabled.mockClear();
     await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
-    expect(storage.getState().sessionOrganizationErrorByServerId[serverId]).toBeNull();
+    expect(organizationReads).toBeGreaterThan(0);
+    // The additive organization failure stays observable without failing the list.
+    expect(crashReports.captureExceptionIfEnabled).toHaveBeenCalledWith(failure, expect.objectContaining({
+      tags: expect.objectContaining({ operation: 'session_organization_snapshot_refresh' }),
+    }));
+    expect(storage.getState().sessionListRowsByServerId[serverId][row.id]).toMatchObject({ id: row.id });
+    expect(sync.readOrdinarySessionListFrontier()).toMatchObject({ hasNext: true, nextCursor: 'organization-next' });
+    const readsBeforeAppend = organizationReads;
+    await sync.fetchMoreSessions();
+    expect(organizationReads).toBe(readsBeforeAppend);
+    expect(storage.getState().sessionListRowsByServerId[serverId]['next-organization']).toMatchObject({ id: 'next-organization' });
+    expect(storage.getState().concurrentSessionListCacheByServerId[serverId]?.listObservation?.phase).toBe('ready');
+    organizationUnavailable = false;
+    crashReports.captureExceptionIfEnabled.mockClear();
+    await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
+    expect(organizationReads).toBeGreaterThan(readsBeforeAppend);
+    expect(crashReports.captureExceptionIfEnabled.mock.calls.filter(([, context]) =>
+      context?.tags?.operation === 'session_organization_snapshot_refresh')).toEqual([]);
+  }, 60_000);
+
+  it('does no fleet warm-display projection before an exact Machine refresh', async () => {
+    const fleet = Array.from({ length: 137 }, (_, index) => createPlainMachineRowFixture({
+      id: `warm-cost-${index}`, accountId: 'test',
+    }));
+    let available = fleet;
+    const reads: string[] = [];
+    let measuringPreparation = false;
+    let preparedEntries = 0;
+    apiSocketRequestMock.mockImplementation(async (path, init) => {
+      const pathname = new URL(path, 'http://localhost').pathname;
+      if (pathname === '/v1/machines' || pathname === '/v1/machines/read-batch') {
+        measuringPreparation = false;
+        reads.push(pathname);
+        return pathname === '/v1/machines'
+          ? Response.json(available)
+          : createMachineReadBatchResponseFixture(String(init?.body), id => available.find(row => row.id === id) ?? null);
+      }
+      return defaultHomeResponse(pathname, init);
+    });
+    await sync.refreshMachines();
+    const untouched = storage.getState().machines['warm-cost-136'];
+    const displays = storage.getState().machineDisplayById;
+    // Observe the real producer's record without replacing its row identities.
+    // Preparation ends at the HTTP boundary, before response reconciliation.
+    storage.setState({ machineDisplayById: new Proxy(displays, {
+      get(target, key, receiver) {
+        if (measuringPreparation && typeof key === 'string' && Object.hasOwn(target, key)) preparedEntries++;
+        return Reflect.get(target, key, receiver);
+      },
+    }) });
+    reads.length = 0;
+    available = fleet.map(row => row.id === 'warm-cost-0'
+      ? createPlainMachineRowFixture({ id: row.id, accountId: 'test', machine: createMachineFixture({
+        id: row.id, metadataVersion: row.metadataVersion + 1,
+        metadata: { ...createMachineFixture().metadata!, displayName: 'Changed Machine' },
+      }) }) : row);
+    measuringPreparation = true;
+    await sync['fetchMachines'](['warm-cost-0']);
+    expect(preparedEntries).toBe(0);
+    expect(reads).toEqual(['/v1/machines/read-batch']);
+    expect(storage.getState().machines['warm-cost-0']?.metadata?.displayName).toBe('Changed Machine');
+    expect(storage.getState().machines['warm-cost-136']).toBe(untouched);
   }, 60_000);
 
   it('replaces the active machine snapshot so an empty account list clears stale machines', async () => {
@@ -2097,41 +2938,60 @@ describe('sync socket offline tracking', () => {
     expect(storage.getState().machineListByServerId[activeServerId]).toEqual([]);
   }, 60_000);
 
-  it('refreshes sessions on socket reconnect (recovers missed activity ephemerals)', async () => {
-    // Ensure serverFetch has an active server target.
-
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url: string =
-        typeof input === 'string'
-          ? input
-          : input instanceof Request
-            ? input.url
-            : 'url' in input
-              ? String(input.url)
-              : input.toString();
-      if (url.includes('/v2/sessions')) {
-        return new Response(
-          JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
+  it('reads committed inactive Machine presence on reconnect after its offline push was lost', async () => {
+    const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+    const { resolveMachinePickerPresence } = await import('@/sync/domains/machines/identity/resolveMachinePickerPresence');
+    const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+    const scope = { serverId: getActiveServerSnapshot().serverId, accountId: 'test' };
+    const lastSeen = Date.now();
+    const original = createMachineFixture({ id: 'restart-recovery-machine', active: true, activeAt: lastSeen, updatedAt: lastSeen });
+    const recoveryReadEntered = createDeferred<void>();
+    const releaseRecoveryRead = createDeferred<void>();
+    let active = true;
+    apiSocketRequestMock.mockImplementation(async (path, init) => {
+      const pathname = new URL(path, 'http://localhost').pathname;
+      if (pathname !== '/v1/machines') return defaultHomeResponse(pathname, init);
+      if (!active) {
+        recoveryReadEntered.resolve();
+        await releaseRecoveryRead.promise;
       }
-      if (url.includes('/v1/machines')) {
-        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      }
-      return defaultHomeResponse(new URL(url, 'http://localhost').pathname);
+      return Response.json([createPlainMachineRowFixture({ id: original.id, accountId: scope.accountId,
+        machine: { ...original, active } })]);
     });
-    routeApiSocketRequestsThroughFetch(fetchMock);
+    const readMachine = () => {
+      const machine = resolveServerScopedMachine(storage.getState(), scope.serverId, original.id);
+      if (!machine) throw new Error('Expected the HTTP-admitted Machine');
+      return machine;
+    };
 
-    // Minimal Sync prerequisites to allow resumeSync to proceed.
-    storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
-    (sync as any).isForeground = true;
-    (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
+    emitSocketStatus('connected');
+    await sync.refreshMachines();
+    expect(readMachine()).toMatchObject({ active: true, activeAt: lastSeen, updatedAt: lastSeen });
+    expect(resolveMachinePickerPresence(readMachine(), lastSeen, scope).status).toBe('online');
 
-    await (sync as any).resumeSync('socket-reconnect');
+    // Model the server's committed expiry and restart with no offline packet.
+    // Only Date is virtual; the real socket, HTTP reader, reducer and store run.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      emitSocketStatus('disconnected');
+      active = false;
+      vi.setSystemTime(lastSeen + 60_001);
+      expect(resolveMachinePickerPresence(readMachine(), Date.now(), scope).status).toBe('unknown');
+      emitSocketStatus('connected');
+      await recoveryReadEntered.promise;
+      expect(readMachine().active).toBe(true);
+      expect(resolveMachinePickerPresence(readMachine(), Date.now(), scope).status).toBe('unknown');
 
-    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
-      expect.arrayContaining([expect.stringContaining('/v2/sessions')]),
-    );
+      releaseRecoveryRead.resolve();
+      await waitForHomeGovernance(() => expect(readMachine().active).toBe(false));
+      expect(readMachine()).toMatchObject({ activeAt: lastSeen, updatedAt: lastSeen });
+      expect(readMachineActivity(readMachine())).toMatchObject({ active: false, activeAt: lastSeen });
+      expect(storage.getState().machinePresenceByServerId[scope.serverId][original.id]).toMatchObject({ active: false, activeAt: lastSeen });
+      expect(resolveMachinePickerPresence(readMachine(), Date.now(), scope).status).toBe('offline');
+    } finally {
+      releaseRecoveryRead.resolve();
+      vi.useRealTimers();
+    }
   }, 60_000);
 
   it('re-enqueues a visible transcript whose first read failed when snapshot refresh resumes', async () => {
@@ -2215,16 +3075,25 @@ describe('sync socket offline tracking', () => {
 
     storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'stale-profile-account' } as any }), true);
     saveProfile({ ...profileDefaults, id: 'test-account' });
+    // Exercise cursor-gone recovery, rather than first repairing a missing cursor.
+    Reflect.set(sync, 'changesCursor', '8');
     (sync as any).isForeground = true;
     (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
 
     await (sync as any).resumeSync('socket-reconnect');
 
-    // /v2/cursor is also the scoped connection's readiness probe, which names its method; the snapshot-base
-    // capture is the one cursor read that does not.
-    expect(fetchCurrentChangesCursorMock.mock.calls.filter(([, init]) => !(init as RequestInit | undefined)?.method)).toHaveLength(1);
+    // The snapshot contract is a fresh cursor after cursor-gone and before the
+    // replacement Session list, independent of other owners' frontier reads.
+    const cursorGoneCallOrder = fetchChangesMock.mock.invocationCallOrder[0]!;
+    const repairCursorOrder = fetchCurrentChangesCursorMock.mock.invocationCallOrder.find(order => order > cursorGoneCallOrder);
+    expect(repairCursorOrder).toBeDefined();
+    // A background list read may overlap reconnect; observe the repair's list.
+    expect(fetchMock.mock.calls.some(([input], index) =>
+      new URL(String(input), 'http://localhost').pathname === '/v2/sessions'
+      && fetchMock.mock.invocationCallOrder[index]! > repairCursorOrder!,
+    )).toBe(true);
     const serverScope = getActiveServerSnapshot().serverId;
-    const instanceId = globalThis.sessionStorage?.getItem(WEB_SYNC_INSTANCE_ID_SESSION_KEY) ?? undefined;
+    const instanceId = (Reflect.get(sync, 'webSyncClientIdentity') as WebSyncClientIdentity | null)?.instanceId;
     expect(loadChangesCursor({ serverScope, accountId: 'test', instanceId })).toBe('12');
     expect(loadChangesCursor({ serverScope, accountId: 'test-account', instanceId })).toBeNull();
   }, 60_000);
@@ -2292,7 +3161,7 @@ describe('sync socket offline tracking', () => {
   it('persists web reconnect cursors under the current tab instance scope only', async () => {
     const sessionStorage = new MemoryWebStorage();
     const localStorage = new MemoryWebStorage();
-    sessionStorage.setItem(WEB_SYNC_INSTANCE_ID_SESSION_KEY, 'tab-a');
+    sessionStorage.setItem('happier-sync-instance-id-v1', 'copied-tab');
     vi.stubGlobal('sessionStorage', sessionStorage);
     vi.stubGlobal('localStorage', localStorage);
     await restoreTestHome();
@@ -2341,12 +3210,12 @@ describe('sync socket offline tracking', () => {
     await (sync as any).resumeSync('socket-reconnect');
 
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const instanceId = (Reflect.get(sync, 'webSyncClientIdentity') as WebSyncClientIdentity).instanceId;
+    expect(instanceId).not.toBe('copied-tab');
     expect({
-      instanceId: sessionStorage.getItem(WEB_SYNC_INSTANCE_ID_SESSION_KEY),
-      instanceCursor: loadChangesCursor({ serverScope: activeServerId, accountId: 'test', instanceId: 'tab-a' }),
-      staleProfileCursor: loadChangesCursor({ serverScope: activeServerId, accountId: 'test-account', instanceId: 'tab-a' }),
+      instanceCursor: loadChangesCursor({ serverScope: activeServerId, accountId: 'test', instanceId }),
+      staleProfileCursor: loadChangesCursor({ serverScope: activeServerId, accountId: 'test-account', instanceId }),
     }).toMatchObject({
-      instanceId: 'tab-a',
       instanceCursor: '12',
       staleProfileCursor: null,
     });
@@ -2355,7 +3224,7 @@ describe('sync socket offline tracking', () => {
   it('persists direct-session tail cursors under the current tab instance scope', async () => {
     const sessionStorage = new MemoryWebStorage();
     const localStorage = new MemoryWebStorage();
-    sessionStorage.setItem(WEB_SYNC_INSTANCE_ID_SESSION_KEY, 'tab-a');
+    sessionStorage.setItem('happier-sync-instance-id-v1', 'copied-tab');
     vi.stubGlobal('sessionStorage', sessionStorage);
     vi.stubGlobal('localStorage', localStorage);
     await restoreTestHome();
@@ -2387,7 +3256,9 @@ describe('sync socket offline tracking', () => {
     await (sync as any).applyExternalSessionTranscriptItems('s1', [], { nextCursor: tailCursor });
 
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    expect(loadExternalSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test', instanceId: 'tab-a' })).toBe(tailCursor);
+    const instanceId = (Reflect.get(sync, 'webSyncClientIdentity') as WebSyncClientIdentity).instanceId;
+    expect(instanceId).not.toBe('copied-tab');
+    expect(loadExternalSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test', instanceId })).toBe(tailCursor);
   });
 
   it('catches up loaded direct sessions on resume even when the account changes feed is empty', async () => {
@@ -2513,24 +3384,27 @@ describe('sync socket offline tracking', () => {
       .map((message) => message.text);
     expect(texts).toEqual(['accepted before resume', 'caught up direct']);
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const instanceId = globalThis.sessionStorage?.getItem(WEB_SYNC_INSTANCE_ID_SESSION_KEY) ?? undefined;
+    const instanceId = (Reflect.get(sync, 'webSyncClientIdentity') as WebSyncClientIdentity | null)?.instanceId;
     expect(loadExternalSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test', instanceId })).toBe(
       'happier_external_cursor_v1:dGFpbC0x',
     );
   }, 60_000);
 
-  it('persists a safe cursor lag tripwire only after two over-threshold checks', () => {
-    (sync as any).rememberBlockedChangesCursorLag({
+  it('evaluates a safe cursor lag tripwire on blocked-cursor events without an idle timer', () => {
+    const remember = Reflect.get(sync, 'rememberBlockedChangesCursorLag') as (params: {
+      blockedCursor: string; blockedReason: string; safeAdvanceCursor: string | null; nowMs: number;
+    }) => void;
+    const blocked = {
       blockedCursor: 'cursor-2',
       blockedReason: 'unsupported-kind',
       safeAdvanceCursor: 'cursor-1',
-      nowMs: 1_000,
-    });
+    };
+    remember.call(sync, { ...blocked, nowMs: 1_000 });
 
-    (sync as any).evaluateSafeCursorLagTripwireNow(301_000);
+    remember.call(sync, { ...blocked, nowMs: 301_000 });
     expect(syncReliabilityTelemetry.snapshot().persistedEvents.map((event) => event.name)).not.toContain('sync.cursor.safeCursorLagExceeded');
 
-    (sync as any).evaluateSafeCursorLagTripwireNow(331_000);
+    remember.call(sync, { ...blocked, nowMs: 331_000 });
     expect(syncReliabilityTelemetry.snapshot().persistedEvents).toEqual([
       expect.objectContaining({
         name: 'sync.cursor.safeCursorLagExceeded',
