@@ -1,9 +1,7 @@
 import type { PluginClientApi, PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import {
-  TriageEntryLocatorV1Schema,
   TriageEntryRefV1Schema,
-  TriageSourceInstanceRefV1Schema,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -14,24 +12,18 @@ import {
 } from '../../actions/sessionLinksProtocol.js';
 import { parseTriageComposerEntryAttachmentValue } from '../../composer/attachmentValue.js';
 import { buildTriageEntryAttachmentDraftV1 } from '../../composer/mutationPlan.js';
-import { isInternalTaskReferenceV1 } from '../../internalTasks/identity.js';
+import { isPersonalTaskReferenceV1 } from '../../internalTasks/identity.js';
+import { PersonalTaskOrderScopeSchema } from '../../internalTasks/listProjection.js';
+import { TRIAGE_WORK_ITEMS_RUNTIME } from '../../workItems/runtime.js';
 
-export const TRIAGE_ENTRY_DRAG_SOURCE_ID_V1 = 'entry-reference';
-export const TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1 = 'entry-session';
-export const TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1 = 'personal-task-order';
-export const TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1 = 'triage-entity-drag-drop-native';
+import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1,
+  TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1, TriageEntryDragReferenceV1Schema } from './entryDragDropProtocol.js';
+export { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1,
+  TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1, TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1,
+  TriageEntryDragReferenceV1Schema } from './entryDragDropProtocol.js';
 
 const text = defineProtocolString({ minLength: 1 });
 const closed = { policy: 'closed' } as const;
-
-/** Identity and current row presentation, never an href transport or a PR-number guess. */
-export const TriageEntryDragReferenceV1Schema = defineProtocolObject({
-  entryRef: TriageEntryRefV1Schema,
-  sourceInstance: TriageSourceInstanceRefV1Schema,
-  lastKnownLocator: TriageEntryLocatorV1Schema,
-  title: text,
-  subtitle: text,
-}, closed);
 
 /** The destination's live row and already-localized release promise. */
 export const TriageEntrySessionDropInputV1Schema = defineProtocolObject({
@@ -42,7 +34,7 @@ export const TriageEntrySessionDropInputV1Schema = defineProtocolObject({
 
 /** The current visible group's personal task anchors; never an order writer. */
 const PersonalTaskOrderInput = defineProtocolObject({
-  scope: defineProtocolObject({ serverId: text, accountId: text }, closed),
+  scope: PersonalTaskOrderScopeSchema,
   targetId: text,
   orderedIds: defineProtocolArray(text),
   preview: defineProtocolObject({ before: text, after: text, target: text }, closed),
@@ -61,7 +53,7 @@ export const triagePersonalTaskOrderTargetRuntime: PluginDropTargetRuntime = {
     const refuse = () => ({ status: 'refused' as const, reason: { code: 'task_order_unavailable', message: target.data.unavailableReason } });
     if (!reference?.success || item.scope.serverId !== target.data.scope.serverId || item.scope.accountId !== target.data.scope.accountId) return refuse();
     const entry = reference.data.entryRef;
-    if (!isInternalTaskReferenceV1(entry)) return refuse();
+    if (!isPersonalTaskReferenceV1(entry, target.data.scope.accountId)) return refuse();
     const sourceIndex = target.data.orderedIds.indexOf(entry.entryId);
     const targetIndex = target.data.orderedIds.indexOf(target.data.targetId);
     if (sourceIndex < 0 || targetIndex < 0) return refuse();
@@ -122,6 +114,7 @@ export const triageEntrySessionDropTargetRuntime: PluginDropTargetRuntime = {
 
 /** The ordinary client activation ABI; the mounted host owns effects and retirement. */
 export function activate(api: PluginClientApi): void {
+  api.workItems.register('work-items', TRIAGE_WORK_ITEMS_RUNTIME);
   api.dragSources.register(TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, triageEntryDragSourceRuntime);
   api.dropTargets.register(TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1, triageEntrySessionDropTargetRuntime);
   api.dropTargets.register(TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1, triagePersonalTaskOrderTargetRuntime);

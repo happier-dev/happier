@@ -9,9 +9,8 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { testkitEntryRef, testkitLocator } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageListItemV1 } from './sections.js';
 import { useTriageListAnatomyV1 } from './rows.js';
-import { usePersonalTaskOrder, type PersonalTaskOrder } from './usePersonalTaskOrder.js';
+import type { PersonalTaskOrder } from './usePersonalTaskOrder.js';
 import { triagePersonalTaskOrderTargetRuntime } from './entryDragDrop.js';
-import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -19,7 +18,7 @@ afterEach(async () => { for (const fixture of mounted.splice(0)) await fixture.d
 
 function entry(materialized = true): TriageListItemV1 {
   return {
-    key: 'entry-17', group: 'inReview', summary: null, signal: null,
+    key: 'entry-17', group: 'inReview', statusGroup: 'inReview', summary: null, signal: null,
     row: {
       key: 'entry-17', entryRef: testkitEntryRef(), title: 'Review the normalizer', scopeLabel: 'example/repository',
       detail: null, tone: 'neutral', detailKind: null, lifecyclePresentation: 'active', activityAtMs: null,
@@ -68,7 +67,7 @@ describe('the real PR Collection public drag/drop binding', () => {
     const task = (id: string, group: TriageListItemV1['group'] = 'unstarted'): TriageListItemV1 => ({ ...base, key: id, group, row: { ...base.row, key: id,
       entryRef: { source: { pluginId: 'happier.triage', localId: 'internal' }, kindId: 'task', collisionScope: 'personal', entryId: id } } });
     const items = [task('a'), task('b'), task('working', 'started')];
-    const order: PersonalTaskOrder = { status: 'ok', scope, todos: [], undoneOrder: ['a', 'b', 'working'], completedOrder: [] };
+    const order: PersonalTaskOrder = { scope, undoneOrder: ['a', 'b', 'working'] };
     const a = await renderAnatomy(items[0]!, false, true, order, items);
     const b = await renderAnatomy(items[1]!, false, true, order, items);
     const resolve = (reference: NonNullable<typeof a.source>['reference'], input: NonNullable<typeof b.target>['input']) => triagePersonalTaskOrderTargetRuntime.resolve({
@@ -78,44 +77,22 @@ describe('the real PR Collection public drag/drop binding', () => {
     expect(resolve(a.source!.reference, b.target!.input)).toMatchObject({ status: 'allowed', effect: {
       actionId: 'tasks.internal.reorder', input: { scope, sourceId: 'a', position: { anchorId: 'b', placement: 'after' } },
     } });
+    const qualifiedOwn = { ...items[0]!, row: { ...items[0]!.row, entryRef: { ...items[0]!.row.entryRef, collisionScope: 'account:account' } } };
+    const ownRow = await renderAnatomy(qualifiedOwn, false, true, order, [qualifiedOwn, ...items.slice(1)]);
+    expect(resolve(ownRow.source!.reference, b.target!.input)).toMatchObject({ status: 'allowed' });
     const external = await renderAnatomy(base, false, true, order, items);
     expect(resolve(external.source!.reference, b.target!.input)).toMatchObject({ status: 'refused' });
     expect(resolve(a.source!.reference, external.target!.input)).toMatchObject({ status: 'refused', reason: { message: 'External tasks keep their source order.' } });
     const working = await renderAnatomy(items[2]!, false, true, order, items);
     expect(resolve(a.source!.reference, working.target!.input)).toMatchObject({ status: 'refused' });
-  });
-  it('rereads the existing Account order after settlement and retains the last order on a failed read', async () => {
-    let order = ['a', 'b'];
-    let fail = false;
-    let invalidate: (() => void) | undefined;
-    const surface = defineUiSurface(function OrderProbe() {
-      const read = usePersonalTaskOrder(true, 0);
-      invalidate = read.onDropOutcome;
-      return <Text value={`${read.value?.undoneOrder.join(',') ?? 'loading'}:${read.available}`} />;
-    });
-    let fixture!: PluginUiTestkit;
-    await act(async () => { fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'task-order-read', mountNonce: 'task-order-read' },
-      authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface,
-      surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
-      handlers: { executeAction: ({ action }) => {
-        expect(action).toBe('tasks.internal.list');
-        if (fail) throw new Error('Account unavailable');
-        return { status: 'ok', scope: { serverId: 'home', accountId: 'account' }, todos: [], undoneOrder: order, completedOrder: [] } satisfies PersonalTaskOrder;
-      } },
-    }); });
-    mounted.push(fixture);
-    await expect(fixture.getByText('a,b:true')).resolves.toBeDefined();
-    order = ['b', 'a'];
-    await act(async () => { invalidate?.(); });
-    await expect(fixture.getByText('b,a:true')).resolves.toBeDefined();
-    fail = true;
-    await act(async () => { invalidate?.(); });
-    await expect(fixture.getByText('b,a:false')).resolves.toBeDefined();
+    const shared = { ...items[0]!, row: { ...items[0]!.row, entryRef: { ...items[0]!.row.entryRef, collisionScope: 'account:other' } } };
+    const sharedRow = await renderAnatomy(shared, false, true, order, [...items, shared]);
+    expect(resolve(sharedRow.source!.reference, b.target!.input)).toMatchObject({ status: 'refused' });
+    expect(resolve(a.source!.reference, sharedRow.target!.input)).toMatchObject({ status: 'refused' });
   });
   it('offers the Tasks successor reorder target without replacing the shared row or restoring Zen', async () => {
     const item = entry();
-    const task: TriageListItemV1 = { ...item, group: 'unstarted', row: { ...item.row,
+    const task: TriageListItemV1 = { ...item, group: 'unstarted', statusGroup: 'unstarted', row: { ...item.row,
       entryRef: { source: { pluginId: 'happier.triage', localId: 'internal' }, kindId: 'task', collisionScope: 'personal', entryId: 'task-a' } } };
     expect((await renderAnatomy(task, false, true)).target?.targetId).toBe('personal-task-order');
   });

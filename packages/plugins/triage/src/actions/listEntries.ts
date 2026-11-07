@@ -5,6 +5,7 @@ import {
     admitTriageSourceDescriptorV1,
     TriageListScopeUnitsResultV1Schema,
     TriageSourceFailureV1Schema,
+    projectTriageDisplayTextV1,
     type TriageListScopeUnitsInputV1,
     type TriageListScopeUnitsResultV1,
     type TriageScanInputV1,
@@ -13,6 +14,10 @@ import {
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
+import { readInternalTaskList, projectInternalTaskScan, projectInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
+import { isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
+import type { InternalTaskListProjection } from '../internalTasks/listProjection.js';
+import { entryReferenceComponents } from '../corpus/identity/components.js';
 import {
     readActiveConfiguredSourceRowPage,
     readActiveConfiguredSourceRows,
@@ -36,7 +41,7 @@ import {
     runTriageScanPass,
     type TriageScanLaneV1,
 } from '../projection/scanPass.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import {
     MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     triageListRowBudgetV1,
@@ -102,6 +107,7 @@ export type TriageListEntriesDepsV1 = Readonly<{
     /** The current admitted view of this target's own sources point. */
     readAdmittedSources: (options?: PluginCancellationOptions) => Promise<readonly TriageAdmittedSourceV1[]>;
     executeScan: TriageAdmittedOperationExecutorV1;
+    readInternalTasks?: () => Promise<TaskList | null>;
     executeScopeUnits?: (
         operation: AdmittedTargetedOperationExecutionHandle<TriageListScopeUnitsInputV1, TriageListScopeUnitsResultV1, 'listScopeUnits'>,
         input: TriageListScopeUnitsInputV1,
@@ -129,11 +135,10 @@ function lensFrom(
         smartPolicy: parseCorpusSmartPolicy(input.smartPolicy) ?? CORPUS_DEFAULT_SMART_POLICY_V1,
         query: input.query ?? '',
         filters: input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
-        // The explicit row bound of one result, applied by its owner.
-        // The projection bounds by the lens it is given — a mounted store folds
-        // its whole accumulated page through the same owner and crosses no wire
-        // — so the per-invocation contract is enforced here, beside the array
-        // whose `maxItems` would otherwise be the only thing that noticed.
+        // The requested share stays within the finite wire maximum. The scan
+        // owner decides the capacity needed for its first atomic native page;
+        // the result projection below consumes that decision without cutting
+        // rows behind the returned provider frontier.
         limit: Math.max(0, Math.min(input.limit, triageListRowBudgetV1(laneCount))),
     };
 }
@@ -180,10 +185,12 @@ function resumeByInstanceId(
  * other, and neither owns a second scan, fold, order or matcher.
  */
 export type TriageAssembledListPassV1 = Readonly<{
+    admittedSources: ReadonlyMap<string, TriageAdmittedSourceV1>;
     configuredSources: TriageListEntriesResultV1['configuredSources'];
     configuredSourcesStatus: 'complete' | 'truncated';
     configuredSourcesNextCursor?: string;
     window: TriageListWindowV1;
+    taskProjection?: InternalTaskListProjection;
     /** Absent when no walked lane stopped with more to give. */
     continuations?: TriageListEntriesResultV1['window']['continuations'];
 }>;
@@ -225,18 +232,17 @@ export async function assembleTriageListPass(
     /** Every instance this request set out to cover, invocable or not. */
     const intended: TriageListIntendedSourceV1[] = [];
     const lanes: TriageScanLaneV1[] = [];
+    let taskList: TaskList | null = null;
     const unknownCompletedCoverage = new Set<string>();
     const configurationRevisionBySourceInstanceId = new Map(configuredRecords.map((record) => [
         record.value.configured.instance.sourceInstanceId,
         record.revision,
     ]));
-    const contributionGenerationBySourceInstanceId = new Map<string, string>();
     const configuredScopes = new Map<string, NonNullable<TriageListEntriesResultV1['configuredSources'][number]['scope']>>();
     await Promise.all(configuredRows.map(async (row) => {
         const contribution = admittedByQualifiedId.get(row.sourceQualifiedId);
         if (contribution === undefined) return;
         const sourceInstanceId = row.configured.instance.sourceInstanceId;
-        contributionGenerationBySourceInstanceId.set(sourceInstanceId, contribution.contributor.occurrenceId);
         const unit = contribution.descriptor.scopeUnit;
         const operation = contribution.operations.listScopeUnits;
         if (unit === undefined || operation === undefined || deps.executeScopeUnits === undefined) return;
@@ -278,13 +284,19 @@ export async function assembleTriageListPass(
         const configurationRevision = configurationRevisionBySourceInstanceId.get(
             row.configured.instance.sourceInstanceId,
         );
+        const connectionLabel = row.configured.locator?.displayLabel;
+        const sourceName = contribution?.descriptor?.displayName;
+        const displayLabel = connectionLabel === undefined
+            ? (sourceName === undefined ? undefined : projectTriageDisplayTextV1(sourceName))
+            : projectTriageDisplayTextV1(sourceName === undefined || sourceName === connectionLabel
+                ? connectionLabel : `${sourceName} · ${connectionLabel}`);
         configuredSources.push({
             sourceInstanceId: row.configured.instance.sourceInstanceId,
             source,
             ...(configurationRevision === undefined ? {} : { configurationRevision }),
-            ...(row.configured.locator === undefined
+            ...(displayLabel === undefined
                 ? {}
-                : { displayLabel: row.configured.locator.displayLabel }),
+                : { displayLabel: displayLabel.value, ...(displayLabel.truncated ? { projectionTruncated: true as const } : {}) }),
             available,
             ...(configuredScopes.has(row.configured.instance.sourceInstanceId)
                 ? { scope: configuredScopes.get(row.configured.instance.sourceInstanceId) } : {}),
@@ -318,10 +330,12 @@ export async function assembleTriageListPass(
                 completed: { kindIds: completedKindIds, sinceMs: input.tasks.completedSinceMs },
             }),
             configured: row.configured,
+            ...(input.query?.trim() ? { query: input.query.trim() } : {}),
             ...(resume === undefined
                 ? {}
                 : { resume: resume.continuation, pageLimit: resume.pageLimit }),
-            scan: (scanInput, scanOptions) => deps.executeScan(
+            scan: (scanInput, scanOptions) => deps.readInternalTasks !== undefined && isInternalTaskConfiguredInstanceV1(scanInput.instance)
+                ? Promise.resolve(projectInternalTaskScan(scanInput, taskList)) : deps.executeScan(
                 contribution.operations.scan,
                 scanInput,
                 scanOptions,
@@ -332,9 +346,9 @@ export async function assembleTriageListPass(
     const lens = lensFrom(input, lanes.length, deps.taskOnly);
     // One transport page walks every admitted lane fairly without fetching rows
     // the result cannot carry. The shared per-lane geometry is the largest whole
-    // share whose first round fits the result row budget; a short lane may yield
-    // unused capacity, but no later fold is allowed to advance a provider cursor
-    // past rows the wire drops.
+    // share whose first round fits the result row budget. The pass honors a
+    // source-declared native minimum, promoting capacity for the first lane's
+    // atomic page. Later pages that cannot fit retain their ordered frontier.
     const pageLimit = Math.max(
         1,
         Math.floor(lens.limit / Math.max(lanes.length, 1)),
@@ -349,6 +363,9 @@ export async function assembleTriageListPass(
             return lane === undefined ? [] : [lane];
         }),
     ];
+    const taskLane = deps.readInternalTasks === undefined ? undefined
+        : lanes.find(lane => isInternalTaskConfiguredInstanceV1(lane.configured));
+    if (taskLane !== undefined && lens.limit > 0) taskList = await deps.readInternalTasks!();
     const pass = await runTriageScanPass({
         lanes: orderedLanes,
         pageLimit,
@@ -358,94 +375,22 @@ export async function assembleTriageListPass(
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
 
-    /**
-     * Re-read both currentness owners after provider work settles.
-     *
-     * A configured row can be removed or rewritten under the same stable
-     * `sourceInstanceId` while an admitted source is answering. The initial row
-     * granted authority to start that call; it does not grant authority to
-     * publish after its Collection revision or admitted immutable generation
-     * changed. No durable scan generation is needed: compare the two canonical
-     * identities at this one result boundary and discard only stale lanes.
-     */
-    // Both independent authorities fence the settled provider work. Start
-    // them together, as at initial admission, rather than serializing I/O.
-    const [currentConfigured, currentAdmittedByQualifiedId] = input.limit === 0 && configuredScopes.size === 0
-        ? [null, admittedByQualifiedId] as const
-        : await Promise.all([
-            readActiveConfiguredSourceRows(deps.sourceInstances, options),
-            deps.readAdmittedSources(options).then(indexTriageAdmittedSourcesV1),
-        ]);
-    const initialSourceInstanceIds = new Set(
-        configuredRows.map((row) => row.configured.instance.sourceInstanceId),
-    );
-    const currentRecords = currentConfigured === null
-        ? configuredRecords
-        : currentConfigured.records.filter((record) => (
-            initialSourceInstanceIds.has(record.value.configured.instance.sourceInstanceId)
-            && selectionAdmits(input, record.value.configured.instance.sourceInstanceId)
-        ));
-    const currentRecordBySourceInstanceId = new Map(currentRecords.map((record) => [
-        record.value.configured.instance.sourceInstanceId,
-        record,
-    ]));
-    const currentGenerationMatches = (sourceInstanceId: string): boolean => {
-        const record = currentRecordBySourceInstanceId.get(sourceInstanceId);
-        const initialRevision = configurationRevisionBySourceInstanceId.get(sourceInstanceId);
-        if (record === undefined || initialRevision === undefined || record.revision !== initialRevision) return false;
-        const currentContribution = currentAdmittedByQualifiedId.get(record.value.sourceQualifiedId);
-        return currentContribution !== undefined
-            && currentContribution.contributor.occurrenceId
-                === contributionGenerationBySourceInstanceId.get(sourceInstanceId);
-    };
-
-    const settledConfiguredSources: TriageListEntriesResultV1['configuredSources'][number][] = [];
-    const settledIntended: TriageListIntendedSourceV1[] = [];
-    for (const record of currentRecords) {
-        const row = record.value;
-        const contribution = currentAdmittedByQualifiedId.get(row.sourceQualifiedId);
-        const declaredKindIds = contribution?.descriptor?.kinds.map((kind) => kind.id) ?? [];
-        const available = contribution !== undefined && declaredKindIds.length > 0;
-        const source = {
-            pluginId: row.configured.instance.source.pluginId,
-            localId: row.configured.instance.source.localId,
-        };
-        settledConfiguredSources.push({
-            sourceInstanceId: row.configured.instance.sourceInstanceId,
-            source,
-            configurationRevision: record.revision,
-            ...(row.configured.locator === undefined
-                ? {}
-                : { displayLabel: row.configured.locator.displayLabel }),
-            available,
-            ...(currentGenerationMatches(row.configured.instance.sourceInstanceId)
-                && configuredScopes.has(row.configured.instance.sourceInstanceId)
-                ? { scope: configuredScopes.get(row.configured.instance.sourceInstanceId) } : {}),
-        });
-        const hasSelectedKinds = !deps.taskOnly || contribution === undefined
-            || contribution.descriptor.kinds.some((kind) => kind.task === true);
-        if (hasSelectedKinds && input.limit > 0 && walkAdmits(input, row.configured.instance.sourceInstanceId)) {
-            settledIntended.push({ sourceInstanceId: row.configured.instance.sourceInstanceId, source });
-        }
-    }
-    const settledLanes = pass.lanes.filter((lane) => currentGenerationMatches(lane.sourceInstanceId)).map(lane => (
+    const settledLanes = pass.lanes.map(lane => (
         unknownCompletedCoverage.has(lane.sourceInstanceId) ? { ...lane, exhausted: false,
             health: lane.health.kind === 'walkFinished'
                 ? { kind: 'partial' as const, reason: 'completedScanUnavailable' } : lane.health,
         } : lane
     ));
-    const settledObservations = pass.observations.filter(
-        (observation) => currentGenerationMatches(observation.sourceInstanceId),
-    );
 
+    // This Action is stateless. Retained callers reconcile its admitted wire output at their mounted fold baseline.
     const window: TriageListWindowV1 = foldTriageListWindow({
-        observations: settledObservations,
+        observations: pass.observations,
         lanes: triageListCoverageLanes({
-            intended: currentConfigured === null ? intended : settledIntended,
+            intended,
             walked: settledLanes,
         }),
         configuredSourcesStatus,
-        activeSourceInstanceIds: settledConfiguredSources
+        activeSourceInstanceIds: configuredSources
             .filter((summary) => summary.available)
             .map((summary) => summary.sourceInstanceId),
         lens: { ...lens, limit: pass.observationBudget },
@@ -457,13 +402,58 @@ export async function assembleTriageListPass(
     // frontier per walked lane, so there is nothing here to cut — and cutting
     // is what starved the tail of the rotation on every page (`PLAN.md` §0a
     // A9a).
-    const continuations = pass.stopped.filter((stop) => currentGenerationMatches(stop.sourceInstanceId));
+    const continuations = pass.stopped;
+
+    let taskProjection: InternalTaskListProjection | undefined;
+    if (taskLane !== undefined) {
+        const refs = window.rows.filter(row => row.content?.sourceInstanceId === taskLane.sourceInstanceId).map(row => row.entryRef);
+        const keyOf = (ref: typeof refs[number]) => JSON.stringify(entryReferenceComponents(ref));
+        const relation = taskList === null ? { kind: 'failed' as const,
+            failure: { class: 'transient' as const, code: 'accountDataUnavailable' } }
+            : projectInternalTaskSessionLinks({}, taskList);
+        // A partial inventory says which retained entries could not be opened.
+        // Publish those facts even though this scan cannot produce their rows.
+        const refKeys = new Set(refs.map(keyOf));
+        if (relation.kind === 'partial') for (const localRef of relation.unavailableRefs) {
+            const entryRef = { source: taskLane.source, ...localRef };
+            if (!refKeys.has(keyOf(entryRef))) { refs.push(entryRef); refKeys.add(keyOf(entryRef)); }
+        }
+        const selectedIds = new Set(refs.filter(ref => ref.collisionScope === 'personal').map(ref => ref.entryId));
+        const linksByEntry = new Map<string, InternalTaskListProjection['entries'][number]['result']['links']>();
+        if (relation.kind !== 'failed') for (const { localRef, ...link } of relation.links) {
+            const entryRef = { source: taskLane.source, ...localRef };
+            const key = keyOf(entryRef);
+            const links = linksByEntry.get(key) ?? [];
+            links.push({ ...link, entryRef, sourceInstanceId: taskLane.sourceInstanceId });
+            linksByEntry.set(key, links);
+        }
+        const unavailableKeys = new Set(relation.kind === 'partial'
+            ? relation.unavailableRefs.map(ref => keyOf({ source: taskLane.source, ...ref })) : []);
+        taskProjection = {
+            sourceInstanceId: taskLane.sourceInstanceId,
+            ...(taskList === null ? {} : { order: { scope: taskList.scope,
+                undoneOrder: taskList.undoneOrder.filter(id => selectedIds.has(id)) } }),
+            ...(relation.kind === 'failed' ? { failure: relation.failure } : {}),
+            entries: refs.map(entryRef => {
+                const unavailable = relation.kind === 'failed' || unavailableKeys.has(keyOf(entryRef));
+                const health = relation.kind === 'failed' ? relation : unavailable
+                    ? { kind: 'partial' as const, unavailableRefs: [entryRef] } : { kind: 'complete' as const };
+                return { entryRef, result: { kind: relation.kind === 'failed' ? 'failed' as const : unavailable ? 'partial' as const : 'complete' as const,
+                    links: linksByEntry.get(keyOf(entryRef)) ?? [],
+                    lanes: [{ source: taskLane.source, sourceInstanceId: taskLane.sourceInstanceId,
+                        displayLabel: taskLane.configured.localInstanceKey, kindIds: ['task'], health }],
+                } };
+            }),
+        };
+    }
 
     return {
-        configuredSources: currentConfigured === null ? configuredSources : settledConfiguredSources,
+        admittedSources: admittedByQualifiedId,
+        configuredSources,
         configuredSourcesStatus,
         ...(configuredSourcesNextCursor === undefined ? {} : { configuredSourcesNextCursor }),
         window,
+        ...(taskProjection === undefined ? {} : { taskProjection }),
         ...(continuations.length === 0 ? {} : { continuations }),
     };
 }
@@ -483,6 +473,7 @@ export async function listTriageEntries(
             : { configuredSourcesNextCursor: pass.configuredSourcesNextCursor }),
         window: {
             v: 1,
+            ...(pass.taskProjection === undefined ? {} : { taskProjection: pass.taskProjection }),
             rows: toTriageListWireRows(pass.window),
             lanes: pass.window.lanes,
             coverage: pass.window.coverage,
@@ -499,12 +490,13 @@ export async function listTriageEntries(
  * invocation context the host supplies and adds no dispatch, cache or registry
  * of its own.
  */
-export function createTriageListEntriesActionHandler(lens?: Readonly<{ taskOnly?: boolean }>): TriageDataActionHandler<
-    TriageListEntriesInputV1,
-    TriageListEntriesResultV1
-> {
-    return async (input, context: TriageDataActionContext) => await listTriageEntries(input, {
+export function createTriageListEntriesDeps(
+    context: TriageDataActionContext,
+    lens?: Readonly<{ taskOnly?: boolean }>,
+): TriageListEntriesDepsV1 {
+    return {
         sourceInstances: bindCorpusCollections(requireTriageAccountStorage(context)).sourceInstances,
+        readInternalTasks: () => readInternalTaskList(context),
         readAdmittedSources: async (options) => {
             const observation = context.services.targetedContributions.observeForSelf(
                 TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
@@ -524,5 +516,12 @@ export function createTriageListEntriesActionHandler(lens?: Readonly<{ taskOnly?
         nowMs: () => Date.now(),
         taskOnly: lens?.taskOnly,
         signal: context.signal,
-    });
+    };
+}
+
+export function createTriageListEntriesActionHandler(lens?: Readonly<{ taskOnly?: boolean }>): TriageDataActionHandler<
+    TriageListEntriesInputV1,
+    TriageListEntriesResultV1
+> {
+    return async (input, context) => await listTriageEntries(input, createTriageListEntriesDeps(context, lens));
 }

@@ -1,20 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePluginHostApi, useSessionStates } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, useSessionStates, usePluginUiEphemeralSharedScope, type PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import { triageEntryRowKey } from '../../projection/listWindow.js';
-import { readTriageSessionLinksPageV1 } from '../../sessions/readEntrySessionLinks.js';
-import { useTriageDurableAccount } from '../durable/accountDurableState.js';
+import type { InternalTaskListProjection } from '../../internalTasks/listProjection.js';
 import type { TriageAgentStateV1 } from '../detail/agentState.js';
-import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema } from '../../actions/entryDetailProtocol.js';
+import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksActionResultV1Schema, normalizeTriageSourceSessionLinksCoverageV1 } from '../../actions/sessionLinksProtocol.js';
 
 type LinksByEntry = ReadonlyMap<string, readonly string[]>;
-type LinkRead = Readonly<{ links: LinksByEntry; status: 'reading' | 'ready' | 'unavailable' }>;
+type LinkRead = Readonly<{ owner: PluginUiEphemeralSharedScope | null; links: LinksByEntry;
+  status: 'reading' | 'ready' | 'unavailable'; linkedReadFailed: boolean }>;
 
-const INITIAL: LinkRead = Object.freeze({ links: new Map(), status: 'reading' });
+/** Produce the keyed Session-id projection against its admitted baseline. */
+function projectLinkRead(previous: LinkRead, owner: LinkRead['owner'], links: LinksByEntry,
+  status: LinkRead['status'], linkedReadFailed = false): LinkRead {
+  const baseline = previous.owner === owner ? previous.links : undefined;
+  const projected = new Map<string, readonly string[]>();
+  let unchanged = baseline !== undefined && baseline.size === links.size;
+  for (const [key, sessions] of links) {
+    const retained = baseline?.get(key);
+    const same = retained !== undefined && retained.length === sessions.length
+      && sessions.every((sessionId, index) => sessionId === retained[index]);
+    projected.set(key, same ? retained : sessions);
+    if (!same) unchanged = false;
+  }
+  const value = unchanged && baseline !== undefined ? baseline : projected;
+  return previous.owner === owner && previous.status === status && previous.links === value
+    && previous.linkedReadFailed === linkedReadFailed
+    ? previous : { owner, links: value, status, linkedReadFailed };
+}
 
 function selectAgentState(state: SessionStateV1): TriageAgentStateV1 {
   return {
@@ -25,19 +42,28 @@ function selectAgentState(state: SessionStateV1): TriageAgentStateV1 {
   };
 }
 
+/** Only the Agents lens says what a Session is about, so a renamed Session re-renders no other list. */
+function selectAgentStateWithTitle(state: SessionStateV1): TriageAgentStateV1 {
+  return { ...selectAgentState(state), ...(state.title === undefined ? {} : { title: state.title }) };
+}
+
 /**
- * One mounted list join: the existing Session-link index supplies relationships,
+ * One mounted list join: the composed relation Action supplies relationships,
  * and the host's shared Session hook supplies current Work facts. Acquisition is
- * relation-addressed once for each entry in the window, never placed on each
- * row. Only those relations are paged; no Account corpus or durable mirror is made.
+ * relation-addressed once for the demanded window, never placed on each
+ * row. Only selected relations are read; no entry detail bodies are acquired.
  */
 export function useTriageListSessionActivityV1(input: Readonly<{
   entryRefs: readonly TriageEntryRefV1[];
   /** Moves once per list pass that read (`TriageListWindowSnapshotV1.passes`); each move re-reads the links once. */
   acquisition: unknown;
   active: boolean;
-  /** Source-owned links read through the same detail relationship projection as the opened entry. */
-  sourceOwnedEntries?: ReadonlyMap<string, string>;
+  /** The list says what each Session is about (the Agents lens). */
+  withSessionTitle?: boolean;
+  /** The list winner's selected connection, independent of relation ownership. */
+  sourceInstanceIds?: ReadonlyMap<string, string>;
+  taskProjection?: InternalTaskListProjection;
+  refreshList?: () => void;
 }>): Readonly<{
   /** The live states of each listed entry's linked Sessions that have answered, by row key. */
   agentStates: ReadonlyMap<string, readonly TriageAgentStateV1[]>;
@@ -46,91 +72,73 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   linksStatus: LinkRead['status'];
   incomplete: boolean;
   unavailable: boolean;
+  unreachable: boolean;
   retry(): void;
 }> {
   const host = usePluginHostApi();
-  const { collections } = useTriageDurableAccount();
+  const owner = usePluginUiEphemeralSharedScope();
   const keys = input.entryRefs.map(triageEntryRowKey).sort();
   const keysIdentity = JSON.stringify(keys);
-  const [read, setRead] = useState<LinkRead>(INITIAL);
+  const [read, setRead] = useState<LinkRead>({ owner, links: new Map(), status: 'reading', linkedReadFailed: false });
   const [demand, setDemand] = useState(0);
 
   useEffect(() => {
     if (!input.active) return;
     if (keys.length === 0) {
-      setRead((previous) => (previous.status === 'ready' && previous.links.size === 0
+      setRead((previous) => (previous.owner === owner && previous.status === 'ready' && previous.links.size === 0
         ? previous
-        : { links: new Map(), status: 'ready' }));
-      return;
-    }
-    if (collections === null && (input.sourceOwnedEntries?.size ?? 0) === 0) {
-      setRead((previous) => (previous.status === 'unavailable' ? previous : { ...previous, status: 'unavailable' }));
+        : { owner, links: new Map(), status: 'ready', linkedReadFailed: false }));
       return;
     }
     const cancellation = new AbortController();
-    const wanted = new Set(keys);
     const entries = new Map(input.entryRefs.map((entryRef) => [triageEntryRowKey(entryRef), entryRef]));
     // Links already read stay the answer while they are re-read (last known good); only a read that has not
     // answered yet, or one that failed, says it is reading.
-    setRead((previous) => (previous.status === 'ready' || previous.status === 'reading'
+    setRead((previous) => previous.owner !== owner ? { owner, links: new Map(), status: 'reading', linkedReadFailed: false }
+      : (previous.status === 'ready' || previous.status === 'reading'
       ? previous
       : { ...previous, status: 'reading' }));
     void (async () => {
       const links = new Map<string, string[]>();
-      let retried = false;
+      // Null means the batch itself could not be read. A parsed batch instead
+      // identifies the exact entries whose relationship coverage is incomplete.
+      let failedEntries: ReadonlySet<string> | null = null;
       try {
-        const results = await Promise.allSettled(Array.from(entries.values(), async (entryRef) => {
-          const key = triageEntryRowKey(entryRef);
-          const sourceInstanceId = input.sourceOwnedEntries?.get(key);
-          if (sourceInstanceId !== undefined) {
-            const result = TriageReadEntryDetailResultV1Schema.parse(await host.executeAction(
-              TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, { v: 1, entryRef, sourceInstanceId }, { signal: cancellation.signal },
-            ));
-            if (result.kind !== 'read') throw new Error('triage:sessionLinks:sourceUnavailable');
-            links.set(key, result.linkedSessions.map((session) => session.sessionId));
-            return;
+        const admitted = new Map(input.taskProjection?.entries.map(entry => [triageEntryRowKey(entry.entryRef), entry]));
+        const projected = [];
+        const selected = [];
+        for (const entryRef of entries.values()) {
+          const sourceInstanceId = input.sourceInstanceIds?.get(triageEntryRowKey(entryRef));
+          const entry = admitted.get(triageEntryRowKey(entryRef));
+          if (entry !== undefined) projected.push(entry);
+          else if (sourceInstanceId !== undefined && sourceInstanceId === input.taskProjection?.sourceInstanceId) {
+            projected.push({ entryRef, result: { kind: 'failed' as const, links: [], lanes: [{ source: entryRef.source,
+              sourceInstanceId, displayLabel: sourceInstanceId, kindIds: [entryRef.kindId], health: { kind: 'failed' as const,
+                failure: input.taskProjection.failure ?? { class: 'transient' as const, code: 'accountDataUnavailable' } } }] } });
+          } else selected.push({ entryRef, ...(sourceInstanceId === undefined ? {} : { sourceInstanceId }) });
+        }
+        const result = selected.length === 0 ? { kind: 'entries' as const, entries: [] }
+          : TriageReadSourceSessionLinksActionResultV1Schema.parse(await host.executeAction(
+          TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
+          { v: 1, entries: selected },
+          { signal: cancellation.signal },
+        ));
+        if (result.kind !== 'entries') throw new Error('triage:sessionLinks:invalidBatchResult');
+        const incomplete = new Set<string>();
+        for (const entry of [...projected, ...result.entries]) {
+          const relation = normalizeTriageSourceSessionLinksCoverageV1(entry.result);
+          const key = triageEntryRowKey(entry.entryRef);
+          if (!entries.has(key)) throw new Error('triage:sessionLinks:unexpectedEntry');
+          if (relation.kind === 'complete' || relation.links.length > 0) {
+            links.set(key, Array.from(new Set(relation.links.map(link => link.sessionId))));
           }
-          if (collections === null) throw new Error('triage:sessionLinks:accountUnavailable');
-          const cursors = new Set<string>();
-          let cursor: string | undefined;
-          do {
-            const readPage = () => readTriageSessionLinksPageV1(collections.sessionLinks, {
-              relation: { entryRef },
-              ...(cursor === undefined ? {} : { cursor }),
-            }, { signal: cancellation.signal });
-            const page = await readPage().catch((error: unknown) => {
-              if (cancellation.signal.aborted) throw error;
-              if (retried || !isPluginError(error) || !error.retryable) throw error;
-              host.diagnostic({
-                code: 'triage_session_links_read_failed', severity: 'warning',
-                message: error instanceof Error ? error.message : 'Session links could not be read',
-                details: { code: error.code, retryable: error.retryable },
-              });
-              retried = true;
-              return readPage();
-            });
-            throwIfAborted(cancellation.signal);
-            for (const link of page.links) {
-              const key = triageEntryRowKey(link.entryRef);
-              if (!wanted.has(key)) continue;
-              const sessions = links.get(key) ?? [];
-              if (!sessions.includes(link.sessionId)) sessions.push(link.sessionId);
-              links.set(key, sessions);
-            }
-            cursor = page.nextCursor;
-            // Continuations are opaque and scoped to this relation. A repeated
-            // position cannot complete it; other relations may use the same token.
-            if (cursor !== undefined && cursors.has(cursor)) throw new Error('triage:sessionLinks:nonProgress');
-            if (cursor !== undefined) cursors.add(cursor);
-          } while (cursor !== undefined);
-        }));
-        // Keep successful relations even when another read failed. Every
-        // independent request settles before publishing one window answer.
-        for (const result of results) if (result.status === 'rejected') throw result.reason;
+          if (relation.kind !== 'complete') incomplete.add(key);
+        }
+        if (projected.length + result.entries.length !== entries.size) throw new Error('triage:sessionLinks:incomplete');
+        failedEntries = incomplete;
+        if (incomplete.size > 0) throw new Error('triage:sessionLinks:incomplete');
         throwIfAborted(cancellation.signal);
-        setRead((previous) => (previous.status === 'ready' && sameLinks(previous.links, links)
-          ? previous
-          : { links, status: 'ready' }));
+        setRead(previous => projectLinkRead(previous, owner, links, 'ready'));
       } catch (error) {
         if (cancellation.signal.aborted) return;
         host.diagnostic({
@@ -141,33 +149,39 @@ export function useTriageListSessionActivityV1(input: Readonly<{
         setRead((previous) => {
           // Failed enumeration makes no absence claim. Keep prior links and
           // the pages that did answer, with incompleteness visible to the reader.
-          const retained = new Map(previous.links);
+          const retained = new Map(previous.owner === owner ? [...previous.links].filter(([key]) => entries.has(key)) : []);
           for (const [key, sessions] of links) {
-            retained.set(key, Array.from(new Set([...(retained.get(key) ?? []), ...sessions])));
+            retained.set(key, sessions);
           }
-          return { links: retained, status: 'unavailable' };
+          const linkedReadFailed = Array.from(retained).some(([key, sessions]) => sessions.length > 0
+            && (failedEntries === null || failedEntries.has(key)));
+          return projectLinkRead(previous, owner, retained, 'unavailable', linkedReadFailed);
         });
       }
     })();
     return () => cancellation.abort();
     // keysIdentity is the exact window membership; unrelated render/row facts
     // do not start another link read.
-  }, [collections, demand, host, input.acquisition, input.active, input.sourceOwnedEntries, keysIdentity]);
+  }, [owner, demand, host, input.acquisition, input.active, input.sourceInstanceIds, input.taskProjection, keysIdentity]);
+
+  const currentRead = read.owner === owner ? read : { owner, links: new Map<string, readonly string[]>(),
+    status: 'reading' as const, linkedReadFailed: false };
 
   const sessionIds = useMemo(() => Array.from(new Set(
-    keys.flatMap((key) => read.links.get(key) ?? []),
-  )), [keysIdentity, read.links]);
-  const { sessions, refresh: refreshSessions } = useSessionStates(sessionIds, { select: selectAgentState });
+    keys.flatMap((key) => currentRead.links.get(key) ?? []),
+  )), [keysIdentity, currentRead.links]);
+  const { sessions, refresh: refreshSessions } = useSessionStates(sessionIds, { select: input.withSessionTitle === true ? selectAgentStateWithTitle : selectAgentState });
   const retry = useCallback(() => {
-    setDemand((value) => value + 1);
+    if (input.refreshList !== undefined) input.refreshList();
+    else setDemand((value) => value + 1);
     refreshSessions();
-  }, [refreshSessions]);
+  }, [refreshSessions, input.refreshList]);
   const previousAgentStates = useRef<ReadonlyMap<string, readonly TriageAgentStateV1[]>>(new Map());
   const agentStates = useMemo(() => {
     const previous = previousAgentStates.current;
     const byEntry = new Map<string, readonly TriageAgentStateV1[]>();
     for (const key of keys) {
-      const states = (read.links.get(key) ?? []).flatMap((id) => {
+      const states = (currentRead.links.get(key) ?? []).flatMap((id) => {
         const state = sessions.get(id)?.state;
         return state == null ? [] : [state];
       });
@@ -180,29 +194,27 @@ export function useTriageListSessionActivityV1(input: Readonly<{
     if (byEntry.size === previous.size && Array.from(byEntry).every(([key, states]) => previous.get(key) === states)) return previous;
     previousAgentStates.current = byEntry;
     return byEntry;
-  }, [keysIdentity, read.links, sessions]);
+  }, [keysIdentity, currentRead.links, sessions]);
   // Failed enumeration cannot establish that any listed row has a link. Only
   // known linked Sessions can have unreadable activity; empty rows stay quiet.
-  const incomplete = read.status === 'reading'
-    || (read.status === 'unavailable' && sessionIds.length > 0)
-    || sessionIds.some((id) => sessions.get(id)?.status !== 'ready');
+  const unavailable = currentRead.linkedReadFailed || sessionIds.some((id) => {
+    const read = sessions.get(id);
+    return read?.status === 'unavailable' && read.retryable !== false;
+  });
+  const incomplete = currentRead.status === 'reading' || unavailable
+    || sessionIds.some((id) => (sessions.get(id)?.status ?? 'loading') === 'loading');
+  const unreachable = sessionIds.some((id) => {
+    const read = sessions.get(id);
+    return read?.status === 'missing' || read?.status === 'unsupported'
+      || (read?.status === 'unavailable' && read.retryable === false);
+  });
   return useMemo(() => ({
     agentStates,
-    linkedSessions: read.links,
-    linksStatus: read.status,
+    linkedSessions: currentRead.links,
+    linksStatus: currentRead.status,
     incomplete,
-    unavailable: (read.status === 'unavailable' && sessionIds.length > 0)
-      || sessionIds.some((id) => ['unavailable', 'unsupported'].includes(sessions.get(id)?.status ?? 'loading')),
+    unavailable,
+    unreachable,
     retry,
-  }), [agentStates, incomplete, read.links, read.status, retry, sessionIds, sessions]);
-}
-
-function sameLinks(left: LinksByEntry, right: LinksByEntry): boolean {
-  if (left.size !== right.size) return false;
-  for (const [key, sessions] of right) {
-    const previous = left.get(key);
-    if (previous === undefined || previous.length !== sessions.length
-      || previous.some((sessionId, index) => sessionId !== sessions[index])) return false;
-  }
-  return true;
+  }), [agentStates, incomplete, currentRead.links, currentRead.status, unavailable, unreachable, retry]);
 }

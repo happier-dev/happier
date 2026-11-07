@@ -5,6 +5,8 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
+    MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1,
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
@@ -13,12 +15,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { createTriageListWindowStore } from '../projection/listWindowStore.js';
 import { readTriageListFailureNotice, resolveTriageListShellState } from '../ui/shell/windowState.js';
-import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import {
+    CORPUS_SESSION_LINKS_COLLECTION_ID,
+    CORPUS_SOURCE_INSTANCES_COLLECTION_ID,
+    CORPUS_SOURCE_INSTANCE_LIFECYCLE,
+    CORPUS_USER_MARKS_COLLECTION_ID,
+} from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
+import { createNoPersistenceTriageFixture } from '../projection/noPersistence.test-support.js';
 import {
     createTriageListEntriesActionHandler,
     listTriageEntries,
@@ -41,6 +51,7 @@ import {
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
 const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
+const INTERNAL_INSTANCE_ID = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
 
 describe('the aggregate list Action handler', () => {
     it('reads the configured Collection and the admitted source through the invocation context', async () => {
@@ -137,18 +148,13 @@ describe('the aggregate list Action handler', () => {
 
         const result = await createTriageListEntriesActionHandler()({
             v: 1,
-            sources: { kind: 'allConfigured' },
+            sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] },
             limit: 10,
             order: 'newest',
         }, context);
 
-        // Admission is observed once to grant the scan handle and once at the
-        // result boundary to fence an immutable contribution replacement.
-        expect(observed).toEqual([
-            TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-            TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-        ]);
-        expect(disposedObservations).toBe(2);
+        expect(observed).toEqual([TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1]);
+        expect(disposedObservations).toBe(1);
         // Only the original host-created handle carries authority, so it is
         // passed through untouched rather than reconstructed.
         expect(dispatched).toEqual([scanHandle]);
@@ -156,6 +162,7 @@ describe('the aggregate list Action handler', () => {
             sourceInstanceId: INSTANCE_ID,
             source: SOURCE,
             configurationRevision: 1,
+            displayLabel: 'Example forge',
             available: true,
         }]);
         expect(result.window.rows.map((row) => row.entryRef.entryId)).toEqual(['17']);
@@ -172,7 +179,8 @@ describe('the aggregate list Action handler', () => {
             readEntries: async input => {
                 if (listReadFailure) throw listReadFailure;
                 return TriageListEntriesResultV1Schema.parse(
-                    await createTriageListEntriesActionHandler()(input, context),
+                    await createTriageListEntriesActionHandler()({ ...input,
+                        sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] } }, context),
                 );
             },
             nowMs: () => 1000,
@@ -212,93 +220,42 @@ describe('the aggregate list pass persists nothing provider-derived', () => {
      * "small" entry table, health row or detail cache has a handle to write
      * with. Every other test in this package would still pass with one.
      *
-     * The pass below is a real multi-page walk against Collections that throw on
-     * any mutation, so the first durable write of any kind fails here — and only
-     * here.
+     * The pass below walks every configured source through multiple pages with
+     * strict Collection, Account KV and daemon storage boundaries. The sibling
+     * process fixture drives the same boundary with device/file write traps.
      */
     it('completes a multi-page walk against Collections that reject every write', async () => {
-        const { collections, control } = createTestkitCorpusCollections();
-        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
-            instanceTag: paddedInstanceTag('a'),
-            sourceInstanceId: INSTANCE_ID,
-            configuredAtMs: 1,
-        })));
+        const { readEntries, scannedPages, durableWriteAttempts } = createNoPersistenceTriageFixture();
 
-        const rejectWrites = (handle: (typeof collections)[keyof typeof collections]) => ({
-            ...handle,
-            get: handle.get.bind(handle),
-            query: handle.query.bind(handle),
-            batch: () => {
-                throw new Error('The list pass wrote a durable row.');
-            },
-        });
-
-        let page = 0;
-        const context = {
-            signal: new AbortController().signal,
-            services: {
-                storage: {
-                    account: {
-                        collection: (definition: PluginAccountCollectionDefinition) => (
-                            definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
-                                ? rejectWrites(collections.sourceInstances)
-                                : rejectWrites(collections.userMarks)
-                        ),
-                    },
-                },
-                targetedContributions: {
-                    observeForSelf: () => ({
-                        readCurrent: async () => ({ generation: 'generation-1', contributions: [ADMITTED_SOURCE] }),
-                        dispose: () => {},
-                    }),
-                },
-                actions: {
-                    executeAdmittedTargetedOperation: async (): Promise<TriageScanResultV1> => {
-                        page += 1;
-                        const observation = {
-                            kind: 'present',
-                            localRef: {
-                                kindId: 'pull-request',
-                                collisionScope: 'example/repository',
-                                entryId: String(page),
-                            },
-                            locator: testkitLocator(),
-                            snapshot: testkitSnapshot(),
-                            viewer: testkitViewer(),
-                        } as const;
-                        return page < 2
-                            ? {
-                                kind: 'page',
-                                observations: [observation],
-                                evidence: { kind: 'partial', reason: 'more-pages' },
-                                continuation: { v: 1, token: 'page-2' },
-                            }
-                            : { kind: 'complete', observations: [observation], evidence: { kind: 'walkFinished' } };
-                    },
-                },
-            },
-        } as unknown as PluginInvocationContext;
-
-        const first = await createTriageListEntriesActionHandler()({
+        // One row per configured source leaves each second page for Load More.
+        const first = await readEntries({
             v: 1,
             sources: { kind: 'allConfigured' },
-            limit: 10,
+            limit: 3,
             order: 'newest',
-        }, context);
-        const result = await createTriageListEntriesActionHandler()({
+        });
+        const result = await readEntries({
             v: 1,
             sources: { kind: 'allConfigured' },
-            limit: 10,
+            limit: 3,
             order: 'newest',
             resume: first.window.continuations,
-        }, context);
+        });
 
         // The walk really happened; a pass that never ran would pass this test
         // for the wrong reason.
-        expect(page).toBe(2);
-        expect(first.window.rows.map((row) => row.entryRef.entryId)).toEqual(['1']);
-        expect(result.window.rows.map((row) => row.entryRef.entryId)).toEqual(['2']);
+        expect(scannedPages).toEqual(new Map([
+            [INSTANCE_ID, ['initial', 'continuation']],
+            [SECOND_INSTANCE_ID, ['initial', 'continuation']],
+        ]));
+        expect(first.window.rows.map((row) => row.entryRef.entryId).sort()).toEqual([
+            `${INSTANCE_ID}-initial`, `${SECOND_INSTANCE_ID}-initial`, `${INTERNAL_INSTANCE_ID}-initial`,
+        ].sort());
+        expect(result.window.rows.map((row) => row.entryRef.entryId).sort()).toEqual([
+            `${INSTANCE_ID}-continuation`, `${SECOND_INSTANCE_ID}-continuation`,
+        ].sort());
         expect(result.window.coverage).toBe('complete');
+        expect(durableWriteAttempts).toEqual([]);
     });
 });
 
@@ -386,6 +343,37 @@ const finishedWalk: TriageAdmittedOperationExecutorV1 = async () => ({
 });
 
 describe('the aggregate list coverage claim', () => {
+    it('qualifies a connection login with its source name without changing the stored label', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const retained = configuredRow({ instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1 });
+        const row = { ...retained, configured: { ...retained.configured, locator: { v: 1 as const, displayLabel: 'alice' } } };
+        control.sourceInstances.seed(toCorpusStoredValue(row));
+        const result = await listTriageEntries({ v: 1, sources: { kind: 'allConfigured' }, limit: 0, order: 'newest' }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [ADMITTED_SOURCE], executeScan: finishedWalk, nowMs: () => 1000,
+        });
+        expect(result.configuredSources.find(source => source.sourceInstanceId === INSTANCE_ID)?.displayLabel)
+            .toBe('Example forge · alice');
+        expect(row.configured.locator.displayLabel).toBe('alice');
+    });
+
+    it('projects a retained source label without narrowing its stored configuration', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const retained = configuredRow({ instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1 });
+        const label = 'x'.repeat(MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1);
+        const row = { ...retained, configured: { ...retained.configured, locator: { v: 1 as const, displayLabel: label } } };
+        control.sourceInstances.seed(toCorpusStoredValue(row));
+        const result = await listTriageEntries({ v: 1, sources: { kind: 'allConfigured' }, limit: 0, order: 'newest' }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [ADMITTED_SOURCE], executeScan: finishedWalk, nowMs: () => 1000,
+        });
+        expect(result.configuredSources.find(source => source.sourceInstanceId === INSTANCE_ID)).toMatchObject({
+            displayLabel: `Example forge · ${'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 - new TextEncoder().encode('Example forge · ').length)}`, projectionTruncated: true,
+        });
+        expect(TriageListEntriesResultV1Schema.safeParse(result).success).toBe(true);
+        expect(row.configured.locator.displayLabel).toBe(label);
+    });
+
     it.each([
         ['refused', new PluginError({ code: 'plugin_action_caller_unavailable', retryable: false }),
             'plugin_action_caller_unavailable'],
@@ -422,7 +410,8 @@ describe('the aggregate list coverage claim', () => {
         const store = createTriageListWindowStore({
             readEntries: async (input) => {
                 limits.push(input.limit);
-                return TriageListEntriesResultV1Schema.parse(await listTriageEntries(input, {
+                return TriageListEntriesResultV1Schema.parse(await listTriageEntries({ ...input,
+                    sources: { kind: 'selected', sourceInstanceIds: [INSTANCE_ID] } }, {
                     sourceInstances: collections.sourceInstances,
                     readAdmittedSources: async () => [admitted],
                     executeScopeUnits: async () => {
@@ -451,12 +440,12 @@ describe('the aggregate list coverage claim', () => {
         const snapshot = store.getSnapshot();
         expect(limits).toEqual([0, MAX_TRIAGE_LIST_WINDOW_ROWS_V1]);
         expect({ scopeReads, scans }).toEqual({ scopeReads: 2, scans: 1 });
-        expect(snapshot.configuredSources[0]?.scope?.projection).toEqual({
+        expect(snapshot.configuredSources.find(source => source.sourceInstanceId === INSTANCE_ID)?.scope?.projection).toEqual({
             kind: 'failed', failure: { class: 'unknown', code: refusal instanceof PluginError ? code : 'scope_projection_unavailable' },
         });
         expect(snapshot.window?.rows).toEqual([]);
         expect(snapshot.window?.coverage).toBe('partial');
-        expect(snapshot.window?.lanes[0]).toMatchObject({
+        expect(snapshot.window?.lanes.find(lane => lane.sourceInstanceId === INSTANCE_ID)).toMatchObject({
             health: { kind: 'unavailable', error: { code } }, exhausted: false,
         });
         const state = resolveTriageListShellState(snapshot);
@@ -480,7 +469,7 @@ describe('the aggregate list coverage claim', () => {
         store.dispose();
     });
 
-    it('does not publish a provider result after its configured row is removed during the scan', async () => {
+    it('publishes an admitted provider result and its incomplete frontier after source removal', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const seeded = control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
             instanceTag: paddedInstanceTag('a'),
@@ -526,14 +515,12 @@ describe('the aggregate list coverage claim', () => {
         release();
         const result = await resultPromise;
 
-        expect(result.configuredSources).toEqual([]);
-        expect(result.window.rows).toEqual([]);
-        expect(result.window.lanes).toEqual([]);
-        expect(result.window.continuations).toBeUndefined();
-        // A request whose sole lane retired while it was running has no settled
-        // lane evidence. The empty configured summary is the lifecycle truth;
-        // coverage stays conservative rather than laundering cancellation into
-        // a completed provider walk.
+        expect(result.configuredSources).toHaveLength(1);
+        expect(result.window.rows).toHaveLength(1);
+        expect(result.window.lanes).toHaveLength(1);
+        expect(result.window.continuations).toEqual([expect.objectContaining({
+            sourceInstanceId: INSTANCE_ID, continuation: { v: 1, token: 'late-frontier' },
+        })]);
         expect(result.window.coverage).toBe('partial');
     });
 
@@ -569,7 +556,10 @@ describe('the aggregate list coverage claim', () => {
         });
 
         expect(executeScan).not.toHaveBeenCalled();
-        expect(result.configuredSources).toEqual([expect.objectContaining({ available: false })]);
+        expect(result.configuredSources).toEqual([
+            expect.objectContaining({ sourceInstanceId: INTERNAL_INSTANCE_ID, available: false }),
+            expect.objectContaining({ sourceInstanceId: INSTANCE_ID, available: false }),
+        ]);
         expect(result.window.coverage).toBe('partial');
     });
 
@@ -601,7 +591,7 @@ describe('the aggregate list coverage claim', () => {
             nowMs: () => 1_760_000_000_000,
         });
 
-        expect(result.configuredSources.map((source) => source.available)).toEqual([true, false]);
+        expect(result.configuredSources.map((source) => source.available)).toEqual([false, true, false]);
         // The unasked source is a lane of the window, not an absence from it.
         expect(result.window.lanes).toContainEqual({
             sourceInstanceId: SECOND_INSTANCE_ID,
@@ -655,7 +645,7 @@ describe('the aggregate list coverage claim', () => {
             nowMs: () => 1_760_000_000_000,
         });
 
-        expect(second.configuredSources).toHaveLength(1);
+        expect(second.configuredSources).toHaveLength(2);
         expect(second.configuredSourcesStatus).toBe('complete');
         expect(second.configuredSourcesNextCursor).toBeUndefined();
         expect(second.window.rows).toEqual([]);
@@ -826,42 +816,44 @@ describe('the aggregate list continuation set', () => {
         expect(third.window.coverage).toBe('complete');
         expect(third.window.continuations ?? []).toEqual([]);
     });
-    it('starts both post-provider currentness reads before either boundary settles', async () => {
+    it('finishes a three-page admitted read across revoke with one admission and refuses the next request', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const ids = seedInstances(control, 1);
-        let releaseConfiguration = (): void => {};
-        const configurationPending = new Promise<void>(resolve => { releaseConfiguration = resolve; });
-        let markPostReadStarted = (): void => {};
-        const postReadStarted = new Promise<void>(resolve => { markPostReadStarted = resolve; });
         let configurationReads = 0;
         let admissionReads = 0;
-        const result = listTriageEntries({ v: 1, sources: { kind: 'selected', sourceInstanceIds: ids },
-            limit: 10, order: 'newest' }, {
-            // Only the persistent-store boundary is held; configuration
-            // decoding, source admission and the aggregate remain real.
+        let providerPages = 0;
+        const deps = {
             sourceInstances: { query: async (...args) => {
                 configurationReads++;
-                if (configurationReads === 2) {
-                    markPostReadStarted();
-                    await configurationPending;
-                }
                 return collections.sourceInstances.query(...args);
             } },
             readAdmittedSources: async () => { admissionReads++; return [ADMITTED_SOURCE]; },
-            executeScan: async () => ({ kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } }),
+            executeScan: async (): Promise<TriageScanResultV1> => {
+                providerPages++;
+                if (providerPages === 1) control.sourceInstances.tombstone(paddedInstanceTag('s000'));
+                const observations = [{
+                    kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: String(providerPages) },
+                    locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+                }] as const;
+                return providerPages === 3
+                    ? { kind: 'complete', observations, evidence: { kind: 'walkFinished' } }
+                    : { kind: 'page', observations, evidence: { kind: 'partial', reason: 'more-pages' }, continuation: { v: 1, token: `page-${providerPages + 1}` } };
+            },
             nowMs: () => 1000,
-        });
-        try {
-            await postReadStarted;
-            // Initial admission plus the independent post-provider fence.
-            // Neither fence may serialize its start behind the other's I/O.
-            expect(admissionReads).toBe(2);
-        } finally {
-            releaseConfiguration();
-            await result;
-        }
-        expect(configurationReads).toBe(2);
-        expect((await result).configuredSources.map(source => source.sourceInstanceId)).toEqual(ids);
+        } satisfies Parameters<typeof listTriageEntries>[1];
+        const input = { v: 1, sources: { kind: 'selected', sourceInstanceIds: ids }, limit: 10, order: 'newest',
+            resume: [{ sourceInstanceId: ids[0]!, continuation: { v: 1, token: 'page-1' }, pageLimit: 1 }],
+        } as const;
+        const result = await listTriageEntries(input, deps);
+        expect(providerPages).toBe(3);
+        expect(result.window.rows).toHaveLength(3);
+        expect(result.configuredSources.map(source => source.sourceInstanceId)).toEqual(ids);
+        expect(configurationReads).toBe(1);
+        expect(admissionReads).toBe(1);
+        const next = await listTriageEntries(input, deps);
+        expect(next.window.rows).toEqual([]);
+        expect(next.configuredSources).toEqual([]);
+        expect(providerPages).toBe(3);
     });
 
     it('reports one frontier per walked connection rather than one for the whole request', async () => {
@@ -1078,7 +1070,7 @@ describe('the aggregate list continuation set', () => {
             fetchedThisPress = new Set<string>();
             const result: TriageListEntriesResultV1 = await listTriageEntries({
                 v: 1,
-                sources: { kind: 'allConfigured' },
+                sources: { kind: 'selected', sourceInstanceIds: ids },
                 limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
                 order: 'newest',
                 ...(resume === undefined ? {} : { resume }),
