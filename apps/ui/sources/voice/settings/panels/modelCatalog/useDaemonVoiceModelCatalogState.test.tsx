@@ -242,16 +242,6 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(await action).toMatchObject({ ok: true, result: { status: 'completed', value: { packId: STT_PACK } } });
     });
 
-    it('refuses an installed batch-only pack as the streaming conversation default through the existing Action', async () => {
-        const packId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
-        catalogReply([status(packId, { installState: 'installed' })]);
-        const result = await createDefaultActionExecutor().execute('settings.invoke', {
-            anchor: 'voiceAdvanced.defaultSpeechModel', input: { kind: 'model_pack', packId, machineId: 'machine-a' },
-        }, { surface: 'ui' });
-        expect(result).toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'model_pack_unavailable' } });
-        expect(mutations()).toHaveLength(0);
-    });
-
     it('shares selected-role model facts between passive hubs and pages without probing from the hub', async () => {
         const voice = settingsParse({ voice: { providerId: 'local_conversation',
             executionMachine: { mode: 'fixed', machineId: 'machine-a' },
@@ -343,6 +333,16 @@ describe('useDaemonVoiceModelCatalogState', () => {
         } } });
         expect(listingRequests()).toHaveLength(1);
         expect(requests.filter(request => request.method.endsWith('.status'))).toHaveLength(1);
+        expect(mutations()).toHaveLength(0);
+    });
+
+    it('refuses an installed batch-only pack as the streaming conversation default through the existing Action', async () => {
+        const packId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
+        catalogReply([status(packId, { installState: 'installed' })]);
+        const result = await createDefaultActionExecutor().execute('settings.invoke', {
+            anchor: 'voiceAdvanced.defaultSpeechModel', input: { kind: 'model_pack', packId, machineId: 'machine-a' },
+        }, { surface: 'ui' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'model_pack_unavailable' } });
         expect(mutations()).toHaveLength(0);
     });
 
@@ -586,7 +586,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
 
         await act(async () => publishMachineContributionRegistryProjectionInvalidation({
             machineId: 'machine-a', serverId: storage.getState().settingsScope!.serverId,
-        }));
+        }, 'authority'));
         await settle();
         expect(state(passive)).toMatchObject({ count: 0, loading: false });
         expect(state(remounted)).toMatchObject({ count: 0, loading: false });
@@ -730,7 +730,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(nativeAlert).toHaveBeenCalled();
         await act(async () => publishMachineContributionRegistryProjectionInvalidation({
             machineId: 'machine-a', serverId: storage.getState().settingsScope!.serverId,
-        }));
+        }, 'authority'));
         await settle();
         expect(state(passive).installState).toBe('installed');
         await active.unmount();
@@ -748,7 +748,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const observation = captureDaemonVoiceModelCatalogObservation('machine-a');
         publishMachineContributionRegistryProjectionInvalidation({
             machineId: 'machine-a', serverId: storage.getState().settingsScope!.serverId,
-        });
+        }, 'authority');
         const result = await observation.read({ client: new DaemonVoiceInferenceClient(), packIds: [STT_PACK] });
         expect(result).toBeNull();
         expect(requests).toHaveLength(0);

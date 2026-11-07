@@ -350,6 +350,23 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it.each([undefined, 'read-only'] as const)('renders the Voice permission default without replacing a saved choice (%s)', async (permissionIntent) => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = settingsParse({ voiceSettingsV1: {
+      providerId: 'local_conversation',
+      providers: { local_conversation: { schemaVersion: 1, config: {
+        conversationMode: 'agent', agent: permissionIntent ? { permissionIntent } : {},
+      } } },
+    } }).voice;
+    const setVoice = vi.fn();
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    for (const intent of ['default', 'read-only']) {
+      const option = screen.findByTestId(`settings.voice.local.mediatorPermissionPolicy:${intent}`);
+      expect(option.props.accessibilityState.checked).toBe(intent === (permissionIntent ?? 'default'));
+    }
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
   it.each(['ready', 'incomplete'] as const)('uses %s exact destination facts for Voice memory resume availability', async (status) => {
     const definition = AcpBackendDefinitionV1Schema.parse({ id: 'claude', name: 'configured-claude', title: 'Configured Claude',
       launch: { kind: 'command' as const, command: 'review', args: [] }, capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1 });
@@ -790,7 +807,7 @@ describe('LocalConversationSection', () => {
     await act(async () => {
       publishMachineContributionRegistryProjectionInvalidation({
         machineId: 'machine-1', serverId: getActiveServerSnapshot().serverId,
-      });
+      }, 'authority');
     });
     const agentPicker = findDropdownByItemTriggerTitle(
       screen,
