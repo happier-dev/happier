@@ -137,8 +137,6 @@ export type SessionActivationFailurePresentation = Readonly<{
  */
 export function presentSessionActivationFailure(
     details: PendingActivationFailureDetailsV1 | null | undefined,
-    /** The inactive Session's own last failure; it names an untyped refusal's cause (a weekly limit and its reset). */
-    sessionIssue?: SessionRuntimeIssueV1 | null,
 ): SessionActivationFailurePresentation {
     const reason = details?.runtimeReason;
     if (reason === 'no_eligible_member') return {
@@ -151,11 +149,8 @@ export function presentSessionActivationFailure(
         detail: t(`connectedServices.diagnostics.body.${reason}`),
         recovery: reason === 'connected_service_credential_reconnect_required' ? 'sign_in_again' : 'choose_account',
     };
-    const typed = presentSessionStartupFailureCause(reason);
-    const issue = !typed && sessionIssue?.status === 'failed' ? presentSessionRuntimeIssue(sessionIssue) : null;
     return {
-        message: typed ?? (issue?.summary ? [issue.summary, issue.reset].filter(Boolean).join(' · ') : null)
-            ?? t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'),
+        message: presentSessionStartupFailureCause(reason) ?? t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'),
         recovery: 'choose_account',
     };
 }

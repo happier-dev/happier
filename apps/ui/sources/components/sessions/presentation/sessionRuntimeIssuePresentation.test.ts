@@ -286,14 +286,17 @@ describe('a Session whose Agent account refused queued input: one message and on
             canWrite: true, pendingMessages: [blockedFirstInput] })).not.toHaveProperty('titleKey');
     });
 
-    it('names the Session\'s typed failure, not the delivery mechanism, when the refusal itself is untyped', async () => {
+    it('never blames an untyped delivery refusal on the Session\'s earlier failure', async () => {
         await useLanguage('en');
-        const quota = issue({ code: 'claude_rate_limit', source: 'agent_session_error',
-            sanitizedPreview: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" });
-        expect(presentSessionActivationFailure(null, quota)).toEqual({
-            message: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)", recovery: 'choose_account' });
-        // A typed refusal still wins over an earlier Session failure.
-        expect(presentSessionActivationFailure(reconnect, quota).recovery).toBe('sign_in_again');
+        const session = { activeAt: 100, active: false, pendingActivationAuthorization: null, pendingActivationFailureDetails: null,
+            lastRuntimeIssue: issue({ code: 'claude_rate_limit', source: 'agent_session_error',
+                sanitizedPreview: "You've hit your weekly limit · resets Nov 9, 4pm (Europe/Amsterdam)" }) };
+        const blocked = { id: 'row-2', localId: 'other-input', createdAt: 10, updatedAt: 10, text: 'hi', rawRecord: {},
+            messageRole: 'user' as const, source: 'server_pending' as const,
+            pendingDeliveryStatus: 'blocked' as const, pendingDeliveryBlockedReason: 'runtime_config_blocked' as const };
+        // The refusal is decided by the wake's own spawn result, which can refuse for many causes.
+        expect(resolveSessionDeliveryFailure([blocked], session, false)?.message)
+            .toBe(t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'));
     });
 
     it('offers no Stop while nothing runs and the person must recover blocked input', () => {

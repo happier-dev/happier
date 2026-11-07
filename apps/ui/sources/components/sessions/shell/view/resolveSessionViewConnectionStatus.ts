@@ -101,7 +101,9 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     }
     const restartPending = input.connectedServicesRestartState?.status === 'restarting'
         || input.connectedServicesRestartState?.status === 'pending_confirmation';
-    const queueLine = input.pendingQueue?.line ?? null;
+    // The usage-limit card is the one place the limit and its recovery are said while it shows; queued
+    // input blocked behind that limit adds only its count, never a second failure line.
+    const queueLine = input.usageLimitRecoveryCardShown === true ? null : input.pendingQueue?.line ?? null;
     if (queueLine && !restartActive && !input.sessionStatusResuming) {
         return {
             text: queueLine.text,
@@ -113,6 +115,11 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         };
     }
     const queueCountText = input.pendingQueue?.countText ?? null;
+    if (input.usageLimitRecoveryCardShown === true && input.pendingQueue?.line && !restartActive && !input.sessionStatusResuming) {
+        return queueCountText
+            ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }
+            : null;
+    }
     // The start-failure notice is the one place a refused start is said, with its Retry.
     if (input.startFailureNoticeShown === true && !restartActive && !input.sessionStatusResuming) {
         return queueCountText

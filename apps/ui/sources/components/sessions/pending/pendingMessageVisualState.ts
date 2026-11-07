@@ -44,8 +44,7 @@ export type PendingMessageVisualState = Readonly<{
 }>;
 
 export type PendingMessageQueuedStateOptions = Readonly<{
-    session?: Pick<Session, 'activeAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails'>
-        & Partial<Pick<Session, 'active' | 'lastRuntimeIssue'>> | null;
+    session?: Pick<Session, 'activeAt' | 'pendingActivationAuthorization' | 'pendingActivationFailureDetails'> | null;
     machineAccessRemoved?: boolean;
     hasEarlierRow?: boolean;
     /** An earlier row in this queue is itself blocked, so this one waits behind it. */
@@ -292,8 +291,7 @@ export function resolveSessionDeliveryFailure(
         const activation = session?.pendingActivationAuthorization;
         const ownFailedStart = session != null && activation?.status === 'failed'
             && activation.requestId === (message.localId ?? message.id) && activation.requestedAt > session.activeAt;
-        return presentSessionActivationFailure(ownFailedStart ? session?.pendingActivationFailureDetails : null,
-            session?.active === true ? null : session?.lastRuntimeIssue);
+        return presentSessionActivationFailure(ownFailedStart ? session?.pendingActivationFailureDetails : null);
     }
     return null;
 }

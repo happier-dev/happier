@@ -422,6 +422,15 @@ describe('resolveSessionViewConnectionStatus', () => {
             .toBe('Usage limit reached');
     });
 
+    it('leaves a usage limit to its recovery card even when queued input is blocked behind it', () => {
+        const blocked = { ...baseInput, sessionStatusState: 'action_required', inactiveStatusText: null,
+            pendingQueue: { line: { text: 'Runtime configuration is blocking delivery', action: 'choose_account', color: 'attention' },
+                countText: '1 queued' } } as const;
+        expect(resolveSessionViewConnectionStatus(blocked)?.text).toBe('Runtime configuration is blocking delivery');
+        expect(resolveSessionViewConnectionStatus({ ...blocked, usageLimitRecoveryCardShown: true })).toMatchObject({ text: '1 queued' });
+        expect(resolveSessionViewConnectionStatus({ ...blocked, usageLimitRecoveryCardShown: true })).not.toHaveProperty('pendingQueueAction');
+    });
+
     it('leaves a refused start to its "Couldn\'t start" notice: no second Inactive line or Resume', () => {
         const inactive = { ...baseInput, sessionStatusState: 'disconnected', inactiveStatusText: 'Inactive (resumable)',
             inactiveResumeAvailable: true } as const;

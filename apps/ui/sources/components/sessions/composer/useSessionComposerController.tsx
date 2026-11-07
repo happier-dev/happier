@@ -1555,9 +1555,7 @@ export function useSessionComposerController({
         activeAt: session.activeAt,
         pendingActivationAuthorization: session.pendingActivationAuthorization,
         pendingActivationFailureDetails: session.pendingActivationFailureDetails,
-        active: session.active,
-        lastRuntimeIssue: session.lastRuntimeIssue,
-    }, sessionMachineAccessRemoved), [pendingMessages, session.active, session.activeAt, session.lastRuntimeIssue, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionMachineAccessRemoved]);
+    }, sessionMachineAccessRemoved), [pendingMessages, session.activeAt, session.pendingActivationAuthorization, session.pendingActivationFailureDetails, sessionMachineAccessRemoved]);
     const [pendingActivationActionBusy, setPendingActivationActionBusy] = React.useState(false);
     const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
     const goalControlMachineRecord = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
