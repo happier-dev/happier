@@ -9,7 +9,7 @@ import type {
     WorkflowInvocationRecoveryV1,
     WorkflowProgressEnvelopeV1,
     WorkflowInvocationLifecycleV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import type {
@@ -33,6 +33,7 @@ import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/wo
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowReviewValue } from './WorkflowReviewCard';
 import { useAnsweredByLabel } from './workflowAnsweredBy';
@@ -41,6 +42,7 @@ import { workflowRunStyles as styles } from './workflowRunStyles';
 import type {
     WorkflowInvocationRecoveryPresentation,
     WorkflowRecoveryContinuation,
+    WorkflowSetupOutcome,
 } from './workflowRunDetailPresentation';
 import { projectWorkflowInvocationRequests } from './workflowPermissionRequests';
 import { createReadOnlySessionTranscriptSource } from '@/components/sessions/transcript/source/readOnlySessionTranscriptSource';
@@ -142,6 +144,22 @@ export type WorkflowInvocationDetailProps = Readonly<{
     onChangeReplacementText: (next: string) => void;
     /** The Run's Machine as the machine owner sees it; an unreachable one heads the recovery card. */
     machine?: Readonly<{ name: string; reachable: boolean }> | null;
+    /**
+     * The Run page's own way forward when this step has no recovery choice (Stop, Run again, or the
+     * workflow it came from), so the card names what the person can do rather than only what they can't.
+     */
+    noChoicesNext?: 'stop' | 'run_again' | 'open_workflow' | null;
+    /** The Run's own Run again, shown as this card's primary when the step has no recovery choice of its own. */
+    onRunAgain?: () => void;
+    /** What a finished Machine setup step installed, read from the Run's frozen Setup input. */
+    setupOutcome?: WorkflowSetupOutcome | null;
+    /**
+     * A Machine setup step: its operation id and the folder the daemon ran in are not the person's to act on,
+     * so they wait under Technical details instead of reading as the step's result and workspace.
+     */
+    machineSetupStep?: boolean;
+    /** Opens the Run's Machine at its administrator access setting, for a failure only that setting can fix. */
+    onOpenMachineAdminAccess?: () => void;
     /** The selected Wait's authored question, when the selection is a Wait in the frozen definition. */
     waitPrompt?: string | null;
     testIDPrefix: string;
@@ -206,7 +224,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const visibleResult = props.finalResult != null ? props.finalResult.value : props.progress?.result;
     const workspace = recovery.workspace;
     // A step that worked in the home folder with nothing else to say ("~") gets no row (FIN-DESIGN-REVIEW H4).
-    const workspaceInformative = workspace != null && (workspace.displayDirectory !== '~' || workspace.branchName !== null
+    const workspaceInformative = props.machineSetupStep !== true && workspace != null && (workspace.displayDirectory !== '~' || workspace.branchName !== null
         || workspace.checkoutRootPath !== workspace.directory || props.workspaceSourceLabel != null);
     const prepared = recovery.preparedRecovery;
     const continuation = useReviewedContinuation(prepared, {
@@ -278,9 +296,11 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         return parsed.success ? parsed.data : undefined;
     }, [props.progress?.resultContract]);
     const previousAttemptRecordId = props.progress?.previousAttemptRecordId;
-    // Missing usage carries no reported fact; container frames run no agent.
+    // Usage reads only when a step reported it: never zero, never a dash, and no "Not reported" row
+    // (FIN-DESIGN-REVIEW H4 supersedes UX-26's explicit-unavailable row). A container frame runs no agent.
     const usageLabel = props.progress === null || props.progress.blockKind !== 'step'
         ? null
+        // Missing usage is no fact worth a row (FIN-DESIGN-REVIEW H4); a settled step that reported none says nothing.
         : props.progress.usage === undefined
             ? null
             : formatWorkflowUsageLabel(props.progress.usage, {
@@ -313,6 +333,8 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     // Only this attempt's recorded failure explains what happened. Connectivity only affects recovery.
     const failureCause = recovery.failureCause ?? null;
     const unavailableMachine = recovery.unavailableMachine ?? null;
+    // A step whose content could not be read shows that one problem; a second card saying only "This step
+    // did not finish" beside it would be two problems for one cause (FIN-DESIGN-REVIEW H3).
     const unreadable = props.contentUnavailable === true && failureCause === null && !choiceOffered;
     const showRecoveryCard = !unreadable && (choiceOffered || recovery.workspaceUnavailable || failureCause !== null
         || props.lifecycle === 'failed' || props.lifecycle === 'outcome_uncertain');
@@ -324,11 +346,22 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     // With choices, the description says what they keep; without, the one sentence saying when they
     // appear is the sheet's content, so the card never draws an empty tinted sheet under its title.
     const recoveryDescription = choiceOffered ? t('workflows.recovery.keptBody') : undefined;
-    const noChoicesLine = choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
-        || (recovery.remainingNotStartedSiblingCount ?? 0) > 0 ? null
+    const noChoices = !(choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
+        || (recovery.remainingNotStartedSiblingCount ?? 0) > 0);
+    // With no choice of its own, a step the Run can replay puts Run again right under its failure: the line then
+    // says only why, and the button is the way forward (the shared "Investigate with an agent" joins it later).
+    const runAgainShown = noChoices && unavailableMachine === null && props.noChoicesNext === 'run_again'
+        && props.onRunAgain !== undefined;
+    // A failure only a Machine setting can fix leads to that setting; Run again stays beside it, quieter.
+    const adminAccessShown = noChoices && recovery.remedy === 'configure_admin_access'
+        && props.onOpenMachineAdminAccess !== undefined;
+    const noChoicesLine = !noChoices ? null
         : unavailableMachine !== null
             ? t('workflows.recovery.choicesOnReconnect', { machine: unavailableMachine.name })
-            : t('workflows.recovery.noChoices');
+            : resolveNoChoicesLine(failureCause, runAgainShown ? null : props.noChoicesNext ?? null);
+    // A failed step's own result is the detail of what went wrong; it waits one quiet tap away in its card.
+    const failureDetails = props.lifecycle === 'failed' && props.finalResult == null && props.waitPrompt == null
+        ? props.progress?.result : undefined;
     // An interruption needs you; only a reported failure reads as failed (lab run-A_failed / _interrupted).
     // With nothing to choose yet nothing needs you, so the card stays quiet (DESIGN-18 R1b).
     const recoveryTone = !choiceOffered ? 'neutral' as const
@@ -340,16 +373,24 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     // Technical details, one tap away from the readable head (lab run-R1 failed inspector). The recovery
     // owner decides which attempts carry one; a finished step never does.
     const reportedFailure = failureCause?.kind === 'reported_failure' ? failureCause : null;
+    const setupOperationId = props.machineSetupStep === true ? readSetupOperationId(props.progress?.result) : null;
+    const setupDirectory = props.machineSetupStep === true ? workspace?.directory ?? null : null;
     const technicalLines = React.useMemo((): TechnicalDetailsLine[] => {
-        if (reportedFailure === null) return [];
-        const lines: TechnicalDetailsLine[] = [
-            { key: 'failure-code', label: t('workflows.run.technical.failureCode'), value: reportedFailure.code },
-        ];
-        if (reportedFailure.message !== null && reportedFailure.message.length > 0 && reportedFailure.message !== causeHeadline) {
-            lines.push({ key: 'failure-cause', label: t('workflows.run.technical.failureCause'), value: reportedFailure.message });
+        const lines: TechnicalDetailsLine[] = [];
+        if (reportedFailure !== null) {
+            lines.push({ key: 'failure-code', label: t('workflows.run.technical.failureCode'), value: reportedFailure.code });
+            if (reportedFailure.message !== null && reportedFailure.message.length > 0 && reportedFailure.message !== causeHeadline) {
+                lines.push({ key: 'failure-cause', label: t('workflows.run.technical.failureCause'), value: reportedFailure.message });
+            }
+        }
+        if (setupOperationId !== null) {
+            lines.push({ key: 'setup-operation', label: t('workflows.run.technical.operation'), value: setupOperationId });
+        }
+        if (setupDirectory !== null) {
+            lines.push({ key: 'setup-directory', label: t('workflows.workspace.title'), value: setupDirectory });
         }
         return lines;
-    }, [causeHeadline, reportedFailure]);
+    }, [causeHeadline, reportedFailure, setupDirectory, setupOperationId]);
     const sessionLink = (execution?.kind === 'session' || execution?.kind === 'session_ready')
         && recovery.canInspectExecution && props.onOpenSession !== undefined ? execution.sessionId : null;
     const executionLink = execution?.kind === 'detached_run'
@@ -773,6 +814,44 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 )}
                             />
                         ) : null}
+                        {runAgainShown || adminAccessShown ? (
+                            <SectionContentRow>
+                                <View style={styles.actions}>
+                                    {adminAccessShown ? (
+                                        <RoundButton
+                                            testID={`${testIDPrefix}-recovery-configure-admin-access`}
+                                            size="small"
+                                            display="default"
+                                            title={t('workflows.recovery.configureAdminAccess')}
+                                            onPress={props.onOpenMachineAdminAccess}
+                                        />
+                                    ) : null}
+                                    {runAgainShown ? (
+                                        <RoundButton
+                                            testID={`${testIDPrefix}-recovery-run-again`}
+                                            size="small"
+                                            display={adminAccessShown ? 'secondary' : 'default'}
+                                            title={t('workflows.run.runAgain')}
+                                            onPress={props.onRunAgain}
+                                        />
+                                    ) : null}
+                                </View>
+                            </SectionContentRow>
+                        ) : null}
+                        {failureDetails === undefined || !showRecoveryCard ? null : (
+                            <CountedDisclosureItem
+                                testID={`${testIDPrefix}-recovery-what-went-wrong`}
+                                title={t('workflows.recovery.whatWentWrong')}
+                                showDivider
+                            >
+                                <WorkflowReviewValue value={failureDetails} contract={resultContract}
+                                    testIDPrefix={`${testIDPrefix}-invocation-result`} />
+                                {failureDetails === null || typeof failureDetails !== 'object' ? null : (
+                                    <Item testID={`${testIDPrefix}-invocation-result-copy`} title={t('common.copy')}
+                                        copy={JSON.stringify(failureDetails, null, 2)} showChevron={false} />
+                                )}
+                            </CountedDisclosureItem>
+                        )}
                         {recovery.workspaceUnavailable && !restoreOffered && !reviewedNewRunOffered ? (
                             <SectionContentRow>
                                 <Text testID={`${testIDPrefix}-workspace-unavailable-body`} style={styles.provenance}>
@@ -803,7 +882,24 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     {t('workflows.recovery.waitingForStop')}
                 </Text>
             )}
-            {props.resultShownAbove !== true && (visibleResult !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed'))) ? (
+            {/* A finished Machine setup leads with what it installed; several packages open to their list. */}
+            {props.setupOutcome == null ? null : (
+                <View testID={`${testIDPrefix}-setup-outcome`}><ListPresentationProvider value="page">
+                    <ItemGroup header="none">
+                        {props.setupOutcome.packages.length === 1 ? (
+                            <Item title={props.setupOutcome.label} titleLines={0} showChevron={false} />
+                        ) : (
+                            <CountedDisclosureItem title={props.setupOutcome.label}>
+                                {props.setupOutcome.packages.map((name) => (
+                                    <Item key={name} title={name} showChevron={false} />
+                                ))}
+                            </CountedDisclosureItem>
+                        )}
+                    </ItemGroup>
+                </ListPresentationProvider></View>
+            )}
+            {props.resultShownAbove !== true && props.machineSetupStep !== true
+                && !(failureDetails !== undefined && showRecoveryCard) && (visibleResult !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed'))) ? (
                 // The answer reads as the card it was typed in: the Wait's question heads it and the value
                 // sits in the review card's own rows (DESIGN-16 D4, D5). Any other step's own result heads
                 // "Result"; "Final output" is the Run's, and only one step carries it.
@@ -814,6 +910,11 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 <WorkflowReviewValue value={visibleResult}
                                     contract={props.finalResult != null ? undefined : resultContract}
                                     testIDPrefix={`${testIDPrefix}-invocation-result`} />
+                                {/* The exact structured value stays one Copy away, never printed as JSON. */}
+                                {visibleResult === null || typeof visibleResult !== 'object' ? null : (
+                                    <Item testID={`${testIDPrefix}-invocation-result-copy`} title={t('common.copy')}
+                                        copy={JSON.stringify(visibleResult, null, 2)} showChevron={false} />
+                                )}
                                 {answeredBy === null ? null : (
                                     <SectionContentRow testID={`${testIDPrefix}-invocation-answered-by`}>
                                         <Text style={styles.provenance}>{answeredBy}</Text>
@@ -833,6 +934,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     </ItemGroup>
                 </ListPresentationProvider></View>
             ) : null}
+            {/* What the step returned leads; what it was given follows it (FIN-DESIGN-REVIEW H4). */}
             {props.progress?.input === undefined ? null : (
                 // What the step was given reads in the same card anatomy as what it returned.
                 <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page" pageInsets={props.resultShownAbove === true ? 'contained' : 'standard'}>
@@ -844,7 +946,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             )}
             {/*
               * The quiet facts in one meta block (DESIGN-17 R1): usage, where the step worked, and where
-              * to inspect it. Only reported usage reads here.
+              * to inspect it. A settled step's missing usage reads "Not reported" in quiet meta, never a bare dash.
               */}
             {usageLabel === null && !workspaceInformative && sessionLink === null && executionLink === null
                 && technicalLines.length === 0 ? null : (
@@ -948,4 +1050,30 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             )}
         </View>
     );
+}
+
+/**
+ * The card's one line when the step has no recovery choice: why (when the cause says it) and what the
+ * person can do on this page. A target that stopped answering leaves no proof the step stopped, so the
+ * recovery owner withholds Start fresh (no duplicate effects); the line says so instead of "cannot be
+ * continued", and points at the Run's own action.
+ */
+function resolveNoChoicesLine(
+    failureCause: WorkflowInvocationRecoveryPresentation['failureCause'],
+    next: 'stop' | 'run_again' | 'open_workflow' | null,
+): string {
+    const why = failureCause?.kind === 'reported_failure' && failureCause.code === 'target_unavailable'
+        ? t('workflows.recovery.unconfirmedStop')
+        : t('workflows.recovery.noChoices');
+    const then = next === 'stop' ? t('workflows.recovery.nextStop')
+        : next === 'run_again' ? t('workflows.recovery.nextRunAgain')
+            : next === 'open_workflow' ? t('workflows.recovery.nextOpenWorkflow') : null;
+    return then === null ? why : `${why} ${then}`;
+}
+
+/** The operation a Machine setup step's result names (`{ operationId }`), for its Technical details. */
+function readSetupOperationId(result: JsonValue | undefined): string | null {
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) return null;
+    const operationId = result.operationId;
+    return typeof operationId === 'string' && operationId.length > 0 ? operationId : null;
 }

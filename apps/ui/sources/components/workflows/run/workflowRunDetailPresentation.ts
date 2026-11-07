@@ -25,6 +25,9 @@ import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/contr
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
 import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationRequests';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowFailureRemedy } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { readWorkflowSetupInstallPackagesV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import {
     describeWorkflowRunState,
     isTerminalWorkflowRunState,
@@ -148,6 +151,9 @@ export type WorkflowInvocationWorkspacePresentation = Readonly<{
     sourceInvocationRecordId: string | null;
 }>;
 
+/** The elevation owner's typed refusal when Machine administrator access is off (`MachineElevatedNotAppliedResultV1`). */
+const ADMIN_ACCESS_DISABLED_REASON_CODE = 'mode_none';
+
 export type WorkflowInvocationRecoveryPresentation = Readonly<{
     /** Opened owner evidence, without attributing a workspace/admission refusal to the Agent. */
     failureCause?: Readonly<{
@@ -163,6 +169,11 @@ export type WorkflowInvocationRecoveryPresentation = Readonly<{
         reset?: string | null;
         at: string | null;
     }> | Readonly<{ kind: 'cause_not_recorded' }> | null;
+    /**
+     * A failure only a Machine setting can fix: running again unchanged would fail the same way, so the way
+     * forward is that setting. Read from the typed refusal the step recorded, never from its words.
+     */
+    remedy?: WorkflowFailureRemedy | null;
     /** Connectivity is separate from the recorded failure and exact recovery eligibility. */
     unavailableMachine?: Readonly<{ name: string; lastSeenAt: number | null }> | null;
     canInspectExecution: boolean;
@@ -305,6 +316,8 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
 
     return {
         failureCause,
+        remedy: failureCause?.kind === 'reported_failure' && failureCause.code === ADMIN_ACCESS_DISABLED_REASON_CODE
+            ? 'configure_admin_access' : null,
         unavailableMachine,
         canInspectExecution: params.run.availability.inspectExecution
             && params.progress?.execution !== undefined,
@@ -558,6 +571,40 @@ export function formatWorkflowRunConsequenceSentence(params: Readonly<{
     return null;
 }
 
+/** What a finished Machine setup installed: the summary line, and each package it names. */
+export type WorkflowSetupOutcome = Readonly<{ label: string; packages: readonly string[] }>;
+
+/**
+ * Names what finished Setup steps installed ("Installed sl on NLDW3", "Installed 3 packages"), from the
+ * Setup input the Run froze when it started; the step's own result carries only its operation. The frozen
+ * leaf's reader (the same one that titles the Run) says nothing unless every change is a package install,
+ * so anything else keeps the Run's ordinary wording.
+ */
+export function describeWorkflowSetupOutcome(params: Readonly<{
+    blocks: readonly WorkflowBlock[];
+    machine: Readonly<{ id: string; name: string }> | null;
+}>): WorkflowSetupOutcome | null {
+    if (params.blocks.length === 0) return null;
+    const packages: string[] = [];
+    let onMachine = params.machine !== null;
+    for (const block of params.blocks) {
+        const installed = readWorkflowSetupInstallPackagesV1(block)?.installs;
+        if (installed === undefined) return null;
+        for (const name of installed) if (!packages.includes(name)) packages.push(name);
+        const machineId = block.kind === 'action' && block.input.machineId?.kind === 'literal' ? block.input.machineId.value : null;
+        if (machineId !== params.machine?.id) onMachine = false;
+    }
+    // Nothing was missing, so nothing was installed: the Run keeps its ordinary wording.
+    if (packages.length === 0) return null;
+    const machine = onMachine ? params.machine?.name : undefined;
+    return {
+        label: packages.length === 1
+            ? t('workflows.run.setupInstalledOne', { name: packages[0]!, machine })
+            : t('workflows.run.setupInstalledMany', { count: packages.length, machine }),
+        packages,
+    };
+}
+
 export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     run: WorkflowRunSummaryV1;
     coverage: WorkflowRunCoverage;
@@ -571,6 +618,8 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
      * Contact and recovery details never replace the persisted Run outcome.
      */
     machine?: Readonly<{ name: string; reachable: boolean; status?: WorkStatusPresentation }>;
+    /** What the Run's Setup steps installed, when the Run is a Machine setup. */
+    setup?: WorkflowSetupOutcome | null;
 }>): string {
     const { run, coverage } = params;
     if (isWorkflowRunStopPending({ ...run, cancelRequested: params.cancelRequested })) {
@@ -609,7 +658,8 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
                     completed: progress.completed, skipped: progress.skipped,
                 })
                 : progress.skipped === 0 && progress.completed === progress.total
-                    ? t('workflows.run.completedCount', { count: progress.total })
+                    ? params.setup ? t('workflows.run.setupInstalledSentence', { summary: params.setup.label })
+                        : t('workflows.run.completedCount', { count: progress.total })
                     : formatWorkflowRunStateLabel(run.state)
             : formatWorkflowRunStateLabel(run.state);
     }

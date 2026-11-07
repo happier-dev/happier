@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WorkflowStep } from './workflowV1.js';
-import { formatWorkflowStepSessionTitle, listWorkflowBlockOrdinalsV1, workflowBlockOrdinalV1, workflowStepPromptLabel } from './workflowStepLabel.js';
+import { formatWorkflowStepSessionTitle, listWorkflowBlockOrdinalsV1, readWorkflowSetupInstallPackagesV1, workflowBlockOrdinalV1,
+  workflowDefinitionDisplayTitleV1, workflowStepPromptLabel } from './workflowStepLabel.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import type { WorkflowBlock } from './workflowV1.js';
 import { createDeepWorkflowDefinition } from './workflowDefinition.testkit.js';
 
@@ -75,5 +77,39 @@ describe('workflow step label', () => {
     // A step Session's title carries exactly the number its heading and map node show.
     const named = { ...(leaf('reopen') as Extract<WorkflowBlock, { kind: 'step' }>), name: 'Reopen with notes' };
     expect(formatWorkflowStepSessionTitle({ step: named, stepOrdinal: workflowBlockOrdinalV1(blocks, 'reopen')! })).toBe('4 · Reopen with notes');
+  });
+});
+
+describe('Machine setup install naming', () => {
+  // The frozen Setup leaf a Bot template software install starts, as its reviewed Plan carries it.
+  function setupLeaf(steps: readonly unknown[], nativeFacts: readonly unknown[] = []): WorkflowBlock {
+    const target = { homeId: 'home', machineId: 'machine', sources: [{ kind: 'direct', setup: { items: [] } }], desiredRevision: 1,
+      recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: { v: 1, basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 },
+        steps, nativeFacts, planDigest: 'digest' } }], exclusions: [] };
+    return { kind: 'action', id: 'setup-0', actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, input: {
+      homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: 'machine' },
+      targets: { kind: 'literal', value: [target] as never },
+    } } as WorkflowBlock;
+  }
+  const pkg = (packages: readonly Readonly<{ name: string; version?: string }>[], state = 'present') =>
+    ({ id: 'package-apt', kind: 'package', manager: 'apt', state, packages });
+
+  it('names an unnamed Setup Run after the software it installs', () => {
+    expect(workflowDefinitionDisplayTitleV1([setupLeaf([pkg([{ name: 'sl' }])])])).toBe('Install sl');
+    expect(workflowDefinitionDisplayTitleV1([setupLeaf([pkg([{ name: 'ripgrep', version: '14.1' }, { name: 'jq' }])])]))
+      .toBe('Install 2 packages');
+    expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }])]))).toEqual({ requested: ['sl'], installs: ['sl'] });
+  });
+
+  it('skips what is already there and names nothing it cannot say plainly', () => {
+    // A package already there is still what the Run is for, but not something it installs.
+    expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }]), pkg([{ name: 'jq' }])],
+      [{ stepId: 'a', status: 'satisfied' }, { stepId: 'b', status: 'drifted' }]))).toEqual({ requested: ['sl', 'jq'], installs: ['jq'] });
+    expect(workflowDefinitionDisplayTitleV1([setupLeaf([pkg([{ name: 'hello' }])], [{ stepId: 'a', status: 'satisfied' }])]))
+      .toBe('Install hello');
+    // Removals and other kinds of change keep the ordinary wording.
+    expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }], 'absent')]))).toBeNull();
+    expect(readWorkflowSetupInstallPackagesV1(setupLeaf([pkg([{ name: 'sl' }]), { id: 'f', kind: 'file', path: '/etc/x' }]))).toBeNull();
+    expect(workflowDefinitionDisplayTitleV1([setupLeaf([{ id: 'f', kind: 'file', path: '/etc/x' }])])).toBeNull();
   });
 });

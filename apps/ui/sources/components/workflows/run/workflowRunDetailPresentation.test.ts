@@ -20,6 +20,7 @@ import {
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import { t } from '@/text';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -27,6 +28,7 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import {
     canOfferWorkflowInvocationReattach,
     describeWorkflowInvocationCause,
+    describeWorkflowSetupOutcome,
     formatWorkflowRunOutcomeLabel,
     formatWorkflowRunOutcomeSentence,
     formatWorkflowRunOutcomeLine,
@@ -1113,5 +1115,71 @@ describe('managed workflow Run presentation', () => {
             .toBe(t('workflows.runState.running'));
         expect(formatWorkflowRunOutcomeLabel({ state: 'succeeded', coverage, inAttentionWindow: true }))
             .toBe(t('workflows.runState.succeeded'));
+    });
+});
+
+describe('describeWorkflowSetupOutcome', () => {
+    const homeId = 'srv_home';
+    const machineId = 'machine-1';
+    // The frozen Setup action's literal input, in the shape a Bot template software install freezes.
+    function setupBlock(packages: readonly Readonly<{ name: string; version?: string }>[]) {
+        const steps = [{ id: 'package-apt', kind: 'package', manager: 'apt', state: 'present', packages }];
+        const selection = { ref: { pluginId: 'happier.machine.recipes', recipeId: 'install-package', revision: '1' },
+            inputs: { package: { manager: 'apt', apt: { name: packages[0]!.name } } } };
+        const target = { homeId, machineId,
+            sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection }] } }],
+            desiredRevision: 1,
+            recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: { v: 1,
+                basis: { kind: 'setup', machineId, desiredRevision: 1, selection },
+                steps,
+                nativeFacts: [{ stepId: 'package-apt', status: 'drifted', facts: { manager: 'apt', architecture: 'amd64',
+                    packages: packages.map((item) => ({ manager: 'apt', name: item.name, present: false })), unresolvedPackages: [] } }],
+                planDigest: '5313b242a64b9a2e163657fb87a31a2a0165aa384fa9f45068b541871078f4a7' } }],
+            exclusions: [] };
+        return { id: 'setup-0', kind: 'action' as const, actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, input: {
+            homeId: { kind: 'literal' as const, value: homeId },
+            machineId: { kind: 'literal' as const, value: machineId },
+            targets: { kind: 'literal' as const, value: [target] },
+        } };
+    }
+
+    it('names the one package a finished Setup installed, and where', () => {
+        const outcome = describeWorkflowSetupOutcome({ blocks: [setupBlock([{ name: 'sl', version: '5.02' }])],
+            machine: { id: machineId, name: 'NLDW3' } });
+        expect(outcome?.label).toBe(t('workflows.run.setupInstalledOne', { name: 'sl 5.02', machine: 'NLDW3' }));
+        expect(outcome?.packages).toEqual(['sl 5.02']);
+        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 1, skipped: 0, total: 1 } });
+        const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, setup: outcome }))
+            .toBe(t('workflows.run.setupInstalledSentence', { summary: outcome!.label }));
+    });
+
+    it('counts several packages and lists them', () => {
+        const outcome = describeWorkflowSetupOutcome({ blocks: [setupBlock([{ name: 'ripgrep' }, { name: 'fd-find' }, { name: 'jq' }])],
+            machine: { id: machineId, name: 'NLDW3' } });
+        expect(outcome?.label).toBe(t('workflows.run.setupInstalledMany', { count: 3, machine: 'NLDW3' }));
+        expect(outcome?.packages).toEqual(['ripgrep', 'fd-find', 'jq']);
+    });
+
+    it('says nothing it cannot read from the frozen input', () => {
+        const bound = setupBlock([{ name: 'sl' }]);
+        expect(describeWorkflowSetupOutcome({ blocks: [{ ...bound, input: { ...bound.input,
+            targets: { kind: 'input', name: 'targets' } } }], machine: null })).toBeNull();
+        expect(describeWorkflowSetupOutcome({ blocks: [], machine: null })).toBeNull();
+    });
+});
+
+describe('failure remedies', () => {
+    it('reads the typed admin-access-disabled refusal as a Machine setting to change before running again', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'failed' });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const progress = (code: string) => WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+            blockKind: 'action', invocationPath: { blockId: 'setup-0', scope: [] }, attempt: '0',
+            logicalInvocationRecordId: invocation.id, reason: { code,
+                message: 'Machine administrator access is disabled. Configure administrator access on this Machine, then review and retry.' } });
+        expect(projectWorkflowInvocationRecovery({ run, invocation, progress: progress('mode_none'), machineHomeDirectory: null })
+            .remedy).toBe('configure_admin_access');
+        expect(projectWorkflowInvocationRecovery({ run, invocation, progress: progress('native_check_unsupported'),
+            machineHomeDirectory: null }).remedy).toBeNull();
     });
 });

@@ -301,9 +301,12 @@ const fileContentSearchTranslations = { "zh-Hant": {
         invalidPattern: "正規表示式無效。請修改模式後重試。",
         unavailable: "文字搜尋無法使用。請檢查機器連線。",
         noFolder: "開啟一個專案或資料夾，即可搜尋其中檔案的文字。",
-        placeholder: "搜尋檔案、訊息、提交、工作階段、設定和操作",
+        placeholder: "搜尋檔案、工作階段、設定等",
         matchCase: "區分大小寫",
         regex: "正規表示式",
+        findMode: "尋找範圍",
+        findFiles: "檔案",
+        findText: "文字",
     } };
 
 return { fileContentSearchTranslations };
@@ -1704,6 +1707,7 @@ return { commitProposalTranslations };
 const Domain_committedMessageActionTranslations = (() => {
 const committedMessageActionTranslations = { "zh-Hant": {
         "committedMessageActions": {
+            "readAloud": "朗讀",
             "copy": "複製",
             "fork": "分支",
             "rollback": "回滾",
@@ -3086,6 +3090,8 @@ const externalSessionOperationTranslations = { zhHant: {
     sharingImportIncomplete: '匯入正在進行或尚未完成。請先繼續匯入再分享。',
     sharingTranscriptUnavailableTitle: '工作階段記錄無法使用',
     transcriptRetainedRefreshFailedTitle: '正在顯示最近一次取得的工作階段記錄',
+    transcriptLoadFailedFrom: ({ place }: { place: string }) => `無法從 ${place} 載入此對話記錄`,
+    transcriptUnreachable: 'Happier 無法從這裡連線。請檢查網路連線，然後重試。',
     transcriptLoadFailed: 'Happier 無法載入此工作階段記錄。',
     sharingTranscriptUnavailable: '工作階段記錄無法使用。此舊版連結工作階段沒有安全保存的記錄。',
     sharingSharedUpTo: ({ time }: { time: string }) => `已分享至 ${time}`,
@@ -5255,6 +5261,7 @@ const homeIndexTranslations = { 'zh-Hant': {
         greetingEveningAnonymous: '晚安',
         sessionsWorking: ({ count }) => `${count} 個工作階段正在工作`,
         sessionsNeedYou: ({ count }) => `${count} 個需要你`,
+        inboxWaiting: ({ count }) => `收件匣中有 ${count} 項`,
         sessionsAwaitingResponse: ({ count }) => `${count} 個工作階段正在等待你的回覆`,
         nothingRunning: '尚無執行中的工作階段',
         customize: '自訂',
@@ -6598,10 +6605,6 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             fleet: {
                 calm: "一切平穩",
                 count: ({ count }) => `${count} 台機器需要查看`,
-                sentenceOne: ({ phrase }) => `${phrase}。`,
-                sentenceTwo: ({ first, second }) => `${first}，${second}。`,
-                sentenceMore: ({ first, second, count }) => `${first}，${second}，另有 ${count} 台。`,
-                sameReason: ({ word, count }) => `${count} 台：${word}。`,
                 otherOnlineCalm: ({ count }) => `其餘 ${count} 台在線機器都很平穩。`,
                 allOnlineCalm: ({ count }) => count === 1 ? "唯一在線的機器很平穩。" : `所有在線機器都很平穩。`,
             },
@@ -8205,6 +8208,14 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             },
         },
         machineServices: {
+            actions: {
+                command: "執行命令…",
+                shell: "開啟 Shell",
+                unwatch: "停止關注",
+                unwatched: "已停止關注。服務仍在執行。",
+                unwatchConflict: "此關注設定已變更。請重新整理「服務」後再試。",
+                unwatchFailed: "無法停止關注此服務。",
+            },
             tab: '服務',
             lede: ({ machine }) => `${machine} 上為你執行的內容：由 Happier 部署，或已存在並受關注。健康狀態來自每個服務自身的來源。`,
             stale: ({ machine }) => `${machine} 沒有回應。以下是它最後列出的服務。`,
@@ -10853,7 +10864,7 @@ const sessionCollaborationPaneTranslations = {...Domain_sessionCollaborationPane
 
 const en = Shared_sessionCollaborationTranslations.en;
 
-const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "zh-Hant"> = { 'zh-Hant': { pane: sessionCollaborationPaneTranslations['zh-Hant'], readiness: sessionReadinessCopy['zh-Hant'], title: '成員', viewingNow: '正在檢視', justYou: '只有你', typing: '正在輸入…', stale: '可能不是最新', unavailable: '即時線上狀態無法使用', connecting: '連線中…', unnamed: 'Happier 成員', open: '開啟協作', conversations: "討論", accessUnavailable: '工作階段存取權無法使用', accessUnavailableReason: '此 Home 不支援將工作階段分享給其他人。', discussion: { openAnchor: ({ name }: { name: string }) => `開啟 ${name}`, reply: { readUpTo: "已讀到問題為止的討論", passed: "選擇略過", failed: "無法回答", cancelled: "在回答前停止了", stopped: "在完成前停止了" }, participants: { title: "參與者", loading: "正在查看誰在這裡…", moreSessionsFailed: "無法載入更多工作階段。", peopleGroup: "成員", agentsGroup: "代理", agentsNote: "每個都保留自己的工作階段、機器與核准", owner: "擁有者", you: "你", hereNow: "在線", canPost: "可發言", canRead: "可閱讀", teamAccess: "團隊存取", noAgents: "還沒有代理", model: "模型", session: "工作階段", modelStarting: "模型啟動中", policyWhenAddressed: "被提及時回答", policyReadsOnly: "只讀", policyDrafts: "草擬待核准", policyWatches: "關注並發言", privateNote: "只有受邀的人可以閱讀。提及永遠不會授予權限。", mentionNote: "提及永遠不會授予權限。", inheritedNote: "受邀的人及其團隊可以閱讀。提及永遠不會授予權限。", leave: "離開", invitedOnly: "僅限受邀", teamCanRead: "團隊可閱讀", people: ({ count }) => count === 1 ? '只有你' : `${count.toLocaleString()} 人`, peopleAndAgents: ({ people, agents }) => `${people.toLocaleString()} 人，${agents.toLocaleString()} 個代理` }, home: { search: "搜尋討論", needsYou: "需要你處理", filter: "篩選", filterAll: "全部討論", filterUnread: "未讀", filterEmpty: "沒有符合此篩選的內容", today: "今天", thisWeek: "本週", earlier: "更早", columnEmpty: "你受邀參與的討論會顯示在這裡", inviteTitle: "與人和代理一起討論", inviteBody: "把隊友、工作階段、機器人和模型帶進同一個對話。提及某個代理，它會在自己的工作階段中、依自己的核准回答。", idleTitle: "開啟一個討論", idleBody: "從清單中選擇一個，或與人和代理開始新的討論。", audience: "僅限你邀請的人", draftWaiting: "有草稿等你處理", approvalPending: "需要你的核准", draftWaitingNamed: ({ name }: { name: string }) => `${name} 的草稿等你處理`, approvalPendingNamed: ({ name }: { name: string }) => `${name} 需要核准` }, manage: { startAgain: "重新啟動", startAgainBody: "它的工作階段尚未啟動。用相同設定再試一次。", invitePlaceholder: "搜尋人員、工作階段或模型", policyWhenAddressedBody: "提及或回覆它時。預設。", policyReadsOnlyBody: "只閱讀；從不在這裡回答。", policyDraftsBody: "由你發布它的回答，或捨棄。", policyWatchesBody: "閱讀每則訊息並可能回答。即使不說話也會消耗回合。", answersGroup: "回答方式", operationsGroup: "工作階段", openSession: "開啟它的工作階段", removeModel: "移除並封存它的工作階段", removeModelBody: "它是為此討論啟動的；歷史會保留。", removeSession: "從此討論中移除", removeSessionBody: "該工作階段會繼續獨立執行。", rowHint: "選擇回答方式、開啟或移除", working: "正在儲存…", checking: "正在確認是否完成…", failed: "未能完成。", leaveTitle: "離開此討論", leaveBody: "必須有人擁有它。把它交給這裡的某人，或將其封存；不會刪除任何內容。", transferGroup: "讓其他人成為擁有者", transferSubtitle: "成為擁有者，然後你離開", noTransferCandidates: "請先邀請某人再轉交。", archiveInstead: "改為封存", archiveInsteadBody: "你仍是擁有者。還原之前任何人都不能發言。", inviteSubtitle: "只有你邀請的人可以閱讀", sessionsGroup: "你的工作階段", modelsGroup: "模型", sessionCandidate: "各自在被提及時回答", modelOn: ({ machine }: { machine: string }) => `${machine} 上的模型`, modelCandidate: "你的新工作階段 · 選擇代理和模型", startedGroup: "為此討論啟動", modelSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的工作階段`, modelNewSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的新工作階段`, modelStartingOn: ({ machine }: { machine: string }) => `正在 ${machine} 上啟動…`, modelFailedOn: ({ machine }: { machine: string }) => `未能在 ${machine} 上啟動`, modelNotStartedOn: ({ machine }: { machine: string }) => `尚未在 ${machine} 上啟動` }, invite: { button: "邀請", title: ({ title }: { title: string }) => `邀請加入 ${title}`, canManage: "可管理", ownerOnly: "只有擁有者可以變更受邀者。", failed: "無法儲存邀請。" }, composer: { mention: "提及", mentionHint: "提及一個智慧體，讓它來回答" }, newPage: { invitePlaceholder: "搜尋人員或工作階段", inviteTitle: "和誰一起開始", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names}已受邀` : `${names}已受邀`, namePlaceholder: "為這個討論命名", emptyTitle: "提及應該回答的對象", emptyBody: "智慧體只有被提及時才會回答。不提及任何人的訊息只會傳給人。" }, secondOpinion: { title: "徵求第二意見", discussTitle: "討論這個回答", discussionTitle: "第二意見", discussionTitleOn: ({ session }: { session: string }) => `關於 ${session} 的第二意見`, discussDiscussionTitle: "關於這個回答", defaultQuestion: "這樣對嗎？你會改什麼？", subtitle: ({ session }: { session: string }) => `關於 ${session} 中的一個回答`, subtitleUntitled: "關於這個回答", answer: "這個回答", open: "開啟討論", askQuoteOnly: "僅附引用提問", shareAndAsk: "分享並提問", ask: "提問", freshOpinionsHint: "選擇兩個或更多以執行獨立意見", askFreshOpinions: ({ count }: { count: number }) => `詢問 ${count} 個 · 獨立意見`, whereBody: "獨立意見從這台機器和資料夾執行。", noReviewers: "這個 Home 上還沒有其他工作階段", paneClosed: "應用程式重新載入後此提問已關閉。請從回答處重新開始。", searchReviewers: "搜尋工作階段和模型", noReviewerMatch: "沒有符合的結果", showAllReviewers: ({ count }: { count: number }) => `顯示全部（${count}）`, yourSession: "工作階段", moreSessions: "顯示更多工作階段", question: "問題", thisSession: "這個工作階段", cannotAskTitle: ({ name }: { name: string }) => `無法在這裡詢問 ${name}`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} 只能看到引用`, quoteOnlyBody: "無法開啟這個工作階段的其餘內容。", grantTitle: ({ name }: { name: string }) => `允許 ${name} 讀取這個工作階段`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} 會保留 ${session} 的讀取權限，直到你撤銷。`, grantUnavailable: "你無法分享這個工作階段，因此只會傳送引用。", readsAsYouTitle: ({ name }: { name: string }) => `${name} 以你的身分讀取這個工作階段`, readsTitle: ({ name }: { name: string }) => `${name} 已經可以讀取這個工作階段`, readsAsYouBody: "不會新增分享任何內容。", discussionTitleRow: "新的討論", discussionOnlyYou: "只有你，直到你邀請他人。", discussionPeople: ({ count }: { count: number }) => `你和另外 ${count} 人可以閱讀`, readsGroup: "他們能讀到什麼", disclosure: { sameSession: "這就是寫出這個回答的工作階段。", broader: "看到它的人會比現在能讀這個回答的人更多。", public: "它會變成公開的。", notAllowed: "這個 Home 的分享規則不允許。", unavailable: "現在無法讀取這個回答。" }, discussDone: "討論已開始", asked: ({ name }: { name: string }) => `已詢問 ${name}`, askedBody: "回答會出現在討論中。", freshStarted: ({ count }: { count: number }) => `已用 ${count} 個開始獨立意見`, freshStartedBody: "每個都獨立回答，回答會發到討論中。", openRun: "開啟執行", failed: "沒有成功。", pending: "尚未完成。再試一次即可從中斷處繼續。", previewChanged: "可讀取的人已變更。確認後再提問。", approvalPendingBody: "核准後，討論會在這裡開啟。你的問題會保留。" }, draftReview: { post: "發佈", decline: "拒絕", onlyYou: "發佈之前只有你看得到。" }, replyDraft: { action: "回覆", actionTo: ({ name }: { name: string }) => `回覆 ${name}`, replyingTo: ({ name }: { name: string }) => `正在回覆 ${name}`, removedTitle: ({ names }: { names: string }) => `已從傳送對象中移除：${names}`, removedBody: "他們已不在此討論中，因此不會傳送給他們。" },
+const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "zh-Hant"> = { 'zh-Hant': { pane: sessionCollaborationPaneTranslations['zh-Hant'], readiness: sessionReadinessCopy['zh-Hant'], title: '成員', viewingNow: '正在檢視', justYou: '只有你', typing: '正在輸入…', stale: '可能不是最新', unavailable: '即時線上狀態無法使用', connecting: '連線中…', unnamed: 'Happier 成員', open: '開啟協作', conversations: "討論", accessUnavailable: '工作階段存取權無法使用', accessUnavailableReason: '此 Home 不支援將工作階段分享給其他人。', discussion: { openAnchor: ({ name }: { name: string }) => `開啟 ${name}`, reply: { readUpTo: "已讀到問題為止的討論", passed: "選擇略過", failed: "無法回答", cancelled: "在回答前停止了", stopped: "在完成前停止了" }, participants: { title: "參與者", loading: "正在查看誰在這裡…", moreSessionsFailed: "無法載入更多工作階段。", peopleGroup: "成員", agentsGroup: "代理", agentsNote: "每個都保留自己的工作階段、機器與核准", owner: "擁有者", you: "你", hereNow: "在線", canPost: "可發言", canRead: "可閱讀", teamAccess: "團隊存取", noAgents: "還沒有代理", model: "模型", session: "工作階段", modelStarting: "模型啟動中", policyWhenAddressed: "被提及時回答", policyReadsOnly: "只讀", policyDrafts: "草擬待核准", policyWatches: "關注並發言", privateNote: "只有受邀的人可以閱讀。提及永遠不會授予權限。", mentionNote: "提及永遠不會授予權限。", inheritedNote: "受邀的人及其團隊可以閱讀。提及永遠不會授予權限。", leave: "離開", invitedOnly: "僅限受邀", teamCanRead: "團隊可閱讀", people: ({ count }) => count === 1 ? '只有你' : `${count.toLocaleString()} 人`, peopleAndAgents: ({ people, agents }) => `${people.toLocaleString()} 人，${agents.toLocaleString()} 個代理` }, home: { search: "搜尋討論", needsYou: "需要你處理", filter: "篩選", filterAll: "全部討論", filterUnread: "未讀", filterEmpty: "沒有符合此篩選的內容", today: "今天", thisWeek: "本週", earlier: "更早", columnEmpty: "你受邀參與的討論會顯示在這裡", inviteTitle: "與人和代理一起討論", inviteBody: "把隊友、工作階段、機器人和模型帶進同一個對話。提及某個代理，它會在自己的工作階段中、依自己的核准回答。", idleTitle: "開啟一個討論", idleBody: "從清單中選擇一個，或與人和代理開始新的討論。", audience: "僅限你邀請的人", draftWaiting: "有草稿等你處理", approvalPending: "需要你的核准", draftWaitingNamed: ({ name }: { name: string }) => `${name} 的草稿等你處理`, approvalPendingNamed: ({ name }: { name: string }) => `${name} 需要核准` }, manage: { startAgain: "重新啟動", startAgainBody: "它的工作階段尚未啟動。用相同設定再試一次。", invitePlaceholder: "搜尋人員、工作階段或模型", policyWhenAddressedBody: "提及或回覆它時。預設。", policyReadsOnlyBody: "只閱讀；從不在這裡回答。", policyDraftsBody: "由你發布它的回答，或捨棄。", policyWatchesBody: "閱讀每則訊息並可能回答。即使不說話也會消耗回合。", answersGroup: "回答方式", operationsGroup: "工作階段", openSession: "開啟它的工作階段", removeModel: "移除並封存它的工作階段", removeModelBody: "它是為此討論啟動的；歷史會保留。", removeSession: "從此討論中移除", removeSessionBody: "該工作階段會繼續獨立執行。", rowHint: "選擇回答方式、開啟或移除", working: "正在儲存…", checking: "正在確認是否完成…", failed: "未能完成。", leaveTitle: "離開此討論", leaveBody: "必須有人擁有它。把它交給這裡的某人，或將其封存；不會刪除任何內容。", transferGroup: "讓其他人成為擁有者", transferSubtitle: "成為擁有者，然後你離開", noTransferCandidates: "請先邀請某人再轉交。", archiveInstead: "改為封存", archiveInsteadBody: "你仍是擁有者。還原之前任何人都不能發言。", inviteSubtitle: "只有你邀請的人可以閱讀", sessionsGroup: "你的工作階段", modelsGroup: "模型", sessionCandidate: "各自在被提及時回答", modelOn: ({ machine }: { machine: string }) => `${machine} 上的模型`, modelCandidate: "你的新工作階段 · 選擇代理和模型", startedGroup: "為此討論啟動", modelSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的工作階段`, modelNewSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的新工作階段`, modelStartingOn: ({ machine }: { machine: string }) => `正在 ${machine} 上啟動…`, modelFailedOn: ({ machine }: { machine: string }) => `未能在 ${machine} 上啟動`, modelNotStartedOn: ({ machine }: { machine: string }) => `尚未在 ${machine} 上啟動` }, invite: { button: "邀請", title: ({ title }: { title: string }) => `邀請加入 ${title}`, canManage: "可管理", ownerOnly: "只有擁有者可以變更受邀者。", failed: "無法儲存邀請。" }, composer: { mention: "提及", mentionHint: "提及一個智慧體，讓它來回答" }, newPage: { invitePlaceholder: "搜尋人員或工作階段", inviteTitle: "和誰一起開始", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names}已受邀` : `${names}已受邀`, namePlaceholder: "為這個討論命名", emptyTitle: "提及應該回答的對象", emptyBody: "智慧體只有被提及時才會回答。不提及任何人的訊息只會傳給人。" }, secondOpinion: { title: "徵求第二意見", discussTitle: "討論這個回答", discussionTitle: "第二意見", discussionTitleOn: ({ session }: { session: string }) => `關於 ${session} 的第二意見`, discussDiscussionTitle: "關於這個回答", defaultQuestion: "這樣對嗎？你會改什麼？", subtitle: ({ session }: { session: string }) => `關於 ${session} 中的一個回答`, subtitleUntitled: "關於這個回答", answer: "這個回答", open: "開啟討論", askQuoteOnly: "僅附引用提問", shareAndAsk: "分享並提問", ask: "提問", freshOpinionsHint: "選擇兩個或更多以執行獨立意見", askFreshOpinions: ({ count }: { count: number }) => `詢問 ${count} 個 · 獨立意見`, whereBody: "獨立意見從這台機器和資料夾執行。", noReviewers: "這個 Home 上還沒有其他工作階段", nothingCanAnswer: "目前你的工作階段和機器都無法回答", nothingCanAnswerBody: "你的機器都尚未就緒", paneClosed: "應用程式重新載入後此提問已關閉。請從回答處重新開始。", searchReviewers: "搜尋工作階段和模型", noReviewerMatch: "沒有符合的結果", showAllReviewers: ({ count }: { count: number }) => `顯示全部（${count}）`, yourSession: "工作階段", moreSessions: "顯示更多工作階段", question: "問題", thisSession: "這個工作階段", cannotAskTitle: ({ name }: { name: string }) => `無法在這裡詢問 ${name}`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} 只能看到引用`, quoteOnlyBody: "無法開啟這個工作階段的其餘內容。", grantTitle: ({ name }: { name: string }) => `允許 ${name} 讀取這個工作階段`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} 會保留 ${session} 的讀取權限，直到你撤銷。`, grantUnavailable: "你無法分享這個工作階段，因此只會傳送引用。", readsAsYouTitle: ({ name }: { name: string }) => `${name} 以你的身分讀取這個工作階段`, readsTitle: ({ name }: { name: string }) => `${name} 已經可以讀取這個工作階段`, readsAsYouBody: "不會新增分享任何內容。", discussionTitleRow: "新的討論", discussionOnlyYou: "只有你，直到你邀請他人。", discussionPeople: ({ count }: { count: number }) => `你和另外 ${count} 人可以閱讀`, readsGroup: "他們能讀到什麼", disclosure: { sameSession: "這就是寫出這個回答的工作階段。", broader: "看到它的人會比現在能讀這個回答的人更多。", public: "它會變成公開的。", notAllowed: "這個 Home 的分享規則不允許。", unavailable: "現在無法讀取這個回答。" }, discussDone: "討論已開始", asked: ({ name }: { name: string }) => `已詢問 ${name}`, askedBody: "回答會出現在討論中。", freshStarted: ({ count }: { count: number }) => `已用 ${count} 個開始獨立意見`, freshStartedBody: "每個都獨立回答，回答會發到討論中。", openRun: "開啟執行", failed: "沒有成功。", pending: "尚未完成。再試一次即可從中斷處繼續。", previewChanged: "可讀取的人已變更。確認後再提問。", approvalPendingBody: "核准後，討論會在這裡開啟。你的問題會保留。" }, draftReview: { post: "發佈", decline: "拒絕", onlyYou: "發佈之前只有你看得到。" }, replyDraft: { action: "回覆", actionTo: ({ name }: { name: string }) => `回覆 ${name}`, replyingTo: ({ name }: { name: string }) => `正在回覆 ${name}`, removedTitle: ({ names }: { names: string }) => `已從傳送對象中移除：${names}`, removedBody: "他們已不在此討論中，因此不會傳送給他們。" },
         quote: discussionQuoteCopy['zh-Hant'], controls: discussionControlsCopy['zh-Hant'], attribution: discussionAttributionCopy['zh-Hant'],
         heldParticipant: "工作階段參與者",
         participantReturnFailed: ({ participant }: { participant: string }) => `無法發佈${participant}的回覆。`,
@@ -11609,7 +11620,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         conditionOpBefore: "早於", conditionOpAfter: "晚於", conditionOpBetween: "介於", conditionUnavailable: "無法使用", conditionNoFields: "所有篩選皆已使用", conditionUnder: "下屬", conditionBot: "機器人", conditionUpdated: "更新時間", conditionMachine: "機器", conditionAgent: "代理", conditionOwner: "擁有者", conditionSection: "分區", conditionBranch: "分支", conditionInactiveShown: "顯示",
         spacesSessionListSettings: "工作階段清單設定", conditionTitle: "篩選", conditionClear: "清除", conditionAdd: "新增篩選", conditionAddSearch: "篩選條件…",
         conditionRemove: ({ field }: { field: string }) => `移除${field}`, conditionOr: "或", conditionOpAre: "是", conditionOpIs: "是",
-        conditionOpIsNot: "不是", conditionOpHasAny: "包含任一", conditionWhose: "歸屬", conditionNeedsMe: "需要我", conditionWaitingOnYou: "等待你",
+        conditionOpIsNot: "不是", conditionOpHasAny: "包含任一", conditionWhose: "歸屬", conditionWaitingOnYou: "等待你",
         conditionSessionsAndRuns: "工作階段與執行", conditionCoordinators: "協調者", conditionHideInactive: "隱藏非使用中", conditionInactiveHidden: "已隱藏",
         conditionHome: "Home", conditionGroupWork: "工作", conditionGroupPeople: "人員", conditionGroupKind: "類型與時間",
         conditionCountPartial: ({ count }: { count: number }) => `已載入 ${count} · 可能還有更多相符`, filterButton: "篩選",
@@ -11621,7 +11632,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         filtersRunsNeedingYouAlwaysShow: '需要你處理的執行一律顯示',
         filtersMyWork: '我的工作', filtersLegacyOwnerDirect: '我的工作', filtersAssignedToMe: '指派給我', filtersFollowing: '正在關注',
         filtersInvolvingMe: '與我相關', filtersAllAccessible: '所有可存取', filtersAttention: '待處理',
-        filtersAttentionAny: '不限', filtersAttentionNeedsMe: '僅顯示需要我處理的工作階段', filtersScopeNeedsMe: '需要我處理',
+        filtersAttentionAny: '不限', filtersAttentionNeedsMe: '僅顯示需要我處理的工作階段',
         filtersInactive: '非活躍工作階段', filtersInactiveShow: '顯示', filtersInactiveHide: '隱藏',
         filtersHomes: 'Home', filtersSharedWith: '共享對象', filtersOutsideTeams: '個人和直接共享',
         filtersTags: '標籤', filtersSource: '來源', filtersSourceAll: '全部',
@@ -11629,7 +11640,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         filtersOnlyCoordinators: '僅協調者', filtersOnlyCoordinatorsDescription: '管理其他工作階段或依規則追蹤的工作階段',
         filtersCoordinatorsChip: '協調者', filtersCoordinatorsChipClear: '不再僅顯示協調者',
         filtersNoOptions: '沒有可用的篩選條件', filtersClear: '清除篩選條件', filtersDone: '完成', filtersArchived: '已封存',
-        filtersNeedsMeOnly: '僅需要我處理的', filtersNeedsMeOnlyDescription: '等待你處理的工作階段', filtersSourceHappier: 'Happier',
+        filtersNeedsMeOnlyDescription: '等待你處理的工作階段', filtersSourceHappier: 'Happier',
         filtersMoreTags: ({ count }: { count: number }) => `+ ${count} 更多`,
         filtersStatus: '狀態', filtersStatusFailed: '失敗', filtersProject: '專案', filtersProjectIs: '是', filtersProjectIsNot: '不是',
         filtersProjectNot: ({ names }: { names: string }) => `專案不是 ${names}`,
@@ -13460,6 +13471,14 @@ const traditionalChinese: TeamsTranslationRoot = {
             retry: '再試一次',
         },
         credentials: {
+            unavailableShort: {
+                brokerOffline: '代理離線',
+                sourceRemoved: '來源已移除',
+                updateNeeded: '需要更新',
+                notAllowed: '不允許',
+                homeOffline: 'Home 離線',
+                askOwner: '詢問擁有者',
+            },
             recovery: {
                 openSettings: '\u958b\u555f\u6191\u8b49\u8a2d\u5b9a',
                 selectBroker: '\u9078\u64c7\u4ee3\u7406\u4f4d\u7f6e',
@@ -16755,6 +16774,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
             machineId: '機器 ID',
             revision: '版本',
             failureCode: '失敗代碼',
+            operation: '操作',
             failureCause: '原因',
         },
         usageUnavailable: '用量無法取得',
@@ -16785,6 +16805,10 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         machineUnavailableBody: '確認目前狀態後，就會顯示可用的繼續方式。',
         completedCount: ({ count }) => (count === 1 ? '唯一的步驟已完成。' : `全部 ${count} 個步驟已完成。`),
         completedWithSkipped: ({ completed, skipped }) => `已完成 ${completed} 個步驟，略過 ${skipped} 個。`,
+        setupInstalledOne: ({ name, machine }) => (machine ? `已在 ${machine} 上安裝 ${name}` : `已安裝 ${name}`),
+        setupInstalledMany: ({ count, machine }) => (machine ? `已在 ${machine} 上安裝 ${count} 個套件` : `已安裝 ${count} 個套件`),
+        setupInstalledSentence: ({ summary }) => `${summary}。`,
+        setupInstallStep: ({ name, count }) => (count === 1 ? `安裝 ${name}` : `安裝 ${count} 個套件`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `已完成 ${completed}/${total} 個步驟。`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `已完成 ${completed}/${total} 個步驟和 ${itemsCompleted}/${itemsTotal} 項。`,
         notAnswered: '未回答',
@@ -16841,6 +16865,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         unconfirmedStop: 'Happier 無法確認此步驟是否已停止，因此不會再次啟動它。',
         nextStop: '請先停止此次執行，準備好後再重新執行工作流程。',
         nextRunAgain: '再次執行工作流程會開始一次新的執行。',
+        whatWentWrong: '出了什麼問題',
+        configureAdminAccess: '設定管理員存取權',
         nextOpenWorkflow: '要重試，請開啟工作流程並執行它。',
         sameConversationTitle: '在同一對話中繼續',
         freshAgentBody: '新的 Agent 會取得此步驟的輸入與工作區，但不會取得這段對話。',

@@ -301,9 +301,12 @@ const fileContentSearchTranslations = { "ja": {
         invalidPattern: "正規表現が無効です。パターンを編集して再試行してください。",
         unavailable: "テキスト検索を利用できません。マシンの接続を確認してください。",
         noFolder: "プロジェクトまたはフォルダを開くと、そのファイル内のテキストを検索できます。",
-        placeholder: "ファイル、メッセージ、コミット、セッション、設定、アクションを検索",
+        placeholder: "ファイル、セッション、設定などを検索",
         matchCase: "大文字と小文字を区別",
         regex: "正規表現",
+        findMode: "検索対象",
+        findFiles: "ファイル",
+        findText: "テキスト",
     } };
 
 return { fileContentSearchTranslations };
@@ -1709,6 +1712,7 @@ return { commitProposalTranslations };
 const Domain_committedMessageActionTranslations = (() => {
 const committedMessageActionTranslations = { "ja": {
         "committedMessageActions": {
+            "readAloud": "読み上げる",
             "copy": "コピー",
             "fork": "分岐",
             "rollback": "ロールバック",
@@ -3091,6 +3095,8 @@ const externalSessionOperationTranslations = { ja: {
     sharingImportIncomplete: 'インポート中または未完了です。共有する前にインポートを再開してください。',
     sharingTranscriptUnavailableTitle: 'トランスクリプトを利用できません',
     transcriptRetainedRefreshFailedTitle: '最後に取得したトランスクリプトを表示しています',
+    transcriptLoadFailedFrom: ({ place }: { place: string }) => `${place} からこのトランスクリプトを読み込めませんでした`,
+    transcriptUnreachable: 'ここから接続できません。接続を確認してから再試行してください。',
     transcriptLoadFailed: 'Happier はこのトランスクリプトを読み込めませんでした。',
     sharingTranscriptUnavailable: 'トランスクリプトを利用できません。この古いリンク済みセッションには安全に保存されたトランスクリプトがありません。',
     sharingSharedUpTo: ({ time }: { time: string }) => `${time} まで共有済み`,
@@ -5260,6 +5266,7 @@ const homeIndexTranslations = { ja: {
         greetingEveningAnonymous: 'こんばんは',
         sessionsWorking: ({ count }) => `${count} 件のセッションが作業中`,
         sessionsNeedYou: ({ count }) => `${count} 件があなたを待っています`,
+        inboxWaiting: ({ count }) => `受信箱に ${count} 件`,
         sessionsAwaitingResponse: ({ count }) => `${count} 件のセッションがあなたの回答を待っています`,
         nothingRunning: 'まだ実行中のものはありません',
         customize: 'カスタマイズ',
@@ -6603,10 +6610,6 @@ const machineDetailPageTranslations = { ja: translated({
             fleet: {
                 calm: "すべて安定",
                 count: ({ count }) => `${count} 台のマシンを確認してください`,
-                sentenceOne: ({ phrase }) => `${phrase}。`,
-                sentenceTwo: ({ first, second }) => `${first}。${second}。`,
-                sentenceMore: ({ first, second, count }) => `${first}。${second}。ほか ${count} 台。`,
-                sameReason: ({ word, count }) => `${count} 台で${word}。`,
                 otherOnlineCalm: ({ count }) => `オンラインの他の ${count} 台は安定しています。`,
                 allOnlineCalm: ({ count }) => count === 1 ? "オンラインの1台は安定しています。" : `オンラインのマシンはすべて安定しています。`,
             },
@@ -8210,6 +8213,14 @@ const machineDetailPageTranslations = { ja: translated({
             },
         },
         machineServices: {
+            actions: {
+                command: "コマンドを実行…",
+                shell: "シェルを開く",
+                unwatch: "監視を停止",
+                unwatched: "監視を停止しました。サービスは引き続き動作します。",
+                unwatchConflict: "この監視設定は変更されました。サービス一覧を更新してから、もう一度お試しください。",
+                unwatchFailed: "このサービスの監視を停止できませんでした。",
+            },
             tab: 'サービス',
             lede: ({ machine }) => `${machine} であなたのために動いているもの：Happier がデプロイしたもの、または既にあって監視しているもの。状態は各サービス自身のソースから取得します。`,
             stale: ({ machine }) => `${machine} が応答していません。最後に一覧されたサービスです。`,
@@ -10858,7 +10869,7 @@ const sessionCollaborationPaneTranslations = {...Domain_sessionCollaborationPane
 
 const en = Shared_sessionCollaborationTranslations.en;
 
-const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "ja"> = { ja: { pane: sessionCollaborationPaneTranslations['ja'], readiness: sessionReadinessCopy.ja, title: 'メンバー', viewingNow: '現在閲覧中', justYou: 'あなただけ', typing: '入力中…', stale: '最新ではない可能性があります', unavailable: 'リアルタイムの在席情報を取得できません', connecting: '接続中…', unnamed: 'Happierメンバー', open: 'コラボレーションを開く', conversations: "ディスカッション", accessUnavailable: 'セッションのアクセス権を利用できません', accessUnavailableReason: 'この Home はセッションを他の人と共有する機能に対応していません。', discussion: { openAnchor: ({ name }: { name: string }) => `${name} を開く`, reply: { readUpTo: "質問までのディスカッションを読みました", passed: "パスしました", failed: "回答できませんでした", cancelled: "回答前に停止しました", stopped: "完了前に停止しました" }, participants: { title: "参加者", loading: "参加中のメンバーを確認中…", moreSessionsFailed: "これ以上のセッションを読み込めませんでした。", peopleGroup: "メンバー", agentsGroup: "エージェント", agentsNote: "それぞれ自分のセッション、マシン、承認を保持します", owner: "オーナー", you: "あなた", hereNow: "参加中", canPost: "投稿可", canRead: "閲覧可", teamAccess: "チームのアクセス", noAgents: "まだエージェントはいません", model: "モデル", session: "セッション", modelStarting: "モデルを起動中", policyWhenAddressed: "メンションされたら回答", policyReadsOnly: "閲覧のみ", policyDrafts: "承認用の下書き", policyWatches: "見守って発言", privateNote: "招待されたメンバーだけが閲覧できます。メンションで権限が付与されることはありません。", mentionNote: "メンションで権限が付与されることはありません。", inheritedNote: "招待されたメンバーとそのチームが閲覧できます。メンションで権限が付与されることはありません。", leave: "退出", invitedOnly: "招待のみ", teamCanRead: "チームが閲覧可", people: ({ count }) => count === 1 ? 'あなただけ' : `${count.toLocaleString()} 人`, peopleAndAgents: ({ people, agents }) => `${people.toLocaleString()} 人、エージェント ${agents.toLocaleString()}` }, home: { search: "ディスカッションを検索", needsYou: "対応が必要", filter: "絞り込み", filterAll: "すべてのディスカッション", filterUnread: "未読", filterEmpty: "この条件に合うものはありません", today: "今日", thisWeek: "今週", earlier: "それ以前", columnEmpty: "招待されたディスカッションがここに表示されます", inviteTitle: "人やエージェントと話し合う", inviteBody: "チームメイト、セッション、ボット、モデルを 1 つの会話に集めましょう。エージェントにメンションすると、そのエージェント自身のセッションと承認で回答します。", idleTitle: "ディスカッションを開く", idleBody: "一覧から選ぶか、人やエージェントと新しく始めましょう。", audience: "招待した人だけ", draftWaiting: "下書きがあなたを待っています", approvalPending: "承認が必要です", draftWaitingNamed: ({ name }: { name: string }) => `${name}の下書きがあなたを待っています`, approvalPendingNamed: ({ name }: { name: string }) => `${name}の承認が必要です` }, manage: { startAgain: "もう一度開始", startAgainBody: "セッションが開始されていません。同じ設定でもう一度試します。", invitePlaceholder: "人、セッション、モデルを検索", policyWhenAddressedBody: "メンション、またはそれへの返信。既定。", policyReadsOnlyBody: "読むだけで、ここでは答えません。", policyDraftsBody: "回答はあなたが投稿するか破棄します。", policyWatchesBody: "すべてのメッセージを読み、答えることがあります。黙っていてもターンを使います。", answersGroup: "回答", operationsGroup: "セッション", openSession: "セッションを開く", removeModel: "削除してセッションをアーカイブ", removeModelBody: "このディスカッション用に開始されました。履歴は残ります。", removeSession: "このディスカッションから外す", removeSessionBody: "セッションはそのまま動き続けます。", rowHint: "回答方法を選ぶ、開く、または外す", working: "保存中…", checking: "完了したか確認中…", failed: "うまくいきませんでした。", leaveTitle: "このディスカッションを退出", leaveBody: "所有者が必要です。ここにいる人に渡すか、アーカイブしてください。何も削除されません。", transferGroup: "別の人を所有者にする", transferSubtitle: "所有者になり、その後あなたが退出します", noTransferCandidates: "渡すには、まず誰かを招待してください。", archiveInstead: "代わりにアーカイブ", archiveInsteadBody: "所有者のままです。復元するまで誰も投稿できません。", inviteSubtitle: "招待した人だけが読めます", sessionsGroup: "あなたのセッション", modelsGroup: "モデル", sessionCandidate: "それぞれメンションされると回答", modelOn: ({ machine }: { machine: string }) => `${machine} のモデル`, modelCandidate: "あなたの新しいセッション · エージェントとモデルを選択", startedGroup: "このディスカッション用に開始", modelSessionOn: ({ machine }: { machine: string }) => `${machine} 上のあなたのセッション`, modelNewSessionOn: ({ machine }: { machine: string }) => `${machine} で始めるあなたの新しいセッション`, modelStartingOn: ({ machine }: { machine: string }) => `${machine} で開始中…`, modelFailedOn: ({ machine }: { machine: string }) => `${machine} で開始できませんでした`, modelNotStartedOn: ({ machine }: { machine: string }) => `${machine} で未開始` }, invite: { button: "招待", title: ({ title }: { title: string }) => `${title} に招待`, canManage: "管理できる", ownerOnly: "招待する相手を変更できるのはオーナーだけです。", failed: "招待を保存できませんでした。" }, composer: { mention: "メンション", mentionHint: "エージェントをメンションすると回答します" }, newPage: { invitePlaceholder: "人またはセッションを検索", inviteTitle: "一緒に始める相手", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names}を招待しました` : `${names}を招待しました`, namePlaceholder: "このディスカッションに名前を付ける", emptyTitle: "回答してほしい相手をメンション", emptyBody: "エージェントはメンションされたときだけ回答します。誰もメンションしないメッセージは人だけに届きます。" }, secondOpinion: { title: "セカンドオピニオンを求める", discussTitle: "この回答について話し合う", discussionTitle: "セカンドオピニオン", discussionTitleOn: ({ session }: { session: string }) => `${session} へのセカンドオピニオン`, discussDiscussionTitle: "この回答について", defaultQuestion: "これで合っていますか？どこを変えますか？", subtitle: ({ session }: { session: string }) => `${session} の回答について`, subtitleUntitled: "この回答について", answer: "この回答", open: "ディスカッションを開く", askQuoteOnly: "引用だけで質問", shareAndAsk: "共有して質問", ask: "質問する", freshOpinionsHint: "2つ以上選ぶと独立した意見を実行します", askFreshOpinions: ({ count }: { count: number }) => `${count}件に質問 · 独立した意見`, whereBody: "独立した意見はこのマシンとフォルダーから実行されます。", noReviewers: "このHomeにはまだ他のセッションがありません", paneClosed: "アプリの再読み込みでこの質問は閉じられました。回答からもう一度始めてください。", searchReviewers: "セッションとモデルを検索", noReviewerMatch: "一致するものがありません", showAllReviewers: ({ count }: { count: number }) => `すべて表示（${count}）`, yourSession: "セッション", moreSessions: "さらにセッションを表示", question: "質問", thisSession: "このセッション", cannotAskTitle: ({ name }: { name: string }) => `${name} にはここで質問できません`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} には引用だけが見えます`, quoteOnlyBody: "このセッションの残りは開けません。", grantTitle: ({ name }: { name: string }) => `${name} にこのセッションの閲覧を許可`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} は取り消すまで ${session} を閲覧できます。`, grantUnavailable: "このセッションは共有できないため、引用だけが送られます。", readsAsYouTitle: ({ name }: { name: string }) => `${name} はあなたとしてこのセッションを読みます`, readsTitle: ({ name }: { name: string }) => `${name} はすでにこのセッションを読めます`, readsAsYouBody: "新たに共有されるものはありません。", discussionTitleRow: "新しいディスカッション", discussionOnlyYou: "誰かを招待するまで、あなただけです。", discussionPeople: ({ count }: { count: number }) => `あなたと他 ${count} 人が読めます`, readsGroup: "閲覧できる範囲", disclosure: { sameSession: "この回答を書いたセッションです。", broader: "今この回答を読める人より多くの人に見えてしまいます。", public: "公開されてしまいます。", notAllowed: "このHomeの共有ルールでは許可されていません。", unavailable: "今はこの回答を読めません。" }, discussDone: "ディスカッションを開始しました", asked: ({ name }: { name: string }) => `${name} に質問しました`, askedBody: "回答はディスカッションに届きます。", freshStarted: ({ count }: { count: number }) => `${count}件で独立した意見を開始しました`, freshStartedBody: "それぞれが個別に回答し、回答はディスカッションに届きます。", openRun: "実行を開く", failed: "完了できませんでした。", pending: "まだ終わっていません。もう一度試すと続きから再開します。", previewChanged: "閲覧できる人が変わりました。確認してからもう一度質問してください。", approvalPendingBody: "承認されると、ここでディスカッションが開きます。質問はそのまま保持されます。" }, draftReview: { post: "投稿", decline: "却下", onlyYou: "投稿するまで、あなただけに表示されます。" }, replyDraft: { action: "返信", actionTo: ({ name }: { name: string }) => `${name} に返信`, replyingTo: ({ name }: { name: string }) => `${name} に返信中`, removedTitle: ({ names }: { names: string }) => `送信先から外しました: ${names}`, removedBody: "このディスカッションにもういないため、何も送られません。" },
+const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "ja"> = { ja: { pane: sessionCollaborationPaneTranslations['ja'], readiness: sessionReadinessCopy.ja, title: 'メンバー', viewingNow: '現在閲覧中', justYou: 'あなただけ', typing: '入力中…', stale: '最新ではない可能性があります', unavailable: 'リアルタイムの在席情報を取得できません', connecting: '接続中…', unnamed: 'Happierメンバー', open: 'コラボレーションを開く', conversations: "ディスカッション", accessUnavailable: 'セッションのアクセス権を利用できません', accessUnavailableReason: 'この Home はセッションを他の人と共有する機能に対応していません。', discussion: { openAnchor: ({ name }: { name: string }) => `${name} を開く`, reply: { readUpTo: "質問までのディスカッションを読みました", passed: "パスしました", failed: "回答できませんでした", cancelled: "回答前に停止しました", stopped: "完了前に停止しました" }, participants: { title: "参加者", loading: "参加中のメンバーを確認中…", moreSessionsFailed: "これ以上のセッションを読み込めませんでした。", peopleGroup: "メンバー", agentsGroup: "エージェント", agentsNote: "それぞれ自分のセッション、マシン、承認を保持します", owner: "オーナー", you: "あなた", hereNow: "参加中", canPost: "投稿可", canRead: "閲覧可", teamAccess: "チームのアクセス", noAgents: "まだエージェントはいません", model: "モデル", session: "セッション", modelStarting: "モデルを起動中", policyWhenAddressed: "メンションされたら回答", policyReadsOnly: "閲覧のみ", policyDrafts: "承認用の下書き", policyWatches: "見守って発言", privateNote: "招待されたメンバーだけが閲覧できます。メンションで権限が付与されることはありません。", mentionNote: "メンションで権限が付与されることはありません。", inheritedNote: "招待されたメンバーとそのチームが閲覧できます。メンションで権限が付与されることはありません。", leave: "退出", invitedOnly: "招待のみ", teamCanRead: "チームが閲覧可", people: ({ count }) => count === 1 ? 'あなただけ' : `${count.toLocaleString()} 人`, peopleAndAgents: ({ people, agents }) => `${people.toLocaleString()} 人、エージェント ${agents.toLocaleString()}` }, home: { search: "ディスカッションを検索", needsYou: "対応が必要", filter: "絞り込み", filterAll: "すべてのディスカッション", filterUnread: "未読", filterEmpty: "この条件に合うものはありません", today: "今日", thisWeek: "今週", earlier: "それ以前", columnEmpty: "招待されたディスカッションがここに表示されます", inviteTitle: "人やエージェントと話し合う", inviteBody: "チームメイト、セッション、ボット、モデルを 1 つの会話に集めましょう。エージェントにメンションすると、そのエージェント自身のセッションと承認で回答します。", idleTitle: "ディスカッションを開く", idleBody: "一覧から選ぶか、人やエージェントと新しく始めましょう。", audience: "招待した人だけ", draftWaiting: "下書きがあなたを待っています", approvalPending: "承認が必要です", draftWaitingNamed: ({ name }: { name: string }) => `${name}の下書きがあなたを待っています`, approvalPendingNamed: ({ name }: { name: string }) => `${name}の承認が必要です` }, manage: { startAgain: "もう一度開始", startAgainBody: "セッションが開始されていません。同じ設定でもう一度試します。", invitePlaceholder: "人、セッション、モデルを検索", policyWhenAddressedBody: "メンション、またはそれへの返信。既定。", policyReadsOnlyBody: "読むだけで、ここでは答えません。", policyDraftsBody: "回答はあなたが投稿するか破棄します。", policyWatchesBody: "すべてのメッセージを読み、答えることがあります。黙っていてもターンを使います。", answersGroup: "回答", operationsGroup: "セッション", openSession: "セッションを開く", removeModel: "削除してセッションをアーカイブ", removeModelBody: "このディスカッション用に開始されました。履歴は残ります。", removeSession: "このディスカッションから外す", removeSessionBody: "セッションはそのまま動き続けます。", rowHint: "回答方法を選ぶ、開く、または外す", working: "保存中…", checking: "完了したか確認中…", failed: "うまくいきませんでした。", leaveTitle: "このディスカッションを退出", leaveBody: "所有者が必要です。ここにいる人に渡すか、アーカイブしてください。何も削除されません。", transferGroup: "別の人を所有者にする", transferSubtitle: "所有者になり、その後あなたが退出します", noTransferCandidates: "渡すには、まず誰かを招待してください。", archiveInstead: "代わりにアーカイブ", archiveInsteadBody: "所有者のままです。復元するまで誰も投稿できません。", inviteSubtitle: "招待した人だけが読めます", sessionsGroup: "あなたのセッション", modelsGroup: "モデル", sessionCandidate: "それぞれメンションされると回答", modelOn: ({ machine }: { machine: string }) => `${machine} のモデル`, modelCandidate: "あなたの新しいセッション · エージェントとモデルを選択", startedGroup: "このディスカッション用に開始", modelSessionOn: ({ machine }: { machine: string }) => `${machine} 上のあなたのセッション`, modelNewSessionOn: ({ machine }: { machine: string }) => `${machine} で始めるあなたの新しいセッション`, modelStartingOn: ({ machine }: { machine: string }) => `${machine} で開始中…`, modelFailedOn: ({ machine }: { machine: string }) => `${machine} で開始できませんでした`, modelNotStartedOn: ({ machine }: { machine: string }) => `${machine} で未開始` }, invite: { button: "招待", title: ({ title }: { title: string }) => `${title} に招待`, canManage: "管理できる", ownerOnly: "招待する相手を変更できるのはオーナーだけです。", failed: "招待を保存できませんでした。" }, composer: { mention: "メンション", mentionHint: "エージェントをメンションすると回答します" }, newPage: { invitePlaceholder: "人またはセッションを検索", inviteTitle: "一緒に始める相手", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names}を招待しました` : `${names}を招待しました`, namePlaceholder: "このディスカッションに名前を付ける", emptyTitle: "回答してほしい相手をメンション", emptyBody: "エージェントはメンションされたときだけ回答します。誰もメンションしないメッセージは人だけに届きます。" }, secondOpinion: { title: "セカンドオピニオンを求める", discussTitle: "この回答について話し合う", discussionTitle: "セカンドオピニオン", discussionTitleOn: ({ session }: { session: string }) => `${session} へのセカンドオピニオン`, discussDiscussionTitle: "この回答について", defaultQuestion: "これで合っていますか？どこを変えますか？", subtitle: ({ session }: { session: string }) => `${session} の回答について`, subtitleUntitled: "この回答について", answer: "この回答", open: "ディスカッションを開く", askQuoteOnly: "引用だけで質問", shareAndAsk: "共有して質問", ask: "質問する", freshOpinionsHint: "2つ以上選ぶと独立した意見を実行します", askFreshOpinions: ({ count }: { count: number }) => `${count}件に質問 · 独立した意見`, whereBody: "独立した意見はこのマシンとフォルダーから実行されます。", noReviewers: "このHomeにはまだ他のセッションがありません", nothingCanAnswer: "今は応答できるものがありません", nothingCanAnswerBody: "使える状態のマシンがありません", paneClosed: "アプリの再読み込みでこの質問は閉じられました。回答からもう一度始めてください。", searchReviewers: "セッションとモデルを検索", noReviewerMatch: "一致するものがありません", showAllReviewers: ({ count }: { count: number }) => `すべて表示（${count}）`, yourSession: "セッション", moreSessions: "さらにセッションを表示", question: "質問", thisSession: "このセッション", cannotAskTitle: ({ name }: { name: string }) => `${name} にはここで質問できません`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} には引用だけが見えます`, quoteOnlyBody: "このセッションの残りは開けません。", grantTitle: ({ name }: { name: string }) => `${name} にこのセッションの閲覧を許可`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} は取り消すまで ${session} を閲覧できます。`, grantUnavailable: "このセッションは共有できないため、引用だけが送られます。", readsAsYouTitle: ({ name }: { name: string }) => `${name} はあなたとしてこのセッションを読みます`, readsTitle: ({ name }: { name: string }) => `${name} はすでにこのセッションを読めます`, readsAsYouBody: "新たに共有されるものはありません。", discussionTitleRow: "新しいディスカッション", discussionOnlyYou: "誰かを招待するまで、あなただけです。", discussionPeople: ({ count }: { count: number }) => `あなたと他 ${count} 人が読めます`, readsGroup: "閲覧できる範囲", disclosure: { sameSession: "この回答を書いたセッションです。", broader: "今この回答を読める人より多くの人に見えてしまいます。", public: "公開されてしまいます。", notAllowed: "このHomeの共有ルールでは許可されていません。", unavailable: "今はこの回答を読めません。" }, discussDone: "ディスカッションを開始しました", asked: ({ name }: { name: string }) => `${name} に質問しました`, askedBody: "回答はディスカッションに届きます。", freshStarted: ({ count }: { count: number }) => `${count}件で独立した意見を開始しました`, freshStartedBody: "それぞれが個別に回答し、回答はディスカッションに届きます。", openRun: "実行を開く", failed: "完了できませんでした。", pending: "まだ終わっていません。もう一度試すと続きから再開します。", previewChanged: "閲覧できる人が変わりました。確認してからもう一度質問してください。", approvalPendingBody: "承認されると、ここでディスカッションが開きます。質問はそのまま保持されます。" }, draftReview: { post: "投稿", decline: "却下", onlyYou: "投稿するまで、あなただけに表示されます。" }, replyDraft: { action: "返信", actionTo: ({ name }: { name: string }) => `${name} に返信`, replyingTo: ({ name }: { name: string }) => `${name} に返信中`, removedTitle: ({ names }: { names: string }) => `送信先から外しました: ${names}`, removedBody: "このディスカッションにもういないため、何も送られません。" },
         quote: discussionQuoteCopy.ja, controls: discussionControlsCopy.ja, attribution: discussionAttributionCopy.ja,
         heldParticipant: "セッション参加者",
         participantReturnFailed: ({ participant }: { participant: string }) => `${participant}からの返信を投稿できませんでした。`,
@@ -11615,7 +11626,7 @@ const sessionListFilterTranslations = { ja: translated({
         spacesSaveFailed: "このスペースを保存できませんでした", spacesFromEverywhere: "すべての場所から", spacesSessionListSettings: "セッション一覧の設定", conditionTitle: "フィルター",
         conditionClear: "クリア", conditionAdd: "フィルターを追加", conditionAddSearch: "絞り込み…", conditionRemove: ({ field }: { field: string }) => `${field}を削除`,
         conditionOr: "または", conditionOpAre: "が", conditionOpIs: "が", conditionOpIsNot: "ではない", conditionOpHasAny: "のいずれかを含む", conditionWhose: "誰の",
-        conditionNeedsMe: "自分が必要", conditionWaitingOnYou: "あなたを待っています", conditionSessionsAndRuns: "セッションと実行", conditionCoordinators: "コーディネーター",
+        conditionWaitingOnYou: "あなたを待っています", conditionSessionsAndRuns: "セッションと実行", conditionCoordinators: "コーディネーター",
         conditionHideInactive: "非アクティブを隠す", conditionInactiveHidden: "非表示", conditionHome: "Home", conditionGroupWork: "作業",
         conditionGroupPeople: "ユーザー", conditionGroupKind: "種類と時間",
         conditionCountPartial: ({ count }: { count: number }) => `${count}件読み込み済み · 他にも一致する可能性`, filterButton: "フィルター",
@@ -11627,7 +11638,7 @@ const sessionListFilterTranslations = { ja: translated({
         filtersRunsNeedingYouAlwaysShow: 'あなたの対応が必要な実行は常に表示されます',
         filtersMyWork: '自分の作業', filtersLegacyOwnerDirect: '自分の作業', filtersAssignedToMe: '自分に割り当て済み', filtersFollowing: 'フォロー中',
         filtersInvolvingMe: '自分が関与', filtersAllAccessible: 'アクセス可能なすべて', filtersAttention: '要対応',
-        filtersAttentionAny: 'すべて', filtersAttentionNeedsMe: '自分の対応が必要なセッションのみ', filtersScopeNeedsMe: '要対応',
+        filtersAttentionAny: 'すべて', filtersAttentionNeedsMe: '自分の対応が必要なセッションのみ',
         filtersInactive: '非アクティブなセッション', filtersInactiveShow: '表示', filtersInactiveHide: '非表示',
         filtersHomes: 'Home', filtersSharedWith: '共有先', filtersOutsideTeams: '個人・直接',
         filtersTags: 'タグ', filtersSource: 'ソース', filtersSourceAll: 'すべて',
@@ -11635,7 +11646,7 @@ const sessionListFilterTranslations = { ja: translated({
         filtersOnlyCoordinators: 'コーディネーターのみ', filtersOnlyCoordinatorsDescription: '他のセッションを管理するか、ルールでフォローするセッション',
         filtersCoordinatorsChip: 'コーディネーター', filtersCoordinatorsChipClear: 'コーディネーターのみの表示を解除',
         filtersNoOptions: '利用できるフィルターはありません', filtersClear: 'フィルターをクリア', filtersDone: '完了', filtersArchived: 'アーカイブ済み',
-        filtersNeedsMeOnly: '自分の対応が必要なもののみ', filtersNeedsMeOnlyDescription: 'あなたを待っているセッション', filtersSourceHappier: 'Happier',
+        filtersNeedsMeOnlyDescription: 'あなたを待っているセッション', filtersSourceHappier: 'Happier',
         filtersMoreTags: ({ count }: { count: number }) => `他 ${count} 件`,
         filtersStatus: '状態', filtersStatusFailed: '失敗', filtersProject: 'プロジェクト', filtersProjectIs: '一致', filtersProjectIsNot: '除外',
         filtersProjectNot: ({ names }: { names: string }) => `除外するプロジェクト:${names}`,
@@ -13465,6 +13476,14 @@ const japanese: TeamsTranslationRoot = {
             retry: '再試行',
         },
         credentials: {
+            unavailableShort: {
+                brokerOffline: 'ブローカーがオフライン',
+                sourceRemoved: 'ソースが削除されました',
+                updateNeeded: '更新が必要',
+                notAllowed: '許可されていません',
+                homeOffline: 'Home がオフライン',
+                askOwner: '所有者に依頼',
+            },
             recovery: {
                 openSettings: '\u8a8d\u8a3c\u60c5\u5831\u306e\u8a2d\u5b9a\u3092\u958b\u304f',
                 selectBroker: '\u30d6\u30ed\u30fc\u30ab\u30fc\u306e\u5834\u6240\u3092\u9078\u3076',
@@ -16760,6 +16779,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
             machineId: 'マシン ID',
             revision: 'リビジョン',
             failureCode: '失敗コード',
+            operation: '操作',
             failureCause: '原因',
         },
         usageUnavailable: '使用量を取得できません',
@@ -16790,6 +16810,10 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         machineUnavailableBody: '現在の状態がわかると、再開の選択肢が表示されます。',
         completedCount: ({ count }) => (count === 1 ? '1つのステップを終えました。' : `すべての ${count} ステップを終えました。`),
         completedWithSkipped: ({ completed, skipped }) => `${completed} ステップが完了、${skipped} 件をスキップしました。`,
+        setupInstalledOne: ({ name, machine }) => (machine ? `${machine} に ${name} をインストールしました` : `${name} をインストールしました`),
+        setupInstalledMany: ({ count, machine }) => (machine ? `${machine} に ${count} 個のパッケージをインストールしました` : `${count} 個のパッケージをインストールしました`),
+        setupInstalledSentence: ({ summary }) => `${summary}。`,
+        setupInstallStep: ({ name, count }) => (count === 1 ? `${name} をインストール` : `${count} 個のパッケージをインストール`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `${total} ステップ中 ${completed} 件が完了。`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `${total} ステップ中 ${completed} 件、${itemsTotal} 項目中 ${itemsCompleted} 件が完了。`,
         notAnswered: '未回答',
@@ -16846,6 +16870,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         unconfirmedStop: 'このステップが停止したか Happier では確認できないため、再開しません。',
         nextStop: '実行を停止してから、準備ができたらワークフローをもう一度実行してください。',
         nextRunAgain: 'ワークフローをもう一度実行すると、新しい実行が始まります。',
+        whatWentWrong: '問題の内容',
+        configureAdminAccess: '管理者アクセスを設定',
         nextOpenWorkflow: 'もう一度試すには、ワークフローを開いて実行してください。',
         sameConversationTitle: '同じ会話で続ける',
         freshAgentBody: '新しい Agent はステップの入力とワークスペースを受け取りますが、この会話は引き継ぎません。',

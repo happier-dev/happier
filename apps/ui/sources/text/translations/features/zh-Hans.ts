@@ -301,9 +301,12 @@ const fileContentSearchTranslations = { "zh-Hans": {
         invalidPattern: "正则表达式无效。请修改模式后重试。",
         unavailable: "文本搜索不可用。请检查机器连接。",
         noFolder: "打开一个项目或文件夹，即可搜索其中文件的文本。",
-        placeholder: "搜索文件、消息、提交、会话、设置和操作",
+        placeholder: "搜索文件、会话、设置等",
         matchCase: "区分大小写",
         regex: "正则表达式",
+        findMode: "查找范围",
+        findFiles: "文件",
+        findText: "文本",
     } };
 
 return { fileContentSearchTranslations };
@@ -1704,6 +1707,7 @@ return { commitProposalTranslations };
 const Domain_committedMessageActionTranslations = (() => {
 const committedMessageActionTranslations = { "zh-Hans": {
         "committedMessageActions": {
+            "readAloud": "朗读",
             "copy": "复制",
             "fork": "分支",
             "rollback": "回滚",
@@ -3086,6 +3090,8 @@ const externalSessionOperationTranslations = { zhHans: {
     sharingImportIncomplete: '导入正在进行或尚未完成。请先继续导入再共享。',
     sharingTranscriptUnavailableTitle: '会话记录不可用',
     transcriptRetainedRefreshFailedTitle: '正在显示最近一次获取的会话记录',
+    transcriptLoadFailedFrom: ({ place }: { place: string }) => `无法从 ${place} 加载此对话记录`,
+    transcriptUnreachable: 'Happier 无法从这里连接。请检查网络连接，然后重试。',
     transcriptLoadFailed: 'Happier 无法加载此会话记录。',
     sharingTranscriptUnavailable: '会话记录不可用。此旧版关联会话没有安全保存的记录。',
     sharingSharedUpTo: ({ time }: { time: string }) => `已共享至 ${time}`,
@@ -5255,6 +5261,7 @@ const homeIndexTranslations = { 'zh-Hans': {
         greetingEveningAnonymous: '晚上好',
         sessionsWorking: ({ count }) => `${count} 个会话正在工作`,
         sessionsNeedYou: ({ count }) => `${count} 个需要你`,
+        inboxWaiting: ({ count }) => `收件箱中有 ${count} 项`,
         sessionsAwaitingResponse: ({ count }) => `${count} 个会话正在等待你的回复`,
         nothingRunning: '暂无运行中的会话',
         customize: '自定义',
@@ -6598,10 +6605,6 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             fleet: {
                 calm: "一切平稳",
                 count: ({ count }) => `${count} 台机器需要查看`,
-                sentenceOne: ({ phrase }) => `${phrase}。`,
-                sentenceTwo: ({ first, second }) => `${first}，${second}。`,
-                sentenceMore: ({ first, second, count }) => `${first}，${second}，另有 ${count} 台。`,
-                sameReason: ({ word, count }) => `${count} 台：${word}。`,
                 otherOnlineCalm: ({ count }) => `其余 ${count} 台在线机器都很平稳。`,
                 allOnlineCalm: ({ count }) => count === 1 ? "唯一在线的机器很平稳。" : `所有在线机器都很平稳。`,
             },
@@ -8205,6 +8208,14 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             },
         },
         machineServices: {
+            actions: {
+                command: "运行命令…",
+                shell: "打开 Shell",
+                unwatch: "停止关注",
+                unwatched: "已停止关注。服务仍在运行。",
+                unwatchConflict: "此关注设置已更改。请刷新“服务”后重试。",
+                unwatchFailed: "无法停止关注此服务。",
+            },
             tab: '服务',
             lede: ({ machine }) => `${machine} 上为你运行的内容：由 Happier 部署，或已存在并被关注。健康状态来自每个服务自身的来源。`,
             stale: ({ machine }) => `${machine} 没有响应。以下是它最后列出的服务。`,
@@ -10853,7 +10864,7 @@ const sessionCollaborationPaneTranslations = {...Domain_sessionCollaborationPane
 
 const en = Shared_sessionCollaborationTranslations.en;
 
-const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "zh-Hans"> = { 'zh-Hans': { pane: sessionCollaborationPaneTranslations['zh-Hans'], readiness: sessionReadinessCopy['zh-Hans'], title: '成员', viewingNow: '正在查看', justYou: '只有你', typing: '正在输入…', stale: '可能不是最新', unavailable: '实时在线状态不可用', connecting: '连接中…', unnamed: 'Happier 成员', open: '打开协作', conversations: "讨论", accessUnavailable: '会话访问权限不可用', accessUnavailableReason: '此 Home 不支持将会话共享给其他人。', discussion: { openAnchor: ({ name }: { name: string }) => `打开 ${name}`, reply: { readUpTo: "已读到问题为止的讨论", passed: "选择跳过", failed: "无法回答", cancelled: "在回答前停止了", stopped: "在完成前停止了" }, participants: { title: "参与者", loading: "正在查看谁在这里…", moreSessionsFailed: "无法加载更多会话。", peopleGroup: "成员", agentsGroup: "智能体", agentsNote: "每个都保留自己的会话、机器和审批", owner: "所有者", you: "你", hereNow: "在线", canPost: "可发言", canRead: "可阅读", teamAccess: "团队访问", noAgents: "还没有智能体", model: "模型", session: "会话", modelStarting: "模型启动中", policyWhenAddressed: "被提及时回答", policyReadsOnly: "只读", policyDrafts: "起草待审批", policyWatches: "关注并发言", privateNote: "只有受邀的人可以阅读。提及永远不会授予权限。", mentionNote: "提及永远不会授予权限。", inheritedNote: "受邀的人及其团队可以阅读。提及永远不会授予权限。", leave: "离开", invitedOnly: "仅限受邀", teamCanRead: "团队可阅读", people: ({ count }) => count === 1 ? '只有你' : `${count.toLocaleString()} 人`, peopleAndAgents: ({ people, agents }) => `${people.toLocaleString()} 人，${agents.toLocaleString()} 个智能体` }, home: { search: "搜索讨论", needsYou: "需要你处理", filter: "筛选", filterAll: "全部讨论", filterUnread: "未读", filterEmpty: "没有符合此筛选的内容", today: "今天", thisWeek: "本周", earlier: "更早", columnEmpty: "你受邀参与的讨论会显示在这里", inviteTitle: "与人和智能体一起讨论", inviteBody: "把队友、会话、机器人和模型拉进同一个对话。提及某个智能体，它会在自己的会话中、按自己的审批回答。", idleTitle: "打开一个讨论", idleBody: "从列表中选择一个，或与人和智能体开始新的讨论。", audience: "仅限你邀请的人", draftWaiting: "有草稿等你处理", approvalPending: "需要你的批准", draftWaitingNamed: ({ name }: { name: string }) => `${name} 的草稿等你处理`, approvalPendingNamed: ({ name }: { name: string }) => `${name} 需要批准` }, manage: { startAgain: "重新启动", startAgainBody: "它的会话尚未启动。用相同设置再试一次。", invitePlaceholder: "搜索人员、会话或模型", policyWhenAddressedBody: "提及或回复它时。默认。", policyReadsOnlyBody: "只阅读；从不在这里回答。", policyDraftsBody: "由你发布它的回答，或丢弃。", policyWatchesBody: "阅读每条消息并可能回答。即使不说话也会消耗轮次。", answersGroup: "回答方式", operationsGroup: "会话", openSession: "打开它的会话", removeModel: "移除并归档它的会话", removeModelBody: "它是为此讨论启动的；历史会保留。", removeSession: "从此讨论中移除", removeSessionBody: "该会话会继续独立运行。", rowHint: "选择回答方式、打开或移除", working: "正在保存…", checking: "正在确认是否完成…", failed: "未能完成。", leaveTitle: "离开此讨论", leaveBody: "必须有人拥有它。把它交给这里的某人，或将其归档；不会删除任何内容。", transferGroup: "让其他人成为所有者", transferSubtitle: "成为所有者，然后你离开", noTransferCandidates: "请先邀请某人再转交。", archiveInstead: "改为归档", archiveInsteadBody: "你仍是所有者。恢复之前任何人都不能发言。", inviteSubtitle: "只有你邀请的人可以阅读", sessionsGroup: "你的会话", modelsGroup: "模型", sessionCandidate: "各自在被提及时回答", modelOn: ({ machine }: { machine: string }) => `${machine} 上的模型`, modelCandidate: "你的新会话 · 选择代理和模型", startedGroup: "为此讨论启动", modelSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的会话`, modelNewSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的新会话`, modelStartingOn: ({ machine }: { machine: string }) => `正在 ${machine} 上启动…`, modelFailedOn: ({ machine }: { machine: string }) => `未能在 ${machine} 上启动`, modelNotStartedOn: ({ machine }: { machine: string }) => `尚未在 ${machine} 上启动` }, invite: { button: "邀请", title: ({ title }: { title: string }) => `邀请加入 ${title}`, canManage: "可管理", ownerOnly: "只有所有者可以更改受邀者。", failed: "无法保存邀请。" }, composer: { mention: "提及", mentionHint: "提及一个智能体，让它来回答" }, newPage: { invitePlaceholder: "搜索人员或会话", inviteTitle: "和谁一起开始", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names}已受邀` : `${names}已受邀`, namePlaceholder: "为这个讨论命名", emptyTitle: "提及应该回答的对象", emptyBody: "智能体只有被提及时才会回答。不提及任何人的消息只会发给人。" }, secondOpinion: { title: "征求第二意见", discussTitle: "讨论这个回答", discussionTitle: "第二意见", discussionTitleOn: ({ session }: { session: string }) => `关于 ${session} 的第二意见`, discussDiscussionTitle: "关于这个回答", defaultQuestion: "这样对吗？你会改什么？", subtitle: ({ session }: { session: string }) => `关于 ${session} 中的一个回答`, subtitleUntitled: "关于这个回答", answer: "这个回答", open: "打开讨论", askQuoteOnly: "仅附引用提问", shareAndAsk: "共享并提问", ask: "提问", freshOpinionsHint: "选择两个或更多以运行独立意见", askFreshOpinions: ({ count }: { count: number }) => `询问 ${count} 个 · 独立意见`, whereBody: "独立意见从这台机器和文件夹运行。", noReviewers: "这个 Home 上还没有其他会话", paneClosed: "应用重新加载后此提问已关闭。请从回答处重新开始。", searchReviewers: "搜索会话和模型", noReviewerMatch: "没有匹配的结果", showAllReviewers: ({ count }: { count: number }) => `显示全部（${count}）`, yourSession: "会话", moreSessions: "显示更多会话", question: "问题", thisSession: "这个会话", cannotAskTitle: ({ name }: { name: string }) => `无法在这里询问 ${name}`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} 只能看到引用`, quoteOnlyBody: "无法打开这个会话的其余内容。", grantTitle: ({ name }: { name: string }) => `允许 ${name} 读取这个会话`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} 会保留 ${session} 的读取权限，直到你撤销。`, grantUnavailable: "你不能共享这个会话，因此只发送引用。", readsAsYouTitle: ({ name }: { name: string }) => `${name} 以你的身份读取这个会话`, readsTitle: ({ name }: { name: string }) => `${name} 已经可以读取这个会话`, readsAsYouBody: "不会新增共享任何内容。", discussionTitleRow: "新的讨论", discussionOnlyYou: "只有你，直到你邀请他人。", discussionPeople: ({ count }: { count: number }) => `你和另外 ${count} 人可以阅读`, readsGroup: "他们能读到什么", disclosure: { sameSession: "这就是写出这个回答的会话。", broader: "看到它的人会比现在能读这个回答的人更多。", public: "它会变成公开的。", notAllowed: "这个 Home 的共享规则不允许。", unavailable: "现在无法读取这个回答。" }, discussDone: "讨论已开始", asked: ({ name }: { name: string }) => `已询问 ${name}`, askedBody: "回答会出现在讨论中。", freshStarted: ({ count }: { count: number }) => `已用 ${count} 个开始独立意见`, freshStartedBody: "每个都独立回答，回答会发到讨论中。", openRun: "打开运行", failed: "没有成功。", pending: "尚未完成。再试一次即可从中断处继续。", previewChanged: "可读取的人发生了变化。确认后再提问。", approvalPendingBody: "批准后，讨论会在这里打开。你的问题会保留。" }, draftReview: { post: "发布", decline: "拒绝", onlyYou: "发布之前只有你能看到。" }, replyDraft: { action: "回复", actionTo: ({ name }: { name: string }) => `回复 ${name}`, replyingTo: ({ name }: { name: string }) => `正在回复 ${name}`, removedTitle: ({ names }: { names: string }) => `已从发送对象中移除：${names}`, removedBody: "他们已不在此讨论中，因此不会发送给他们。" },
+const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "zh-Hans"> = { 'zh-Hans': { pane: sessionCollaborationPaneTranslations['zh-Hans'], readiness: sessionReadinessCopy['zh-Hans'], title: '成员', viewingNow: '正在查看', justYou: '只有你', typing: '正在输入…', stale: '可能不是最新', unavailable: '实时在线状态不可用', connecting: '连接中…', unnamed: 'Happier 成员', open: '打开协作', conversations: "讨论", accessUnavailable: '会话访问权限不可用', accessUnavailableReason: '此 Home 不支持将会话共享给其他人。', discussion: { openAnchor: ({ name }: { name: string }) => `打开 ${name}`, reply: { readUpTo: "已读到问题为止的讨论", passed: "选择跳过", failed: "无法回答", cancelled: "在回答前停止了", stopped: "在完成前停止了" }, participants: { title: "参与者", loading: "正在查看谁在这里…", moreSessionsFailed: "无法加载更多会话。", peopleGroup: "成员", agentsGroup: "智能体", agentsNote: "每个都保留自己的会话、机器和审批", owner: "所有者", you: "你", hereNow: "在线", canPost: "可发言", canRead: "可阅读", teamAccess: "团队访问", noAgents: "还没有智能体", model: "模型", session: "会话", modelStarting: "模型启动中", policyWhenAddressed: "被提及时回答", policyReadsOnly: "只读", policyDrafts: "起草待审批", policyWatches: "关注并发言", privateNote: "只有受邀的人可以阅读。提及永远不会授予权限。", mentionNote: "提及永远不会授予权限。", inheritedNote: "受邀的人及其团队可以阅读。提及永远不会授予权限。", leave: "离开", invitedOnly: "仅限受邀", teamCanRead: "团队可阅读", people: ({ count }) => count === 1 ? '只有你' : `${count.toLocaleString()} 人`, peopleAndAgents: ({ people, agents }) => `${people.toLocaleString()} 人，${agents.toLocaleString()} 个智能体` }, home: { search: "搜索讨论", needsYou: "需要你处理", filter: "筛选", filterAll: "全部讨论", filterUnread: "未读", filterEmpty: "没有符合此筛选的内容", today: "今天", thisWeek: "本周", earlier: "更早", columnEmpty: "你受邀参与的讨论会显示在这里", inviteTitle: "与人和智能体一起讨论", inviteBody: "把队友、会话、机器人和模型拉进同一个对话。提及某个智能体，它会在自己的会话中、按自己的审批回答。", idleTitle: "打开一个讨论", idleBody: "从列表中选择一个，或与人和智能体开始新的讨论。", audience: "仅限你邀请的人", draftWaiting: "有草稿等你处理", approvalPending: "需要你的批准", draftWaitingNamed: ({ name }: { name: string }) => `${name} 的草稿等你处理`, approvalPendingNamed: ({ name }: { name: string }) => `${name} 需要批准` }, manage: { startAgain: "重新启动", startAgainBody: "它的会话尚未启动。用相同设置再试一次。", invitePlaceholder: "搜索人员、会话或模型", policyWhenAddressedBody: "提及或回复它时。默认。", policyReadsOnlyBody: "只阅读；从不在这里回答。", policyDraftsBody: "由你发布它的回答，或丢弃。", policyWatchesBody: "阅读每条消息并可能回答。即使不说话也会消耗轮次。", answersGroup: "回答方式", operationsGroup: "会话", openSession: "打开它的会话", removeModel: "移除并归档它的会话", removeModelBody: "它是为此讨论启动的；历史会保留。", removeSession: "从此讨论中移除", removeSessionBody: "该会话会继续独立运行。", rowHint: "选择回答方式、打开或移除", working: "正在保存…", checking: "正在确认是否完成…", failed: "未能完成。", leaveTitle: "离开此讨论", leaveBody: "必须有人拥有它。把它交给这里的某人，或将其归档；不会删除任何内容。", transferGroup: "让其他人成为所有者", transferSubtitle: "成为所有者，然后你离开", noTransferCandidates: "请先邀请某人再转交。", archiveInstead: "改为归档", archiveInsteadBody: "你仍是所有者。恢复之前任何人都不能发言。", inviteSubtitle: "只有你邀请的人可以阅读", sessionsGroup: "你的会话", modelsGroup: "模型", sessionCandidate: "各自在被提及时回答", modelOn: ({ machine }: { machine: string }) => `${machine} 上的模型`, modelCandidate: "你的新会话 · 选择代理和模型", startedGroup: "为此讨论启动", modelSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的会话`, modelNewSessionOn: ({ machine }: { machine: string }) => `你在 ${machine} 上的新会话`, modelStartingOn: ({ machine }: { machine: string }) => `正在 ${machine} 上启动…`, modelFailedOn: ({ machine }: { machine: string }) => `未能在 ${machine} 上启动`, modelNotStartedOn: ({ machine }: { machine: string }) => `尚未在 ${machine} 上启动` }, invite: { button: "邀请", title: ({ title }: { title: string }) => `邀请加入 ${title}`, canManage: "可管理", ownerOnly: "只有所有者可以更改受邀者。", failed: "无法保存邀请。" }, composer: { mention: "提及", mentionHint: "提及一个智能体，让它来回答" }, newPage: { invitePlaceholder: "搜索人员或会话", inviteTitle: "和谁一起开始", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names}已受邀` : `${names}已受邀`, namePlaceholder: "为这个讨论命名", emptyTitle: "提及应该回答的对象", emptyBody: "智能体只有被提及时才会回答。不提及任何人的消息只会发给人。" }, secondOpinion: { title: "征求第二意见", discussTitle: "讨论这个回答", discussionTitle: "第二意见", discussionTitleOn: ({ session }: { session: string }) => `关于 ${session} 的第二意见`, discussDiscussionTitle: "关于这个回答", defaultQuestion: "这样对吗？你会改什么？", subtitle: ({ session }: { session: string }) => `关于 ${session} 中的一个回答`, subtitleUntitled: "关于这个回答", answer: "这个回答", open: "打开讨论", askQuoteOnly: "仅附引用提问", shareAndAsk: "共享并提问", ask: "提问", freshOpinionsHint: "选择两个或更多以运行独立意见", askFreshOpinions: ({ count }: { count: number }) => `询问 ${count} 个 · 独立意见`, whereBody: "独立意见从这台机器和文件夹运行。", noReviewers: "这个 Home 上还没有其他会话", nothingCanAnswer: "目前你的会话和机器都无法回答", nothingCanAnswerBody: "你的机器都未就绪", paneClosed: "应用重新加载后此提问已关闭。请从回答处重新开始。", searchReviewers: "搜索会话和模型", noReviewerMatch: "没有匹配的结果", showAllReviewers: ({ count }: { count: number }) => `显示全部（${count}）`, yourSession: "会话", moreSessions: "显示更多会话", question: "问题", thisSession: "这个会话", cannotAskTitle: ({ name }: { name: string }) => `无法在这里询问 ${name}`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} 只能看到引用`, quoteOnlyBody: "无法打开这个会话的其余内容。", grantTitle: ({ name }: { name: string }) => `允许 ${name} 读取这个会话`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} 会保留 ${session} 的读取权限，直到你撤销。`, grantUnavailable: "你不能共享这个会话，因此只发送引用。", readsAsYouTitle: ({ name }: { name: string }) => `${name} 以你的身份读取这个会话`, readsTitle: ({ name }: { name: string }) => `${name} 已经可以读取这个会话`, readsAsYouBody: "不会新增共享任何内容。", discussionTitleRow: "新的讨论", discussionOnlyYou: "只有你，直到你邀请他人。", discussionPeople: ({ count }: { count: number }) => `你和另外 ${count} 人可以阅读`, readsGroup: "他们能读到什么", disclosure: { sameSession: "这就是写出这个回答的会话。", broader: "看到它的人会比现在能读这个回答的人更多。", public: "它会变成公开的。", notAllowed: "这个 Home 的共享规则不允许。", unavailable: "现在无法读取这个回答。" }, discussDone: "讨论已开始", asked: ({ name }: { name: string }) => `已询问 ${name}`, askedBody: "回答会出现在讨论中。", freshStarted: ({ count }: { count: number }) => `已用 ${count} 个开始独立意见`, freshStartedBody: "每个都独立回答，回答会发到讨论中。", openRun: "打开运行", failed: "没有成功。", pending: "尚未完成。再试一次即可从中断处继续。", previewChanged: "可读取的人发生了变化。确认后再提问。", approvalPendingBody: "批准后，讨论会在这里打开。你的问题会保留。" }, draftReview: { post: "发布", decline: "拒绝", onlyYou: "发布之前只有你能看到。" }, replyDraft: { action: "回复", actionTo: ({ name }: { name: string }) => `回复 ${name}`, replyingTo: ({ name }: { name: string }) => `正在回复 ${name}`, removedTitle: ({ names }: { names: string }) => `已从发送对象中移除：${names}`, removedBody: "他们已不在此讨论中，因此不会发送给他们。" },
         quote: discussionQuoteCopy['zh-Hans'], controls: discussionControlsCopy['zh-Hans'], attribution: discussionAttributionCopy['zh-Hans'],
         heldParticipant: "会话参与者",
         participantReturnFailed: ({ participant }: { participant: string }) => `无法发布${participant}的回复。`,
@@ -11609,7 +11620,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         conditionOpBefore: "早于", conditionOpAfter: "晚于", conditionOpBetween: "介于", conditionUnavailable: "不可用", conditionNoFields: "所有筛选均已使用", conditionUnder: "下属", conditionBot: "机器人", conditionUpdated: "更新时间", conditionMachine: "机器", conditionAgent: "智能体", conditionOwner: "所有者", conditionSection: "分区", conditionBranch: "分支", conditionInactiveShown: "显示",
         spacesSessionListSettings: "会话列表设置", conditionTitle: "筛选", conditionClear: "清除", conditionAdd: "添加筛选", conditionAddSearch: "筛选条件…",
         conditionRemove: ({ field }: { field: string }) => `移除${field}`, conditionOr: "或", conditionOpAre: "是", conditionOpIs: "是",
-        conditionOpIsNot: "不是", conditionOpHasAny: "包含任一", conditionWhose: "归属", conditionNeedsMe: "需要我", conditionWaitingOnYou: "等待你",
+        conditionOpIsNot: "不是", conditionOpHasAny: "包含任一", conditionWhose: "归属", conditionWaitingOnYou: "等待你",
         conditionSessionsAndRuns: "会话和运行", conditionCoordinators: "协调者", conditionHideInactive: "隐藏非活动", conditionInactiveHidden: "已隐藏",
         conditionHome: "Home", conditionGroupWork: "工作", conditionGroupPeople: "人员", conditionGroupKind: "类型和时间",
         conditionCountPartial: ({ count }: { count: number }) => `已加载 ${count} · 可能还有更多匹配`, filterButton: "筛选",
@@ -11621,7 +11632,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         filtersRunsNeedingYouAlwaysShow: '需要你处理的运行始终显示',
         filtersMyWork: '我的工作', filtersLegacyOwnerDirect: '我的工作', filtersAssignedToMe: '分配给我', filtersFollowing: '正在关注',
         filtersInvolvingMe: '与我有关', filtersAllAccessible: '所有可访问', filtersAttention: '待处理',
-        filtersAttentionAny: '不限', filtersAttentionNeedsMe: '仅显示需要我处理的会话', filtersScopeNeedsMe: '需要我处理',
+        filtersAttentionAny: '不限', filtersAttentionNeedsMe: '仅显示需要我处理的会话',
         filtersInactive: '非活跃会话', filtersInactiveShow: '显示', filtersInactiveHide: '隐藏',
         filtersHomes: 'Home', filtersSharedWith: '共享对象', filtersOutsideTeams: '个人和直接共享',
         filtersTags: '标签', filtersSource: '来源', filtersSourceAll: '全部',
@@ -11629,7 +11640,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         filtersOnlyCoordinators: '仅协调者', filtersOnlyCoordinatorsDescription: '管理其他会话或按规则关注的会话',
         filtersCoordinatorsChip: '协调者', filtersCoordinatorsChipClear: '不再仅显示协调者',
         filtersNoOptions: '没有可用的筛选条件', filtersClear: '清除筛选条件', filtersDone: '完成', filtersArchived: '已归档',
-        filtersNeedsMeOnly: '仅需要我处理的', filtersNeedsMeOnlyDescription: '等待你处理的会话', filtersSourceHappier: 'Happier',
+        filtersNeedsMeOnlyDescription: '等待你处理的会话', filtersSourceHappier: 'Happier',
         filtersMoreTags: ({ count }: { count: number }) => `+ ${count} 更多`,
         filtersStatus: '状态', filtersStatusFailed: '失败', filtersProject: '项目', filtersProjectIs: '是', filtersProjectIsNot: '不是',
         filtersProjectNot: ({ names }: { names: string }) => `项目不是 ${names}`,
@@ -13460,6 +13471,14 @@ const simplifiedChinese: TeamsTranslationRoot = {
             retry: '重试',
         },
         credentials: {
+            unavailableShort: {
+                brokerOffline: '代理离线',
+                sourceRemoved: '来源已移除',
+                updateNeeded: '需要更新',
+                notAllowed: '不允许',
+                homeOffline: 'Home 离线',
+                askOwner: '询问所有者',
+            },
             recovery: {
                 openSettings: '\u6253\u5f00\u51ed\u636e\u8bbe\u7f6e',
                 selectBroker: '\u9009\u62e9\u4ee3\u7406\u4f4d\u7f6e',
@@ -16755,6 +16774,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
             machineId: '机器 ID',
             revision: '版本',
             failureCode: '失败代码',
+            operation: '操作',
             failureCause: '原因',
         },
         usageUnavailable: '用量不可用',
@@ -16785,6 +16805,10 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         machineUnavailableBody: '弄清当前状态后，会显示可选的恢复方式。',
         completedCount: ({ count }) => (count === 1 ? '唯一的步骤已完成。' : `全部 ${count} 个步骤已完成。`),
         completedWithSkipped: ({ completed, skipped }) => `已完成 ${completed} 个步骤，跳过 ${skipped} 个。`,
+        setupInstalledOne: ({ name, machine }) => (machine ? `已在 ${machine} 上安装 ${name}` : `已安装 ${name}`),
+        setupInstalledMany: ({ count, machine }) => (machine ? `已在 ${machine} 上安装 ${count} 个软件包` : `已安装 ${count} 个软件包`),
+        setupInstalledSentence: ({ summary }) => `${summary}。`,
+        setupInstallStep: ({ name, count }) => (count === 1 ? `安装 ${name}` : `安装 ${count} 个软件包`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `已完成 ${completed}/${total} 个步骤。`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `已完成 ${completed}/${total} 个步骤和 ${itemsCompleted}/${itemsTotal} 项。`,
         notAnswered: '未回答',
@@ -16841,6 +16865,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         unconfirmedStop: 'Happier 无法确认此步骤是否已停止，因此不会再次启动它。',
         nextStop: '请先停止此次运行，准备好后再重新运行工作流。',
         nextRunAgain: '再次运行工作流会开始一次新的运行。',
+        whatWentWrong: '出了什么问题',
+        configureAdminAccess: '设置管理员访问权限',
         nextOpenWorkflow: '要重试，请打开工作流并运行它。',
         sameConversationTitle: '在同一对话中继续',
         freshAgentBody: '新的 Agent 会获得此步骤的输入和工作区，但不会获得这段对话。',

@@ -42,6 +42,42 @@ export function canStartWorkflowRunAgain(params: Readonly<{
         && !isWorkflowRunStopPending({ ...params.run, cancelRequested: params.cancelRequested });
 }
 
+/** The Machine setting a failure points at; today only Machine administrator access turned off. */
+export type WorkflowFailureRemedy = 'configure_admin_access';
+
+/** The one action a Run's header leads with; every other eligible action stays secondary (UX §1, §3.3). */
+export type WorkflowRunPrimaryAction = 'outcome' | 'resume' | 'run_again' | 'configure_admin_access' | 'stop' | null;
+
+/**
+ * One dominant action per state. A failed Run's way forward is to run it again, so Run again leads
+ * there and See failures stays beside it, unless its failure names a Machine setting to change first
+ * (running again unchanged would fail the same way). A finished Run leads with its outcome (Open
+ * result, See failures); one that finished without a result to open stays calm, with no filled
+ * primary. Resume keeps completed work, so it leads ahead of a replay.
+ */
+export function resolveWorkflowRunPrimaryAction(params: Readonly<{
+    state: WorkflowRunStateV1;
+    terminalOutcome: 'open_result' | 'see_failures' | 'result_absent' | null;
+    canResume: boolean;
+    canRunAgain: boolean;
+    canStop: boolean;
+    /** The failure's Machine-setting remedy, from the recovery presenter's typed reading. */
+    remedy?: WorkflowFailureRemedy | null;
+}>): WorkflowRunPrimaryAction {
+    if (params.state === 'failed') {
+        if (params.remedy === 'configure_admin_access') return 'configure_admin_access';
+        if (params.canResume) return 'resume';
+        if (params.canRunAgain) return 'run_again';
+    }
+    if (params.terminalOutcome === 'result_absent') return null;
+    if (params.terminalOutcome !== null) return 'outcome';
+    if (params.canResume) return 'resume';
+    if (params.state !== 'succeeded' && params.canRunAgain) return 'run_again';
+    // An interrupted Run with nothing to resume moves on only by being stopped (then run again), so
+    // Stop is its one primary (07 §6.1, FIN-DESIGN-REVIEW H3).
+    return params.state === 'interrupted' && params.canStop ? 'stop' : null;
+}
+
 /** Another round adds the authored continuation contract to ordinary replay eligibility. */
 export function canStartWorkflowAnotherRound(params: Readonly<{
     run: WorkflowRunSummaryV1;

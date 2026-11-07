@@ -33,6 +33,7 @@ import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/wo
 import { parseWorkflowDefinitionRefV1, resolveBuiltinWorkflowDefinitionV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows';
 import { readWorkflowPlanResult } from '@/sync/domains/workflows/workflowPlanReview';
 import { canStartWorkflowAnotherRound, canStartWorkflowRunAgain } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
@@ -100,6 +101,7 @@ import {
     summarizeWorkflowInvocationCoverage,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
+import { useSaveRunAsWorkflow } from '../run/useSaveRunAsWorkflow';
 import {
     useWorkflowRunComposerModal,
     type WorkflowRunComposerModalProps,
@@ -1784,18 +1786,11 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         }
     }, [activeAccountScope, contentIdentity, isContentIdentityCurrent, openProject]);
 
-    const saveAsWorkflow = React.useCallback(() => {
-        if (summary === null || visibleDefinition === null || visibleAcceptedContext === null) return;
-        const lifetime = accountLifetime;
-        if (lifetime === null || !lifetime.isCurrent() || !isContentIdentityCurrent(contentIdentity)) return;
-        const seedId = storeWorkflowReviewedRunSeed(buildWorkflowReviewedRunSeed({
-            run: summary,
-            definition: visibleDefinition,
-            acceptedContext: visibleAcceptedContext,
-        }), exactServerId ? lifetime : undefined);
-        router.push({ pathname: '/workflows/new', params: { reviewedRunSeedId: seedId,
-            ...(exactServerId ? { serverId: exactServerId } : {}) } } as never);
-    }, [accountLifetime, contentIdentity, exactServerId, isContentIdentityCurrent, router, summary, visibleAcceptedContext, visibleDefinition]);
+    const saveAsWorkflow = useSaveRunAsWorkflow({
+        run: summary, definition: visibleDefinition, acceptedContext: visibleAcceptedContext,
+        accountLifetime, serverId: exactServerId,
+        isCurrent: React.useCallback(() => isContentIdentityCurrent(contentIdentity), [contentIdentity, isContentIdentityCurrent]),
+    });
 
     /**
      * A mutating control only exists while the private evidence it acts on is
@@ -2143,6 +2138,10 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                     ? () => { void requestRunAgain(); }
                     : undefined}
                 runAgainAnchorRef={runAgainAnchorRef}
+                // A failure only a Machine setting can fix leads to that Machine's admin access (its Security page).
+                onOpenMachineAdminAccess={activeAccountScope === null ? undefined : () => router.push(machinePageHref({
+                    door: 'rail', target: { machineId: summary.machineId, serverId: activeAccountScope.serverId }, page: 'security',
+                }) as never)}
                 // Offered where the definition takes the previous round as context (Debate, Panel, Fresh opinions).
                 onAnotherRound={canStartWorkflowAnotherRound({ run: summary, canEdit, cancelRequested,
                     hasAcceptedContext: visibleAcceptedContext !== null, definition: visibleDefinition })

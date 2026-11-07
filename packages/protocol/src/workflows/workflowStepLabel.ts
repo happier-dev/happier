@@ -2,6 +2,7 @@ import type { WorkflowBlock, WorkflowStep } from './workflowV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { walkWorkflowBlocks } from './workflowDefinitionEditV1.js';
 import type { TriggerTargetV1 } from './triggers/triggerTargetV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
 /** Executable trigger sets retain this storage label; it is never an authored display name. */
 export const WORKFLOW_TRIGGER_SET_STORAGE_NAME = 'Workflow triggers';
@@ -72,13 +73,74 @@ export function workflowStepPromptLabel(step: Pick<WorkflowStep, 'document'>): s
     : firstNonemptyLine;
 }
 
-/** An unnamed Run uses the first authored name or prompt in execution order. */
+/** An unnamed Run uses the first authored name, prompt or software install in execution order. */
 export function workflowDefinitionDisplayTitleV1(blocks: readonly WorkflowBlock[]): string | null {
   for (const block of walkWorkflowBlocks(blocks)) {
-    const title = block.name?.trim() || (block.kind === 'step' || block.kind === 'wait' ? workflowStepPromptLabel(block) : null);
+    const title = block.name?.trim() || (block.kind === 'step' || block.kind === 'wait' ? workflowStepPromptLabel(block)
+      : block.kind === 'action' ? workflowSetupInstallTitle(block) : null);
     if (title) return title;
   }
   return null;
+}
+
+/** A Setup Run's title names its software: "Install sl", or "Install 3 packages" when there are several. */
+function workflowSetupInstallTitle(block: WorkflowBlock): string | null {
+  const packages = readWorkflowSetupInstallPackagesV1(block)?.requested;
+  if (packages === undefined) return null;
+  return packages.length === 1 ? `Install ${packages[0]}` : `Install ${packages.length} packages`;
+}
+
+function readJsonRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function readJsonArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * The software a frozen Machine setup leaf is for, as `name` or `name version`, from the reviewed Plans its
+ * literal input carries; `null` unless every pending change is a package install (the Plan stays the
+ * authority for what runs). `requested` names every package the Setup asks for (what the Run is about);
+ * `installs` leaves out those the Plan already found satisfied (what it changes). A package source only
+ * says where packages come from, so it is neither an install nor another kind of change.
+ */
+export function readWorkflowSetupInstallPackagesV1(block: WorkflowBlock): Readonly<{
+  requested: readonly string[];
+  installs: readonly string[];
+}> | null {
+  if (block.kind !== 'action' || block.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1) return null;
+  const binding = block.input.targets;
+  if (binding?.kind !== 'literal') return null;
+  const requested: string[] = [];
+  const installs: string[] = [];
+  for (const rawTarget of readJsonArray(binding.value)) {
+    const target = readJsonRecord(rawTarget);
+    if (target === null || readJsonArray(target.removalPlans).length > 0 || readJsonArray(target.appChildren).length > 0) return null;
+    for (const source of readJsonArray(target.sources)) {
+      const setup = readJsonRecord(readJsonRecord(source)?.setup);
+      if (setup?.toolchain !== undefined || readJsonArray(setup?.scripts).length > 0) return null;
+    }
+    for (const recipe of readJsonArray(target.recipePlans)) {
+      const plan = readJsonRecord(readJsonRecord(recipe)?.plan);
+      const facts = readJsonArray(plan?.nativeFacts);
+      for (const [index, rawStep] of readJsonArray(plan?.steps).entries()) {
+        const step = readJsonRecord(rawStep);
+        const satisfied = readJsonRecord(facts[index])?.status === 'satisfied';
+        if (satisfied && step?.kind !== 'script' && step?.kind !== 'package') continue;
+        if (step?.kind === 'packageSource') continue;
+        if (step?.kind !== 'package' || step.state === 'absent') return null;
+        for (const rawItem of readJsonArray(step.packages)) {
+          const item = readJsonRecord(rawItem);
+          if (typeof item?.name !== 'string') return null;
+          const label = typeof item.version === 'string' && item.version ? `${item.name} ${item.version}` : item.name;
+          if (!requested.includes(label)) requested.push(label);
+          if (!satisfied && !installs.includes(label)) installs.push(label);
+        }
+      }
+    }
+  }
+  return requested.length > 0 ? { requested, installs } : null;
 }
 
 /**

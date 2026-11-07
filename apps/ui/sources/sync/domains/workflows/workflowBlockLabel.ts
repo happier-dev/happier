@@ -1,5 +1,6 @@
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
+import { readWorkflowSetupInstallPackagesV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { t } from '@/text';
 import { resolveWorkflowActionTitle } from './workflowActionPresentation';
@@ -12,7 +13,12 @@ export function workflowBlockReferenceLabel(block: WorkflowBlock, fallbackLabel?
   switch (block.kind) {
     case 'step': return t('workflows.editor.addStep');
     case 'wait': return t('workflows.page.blocks.waitTitle');
-    case 'action': return resolveWorkflowActionTitle(block.actionId, listActionSpecs().find(spec => spec.id === block.actionId) ?? null);
+    case 'action': {
+      // A Machine setup leaf is named after the software it installs, not the Action's generic title.
+      const packages = readWorkflowSetupInstallPackagesV1(block)?.requested;
+      if (packages !== undefined) return t('workflows.run.setupInstallStep', { name: packages[0]!, count: packages.length });
+      return resolveWorkflowActionTitle(block.actionId, listActionSpecs().find(spec => spec.id === block.actionId) ?? null);
+    }
     case 'workflow': {
       const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.id === block.workflowRef);
       return builtin === undefined ? t('workflows.page.blocks.menuRun') : t(builtin.titleKey as never);
@@ -48,11 +54,16 @@ export function resolveWorkflowUnnamedHeading(block: WorkflowBlock): WorkflowUnn
   }
 }
 
-function workflowStepFirstPromptLine(step: WorkflowStep): string | null {
-  return step.document.text
+/** The first written line of a prompt, or `null` while nothing is written. */
+export function workflowPromptFirstLine(text: string): string | null {
+  return text
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .find((line) => line.length > 0) ?? null;
+}
+
+function workflowStepFirstPromptLine(step: WorkflowStep): string | null {
+  return workflowPromptFirstLine(step.document.text);
 }
 
 function firstWorkflowStep(blocks: readonly WorkflowBlock[]): WorkflowStep | null {

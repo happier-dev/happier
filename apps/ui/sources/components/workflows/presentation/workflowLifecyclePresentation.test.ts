@@ -18,6 +18,7 @@ import {
     describeWorkflowRunState,
     summarizeWorkflowInvocationCoverage,
     isWorkflowAttentionInvocation,
+    resolveWorkflowRunPrimaryAction,
 } from './workflowLifecyclePresentation';
 import { createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
@@ -210,5 +211,41 @@ describe('summarizeWorkflowInvocationCoverage', () => {
         expect(summarizeWorkflowInvocationCoverage(rows, { ...evidence, historyComplete: true }).coverage).toBe('partial');
         expect(summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false, runState: 'failed' }).knownFailure).toBe(true);
         expect(summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false, knownFailure: true }).knownFailure).toBe(true);
+    });
+});
+
+describe('resolveWorkflowRunPrimaryAction', () => {
+    const base = { terminalOutcome: null, canResume: false, canRunAgain: true, canStop: false } as const;
+
+    it('leads a failed Run with Run again, even when its failure can be opened', () => {
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures' })).toBe('run_again');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed' })).toBe('run_again');
+        // Without the replay, the failure itself stays the way forward.
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures', canRunAgain: false }))
+            .toBe('outcome');
+    });
+
+    it('keeps the outcome primary for a finished Run, and resume ahead of a replay', () => {
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'succeeded', terminalOutcome: 'open_result' })).toBe('outcome');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'succeeded', terminalOutcome: 'see_failures' })).toBe('outcome');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', canResume: true })).toBe('resume');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'cancelled' })).toBe('run_again');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'interrupted', canRunAgain: false, canStop: true })).toBe('stop');
+    });
+});
+
+describe('resolveWorkflowRunPrimaryAction remedies', () => {
+    const base = { terminalOutcome: null, canResume: false, canRunAgain: true, canStop: false } as const;
+
+    it('leads a failure only the Machine owner can fix to that setting, not to a rerun that would fail again', () => {
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures',
+            remedy: 'configure_admin_access' })).toBe('configure_admin_access');
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'failed', terminalOutcome: 'see_failures', remedy: null }))
+            .toBe('run_again');
+    });
+
+    it('keeps a healthy Run without a result calm: Inspect steps is not a filled primary', () => {
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'succeeded', terminalOutcome: 'result_absent' })).toBeNull();
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'succeeded', terminalOutcome: 'open_result' })).toBe('outcome');
     });
 });

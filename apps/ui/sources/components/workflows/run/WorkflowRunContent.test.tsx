@@ -258,6 +258,21 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
   };
 }
 
+it('keeps the wide held result and its conversation available together', async () => {
+  const session = createSessionFixture({ id: 'held-conversation', access: createSessionAccessFixture({ canSendMessages: true }) });
+  getStorage().getState().applySessions([session]);
+  const invocation = createWorkflowInvocationIndexFixture({ id: 'held-step', parentRecordId: 'root', lifecycle: 'waiting_for_review' });
+  const screen = await renderContent({
+    invocations: [invocation], selectedInvocationId: invocation.id, selectedSessionId: session.id,
+    renderReviewCard: () => <WorkflowReviewCard progress={{ kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'agent', scope: [] },
+      blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id, result: 'Ready' }}
+      contract={{ kind: 'text' }} waitForYou={false} contentRevision="1" draft={undefined}
+      onChangeDraft={() => {}} onComplete={async () => {}} testIDPrefix="held-result" />,
+  });
+  expect(screen.findByTestId('held-result-use')).not.toBeNull();
+  expect(screen.findByTestId('session-in-pane')).not.toBeNull();
+});
+
 it('keeps pane consumers asleep across unrelated publications and local controls in a 500-item Run', async () => {
   const props: Partial<ContentProps> = {
     title: 'Large Run',
@@ -3039,16 +3054,22 @@ describe('WorkflowRunContent', () => {
         invocationProgressById: new Map([[invocation.id, progress as never]]),
         ...overrides,
       });
+      lastScreen = screen;
       return screen.findAllByType(Item)
         .find((item) => item.props.testID === 'workflow-run-recovery-cause')?.props.subtitle;
     };
+    let lastScreen: Awaited<ReturnType<typeof renderContent>> | null = null;
     // Still open: no proof the step stopped, so nothing restarts it here; the Run's Stop is the way on.
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'running' }), onCancel: vi.fn() }))
       .toBe('workflows.recovery.unconfirmedStop workflows.recovery.nextStop');
-    // Ended: Run again is the way on.
+    expect(lastScreen!.findByTestId('workflow-run-recovery-run-again')).toBeNull();
+    // Ended: Run again is the way on, as the card's own primary right under the failure; the line says only why.
+    const onRunAgain = vi.fn();
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'failed', availability: { cancel: false } as never }),
-      onRunAgain: vi.fn() }))
-      .toBe('workflows.recovery.unconfirmedStop workflows.recovery.nextRunAgain');
+      onRunAgain }))
+      .toBe('workflows.recovery.unconfirmedStop');
+    await lastScreen!.pressByTestIdAsync('workflow-run-recovery-run-again');
+    expect(onRunAgain).toHaveBeenCalledOnce();
   });
 
   it('heads an uncertain step with its effects and an unexplained failed step with cause not recorded', async () => {
@@ -3537,6 +3558,8 @@ describe('WorkflowRunContent', () => {
     expect(screen.findByTestId('workflow-run-inspect-steps') !== null).toBe(
       true,
     );
+    // A healthy Run stays calm: Inspect steps is offered, but not as a filled primary.
+    expect(screen.findByTestId('workflow-run-inspect-steps')?.props.tone).not.toBe('primary');
     await screen.pressByTestIdAsync('workflow-run-inspect-steps');
     expect(onChangeView).toHaveBeenCalledWith('steps');
   });
@@ -4487,16 +4510,18 @@ describe('WorkflowRunContent', () => {
     expect(seeFailures(wide)).toHaveLength(1);
     await wide.unmount();
 
-    // Phone: the page keeps its one primary (See failures) under the outcome; Run again, Another round and
-    // Open workflow move into ⋯ rather than stacking three bordered buttons over two rows (lab P1).
+    // Phone: the page keeps its one primary (Run again) under the outcome with See failures beside it; Another
+    // round and Open workflow move into ⋯ rather than stacking more bordered buttons over two rows (lab P1).
     viewport.window = { width: 390, height: 844 };
     const phone = await renderContent(props);
     const pageControls = phone.findByTestId('workflow-run-page-controls');
     expect(pageControls?.findAll((node) => node.props.testID === 'workflow-run-see-failures').length).toBeGreaterThan(0);
     expect(seeFailures(phone)).toHaveLength(1);
-    expect(phone.findAllByType(ToolbarButton).map((button) => button.props.testID)).toEqual(['workflow-run-see-failures']);
+    expect(phone.findAllByType(ToolbarButton).map((button) => button.props.testID))
+      .toEqual(['workflow-run-run-again', 'workflow-run-see-failures']);
     const menuIds = phone.findAllByType(ItemRowActions).flatMap((menu) => menu.props.actions.map((action: { id: string }) => action.id));
-    expect(menuIds).toEqual(expect.arrayContaining(['workflow-run-run-again', 'workflow-run-another-round', 'workflow-run-open-workflow']));
+    expect(menuIds).toEqual(expect.arrayContaining(['workflow-run-another-round', 'workflow-run-open-workflow']));
+    expect(menuIds).not.toContain('workflow-run-run-again');
 
     // "From a session" is the way back; there is no second "Open the session it came from" line.
     expect(phone.getTextContent()).not.toContain('workflows.run.openSourceSession');
@@ -4623,7 +4648,8 @@ describe('WorkflowRunContent', () => {
       // Settled: the cause fills the reserved place, and the primary is decided once.
       expect(screen.findByTestId('workflow-run-failure-reason-pending')).toBeNull();
       expect(screen.findByTestId('workflow-run-failure-reason')?.props.children).toContain('The Run store could not be written.');
-      expect(primaries()).toEqual(state === 'failed' ? ['workflow-run-see-failures'] : ['workflow-run-run-again']);
+      // A failed Run leads with Run again, next to its failure (See failures stays beside it).
+      expect(primaries()).toEqual(['workflow-run-run-again']);
     },
   );
 

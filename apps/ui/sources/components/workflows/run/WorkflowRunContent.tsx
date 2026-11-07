@@ -31,6 +31,7 @@ import {
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { resolveWorkflowRunProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
@@ -56,6 +57,7 @@ import {
     isTerminalWorkflowRunState,
     isWorkflowRunStopPending,
     summarizeWorkflowInvocationCoverage,
+    resolveWorkflowRunPrimaryAction,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { t } from '@/text';
 import { projectWorkflowFlow, resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
@@ -108,6 +110,7 @@ import {
     formatWorkflowRunOutcomeLine,
     workflowRunOutcomeIsAttention,
     formatWorkflowRunOutcomeSentence,
+    describeWorkflowSetupOutcome,
     formatWorkflowRunConsequenceSentence,
     formatWorkflowWorkspaceSourceLabel,
     describeWorkflowInvocationCause,
@@ -304,6 +307,8 @@ export type WorkflowRunContentProps = Readonly<{
     onRestoreWorkspace?: () => void;
     onDelete?: () => void;
     onRunAgain?: () => void;
+    /** Opens the Run's Machine at its administrator access setting (the Machine settings route). */
+    onOpenMachineAdminAccess?: () => void;
     /** Starts the next round with the same participants and this round's results as context. */
     onAnotherRound?: () => void;
     /** Where the Run again composer anchors on wide layouts: the button itself, as Run now does. */
@@ -794,6 +799,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      */
     const stopPending = isWorkflowRunStopPending({ ...props.run, cancelRequested: props.cancelRequested });
     const canResume = canResumeWorkflowRunBoundary({ run: props.run, canEdit: props.onResume !== undefined });
+    const setupMachine = React.useMemo(() => (props.machineName ? { id: props.run.machineId, name: props.machineName } : null),
+        [props.machineName, props.run.machineId]);
     const invocationStatusContext = React.useMemo(() => ({ runStopPending: stopPending,
         machineReachable: props.machineReachable, machineName: props.machineName ?? props.run.machineId }),
     [stopPending, props.machineReachable, props.machineName, props.run.machineId]);
@@ -841,29 +848,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const onRunAgain = outcomeUndecided ? undefined : props.onRunAgain;
     const onAnotherRound = outcomeUndecided ? undefined : props.onAnotherRound;
 
-    /**
-     * One dominant action per state (UX §1, §3.3).
-     *
-     * Tone was assigned per capability, so a completed Run that can also be
-     * repeated drew **Open result** and **Run workflow again** as two filled
-     * primaries and the outcome region lost its state-specific answer exactly
-     * at the moment it matters. The state resolves the primary first; every
-     * other eligible action stays secondary.
-     */
-    const primaryAction: 'outcome' | 'resume' | 'run_again' | 'stop' | null =
-        terminalOutcome?.kind === 'open_result' || terminalOutcome?.kind === 'see_failures'
-            || terminalOutcome?.kind === 'result_absent'
-            ? 'outcome'
-            : canResume
-                ? 'resume'
-                : props.run.state !== 'succeeded' && onRunAgain !== undefined
-                    ? 'run_again'
-                    // An interrupted Run with nothing to resume moves on only by being stopped (then run
-                    // again), so Stop is its one primary (07 §6.1, FIN-DESIGN-REVIEW H3).
-                    : props.run.state === 'interrupted' && props.run.availability.cancel && props.onCancel !== undefined
-                        && props.cancelRequested !== true
-                        ? 'stop'
-                        : null;
 
     /** The row's authored block kind, from the frozen definition through the structure owner. */
     const invocationBlockKind = React.useCallback((invocation: WorkflowRunInvocationIndexV1): string | null => {
@@ -879,9 +863,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // A phone page keeps what needs you in a dock in thumb reach instead of a section above the Map (phone-P1).
     const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
     const [dockHeightPx, setDockHeightPx] = React.useState(0);
-    // One primary per page: the first hold's Review leads only when the header has no primary of its own.
-    const primaryReviewId = props.selectedInvocationId === null && primaryAction === null
-        ? attentionIndexRows[0]?.invocation.id : undefined;
     const firstAttentionLabel = firstAttention === undefined ? null : invocationLabel(firstAttention);
     const failureInvocation = props.firstFailedInvocationResolution === 'resolved'
         ? selectWorkflowRunFailureInvocation({ invocations: props.invocations, structure: derivedStructure,
@@ -900,6 +881,26 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         }), [props.failurePresentation, props.run, failureInvocation, structureProgressById, props.selectedInvocationId,
             props.selectedInvocationRecoveryAvailability, derivedStructure, flowProjection, props.workspaceHomeDirectory,
             props.machineReachable, props.machineName, props.machineLastSeenAt, props.invocations, props.invocationHistoryComplete]);
+    // One dominant action per state (UX §1, §3.3): the lifecycle owner resolves it, every other eligible
+    // action stays secondary. A failed Run leads with Run again next to its failure, or with the Machine
+    // setting its typed refusal names when running again unchanged would fail the same way.
+    const failureRemedy = props.run.state === 'failed' && props.onOpenMachineAdminAccess !== undefined
+        ? failurePresentation?.recovery.remedy ?? null : null;
+    const primaryAction = resolveWorkflowRunPrimaryAction({
+        state: props.run.state,
+        terminalOutcome: terminalOutcome?.kind ?? null,
+        canResume,
+        canRunAgain: onRunAgain !== undefined,
+        canStop: props.run.availability.cancel && props.onCancel !== undefined && props.cancelRequested !== true,
+        remedy: failureRemedy,
+    });
+    // The failure is already open beside the Run: its step carries the way forward as the pane's primary, so
+    // the header's stays visible but bordered, and See failures would only point at the step already showing.
+    const failureOpen = terminalOutcome?.kind === 'see_failures'
+        && props.selectedInvocationId === terminalOutcome.invocationId;
+    // One primary per page: the first hold's Review leads only when the header has no primary of its own.
+    const primaryReviewId = props.selectedInvocationId === null && primaryAction === null
+        ? attentionIndexRows[0]?.invocation.id : undefined;
     const failedStepLabel = props.run.state === 'failed' || props.run.state === 'interrupted'
         ? failurePresentation?.step?.name ?? null : null;
     // Why the Run failed is said once: here, unless the inspector beside the header is open on that step and its
@@ -944,6 +945,16 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     });
     const outcomeFailed = describeWorkflowRunState(props.run.state).variant === 'danger'
         || (props.run.state === 'succeeded' && coverage.knownFailure);
+    // A Run made only of Machine setup steps says what they installed instead of counting steps.
+    const runSetupOutcome = React.useMemo(() => {
+        if (props.definition === null) return null;
+        const leaves = walkWorkflowBlocks(props.definition.blocks).filter((block) => block.kind === 'action'
+            || block.kind === 'step' || block.kind === 'wait' || block.kind === 'workflow');
+        return leaves.every((block) => block.kind === 'action')
+            ? describeWorkflowSetupOutcome({ blocks: leaves.flatMap((block) => (block.kind === 'action' ? [block] : [])),
+                machine: setupMachine })
+            : null;
+    }, [props.definition, setupMachine]);
     const outcomeLine = formatWorkflowRunOutcomeLine({
         word: outcomeWord,
         sentence: formatWorkflowRunOutcomeSentence({
@@ -952,6 +963,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             coverage,
             historyComplete: props.invocationHistoryComplete,
             failure: failedStepLabel === null ? null : { step: failedStepLabel },
+            setup: runSetupOutcome,
             attention: firstAttention === undefined || firstAttentionLabel === null ? null : {
                 step: firstAttentionLabel,
                 waitForYou: attentionWaitsForYou(firstAttention),
@@ -1050,6 +1062,19 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * the primary leads there instead of landing alone on the second line. Inspect steps is withdrawn
      * while Steps is open, since it would only point at the view already showing.
      */
+    // Beside an open failure the pane's own Run again is the primary, so the header keeps its one bordered.
+    const headerPrimaryAction = (primaryAction === 'run_again' || primaryAction === 'configure_admin_access')
+        && failureOpen && detailsPaneAvailable ? null : primaryAction;
+    const adminAccessAction = primaryAction === 'configure_admin_access' && props.onOpenMachineAdminAccess !== undefined ? (
+        <ToolbarButton
+            key="admin-access"
+            testID={`${testIDPrefix}-configure-admin-access`}
+            onPress={props.onOpenMachineAdminAccess}
+            label={t('workflows.recovery.configureAdminAccess')}
+            {...(headerPrimaryAction === 'configure_admin_access' ? { tone: 'primary' as const } : {})}
+            size="md"
+        />
+    ) : null;
     const resumeAction = canResume ? (
         <ToolbarButton
             key="resume"
@@ -1068,7 +1093,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 testID={`${testIDPrefix}-run-again`}
                 onPress={onRunAgain}
                 label={t('workflows.run.runAgain')}
-                {...(primaryAction === 'run_again' ? { tone: 'primary' as const } : {})}
+                {...(headerPrimaryAction === 'run_again' ? { tone: 'primary' as const } : {})}
                 size="md"
             />
         </View>
@@ -1089,7 +1114,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             testID={`${testIDPrefix}-inspect-steps`}
             onPress={() => selectWorkflowNavigationItem(executeNavigation, navigation.model, 'steps')}
             label={t('workflows.run.inspectSteps')}
-            tone="primary"
             size="md"
         />
     ) : terminalOutcome?.kind === 'open_result' ? (
@@ -1101,28 +1125,31 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             tone="primary"
             size="md"
         />
-    ) : terminalOutcome?.kind === 'see_failures' ? (
+    ) : terminalOutcome?.kind === 'see_failures' && !failureOpen ? (
         <ToolbarButton
             key="see-failures"
             testID={`${testIDPrefix}-see-failures`}
             onPress={(event) => selectInvocation(terminalOutcome.invocationId, event)}
             label={t('workflows.run.seeFailures')}
-            tone="primary"
+            {...(headerPrimaryAction === 'outcome' ? { tone: 'primary' as const } : {})}
             size="md"
         />
     ) : null;
-    const primaryElement = primaryAction === 'outcome' ? outcomeAction
-        : primaryAction === 'resume' ? resumeAction
-            : primaryAction === 'run_again' ? runAgainAction : null;
+    const primaryElement = headerPrimaryAction === 'outcome' ? outcomeAction
+        : headerPrimaryAction === 'resume' ? resumeAction
+            : headerPrimaryAction === 'run_again' ? runAgainAction
+                : headerPrimaryAction === 'configure_admin_access' ? adminAccessAction : null;
     const phonePage = phone && props.embedded !== true;
     // One primary in the page (lab P1). On a phone page, and beside an open details pane where the header has a
     // narrow column, Run again and Another round fold into `⋯` unless one of them is the state's primary; a
     // phone page folds Open workflow there too, so no lone bordered button sits under the view switch.
     // `detailsPaneAvailable` already excludes an embedded Run.
     const compactActions = phonePage || (detailsPaneAvailable && props.selectedInvocationId !== null);
-    const runAgainFolded = compactActions && runAgainAction !== null && primaryElement !== runAgainAction;
+    // A failed Run's Run again never folds: it is the way forward, so it stays in reach beside the failure.
+    const runAgainFolded = compactActions && runAgainAction !== null && primaryAction !== 'run_again';
     const anotherRoundFolded = compactActions && anotherRoundAction !== null;
-    const secondaryElements = [resumeAction, runAgainFolded ? null : runAgainAction, anotherRoundFolded ? null : anotherRoundAction, outcomeAction]
+    const secondaryElements = [resumeAction, runAgainFolded ? null : runAgainAction, anotherRoundFolded ? null : anotherRoundAction, outcomeAction,
+        adminAccessAction]
         .filter((element) => element !== null && element !== primaryElement);
     const sourceFolded = phonePage;
     const stateMenuActions: ItemAction[] = [
@@ -1190,7 +1217,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     );
     // A phone's navigation bar keeps only `⋯`; the state's own actions (Run again, See failures, Stop) stay
     // in the page under the outcome they answer, so the failed page's next step is never behind a menu (lab P1).
-    const hasStateControls = canResume
+    const hasStateControls = canResume || adminAccessAction !== null
         || (onRunAgain !== undefined && !runAgainFolded) || (onAnotherRound !== undefined && !anotherRoundFolded)
         || (terminalOutcome !== null && (terminalOutcome.kind !== 'result_absent' || props.view !== 'steps'))
         || (props.run.availability.pause && props.onPause !== undefined)
@@ -1521,8 +1548,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         return {
             subtitle: parts.filter((part): part is string => Boolean(part)).join(' \u00b7 ') || null,
             waitPrompt: block?.kind === 'wait' ? block.document.text : null,
+            // A finished Setup step names what it installed, from the input this Run froze.
+            setupOutcome: block?.kind === 'action' && lifecycle === 'completed'
+                ? describeWorkflowSetupOutcome({ blocks: [block], machine: setupMachine }) : null,
+            machineSetupStep: block?.kind === 'action' && block.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1,
         };
-    }, [attentionWaitsForYou, derivedStructure, formatOccurrence, presentEngine, props.definition, props.frozenChildren,
+    }, [attentionWaitsForYou, derivedStructure, formatOccurrence, presentEngine, props.definition, props.frozenChildren, setupMachine,
         props.materializedLeaves, props.selectedInvocationId, props.selectedInvocationProgress?.attempt,
         props.selectedInvocationProgress?.blockKind, props.selectedInvocationProgress?.timing, selectedInvocation]);
     const selectedDetailSubtitle = selectedDetail.subtitle;
@@ -1554,6 +1585,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             },
             operationPending,
             noChoicesNext,
+            setupOutcome: selectedDetail.setupOutcome,
+            machineSetupStep: selectedDetail.machineSetupStep,
+            // The Run's own replay, offered on the failed step that has no recovery choice of its own.
+            ...(onRunAgain === undefined ? {} : { onRunAgain }),
+            ...(props.onOpenMachineAdminAccess === undefined ? {} : { onOpenMachineAdminAccess: props.onOpenMachineAdminAccess }),
             testIDPrefix,
             ...(props.selectedContentUnavailable === undefined
                 ? {}
@@ -1600,6 +1636,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     ), [
         operationPending,
         noChoicesNext,
+        onRunAgain,
+        props.onOpenMachineAdminAccess,
+        selectedDetail.setupOutcome,
+        selectedDetail.machineSetupStep,
         props.onAcknowledgeUncertainPriorEffects,
         props.onContinuePrepared,
         props.onCopyWorkspace,
