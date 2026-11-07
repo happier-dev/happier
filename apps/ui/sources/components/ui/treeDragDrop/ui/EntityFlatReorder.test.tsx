@@ -113,6 +113,11 @@ it('moves an observed cross-repository sub-issue from the public host grip throu
                 && typeof value.query === 'string' && value.query.startsWith('mutation ');
         });
         expect(writes).toEqual([expect.objectContaining({ variables: { input: { issueId: 'I7', subIssueId: 'I_CROSS42', afterId: 'I42' } } })]);
+        expect(screen.root.findAllByType(EntityFlatReorderRow).map(row => row.props.id)).toEqual(
+            [...input.observation.snapshot.relations!.children!.entries!].reverse().map(entry => JSON.stringify([
+                entry.source.pluginId, entry.source.localId, entry.kindId, entry.collisionScope, entry.entryId,
+            ])),
+        );
         const partial = TriageDetailSurfaceInputV1Schema.parse({ ...input, observation: { ...input.observation,
             snapshot: { ...input.observation.snapshot, relations: { children: {
                 total: 3, entries: input.observation.snapshot.relations!.children!.entries,

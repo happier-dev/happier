@@ -304,9 +304,16 @@ function projectFlatChildren(children: React.ReactNode, ids: readonly string[], 
     const rows = React.Children.toArray(children);
     if (!landed) return rows;
     const next = landed.order;
-    const keyOf = (row: React.ReactNode) => React.isValidElement(row) && typeof row.key === 'string' ? row.key.slice(row.key.lastIndexOf('$') + 1) : null;
-    if (ids.some(id => !next.includes(id)) || rows.some(row => keyOf(row) === null || !ids.includes(keyOf(row)!))) return rows;
-    return [...rows].sort((a, b) => next.indexOf(keyOf(a)!) - next.indexOf(keyOf(b)!));
+    // Read authored keys before toArray escapes ':' and '=' in opaque domain ids.
+    // Keep the normalized elements so settling a move preserves mounted row identity.
+    const rowIds: Array<string | null> = [];
+    React.Children.forEach(children, row => {
+        if (row === null || row === undefined || typeof row === 'boolean') return;
+        rowIds.push(React.isValidElement(row) && typeof row.key === 'string' ? row.key : null);
+    });
+    if (ids.some(id => !next.includes(id)) || rowIds.some(id => id === null || !ids.includes(id))) return rows;
+    return rows.map((row, index) => ({ row, position: next.indexOf(rowIds[index]!) }))
+        .sort((a, b) => a.position - b.position).map(({ row }) => row);
 }
 
 function rowTargetId(context: Pick<FlatContext, 'id'>, id: string): string { return JSON.stringify([context.id, 'target', id]); }
