@@ -172,6 +172,9 @@ function createMachineServiceActionSpecs() {
   return [
 {
   id: 'machines.services.exec', title: 'Run a service command',
+  // The exact-generation approval scope and environment permission are admitted by the target daemon,
+  // so the app hands the person's confirmed press to that daemon as logs.read does.
+  originalExecution: { daemonIngressSurfaces: ['ui'] },
   description: 'Run reviewed literal arguments in the exact admitted current service or prepared Deployment candidate. Retains bounded redacted output without replaying an unknown dispatch.',
   safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine', placements: [],
   approval: { result: 'required' },

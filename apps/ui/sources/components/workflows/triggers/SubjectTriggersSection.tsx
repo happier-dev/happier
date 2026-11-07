@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -20,24 +20,11 @@ import {
 } from './AccountTriggersSection';
 import { GuidedAutomationSetup } from './GuidedAutomationSetup';
 import type { GuidedStarter } from './guidedAutomation';
+import { SUBJECT_TRIGGER_STARTER_GLYPH, SUBJECT_TRIGGER_STARTERS } from './subjectTriggerStarters';
 import { TriggerRow } from './TriggerRow';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 
 const ACCOUNT_TRIGGER_QUERY = { scope: 'account_inline' } as const;
-
-/** The starters an empty section suggests for its subject: what usually needs watching there. */
-const STARTERS: Readonly<
-  Record<TriggerSubject['kind'], readonly GuidedStarter[]>
-> = {
-  machine: ['healthFailed', 'nightly'],
-  environment: ['deploymentFailed', 'healthFailed', 'nightly'],
-  service: ['healthFailed', 'nightly'],
-};
-const STARTER_GLYPH: Readonly<Record<GuidedStarter, IconName>> = {
-  healthFailed: 'pulse',
-  deploymentFailed: 'rocket-launch',
-  nightly: 'moon',
-};
 
 type Opening =
   | Readonly<{ kind: 'custom' }>
@@ -112,7 +99,7 @@ export const SubjectTriggersSection = React.memo(
         }
       >
         {empty
-          ? STARTERS[props.subject.kind].map((starter) => (
+          ? SUBJECT_TRIGGER_STARTERS[props.subject.kind].map((starter) => (
               <StarterRow
                 key={starter}
                 starter={starter}
@@ -183,7 +170,7 @@ const StarterRow = React.memo(function StarterRow(
         title={t(`workflows.triggers.guided.starter.${props.starter}`)}
         icon={
           <Icon
-            name={STARTER_GLYPH[props.starter]}
+            name={SUBJECT_TRIGGER_STARTER_GLYPH[props.starter]}
             size={18}
             color={theme.colors.text.secondary}
           />
