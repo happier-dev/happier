@@ -38,6 +38,8 @@ type ModelPackCatalogEntryBase = Readonly<{
   languages?: readonly string[];
   /** Compressed upstream archive size, distinct from installed files, transfer bytes and RAM. */
   archiveSizeBytes?: number;
+  /** SHA-256 of that exact upstream archive, not the normalized installer manifest. */
+  archiveSha256?: string;
   /** Whether the canonical manifest and every integrity-declared asset are currently published. */
   publicationStatus: 'published' | 'unavailable';
   /** Exact non-runtime files admitted and installed with this pack. */
@@ -133,10 +135,9 @@ export const MODEL_PACK_CATALOG = [
     publicationStatus: 'published',
   },
   // ---------------------------------------------------------------------------
-  // Local STT/TTS packs ported from the verified sherpa-onnx model catalog. URLs
-  // and semantic artifact paths are copied verbatim from the vetted source extract. No sha256 or
-  // sizeBytes is published by that source, so sizeBytes stays null; verification
-  // is by required-file presence until a signed manifest supplies digests.
+  // Upstream archives and language facts are descriptive metadata only. A pack
+  // becomes installable only after its normalized per-file integrity manifest
+  // and all declared runtime/support files are published for the shared installer.
   // These are ADDITIVE: streaming defaults above remain the `defaultFor` packs.
   // ---------------------------------------------------------------------------
   {
@@ -148,6 +149,7 @@ export const MODEL_PACK_CATALOG = [
     languages: ['en'],
     // k2-fsa/sherpa-onnx asr-models asset 283097678 (verified 2026-10-30).
     archiveSizeBytes: 482_468_385,
+    archiveSha256: '157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad',
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.int8.onnx' },
@@ -167,9 +169,11 @@ export const MODEL_PACK_CATALOG = [
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
     displayName: 'Parakeet v3 (0.6B, int8)',
+    // NVIDIA model card, revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b.
     languages: ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'],
     // k2-fsa/sherpa-onnx asr-models asset 283097583 (verified 2026-10-30).
     archiveSizeBytes: 487_170_055,
+    archiveSha256: '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf',
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
       encoder: { type: 'file', path: 'encoder.int8.onnx' },
