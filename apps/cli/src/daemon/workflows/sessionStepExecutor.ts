@@ -276,7 +276,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
       };
       const settleApproval = async (execution: NonNullable<typeof retainedInvitationApproval>) => {
-        const settled = await readWorkflowActionApprovalSettlement({ execution,
+        const settled = await readWorkflowActionApprovalSettlement({ runId: deps.originRunId, execution,
           read: async artifactId => { const observed = await execute('approval.request.get', { artifactId });
             return observed.ok ? observed.result : null; } });
         if (settled?.kind === 'completed') return settled.result;

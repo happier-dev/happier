@@ -42,7 +42,7 @@ import { computeExternalActionSocketRpcRequestDigestV1, isExternalActionAuthoriz
 import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { StrictJsonValueSchema, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { prepareManagedFiniteActionWake } from '@/app/machines/managed/managedWake';
 import { auth } from "@/app/auth/auth";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -1332,6 +1332,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 rootActionId: externalActionExecution.data.authorization.binding.actionId,
                 effectActionId: externalActionExecution.data.effectActionId, method: originalActionMethod,
             });
+            const readinessChild = externalActionExecution?.success
+                && readSessionAgentReadinessChildActionV1(externalActionExecution.data.authorization.binding,
+                    externalActionExecution.data.reviewedChild) === externalActionExecution.data.effectActionId;
             const reviewedStopChild = externalActionExecution?.success && isSessionStopChildV1({
                 rootActionId: externalActionExecution.data.authorization.binding.actionId,
                 effectActionId: externalActionExecution.data.effectActionId, method: originalActionMethod,
@@ -1348,6 +1351,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     && !deploymentChild
                     && !deploymentArchiveChild
                     && !setupPlanChild
+                    && !readinessChild
                     && !operationCancellation
                 || transferRouting || workspaceSyncRouting || workspaceSyncSourceWriterTargetRouting || workspaceSyncSeedRouting || viewer)) {
                 logDeploymentChildRefusal('original_action_shape');
@@ -1419,6 +1423,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     || deploymentChild
                     || deploymentArchiveChild
                     || setupPlanChild
+                    || readinessChild
                     || isSessionStopChildRootV1(binding?.actionId) && verifiedExternalAction
                         && isSessionStopChildV1({ rootActionId: binding.actionId,
                             effectActionId: verifiedExternalAction.effectActionId, method: originalActionMethod,
@@ -1470,6 +1475,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const moveChildExecution = (deploymentArchiveChild || originalActionEnvelope && (verifiedExternalAction?.binding.actionId === 'projects.service.relocate'
                 || deploymentChild
                 || setupPlanChild
+                || readinessChild
                 || verifiedExternalAction?.binding.actionId === 'discussion.second_opinion.start'
                     && verifiedExternalAction.effectActionId === 'session.spawn_new'
                     && (originalActionMethod === RPC_METHODS.SESSION_SPAWN_NEW
@@ -1874,9 +1880,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.writer.installationId;
                 machineAdmissionGuard = { filterTargets: async targets => targets.filter(matches),
                     runOperation: async ({ target, readLatestTarget, operation }) => {
-                        const [latest, current] = await Promise.all([readLatestTarget(), readCurrent()]);
-                        if (!latest || !current || !matches(target) || !matches(latest)
-                            || current.writer.installationId !== admitted.writer.installationId) {
+                        const latest = await readLatestTarget();
+                        if (!latest || !matches(target) || !matches(latest)) {
                             return { status: 'refused', response: buildForbiddenRpcResponse() };
                         }
                         return { status: 'current', value: await operation() };
@@ -1910,9 +1915,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.route.parentInstallationId;
                 machineAdmissionGuard = { filterTargets: async targets => targets.filter(matches),
                     runOperation: async ({ target, readLatestTarget, operation }) => {
-                        const [latest, current] = await Promise.all([readLatestTarget(), readCurrent()]);
-                        if (!latest || !current || !matches(target) || !matches(latest)
-                            || current.route.parentInstallationId !== admitted.route.parentInstallationId) {
+                        const latest = await readLatestTarget();
+                        if (!latest || !matches(target) || !matches(latest)) {
                             return { status: 'refused', response: buildForbiddenRpcResponse() };
                         }
                         return { status: 'current', value: await operation() };
@@ -1968,10 +1972,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.receiverInstallationId;
                 machineAdmissionGuard = { filterTargets: async targets => targets.filter(matches),
                     runOperation: async ({ target, readLatestTarget, operation }) => {
-                        const [latest, current] = await Promise.all([readLatestTarget(), readCurrent()]);
-                        if (!latest || !current || !matches(target) || !matches(latest)
-                            || current.receiverInstallationId !== admitted.receiverInstallationId
-                            || !isDeepStrictEqual(current.context, admitted.context)) {
+                        const latest = await readLatestTarget();
+                        if (!latest || !matches(target) || !matches(latest)) {
                             return { status: 'refused', response: buildForbiddenRpcResponse() };
                         }
                         return { status: 'current', value: await operation() };
@@ -2037,6 +2039,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 if (codecAdmission.machineId !== machinePrefix) { callback?.(buildForbiddenRpcResponse()); return; }
                 machineAdmission = { ...codecAdmission, actorAccountId, role: 'use' };
                 machineAdmissionGuard = createCurrentMachineAdmissionTargetGuard(codecAdmission);
+            } else if (verifiedExternalAction?.sessionAgentReadinessAdmission && machinePrefix) {
+                const { kind: _kind, ...admitted } = verifiedExternalAction.sessionAgentReadinessAdmission;
+                if (admitted.machineId !== machinePrefix) { callback?.(buildForbiddenRpcResponse()); return; }
+                machineAdmission = admitted;
+                machineAdmissionGuard = createCurrentMachineAdmissionTargetGuard(admitted);
             } else if (machinePrefix && sessionWriteTargetUserId === null && !sourceKeyPreparationTargetGuard) {
                 const machine = detachedMachine ?? await readMachineAdmissionFactsInTx(db, { actorAccountId, machineId: machinePrefix });
                 const rpcMethod = method.slice(method.indexOf(':') + 1);

@@ -46,6 +46,29 @@ vi.mock('@/api/session/sockets', async (importOriginal) => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('exact Workflow recovery observation', () => {
+  it.each(['run-1', 'other-run'])('binds recovered approval evidence to the original Workflow Run (%s)', async receiptRunId => {
+    const request = { v: 1, kind: 'plugin_target_action', status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      createdBy: { surface: 'agent' }, requestedSurface: 'agent', summary: 'Update',
+      qualifiedActionId: 'example.workflow/actions/update', input: {}, secretInputPaths: [],
+      sourceCustody: { kind: 'development', registeredRootId: 'root' },
+      policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64),
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', serverId: 'home',
+        serverIdentityId: 'home-identity', accountId: 'owner', machineId: 'machine', actionId: 'action.invoke',
+        requestId: 'invocation', caller: { kind: 'workflowRun', runId: receiptRunId,
+          authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } },
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 3, ok: true, effectAttempted: true, result: { updated: true } } };
+    const observed = await observeWorkflowInvocationRecoveryEvidence({ runId: 'run-1',
+      credentials: { token: 'token', encryption: null }, machineId: 'machine',
+      progress: { ...progress, execution: { kind: 'action', actionId: 'example.workflow/actions/update',
+        actionRequestId: 'invocation', localInputId: 'input', input: {},
+        output: { kind: 'approval_request_created', artifactId: 'receipt', actionId: 'action.invoke' } } },
+      getRun: async () => { throw new Error('Approval recovery does not read detached Runs'); },
+      getApproval: async () => ({ artifactId: 'receipt', request }),
+    });
+    expect(observed).toEqual({ activity: receiptRunId === 'run-1' ? 'not_active' : 'unknown',
+      canReattach: receiptRunId === 'run-1', canContinueConversation: false });
+  });
   it.each(['current', 'replaced', 'no-target'] as const)
   ('starts a Home-qualified input participant and readies only its accepted exact Machine (%s)', async scenario => {
     const credentials = { token: 'token', encryption: null };
@@ -126,6 +149,7 @@ describe('exact Workflow recovery observation', () => {
         if (operation.operation !== 'admit') throw new Error('Unexpected participant admission storage request');
         acceptedEnvelope = String(operation.acceptedEnvelope);
         return { kind: 'created', run: WorkflowRunSummaryV1Schema.parse({
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
           id: runId, sourceArtifactId: null, ownerAccountId: 'participant-account', visibleTeamId: null,
           origin: { kind: 'direct' }, state: 'queued', revision: 0, machineId: 'coordinator-machine',
           workflowCustodyState: 'pending', originDeliveryAckRevision: null,
@@ -281,7 +305,7 @@ describe('exact Workflow recovery observation', () => {
       }
       throw new Error('Unexpected machine RPC');
     });
-    expect(await observeWorkflowInvocationRecoveryEvidence({ credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+    expect(await observeWorkflowInvocationRecoveryEvidence({ runId: 'run-1', credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
       progress: { ...progress, ...(scenario === 'missing-witness' ? {} : { workspace: { descriptor: {
         machineId: selectedMachineId, directory: '/repo', checkoutRootPath: '/repo',
       } } }), execution: { kind: 'session', sessionId, localInputId: 'input-1' } },
@@ -384,7 +408,7 @@ describe('exact Workflow recovery observation', () => {
       output: { operation: accepted }, awaitedOperations: [target] } },
       frozenActionContract: { inputSchema: {}, outputSchema: contract.terminalOutputSchema, completion: contract },
       terminalParent: false, cancellationRequested: true };
-    expect(await observeWorkflowInvocationRecoveryEvidence({ credentials: { token: 'token', encryption: null },
+    expect(await observeWorkflowInvocationRecoveryEvidence({ runId: 'run-1', credentials: { token: 'token', encryption: null },
       machineId: 'controller', progress: request.progress, getRun: async () => { throw new Error('No invented Execution Run'); },
       getOperation: async (address) => { expect(address).toEqual(target); return { kind: 'found', operation: accepted }; } }))
       .toEqual({ activity: 'unknown', canReattach: true, canContinueConversation: false });

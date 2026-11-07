@@ -9,6 +9,7 @@ import * as persistence from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkflowSessionAuthoringSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowAcceptedStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
@@ -36,11 +37,9 @@ import { buildSessionCreationTerminalSpawnErrorResult } from '@/daemon/sessions/
 import { resolveWorkflowSessionConversation, createWorkflowInvocationRecoveryObserver } from './invocationRecoveryObserver';
 import { projectWorkflowConversationRoleSelection } from '@/session/actions/workflowMaterializationHost';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
-import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
@@ -56,7 +55,7 @@ import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessi
 import { readSessionRolesV1, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { createSessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
-import { accountSettingsParse, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { accountSettingsParse, encodePlainArtifactStoredContent, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
@@ -118,7 +117,7 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-function installSessionCreationTransport() {
+function installSessionCreationTransport(events?: string[], agentMissing = false) {
   // Only filesystem readiness, Home HTTP and exact-machine process transport
   // are replaced. Target preparation, creator, nonce settlement and schemas run.
   vi.spyOn(fs, 'access').mockResolvedValue(undefined);
@@ -129,10 +128,35 @@ function installSessionCreationTransport() {
   readiness.callMachineRpc.mockClear();
   readiness.callMachineRpc.mockImplementation(async ({ method, request }: Parameters<typeof import('@/session/transport/rpc/machineRpc').callMachineRpc>[0]) => {
     const organizationPlacement = { folderId: null, tagIds: [] };
+    const agentIds = [...readCurrentContributionRegistry().agentDefinitionsById.keys()];
+    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+      events?.push('inventory');
+      return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {},
+        agentsById: Object.fromEntries(agentIds.map(id => [id, { id, title: id,
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }])) } };
+    }
+    if (method === RPC_METHODS.CAPABILITIES_DETECT) {
+      return { protocolVersion: 1, results: Object.fromEntries(agentIds.map(id => [`cli.${id}`, {
+        ok: true, checkedAt: 1, data: { installed: !agentMissing, version: null, latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
+          platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
+      }])) };
+    }
+    if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) {
+      events?.push('install');
+      return { ok: true, jobId: 'workflow-agent-install' };
+    }
+    if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
+      expect(request).toMatchObject({ jobId: 'workflow-agent-install', waitForTerminal: true });
+      events?.push('terminal');
+      return { ok: true, events: [], steps: [], progress: [], nextCursor: 0, done: true,
+        outcome: { kind: 'succeeded', version: null } };
+    }
     if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
       return prepareSessionCreationTarget({ request: SessionCreationTargetPreparationRequestV1Schema.parse(request) });
     }
     if (method === RPC_METHODS.SPAWN_HAPPY_SESSION) {
+      events?.push('spawn');
       if (request && typeof request === 'object' && 'type' in request && request.type === 'resume-session'
         && 'sessionId' in request && typeof request.sessionId === 'string') {
         readySessionId = request.sessionId;
@@ -389,6 +413,60 @@ describe('workflow Session step executor', () => {
       return { status: 200, data: { sessions: [response.data.session] } };
     });
   });
+  it.each([
+    { code: 'outside_root', source: 'unknown', failureReason: 'permission_denied' },
+    { code: 'agent_startup_rpc_rejected', source: 'usage_limit', failureReason: 'usage_limit' },
+    { code: 'no_eligible_member', source: 'unknown', failureReason: 'unknown' },
+  ] as const)('retains the typed $code startup cause through the real Workflow step', async ({ code, source, failureReason }) => {
+    installSessionCreationTransport();
+    const credentials = { token: 'token', encryption: null } as const;
+    const scope = { accountId: 'account-1', machineId: 'machine-1' };
+    const operations = createHostActionOperationRuntime({ machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId, generateOperationId: () => 'typed-startup' });
+    const failureCause = { phase: 'client_start' as const, code, failureReason, retryable: true,
+      providerErrorMessage: 'PRIVATE_NATIVE_PROSE https://private.example/path' };
+    const startup: WorkflowSessionStartup = input => runObservedWorkflowSessionStartup(input, {
+      serverId: 'server-1', machineId: scope.machineId, observeExecution: operations.observeExecution, rpcContext: {},
+      // Native launch and Home HTTP are boundaries; Action admission, startup,
+      // original-operation observation and step settlement are production code.
+      transport: () => ({ spawn: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED',
+        errorMessage: 'PRIVATE_NATIVE_PROSE https://private.example/path',
+        errorDetail: { kind: 'launch_error', code, message: 'PRIVATE_NATIVE_PROSE https://private.example/path', failureCause } }),
+        resolveSpawnSessionByNonce: async () => { throw new Error('A definite refusal must not relaunch'); } }),
+      observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
+        ...(options.waitForTerminal ? { waitForTerminal: true } : {}),
+        ...(options.includeSetupReview ? { includeSetupReview: true } : {}) }),
+      cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {},
+    });
+    const machineAdmissionTransport = async () => { throw new Error('Refused startup cannot enqueue input'); };
+    const execute = createProductionWorkflowSessionStepExecutor({ credentials, machineId: scope.machineId,
+      machineAdmissionTransport, createFreshConversation: createProductionFreshWorkflowSessionConversation({
+        credentials, serverId: 'server-1', machineId: scope.machineId, workDepth: 0, originRunId: 'typed-run',
+        machineAdmissionTransport, sessionStartup: startup,
+      }), resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => null });
+    const result = await execute({ runId: 'typed-run', invocationRecordId: 'typed-invocation',
+      step: { kind: 'step', id: 'create', inputMode: 'none', document: { text: '', references: [], attachments: [] },
+        input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+        invocationPath: { blockId: 'create', scope: [] }, attempt: '0', logicalInvocationRecordId: 'typed-invocation' },
+      input: { text: '', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'fresh' }, agentTarget: {
+        kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        connectedServices: { v: 2, bindingsByServiceId: {} } }, executionTarget: { kind: 'session' },
+      authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      workspace: { machineId: scope.machineId, directory: '/repo', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {}, onInputAccepted: async () => { throw new Error('No accepted input'); },
+      onSessionReady: async () => { throw new Error('No ready Session'); },
+    });
+    expect(result).toMatchObject({ kind: source === 'usage_limit' ? 'needs_attention' : 'failed', code,
+      runtimeIssueV1: { source, code, failureCause: { phase: 'client_start', code, failureReason, retryable: true } } });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_NATIVE_PROSE|private\.example/);
+    expect(operations.store.get(scope, 'typed-startup')).toMatchObject({ state: 'failed',
+      error: { errorCode: 'spawn_failed', error: 'spawn_failed' },
+      result: { type: 'error', code: 'spawn_failed', retryable: true, launchError: { kind: 'launch_error', code, failureCause } } });
+  });
+
   it('records inputless Session creation and rejoins it without fabricating an input', async () => {
     const launches = installSessionCreationTransport();
     const createdFacts: unknown[] = [];
@@ -503,9 +581,22 @@ describe('workflow Session step executor', () => {
     { name: 'same selection', approvalProfileId: 'builtin:full-trust', review: 'none' },
     { name: 'omitted selection', approvalProfileId: undefined, review: 'none' },
     { name: 'direct human selection', approvalProfileId: 'builtin:full-trust', review: 'none', human: true },
+    { name: 'current Agent before Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'none', human: true, readiness: true },
+    { name: 'reviewed Agent install before Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install' },
+    { name: 'swapped Agent install operand', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install', tamper: 'operand' },
+    { name: 'swapped Agent install origin request', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'install', tamper: 'origin' },
+    { name: 'refused Agent install before Workflow birth', approvalProfileId: 'builtin:full-trust', review: 'approve', human: true, readiness: 'refused' },
   ] as const)('admits native Workflow Session profile selection: $name', async testCase => {
     const { approvalProfileId, review } = testCase;
-    const launches = installSessionCreationTransport();
+    const readinessEvents: string[] = [];
+    const launches = installSessionCreationTransport(readinessEvents, 'readiness' in testCase
+      && (testCase.readiness === 'install' || testCase.readiness === 'refused'));
+    if ('readiness' in testCase && testCase.readiness === 'refused') {
+      const originalRpc = readiness.callMachineRpc.getMockImplementation()!;
+      readiness.callMachineRpc.mockImplementation(async request => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ
+        ? { ok: false, errorCode: 'agent_install_failed', errorMessage: 'Native installation failed' }
+        : originalRpc(request));
+    }
     const artifacts = new Map<string, { id: string } & Record<string, unknown>>();
     let publish!: (artifactId: string) => void;
     const published = new Promise<string>(resolve => { publish = resolve; });
@@ -554,6 +645,7 @@ describe('workflow Session step executor', () => {
       String(url).includes('/features') ? features : { id: 'account-1' }), { status: 200 })));
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
     const settings = accountSettingsParse({ actionsSettingsV1: { v: 1,
+      actions: { 'machines.agents.install': { approvalRequiredSurfaces: ['agent'] } },
       approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } } });
     setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network', settings,
       rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: Date.now(),
@@ -604,15 +696,44 @@ describe('workflow Session step executor', () => {
       const request = await actionDeps.approvalsGet!({ artifactId: first, serverId: 'server-1' });
       expect(request).toMatchObject({ status: 'open', approval: { flow: 'blocking' } });
       expect(launches).toHaveLength(0);
+      if ('tamper' in testCase) {
+        const original = ApprovalRequestV2Schema.parse(request);
+        const changed = ApprovalRequestV2Schema.parse(testCase.tamper === 'operand'
+          ? { ...original, actionArgs: { ...readRecord(original.actionArgs), agentId: 'codex' } }
+          : { ...original, executionOriginV1: { ...original.executionOriginV1, requestId: 'different-native-request' } });
+        const artifact = artifacts.get(first)!;
+        // Substitute only persisted Home bytes; the live issuer operand and
+        // native operation remain the original admitted Session invocation.
+        artifacts.set(first, { ...artifact, body: encodePlainArtifactStoredContent({ body: JSON.stringify(changed) }),
+          bodyVersion: Number(artifact.bodyVersion) + 1 });
+      }
+      const tamperedStartup = 'tamper' in testCase
+        ? expect(pending).rejects.toMatchObject({ code: 'workflow_session_startup_unavailable' }) : undefined;
       const decision = await executor.execute('approval.request.decide', { artifactId: first, decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: 'server-1', serverIdentityId: 'server-1', runtimeAccountId: 'account-1',
       });
+      if ('tamper' in testCase) {
+        await tamperedStartup;
+        expect(launches).toHaveLength(0);
+        expect(readinessEvents).toEqual(['inventory']);
+        return;
+      }
       expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+    }
+    if ('readiness' in testCase && testCase.readiness === 'refused') {
+      await expect(pending).rejects.toMatchObject({ code: 'agent_cli_not_ready',
+        runtimeIssueV1: { code: 'agent_cli_not_ready', failureCause: { retryable: false } } });
+      expect(launches).toHaveLength(0);
+      expect(operations.store.list({ accountId: 'account-1', machineId }).items[0]).toMatchObject({ state: 'failed',
+        result: { type: 'error', code: 'agent_cli_not_ready', agentId: expect.any(String), retryable: false } });
+      return;
     }
     await expect(pending).resolves.toMatchObject({ sessionId: 'new-session' });
     expect(launches).toHaveLength(1);
     expect(launches[0]?.approvalProfileId).toBe(approvalProfileId === undefined ? 'builtin:full-trust' : approvalProfileId);
     expect(artifacts.size).toBe(review === 'approve' ? 1 : 0);
+    if ('readiness' in testCase) expect(readinessEvents).toEqual(testCase.readiness === 'install'
+      ? ['inventory', 'install', 'terminal', 'spawn'] : ['inventory', 'spawn']);
   });
 
   it.each([false, true])('creates Workflow birth correspondence accepted by requester custody (miswired=%s)', async miswired => {
@@ -2265,8 +2386,7 @@ describe('workflow Session step executor', () => {
       ...(terminalMode ? { terminal: { mode: terminalMode } } : {}),
       ...(memoryEnabled === undefined ? {} : { memoryEnabled }),
     });
-    const creationKey = SessionCreationKeyV1Schema.parse(launch.creationKey);
-    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+    const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'server-1', serverHttpBaseUrl: resolveServerHttpBaseUrl(),
       // Replace only exact-Machine IPC; both paths run the real target and birth owners.
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (method, request, options) => {
@@ -2278,11 +2398,11 @@ describe('workflow Session step executor', () => {
         return await readiness.callMachineRpc({ method, request });
       } },
     });
-    if (!deps.sessionSpawnNew) throw new Error('Expected native Session spawn transport');
-    const ordinaryResult = await deps.sessionSpawnNew({ ...launch, creationKey,
-      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey }),
-      actionCaller: { kind: 'host' }, callerSurface: 'ui',
+    const ordinaryExecution = await executor.execute('session.spawn_new', launch, {
+      surface: 'cli', authority: 'present_user', serverId: 'server-1', actionCaller: { kind: 'host' },
     });
+    expect(ordinaryExecution, JSON.stringify(ordinaryExecution)).toMatchObject({ ok: true });
+    const ordinaryResult = ordinaryExecution.ok ? ordinaryExecution.result : null;
     expect(ordinaryResult, JSON.stringify(ordinaryResult)).toMatchObject({ type: 'success', sessionId: 'new-session' });
     const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1',
       machineId: 'machine-1', workDepth: 0, originRunId: 'preparation-parity', machineAdmissionTransport: vi.fn() });
@@ -2645,7 +2765,7 @@ describe('workflow Session step executor', () => {
       expect(reservations).toHaveLength(1);
       if (policy === 'require' && surface === 'cli') {
         const observe = createWorkflowInvocationRecoveryObserver({ credentials, machineId: 'machine-1', actionExecutor: executor });
-        expect(await observe({ progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+        expect(await observe({ run: { id: 'discussion-run' }, progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
           invocationPath: { blockId: 'review', scope: [] }, attempt: '0', logicalInvocationRecordId: 'invocation-1',
           execution: retainedInvitationApproval }, terminalParent: false, cancellationRequested: false }))
           .toMatchObject({ kind: 'unresolved', code: 'workflow_native_startup_ready' });

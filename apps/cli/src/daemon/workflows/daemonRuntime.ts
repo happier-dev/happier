@@ -7,8 +7,6 @@ import { buildWorkflowActionContext, createWorkflowActionContextResolver } from 
 export { buildWorkflowActionContext } from './workflowActionContext';
 import type { WorkflowConversationUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { SessionInputCancelExactTurnResultV1Schema } from '@happier-dev/protocol/sessions/control/exactTurnCancellationV1';
 import { freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -59,9 +57,6 @@ import {
 } from './production';
 import {
   createWorkflowRunRecoveryReader,
-  isWorkflowDiscussionModelReservationCurrent,
-  type WorkflowDiscussionModelReservationCustody,
-  type WorkflowDiscussionModelReservationReplay,
 } from './recovery';
 import { createWorkflowInvocationRecoveryObserver, resolveWorkflowAuthorizedSession, resolveWorkflowSessionConversation } from './invocationRecoveryObserver';
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
@@ -150,23 +145,17 @@ export function createWorkflowAcceptedAuthorizationCurrentness(params: Readonly<
   accountId: string;
   listAccountApiTokens: (signal?: AbortSignal) => Promise<AccountApiTokensListActionOutputV1>;
   resolveCurrentPluginOccurrenceId: (pluginId: string) => Promise<string | null>;
-  resolveCurrentPluginSourceCustody: (pluginId: string) => Promise<PluginSourceCustodyV1 | null>;
   isMediatedSourceCurrent: (
     sourceAuthority: NonNullable<WorkflowAcceptedAuthorizationV1['sourceAuthority']>,
     signal?: AbortSignal,
   ) => Promise<boolean>;
   now?: () => number;
-  discussionModelReservationCustody?: WorkflowDiscussionModelReservationCustody;
 }>) {
   const now = params.now ?? Date.now;
-  return async ({ authorization, reservation, signal }: Readonly<{
+  return async ({ authorization, signal }: Readonly<{
     authorization: WorkflowAcceptedAuthorizationV1;
-    reservation?: WorkflowDiscussionModelReservationReplay;
     signal?: AbortSignal;
   }>): Promise<boolean> => {
-    if (reservation && (!params.discussionModelReservationCustody
-      || !await isWorkflowDiscussionModelReservationCurrent({ ...params.discussionModelReservationCustody,
-        accountId: params.accountId, reservation, ...(signal ? { signal } : {}) }))) return false;
     // A failed authority read is unknown, not revocation. The new Action's
     // admission owner handles it; only verified negatives return false.
     const principal = authorization.principal;
@@ -181,25 +170,18 @@ export function createWorkflowAcceptedAuthorizationCurrentness(params: Readonly<
         return false;
       }
     }
-    // Session is immutable acceptance attribution, not a revocable grant
-    // from the originating process. The accepted Run outlives that Session.
-    if (principal.kind === 'host' || principal.kind === 'session') {
+    // Local principals are immutable acceptance attribution. Plugins are trusted
+    // code, and the accepted Run outlives its originating Session or plugin load.
+    if (principal.kind === 'host' || principal.kind === 'session' || principal.kind === 'plugin') {
       return true;
     }
-    if (principal.kind === 'api') {
-      if (principal.accountId !== params.accountId || principal.principalId !== params.accountId) {
-        return false;
-      }
-      const current = await params.listAccountApiTokens(signal);
-      const token = current.tokens.find((candidate) => candidate.tokenId === principal.credentialId);
-      return token !== undefined
-        && (token.expiresAt === null || Date.parse(token.expiresAt) > now());
+    if (principal.accountId !== params.accountId || principal.principalId !== params.accountId) {
+      return false;
     }
-    const sourceCustody = await params.resolveCurrentPluginSourceCustody(
-      principal.pluginId,
-    );
-    return sourceCustody !== null
-      && pluginSourceCustodyV1Equal(sourceCustody, principal.sourceCustody);
+    const current = await params.listAccountApiTokens(signal);
+    const token = current.tokens.find((candidate) => candidate.tokenId === principal.credentialId);
+    return token !== undefined
+      && (token.expiresAt === null || Date.parse(token.expiresAt) > now());
   };
 }
 
@@ -215,11 +197,6 @@ export function createCredentialedWorkflowAcceptedAuthorizationCurrentness(param
   const readBaseUrl = explicitBaseUrl === undefined ? captureServerHttpBaseUrl() : () => explicitBaseUrl;
   return createWorkflowAcceptedAuthorizationCurrentness({
     accountId: params.accountId,
-    discussionModelReservationCustody: {
-      storage: createWorkflowRunStorageClient({ token: params.credentials.token, serverHttpBaseUrl: explicitBaseUrl }),
-      resolveAccountEncryption: async signal => await runWithServerHttpBaseUrl(readBaseUrl(),
-        () => resolveAvailableEncryption(params.credentials, signal)),
-    },
     listAccountApiTokens: async (signal) => {
       const list = createAccountServerActionDeps({ token: params.credentials.token, serverId,
         serverHttpBaseUrl: readBaseUrl() }).accountApiTokensListAction;
@@ -234,9 +211,6 @@ export function createCredentialedWorkflowAcceptedAuthorizationCurrentness(param
     },
     resolveCurrentPluginOccurrenceId: async (pluginId) => (
       readAuthoritativePluginSlotOccurrence(pluginId)?.occurrenceId ?? null
-    ),
-    resolveCurrentPluginSourceCustody: async (pluginId) => (
-      readAuthoritativePluginSlotOccurrence(pluginId)?.sourceCustody ?? null
     ),
     isMediatedSourceCurrent: async (sourceAuthority, signal) => {
       const lease = await acquireAuthoritativePluginRuntimeRegistryLease();

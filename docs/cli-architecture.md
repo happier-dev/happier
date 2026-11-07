@@ -1165,6 +1165,13 @@ private Sync source route retain the local profile for credentials and requester
 custody, while Workspace and Source addressing uses the admitted Home id. Current
 Machine admission and requester authorization remain required.
 
+Project Open retains the approved Agent's exact Session requester bootstrap when
+selecting execution identity. In 0.3 development, an Agent acting for the Machine
+custodian's own Account may attach the approved raw folder directly. Agents for
+other Accounts, including Team members with Machine access, still require a
+Workspace ref or clone and the existing private-root isolation; the deciding
+person's approval does not replace the original requester's identity.
+
 Finite Project script/preparation, declared Service admission, passive definitions
 and readiness, and local saved-review Actions use the same exact Home admission
 helper. Project execution/review keeps the original local profile for
@@ -4631,9 +4638,11 @@ An Automation-origin Run with an accepted Workflow snapshot can reclaim its
 expired lease after its causal Session or turn disappears. Claim admission reads
 cause depth only before the first accepted snapshot exists; recovery uses the
 depth already frozen there. Current Account, Machine, envelope and accepted
-authorization checks still apply. Deleting a definition does not revoke its
-accepted Runs, and a failed authorization read remains unknown rather than
-revocation. Recovery and settlement stay with the existing Workflow coordinator.
+authorization checks apply at admission. Session steps and approval replay consume
+that admission and retain their exact identity and receipt bindings. Deleting a
+definition does not revoke its accepted Runs, and a failed authorization read
+remains unknown rather than revocation. Recovery and settlement stay with the
+existing Workflow coordinator.
 
 The V3 assignment response optionally carries `directRunClaimDeadlines`, a list of
 closed `{ runId, nextClaimAt }` facts projected by the server claim service for

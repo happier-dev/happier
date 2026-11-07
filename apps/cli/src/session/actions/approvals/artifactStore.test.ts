@@ -25,7 +25,8 @@ import {
 import { createCliApprovalsArtifactStore } from './artifactStore';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodeAccountArtifactListCursor } from '@/api/artifacts/accountArtifactStore';
-import { ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactHttpReadV1Schema, ArtifactHttpHeaderReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
+  ArtifactReadHeadersBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -38,6 +39,7 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 const { mockGet, mockPost } = vi.hoisted(() => ({
   mockGet: vi.fn(),
@@ -45,6 +47,14 @@ const { mockGet, mockPost } = vi.hoisted(() => ({
 }));
 
 const fixtureArtifacts = vi.hoisted(() => new Map<string, Record<string, unknown>>());
+
+/** Opaque HTTP storage for the creation owner's exact-id read/create/rejoin. */
+function createdArtifactResponse(input: Readonly<Record<string, unknown>>, encryptionMode: 'plain' | 'e2ee', ownerAccountId = 'acc_1') {
+  if (typeof input.id !== 'string') throw new Error('fixture_artifact_id_required');
+  fixtureArtifacts.set(input.id, { ...input, ownerAccountId, access: 'owner', encryptionMode, publicAudience: 'none',
+    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+  return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
+}
 
 function batchFixtureItem(artifactId: string, raw: unknown) {
   if (!raw || typeof raw !== 'object') throw new Error('Missing Artifact HTTP fixture');
@@ -57,6 +67,7 @@ function batchFixtureItem(artifactId: string, raw: unknown) {
 
 vi.mock('axios', () => ({
   default: {
+    defaults: {},
     get: vi.fn(async (url: string, config?: unknown) => {
       if (url.endsWith('/recipients')) {
         const artifactId = decodeURIComponent(url.split('/').at(-3) ?? '');
@@ -66,7 +77,13 @@ vi.mock('axios', () => ({
           access: artifact.access, encryptionMode: artifact.encryptionMode,
           dataEncryptionKey: artifact.dataEncryptionKey, callerDataEncryptionKey: artifact.dataEncryptionKey, recipients: [] } };
       }
-      const response = await mockGet(url, config);
+      let response = await mockGet(url, config);
+      // Unconfigured exact-record reads are absent until this fixture's
+      // successful HTTP create. Explicit responses keep precedence.
+      if (response === undefined && /^\/v1\/artifacts\/[^/]+$/.test(new URL(url).pathname)) {
+        const record = fixtureArtifacts.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)!));
+        response = record ? { status: 200, data: record } : { status: 404, data: { error: 'artifact_not_found' } };
+      }
       const payload: unknown = response?.data;
       const envelopeItems: unknown = payload && typeof payload === 'object' ? Reflect.get(payload, 'items') : undefined;
       const rows: unknown[] = Array.isArray(payload) ? payload : Array.isArray(envelopeItems) ? envelopeItems : [payload];
@@ -75,7 +92,11 @@ vi.mock('axios', () => ({
           fixtureArtifacts.set(Reflect.get(row, 'id'), row as Record<string, unknown>);
         }
       }
-      return response;
+      // Model the real Home response for the selected request, while keeping
+      // each case's codecs, row revisions and list/body assertions intact.
+      return new URL(url).pathname === '/v1/artifacts' && Array.isArray(payload)
+        ? { ...response, data: artifactListResponse(url, payload) }
+        : response;
     }),
     post: mockPost,
   },
@@ -90,6 +111,81 @@ vi.mock('@/configuration', () => ({
 }));
 
 describe('createCliApprovalsArtifactStore', () => {
+  it.each(['plain', 'e2ee'] as const)('creates and reads %s approvals with the configured signed Artifact request', async mode => {
+    const credentials: StoredCredentials = mode === 'plain'
+      ? { token: 'unusable-daemon-bearer', encryption: null } : createCredentials();
+    const signedHeaders = vi.fn(async () => ({ 'x-external-action-execution-authorization': 'signed-parent-root',
+      [requesterAccountEncryptionMode]: mode }));
+    const store = createCliApprovalsArtifactStore({ credentials,
+      getAccountEncryptionMode: async () => mode, approvalAuthorizationHeaders: signedHeaders });
+    const target = { kind: 'session' as const, sessionId: 's1' };
+    const envelope = { v: 1 as const, requestId: 'signed-approval', target,
+      input: { sessionId: 's1', message: 'hello' } };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, actionId: 'session.message.send', status: 'open',
+      summary: 'Review message', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli', sessionId: 's1' }, actionArgs: envelope.input,
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'api', caller: { kind: 'host' },
+        accountId: 'acc_1', principalId: 'principal-1', credentialId: 'credential-1',
+        serverId: 'home', serverIdentityId: 'home', sessionId: 's1', target,
+        actionId: 'session.message.send', requestId: envelope.requestId, machineId: 'machine-1',
+        externalActionInputSignature: 'a'.repeat(86), originalActionEnvelope: envelope,
+        externalActionExecutionAuthorization: { v: 1, token: 'home-signed-root', binding: {
+          accountId: 'acc_1', custodianAccountId: 'acc_1', principalId: 'principal-1', credentialId: 'credential-1',
+          grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: 'home', machineId: 'machine-1',
+          installationId: 'installation-1', actionId: 'session.message.send', requestId: envelope.requestId,
+          target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        } },
+      },
+    });
+    mockPost.mockImplementation(async (url: string, body: Readonly<Record<string, unknown>>, config: Readonly<{ headers?: Record<string, string> }>) => {
+      expect(new URL(url).pathname).toBe('/v1/artifacts');
+      expect(config.headers).toMatchObject({ 'x-external-action-execution-authorization': 'signed-parent-root' });
+      expect(config.headers?.Authorization).toBeUndefined();
+      return createdArtifactResponse(body, mode);
+    });
+    mockGet.mockImplementation(async (url: string, config: Readonly<{ headers?: Record<string, string> }>) => {
+      if (new URL(url).pathname.startsWith('/v1/artifacts/')) {
+        expect(config.headers).toMatchObject({ 'x-external-action-execution-authorization': 'signed-parent-root' });
+        expect(config.headers?.Authorization).toBeUndefined();
+      }
+      return undefined;
+    });
+
+    const created = await store.approvalsCreate({ request, serverId: 'home' });
+    expect(await store.approvalsGet({ artifactId: created.artifactId, serverId: 'home' })).toMatchObject(request);
+    expect(await store.approvalsCreate({ request, serverId: 'home' })).toMatchObject({ artifactId: created.artifactId });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(signedHeaders).toHaveBeenCalledWith(expect.objectContaining({ method: 'POST', path: '/v1/artifacts' }));
+  });
+
+  it('refuses foreign requester approval custody before writing a custodian Artifact', async () => {
+    const actionId = 'notifications.notify_me';
+    const target = { kind: 'machine' as const, machineId: 'company-controller' };
+    const envelope = { v: 1 as const, requestId: 'foreign-approval', target, input: { message: 'Review delivery' } };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, actionId, status: 'open', summary: 'Review delivery',
+      createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, actionArgs: envelope.input,
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        accountId: 'requester', serverId: 'home', serverIdentityId: 'home-identity', target,
+        actionId, requestId: envelope.requestId, machineId: target.machineId,
+        externalActionInputSignature: 'a'.repeat(86), originalActionEnvelope: envelope,
+        externalActionExecutionAuthorization: { v: 1, token: 'home-signed-root', binding: {
+          accountId: 'requester', custodianAccountId: 'company', authentication: { kind: 'account', tokenEpoch: 1 },
+          accountEncryptionMode: 'plain', serverIdentityId: 'home-identity', machineId: target.machineId,
+          installationId: 'company-installation', actionId, requestId: envelope.requestId, target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        } },
+      },
+    });
+    const tokenFor = (accountId: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    mockPost.mockImplementation(async (_url: string, body: Readonly<{ id: string }>) =>
+      createdArtifactResponse(body, 'plain', request.executionOriginV1.accountId));
+    const custodian = createStore({ token: tokenFor('company'), encryption: null }, 'plain');
+    await expect(custodian.approvalsCreate({ request, serverId: 'home' })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    expect(mockPost).not.toHaveBeenCalled();
+    const requester = createStore({ token: tokenFor('requester'), encryption: null }, 'plain');
+    expect(await requester.approvalsCreate({ request, serverId: 'home' })).toMatchObject({ artifactId: expect.any(String) });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
   it('places a received Artifact through the real private row transport and refuses stale, cancelled and retired-Home writes', async () => {
     const credentials: StoredCredentials = { token: 'folder-account-token', encryption: null };
     setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
@@ -122,6 +218,12 @@ describe('createCliApprovalsArtifactStore', () => {
       return { status: 503, data: {} };
     });
     mockPost.mockImplementation(async (url: string, input: unknown) => {
+      if (new URL(url).pathname === '/v1/artifacts/read') {
+        expect(input).toEqual({ artifactIds: ['received'], projection: 'headers' });
+        if (retireOnHeaderRead) setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+          loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'replacement-home' });
+        return { status: 200, data: { projection: 'headers', items: [{ artifactId: shared.id, ok: true, artifact: { ...shared, publicAudience: 'none' } }] } };
+      }
       expect(new URL(url).pathname).toBe('/v1/account/entity-rows/prompt-library/folders');
       const mutation = PromptLibraryRowMutationV1Schema.parse(input);
       if (mutation.expectedRevision !== revision) return { status: 409, data: { status: 'conflict', revision } };
@@ -140,6 +242,7 @@ describe('createCliApprovalsArtifactStore', () => {
         .toEqual({ status: 'updated', revision: 2 });
       expect(value).toMatchObject({ value: { artifactHeadersById: { received: { folderId: 'personal' } } } });
       expect(JSON.stringify(value)).not.toContain('Private tag');
+      expect(mockGet.mock.calls.filter(([url]) => new URL(url).pathname === '/v1/artifacts')).toHaveLength(0);
       expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folder.set',
         input: { artifactId: shared.id, folderId: null, expectedRevision: 1 } })).toEqual({ status: 'conflict', revision: 2 });
       const controller = new AbortController(); controller.abort();
@@ -373,7 +476,7 @@ describe('createCliApprovalsArtifactStore', () => {
     let capturedCreateBody: any = null;
     mockPost.mockImplementationOnce(async (_url: string, body: any) => {
       capturedCreateBody = body;
-      return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+      return createdArtifactResponse(body, 'e2ee');
     });
 
     await store.approvalsCreate({ request, serverId: 'server-1' });
@@ -429,8 +532,6 @@ describe('createCliApprovalsArtifactStore', () => {
       }, dataKey!)),
     } });
     await expect(store.approvalsGet({ artifactId: capturedCreateBody.id, serverId: 'server-1' })).resolves.toBeNull();
-    await expect(store.approvalsCreate({ request, serverId: 'server-2' }))
-      .rejects.toThrow('approval_request_server_target_mismatch');
 
     mockGet.mockResolvedValueOnce({
       status: 200,
@@ -469,6 +570,7 @@ describe('createCliApprovalsArtifactStore', () => {
       ok: false,
       errorCode: 'subject_mismatch',
       error: 'approval_request_subject_mismatch',
+      writeCommitted: false,
     });
     expect(mockPost).not.toHaveBeenCalled();
   });
@@ -671,7 +773,7 @@ describe('createCliApprovalsArtifactStore', () => {
     let createdPayload: any = null;
     mockPost.mockImplementationOnce(async (_url: string, body: any) => {
       createdPayload = body;
-      return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+      return createdArtifactResponse(body, 'plain');
     });
 
     await store.approvalsCreate({ request, serverId: 'home-1' });
@@ -716,6 +818,15 @@ describe('createCliApprovalsArtifactStore', () => {
     });
     mockPost.mockImplementation(async (url: string, body: unknown, config: { signal?: AbortSignal }) => {
       const path = new URL(url).pathname;
+      if (path === '/v1/artifacts/read') {
+        const request = ArtifactReadHeadersBatchInputV1Schema.parse(body);
+        const projected: Record<string, unknown> = { ...record, publicAudience: 'none' };
+        delete projected.body;
+        const header = ArtifactHttpHeaderReadV1Schema.parse(projected);
+        expect(request.artifactIds).toEqual([header.id]);
+        return { status: 200, data: { projection: request.projection,
+          items: [{ artifactId: header.id, ok: true, artifact: header }] } };
+      }
       if (path === '/v1/account/entity-rows/prompt-library/folders') {
         const mutation = PromptLibraryRowMutationV1Schema.parse(body);
         expect(mutation.expectedRevision).toBe(folderRevision);
@@ -751,6 +862,19 @@ describe('createCliApprovalsArtifactStore', () => {
         request: { artifactId, favorite: true }, signal })).resolves.toEqual({ ok: true, artifactId });
       await expect(listPromptLibrary({ store: store.promptLibraryStore, request: {} })).resolves.toMatchObject({
         coverage: 'complete', items: [{ artifactId, folderId: 'folder', tags: ['topic'] }] });
+      const artifactBeforeDelete = JSON.stringify(record);
+      const artifactRequestsBeforeDelete = mockGet.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/artifacts')).length
+        + mockPost.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/artifacts')).length;
+      expect(await executeArtifactFolderActionV1({ port: store.promptLibraryStore.organization!, actionId: 'artifact.folders.delete',
+        input: { folderId: 'folder', expectedRevision: folderRevision } })).toMatchObject({ status: 'updated' });
+      expect(folders).toMatchObject({ value: { deletedLegacyFolderIds: ['folder'],
+        artifactHeadersById: { [artifactId]: { folderId: null, tags: ['topic'] } } } });
+      expect(mockGet.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/artifacts')).length
+        + mockPost.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/artifacts')).length).toBe(artifactRequestsBeforeDelete);
+      expect(JSON.stringify(record)).toBe(artifactBeforeDelete);
+      expect(await executeArtifactFolderActionV1({ port: store.promptLibraryStore.organization!, actionId: 'artifact.folders.create',
+        input: { id: 'folder', name: 'Recreated', expectedRevision: folderRevision } })).toMatchObject({ status: 'updated' });
+      expect(folders).toMatchObject({ value: { deletedLegacyFolderIds: ['folder'] } });
     } finally { resetActiveAccountSettingsSnapshotForTests(); }
   });
 
@@ -779,7 +903,7 @@ describe('createCliApprovalsArtifactStore', () => {
       policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Approve run',
     });
     let payload: any;
-    mockPost.mockImplementationOnce(async (_url: string, body: any) => { payload = body; return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } }; });
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => { payload = body; return createdArtifactResponse(body, 'e2ee'); });
     const created = await store.targetActionApprovalsCreate({ request });
     const serializedTransport = JSON.stringify(payload);
     expect(serializedTransport).not.toContain(request.qualifiedActionId);
@@ -809,10 +933,10 @@ describe('createCliApprovalsArtifactStore', () => {
     expect(JSON.stringify(disclosed)).not.toContain('synthetic-target-signed-authorization');
     expect(JSON.stringify(disclosed)).not.toContain('externalActionInputSignature');
     const { readWorkflowActionApprovalSettlement } = await import('@/daemon/workflows/actionApproval');
-    await expect(readWorkflowActionApprovalSettlement({ execution: {
+    await expect(readWorkflowActionApprovalSettlement({ runId: 'workflow-run', execution: {
       kind: 'action', actionId: request.qualifiedActionId, actionRequestId: 'workflow-request', localInputId: 'workflow-input', input: {},
       output: { kind: 'approval_request_created', artifactId: created.artifactId, actionId: 'action.invoke' },
-    }, read: async () => disclosed.ok ? disclosed.result : null })).resolves.toEqual({ kind: 'unresolved', code: 'approval_required' });
+    }, read: async () => disclosed.ok ? disclosed.result : null })).resolves.toEqual({ kind: 'unresolved', code: 'approval_unavailable' });
     expect(await executor.execute('approval.request.list', { status: 'open' }, { surface: 'cli' }))
       .toMatchObject({ ok: true, result: { items: [{ artifactId: created.artifactId, actionId: 'action.invoke', status: 'open' }] } });
     const key = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(payload.dataEncryptionKey), recipientSecretKeyOrSeed: (credentials.encryption as any).machineKey });
@@ -854,6 +978,12 @@ describe('createCliApprovalsArtifactStore', () => {
     } });
     mockGet.mockImplementationOnce(async () => fullRecord(openPayload!, 1));
     await expect(store.executionRunHostActionApprovalsGet({ artifactId: created.artifactId }))
+      .resolves.toEqual(request);
+
+    // The executor's initial family read must classify this same stored body;
+    // host-family routing must not need another independent Artifact read.
+    mockGet.mockImplementationOnce(async () => fullRecord(openPayload!, 1));
+    await expect(store.approvalsGet({ artifactId: created.artifactId }))
       .resolves.toEqual(request);
 
     const approved = ExecutionRunHostActionApprovalRequestV1Schema.parse({
@@ -1195,6 +1325,70 @@ describe('createCliApprovalsArtifactStore', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  it('fetches only exact-Session approval rows with a thousand foreign approvals, without narrowing Account lists', async () => {
+    const store = createStore({ token: 'token-only', encryption: null }, 'plain');
+    const records = Array.from({ length: 1002 }, (_, index) => {
+      const sessionId = index < 1000 ? `foreign-session-${index}` : 'selected-session';
+      const request = ApprovalRequestV1Schema.parse({
+        v: 1, actionId: 'session.message.send', status: 'open', summary: 'Approval metadata',
+        createdAtMs: 1, updatedAtMs: 2000 - index, createdBy: { surface: 'cli', sessionId },
+        actionArgs: { sessionId, message: 'Approved message' },
+      });
+      return { sessionId, row: {
+        id: `approval-${index}`, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+        seq: index + 1, createdAt: 1, updatedAt: 2000 - index,
+        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: 'server-1' })),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+      } };
+    });
+    let fetchedHeaders = 0;
+    const fetchedBodies: string[] = [];
+    // Only HTTP is replaced. The Action's target attenuation, queue producer,
+    // header paging, actual codecs and strict body correspondence remain real.
+    mockGet.mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname !== '/v1/artifacts') throw new Error(`Unexpected read ${parsed.pathname}`);
+      const selectedIds: unknown = JSON.parse(parsed.searchParams.get('approvalSessionIds') ?? 'null');
+      const selected = records.filter(record => !Array.isArray(selectedIds) || selectedIds.includes(record.sessionId));
+      const cursor = parsed.searchParams.get('cursor');
+      const start = cursor ? selected.findIndex(({ row }) => encodeAccountArtifactListCursor({ artifactId: row.id, updatedAt: row.updatedAt }) === cursor) + 1 : 0;
+      if (cursor && start === 0) throw new Error('Unknown source cursor');
+      const rows = selected.slice(start, start + Number(parsed.searchParams.get('limit'))).map(({ row }) => {
+        const { body: _body, ...header } = row;
+        return header;
+      });
+      fetchedHeaders += rows.length;
+      return { status: 200, data: rows };
+    });
+    mockPost.mockImplementation(async (url: string, input: unknown) => {
+      expect(new URL(url).pathname).toBe('/v1/artifacts/read');
+      const request = ArtifactReadBatchInputV1Schema.parse(input);
+      fetchedBodies.push(...request.artifactIds);
+      return { status: 200, data: ArtifactReadBatchResponseV1Schema.parse({ items: request.artifactIds.map(artifactId =>
+        batchFixtureItem(artifactId, records.find(({ row }) => row.id === artifactId)?.row)) }) };
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...store });
+    const exact = await executor.execute('approval.request.list', { status: 'open', limit: 10 }, {
+      surface: 'cli', serverId: 'server-1', externalActionTarget: { kind: 'session', sessionId: 'selected-session' },
+    });
+    expect(exact).toMatchObject({ ok: true, result: { items: [
+      { artifactId: 'approval-1000', sessionId: 'selected-session' },
+      { artifactId: 'approval-1001', sessionId: 'selected-session' },
+    ], nextCursor: null } });
+    expect(fetchedHeaders).toBe(2);
+    expect(fetchedBodies).toEqual(['approval-1000', 'approval-1001']);
+
+    fetchedHeaders = 0;
+    fetchedBodies.length = 0;
+    const account = await executor.execute('approval.request.list', { status: 'open', limit: 2 }, { surface: 'cli', serverId: 'server-1' });
+    expect(account).toMatchObject({ ok: true, result: { items: [
+      { artifactId: 'approval-0', sessionId: 'foreign-session-0' },
+      { artifactId: 'approval-1', sessionId: 'foreign-session-1' },
+    ] } });
+    expect(fetchedBodies).toEqual(['approval-0', 'approval-1']);
+  });
+
   it('pages the real approval-list Action beyond 100 rows and filters without dropping matches at a source-page boundary', async () => {
     const store = createStore({ token: 'token-only', encryption: null }, 'plain');
     const rows = Array.from({ length: 105 }, (_, index) => {
@@ -1212,6 +1406,8 @@ describe('createCliApprovalsArtifactStore', () => {
     mockGet.mockImplementation(async (url: string) => {
       const parsed = new URL(url);
       if (parsed.pathname !== '/v1/artifacts') throw new Error(`Unexpected read ${parsed.pathname}`);
+      expect(JSON.parse(parsed.searchParams.get('approvalStates')!)).toEqual(['open']);
+      expect(JSON.parse(parsed.searchParams.get('kinds')!)).toEqual(['approval_request.v1', 'target_action_approval.v1']);
       const cursor = parsed.searchParams.get('cursor');
       const start = cursor ? rows.findIndex(row => encodeAccountArtifactListCursor({ artifactId: row.id, updatedAt: row.updatedAt }) === cursor) + 1 : 0;
       if (cursor && start === 0) throw new Error('Unknown source cursor');
@@ -1460,7 +1656,7 @@ describe('createCliApprovalsArtifactStore', () => {
     });
   });
 
-  it('filters list results from the hydrated body-authoritative status, not a stale index row', async () => {
+  it('omits an open candidate that settles before its body-authoritative read', async () => {
     const store = createStore({ token: 'token-only', encryption: null }, 'plain');
     const encodeHeader = (value: Record<string, unknown>) => encodeBase64(
       new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })),
@@ -1527,14 +1723,10 @@ describe('createCliApprovalsArtifactStore', () => {
         },
       });
 
-    await expect(store.approvalsList({ status: 'approved', limit: 10, serverId: 'server-1' }))
-      .resolves.toMatchObject({
-        items: [{
-          artifactId: 'approval-raced',
-          status: 'approved',
-          updatedAtMs: 2,
-        }],
-      });
+    // The atomic server query selected the open header. Its exact read may
+    // observe a later settlement, which must disappear from the open queue.
+    await expect(store.approvalsList({ status: 'open', limit: 10, serverId: 'server-1' }))
+      .resolves.toMatchObject({ items: [] });
   });
 
   it('excludes unscoped approval artifacts from server-scoped list queries', async () => {
@@ -1837,7 +2029,7 @@ describe('createCliApprovalsArtifactStore', () => {
     let createPayload: any = null;
     mockPost.mockImplementationOnce(async (_url: string, body: any) => {
       createPayload = body;
-      return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+      return createdArtifactResponse(body, 'e2ee');
     });
     const created = await store.approvalsCreate({ request: open, serverId: 'server-1' });
 
@@ -1973,7 +2165,7 @@ describe('createCliApprovalsArtifactStore', () => {
 
     const res = await store.approvalsUpdate({ artifactId: created.artifactId, request, serverId: 'server-1' });
 
-    expect(res).toEqual({ ok: false, errorCode: 'not_found', error: 'artifact_not_found' });
+    expect(res).toEqual({ ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false });
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 });

@@ -1020,12 +1020,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         serverApiUrl: approvalServerApiUrl,
         resolveServerFeaturesSnapshot,
         ...(params.isAutomationRunCurrent ? { isAutomationRunCurrent: params.isAutomationRunCurrent } : {}),
-        // The same accepted-authorization currentness owner the live Workflow
-        // admission below already consumes; a replayed Workflow origin rechecks
-        // its principal through it instead of a second check.
-        ...(params.workflowAcceptedAuthorizationCurrentness
-          ? { isWorkflowRunAuthorizationCurrent: params.workflowAcceptedAuthorizationCurrentness }
-          : {}),
       });
       return checker ? await checker(args) : false;
     };
@@ -1255,8 +1249,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               const currentHome = snapshot?.status === 'ready' && snapshot.provenance === 'authenticated'
                 ? normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId) : null;
               if (!currentHome) return actionFailure('approval_origin_unavailable');
-              if (currentHome !== origin.serverIdentityId
-                || origin.accountId !== undefined && origin.accountId !== readAccountIdFromToken(credentials.token)) return actionFailure('approval_stale');
+              if (currentHome !== origin.serverIdentityId) return actionFailure('approval_stale');
             }
             // Origin may include a contextual Machine; only replay placement selects an
             // exact remote owner. Account operands stay in the live invocation.
@@ -1313,7 +1306,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const requesterDecision = readApprovalRequesterDecisionV1(request, decision);
         if (requesterDecision) {
           const { subject, decision } = requesterDecision;
-          if (readAccountIdFromToken(credentials.token) !== subject.requesterAccountId) return actionFailure('present_user_required');
           if (!serverIdentityId || request.executionOriginV1?.serverIdentityId !== serverIdentityId) return actionFailure('approval_stale');
           const result = await runWithServerHttpBaseUrl(approvalServerApiUrl, async () => {
             const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials, idOrPrefix: subject.personaSessionRef.sessionId,

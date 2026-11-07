@@ -25,7 +25,8 @@ it('lets the authenticated RPC Account reject its plugin approval while refusing
     const writePaths: string[] = [];
     const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId } } });
     // Home HTTP persistence is the only substituted boundary. The real CLI
-    // executor, Artifact codec, approval transition and Account binding run.
+    // executor, Artifact codec and approval transition run. As on Home, an
+    // Account without a grant cannot read another Account's Artifact.
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       const path = new URL(String(url)).pathname;
       const token = String(config?.headers?.Authorization ?? '');
@@ -37,14 +38,19 @@ it('lets the authenticated RPC Account reject its plugin approval while refusing
       if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
       if (path.startsWith('/v1/artifacts/')) {
         const row = rows.get(path.split('/').at(-1)!);
-        return { status: row ? 200 : 404, data: row };
+        return row?.ownerAccountId === accountId
+          ? { status: 200, data: row } : { status: 404, data: { error: 'Artifact not found' } };
       }
       throw new Error(`Unexpected approval HTTP read ${path}`);
     });
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown, config) => {
       const path = new URL(String(url)).pathname;
+      const accountId = String(config?.headers?.Authorization ?? '').includes(bob.token) ? 'bob' : 'alice';
       writePaths.push(path);
-      if (path === '/v1/artifacts/read') return artifactReadResponse(body, id => rows.get(id) ?? null);
+      if (path === '/v1/artifacts/read') return artifactReadResponse(body, id => {
+        const row = rows.get(id);
+        return row?.ownerAccountId === accountId ? row : null;
+      });
       if (!body || typeof body !== 'object') throw new Error('Expected Artifact body');
       const request = body as Record<string, unknown>;
       if (path === '/v1/artifacts' && typeof request.id === 'string') {
@@ -85,7 +91,7 @@ it('lets the authenticated RPC Account reject its plugin approval while refusing
       const context = { surface: 'rpc' as const, authority: 'present_user' as const,
         actionCaller: { kind: 'host' as const } };
       const denied = await executor(bob).execute('approval.request.decide', { artifactId: created.artifactId, decision: 'reject' }, context);
-      expect.soft(denied).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      expect.soft(denied).toMatchObject({ ok: false, errorCode: 'approval_not_found' });
       expect(await store.targetActionApprovalsGet({ artifactId: created.artifactId })).toMatchObject({ status: 'open' });
       const decided = await executor(alice).execute('approval.request.decide', { artifactId: created.artifactId, decision: 'reject' }, context);
       expect(decided, JSON.stringify({ decided, writePaths })).toMatchObject({ ok: true, result: { status: 'rejected' } });

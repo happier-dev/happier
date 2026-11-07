@@ -7,22 +7,26 @@ import { WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema } 
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createDaemonApprovalExecutionOriginCurrentness } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
-import { createWorkflowAcceptedAuthorizationCurrentness } from './daemonRuntime';
 import { createWorkflowRunStorageTestkit, createPlainWorkflowRunKeyCensusFixture } from './workflowRunStorage.testkit';
 import type { WorkflowRunStorageOperation } from './workflowRunStorageClient';
 
 describe('Workflow model reservation approval custody', () => {
   it.each(['missing-run', 'wrong-discussion', 'wrong-slot', 'wrong-invocation', 'wrong-request', 'wrong-launch',
     'wrong-authorization', 'cancelled', 'terminal', 'cancel-requested', 'reclaim',
-    'cancel-before-final-root', 'cancel-after-final-root', 'cancel-during-accepted-snapshot',
-    'cancelled-root', 'terminal-root'] as const)(
+    'cancel-after-admission',
+    'cancelled-root', 'terminal-root', 'missing-starter', 'substituted-starter', 'causal'] as const)(
     'replays only the exact live accepted invitation (%s)', async variant => {
       const runId = 'accepted-run';
       const slot = `workflow:${runId}:invocation-1`;
       const launch = { executionTarget: { serverId: 'home', machineId: 'machine' },
         directory: { kind: 'path' as const, path: '/repo' },
         agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
-      const origin = { kind: 'direct' as const, discussion: {
+      const origin = { kind: 'direct' as const, authenticatedStarterV1: {
+        requestRef: 'authenticated-start', requester: { serverId: 'srv_home', accountId: 'account' },
+      }, ...(variant === 'causal' ? { actionRequestAttributionV1: { requestRef: 'original-cause',
+        requester: { serverId: 'srv_home', accountId: 'account' },
+        persona: { serverId: 'srv_home', sessionId: 'existing-session' }, origin: null,
+      } } : {}), discussion: {
         discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 } };
       const materialized = await materializeWorkflowAcceptedSnapshotV1({
         definition: { version: 1, defaults: {}, inputs: [{ name: 'reviewer', valueType: 'json', required: true,
@@ -43,14 +47,17 @@ describe('Workflow model reservation approval custody', () => {
         actionId: 'discussion.invite', actionArgs: input, approval: { flow: 'deferred', result: 'none' },
         decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 },
         executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+          ...(origin.actionRequestAttributionV1 ? { actionRequestAttributionV1: origin.actionRequestAttributionV1 } : {}),
           caller: { kind: 'workflowRun', runId, authorization: accepted.authorization,
+            ...(variant === 'causal' ? {} : { authenticatedStarterV1: origin.authenticatedStarterV1 }),
             discussionModelReservation: { discussionId: 'discussion', participantSlotId: slot } },
           serverId: 'home', serverIdentityId: 'srv_home', accountId: 'account', machineId: 'machine',
           target: { kind: 'machine', machineId: 'machine' }, actionId: 'discussion.invite', requestId: `${slot}:discussion.invite` },
       });
       const census = createPlainWorkflowRunKeyCensusFixture({ runId, accountId: 'account' });
       const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine', accountId: 'account',
-        origin, state: variant === 'cancelled' ? 'cancelled' : variant === 'terminal' ? 'succeeded' : 'interrupted',
+        origin: { kind: 'direct', discussion: origin.discussion },
+        state: variant === 'cancelled' ? 'cancelled' : variant === 'terminal' ? 'succeeded' : 'interrupted',
         acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
           mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account', runId }, acceptedSnapshot: accepted })),
       });
@@ -75,49 +82,28 @@ describe('Workflow model reservation approval custody', () => {
       };
       // Only the persistent Home boundary is substituted. All envelope opening,
       // accepted selection, principal checks, approval CAS and replay run for real.
-      let rootReads = 0;
-      let postClaimRunReads = 0;
+      let postClaimReads = 0;
       const custodyStorage = { execute: async (operation: WorkflowRunStorageOperation) => {
+        if (request.status === 'executing') postClaimReads++;
         if (operation.runId !== runId) return null;
         if (operation.operation === 'run-key.census') return census;
         if (operation.operation === 'get') {
-          if (request.status === 'executing' && ++postClaimRunReads === 2 && variant === 'cancel-during-accepted-snapshot') {
-            storage.requestControl('cancelled');
-          }
           return storage.execute({ operation: 'get', runId });
         }
         if (operation.operation === 'invocations.get') {
-          if (operation.invocationId === 'root' && rootReads === 1 && variant === 'cancel-before-final-root') {
-            storage.requestControl('cancelled');
-          }
           const captured = operation.invocationId === 'root' || operation.invocationId === 'invocation-1'
             ? row(String(operation.invocationId)) : null;
-          if (captured && operation.invocationId === 'root') {
-            rootReads++;
-            if (storage.run().state === 'cancelled' && variant === 'cancel-before-final-root') {
-              // The server cancellation owner advances the index lifecycle and
-              // content revision without rewriting the sealed progress bytes.
-              captured.index.lifecycle = 'cancel_requested';
-              captured.index.contentRevision = '1';
-            }
-            if (rootReads === 2 && variant === 'cancel-after-final-root') storage.requestControl('cancelled');
-          }
           return { invocation: captured };
         }
         throw new Error(`Unexpected storage operation: ${operation.operation}`);
       } };
       const unavailable = async (): Promise<never> => { throw new Error('Unexpected principal lookup'); };
-      const principalCurrent = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'account',
-        listAccountApiTokens: unavailable, resolveCurrentPluginOccurrenceId: unavailable,
-        resolveCurrentPluginSourceCustody: unavailable, isMediatedSourceCurrent: unavailable,
-        discussionModelReservationCustody: { storage: custodyStorage,
-          resolveAccountEncryption: async () => ({ kind: 'available', witness: {
-            mode: 'plain', version: 1, contentKeyFingerprint: null } }) },
-      });
       const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account', machineId: 'machine', serverId: 'home',
         resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine', serverIdentityId: 'srv_home' }),
         resolveTarget: async args => args.target, isAccountCurrent: async () => true, listAccountApiTokens: unavailable,
-        isWorkflowRunAuthorizationCurrent: principalCurrent });
+        workflowDiscussionModelReservationCustody: { storage: custodyStorage,
+          resolveAccountEncryption: async () => ({ kind: 'available', witness: {
+            mode: 'plain', version: 1, contentKeyFingerprint: null } }) } });
       const forged = structuredClone(request);
       const caller = forged.executionOriginV1.caller;
       if (caller.kind !== 'workflowRun' || !caller.discussionModelReservation) throw new Error('Missing marker');
@@ -141,14 +127,24 @@ describe('Workflow model reservation approval custody', () => {
         launch: { ...launch, directory: { kind: 'path', path: '/other' } } } };
       if (variant === 'wrong-authorization') caller.authorization = { principal: { kind: 'session', sessionId: 'forged' },
         admittedPermissionCeiling: 'default' };
+      if (variant === 'missing-starter') delete caller.authenticatedStarterV1;
+      if (variant === 'substituted-starter') caller.authenticatedStarterV1 = {
+        ...origin.authenticatedStarterV1, requestRef: 'substituted-start',
+      };
       request = ApprovalRequestV2Schema.parse(forged);
+      const approvedRequest = structuredClone(request);
       let reservations = 0;
       let starts = 0;
+      let writes = 0;
       const executor = createActionExecutor({ isApprovalExecutionOriginCurrent: currentness,
         approvalsGet: async () => request,
         approvalsUpdate: async ({ request: next }) => {
+          writes++;
           const transition = decideApprovalRequestTransition(request, next);
-          if (transition.ok) request = ApprovalRequestV2Schema.parse(next);
+          if (transition.ok) {
+            request = ApprovalRequestV2Schema.parse(next);
+            if (request.status === 'executing' && variant === 'cancel-after-admission') storage.requestControl('cancelled');
+          }
           return transition;
         },
         discussionAction: async () => { reservations++; return { discussionId: 'discussion', ownerAccountId: 'account',
@@ -159,25 +155,33 @@ describe('Workflow model reservation approval custody', () => {
       const result = await executor.replayApprovedApprovalRequest({ artifactId: 'approval', callerAuthority: 'present_user',
         currentAccount: { accountId: 'account', serverId: 'home', serverIdentityId: 'srv_home' } });
       expect(starts).toBe(0);
-      if (variant === 'reclaim' || variant === 'cancel-after-final-root') {
-        // INT-accepted residual: cancellation after the final read cannot guard
-        // the invite HTTP effect. At most one removable orphan slot may remain;
-        // it must never start a Session or be duplicated by approval replay.
-        if (variant === 'cancel-after-final-root') expect(storage.run().state).toBe('cancelled');
+      if (variant === 'missing-starter') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
+        expect(reservations).toBe(0);
+        expect(request.status).toBe('approved');
+        return;
+      }
+      if (variant === 'reclaim' || variant === 'cancel-after-admission' || variant === 'causal') {
+        // Admission-only ruling: no DB/currentness recheck follows the execution
+        // claim. A later DB control change is not the executor's local Stop signal.
+        // A removable orphan reservation may remain, never a native Session start.
+        if (variant === 'cancel-after-admission') expect(storage.run().state).toBe('cancelled');
         expect(result).toMatchObject({ ok: true });
-        expect(reservations).toBe(1);
+        expect(reservations, JSON.stringify({ result, execution: request.execution })).toBe(1);
         expect(request.status).toBe('executed');
+        expect(postClaimReads).toBe(0);
         await executor.replayApprovedApprovalRequest({ artifactId: 'approval', callerAuthority: 'present_user',
           currentAccount: { accountId: 'account', serverId: 'home', serverIdentityId: 'srv_home' } });
         expect(reservations).toBe(1);
         expect(starts).toBe(0);
       } else {
         expect(reservations).toBe(0);
-        expect(request.status).toBe('failed');
-        // Replay returns the decision receipt; its recorded execution owns the
-        // typed refusal, independently of the receipt's successful persistence.
-        expect(buildActionExecuteResultFromRecordedApprovalExecution(request))
-          .toMatchObject({ ok: false, errorCode: 'approval_stale' });
+        // The approval owner refuses before claiming this execution; it must not
+        // terminalize another executor's still-approved consent or fake an effect.
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
+        expect(request).toEqual(approvedRequest);
+        expect(writes).toBe(0);
+        expect(buildActionExecuteResultFromRecordedApprovalExecution(request)).toBeNull();
       }
     });
 });

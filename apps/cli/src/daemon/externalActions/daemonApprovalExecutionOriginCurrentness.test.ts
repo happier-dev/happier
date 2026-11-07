@@ -788,7 +788,7 @@ describe('daemon approval execution-origin currentness', () => {
     await expect(isCurrent({ origin: automationOrigin })).resolves.toBe(false);
   });
 
-  it('rechecks a Workflow approval principal through the live admission owner and fails closed without it', async () => {
+  it('replays an admitted Workflow principal without a second authority reader', async () => {
     const authorization = {
       admittedPermissionCeiling: 'safe-yolo' as const,
       principal: {
@@ -823,24 +823,12 @@ describe('daemon approval execution-origin currentness', () => {
       }),
       resolveTarget: async () => ({ kind: 'machine' as const, machineId: 'machine-1' }),
       isAccountCurrent: async () => true,
-      listAccountApiTokens: async () => ({ tokens: [] }),
+      listAccountApiTokens: async (): Promise<never> => { throw new Error('Admitted Workflow replay must not read the token inventory'); },
     };
 
-    // No admission owner means the principal cannot be rechecked at all.
+    // SEC-FOLLOWUP-1107 #6: the accepted Run owns admission; replay retains it.
     await expect(createDaemonApprovalExecutionOriginCurrentness(baseOwners)({ origin: workflowOrigin }))
-      .resolves.toBe(false);
-
-    const isWorkflowRunAuthorizationCurrent = vi.fn(async () => true);
-    const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
-      ...baseOwners,
-      isWorkflowRunAuthorizationCurrent,
-    });
-    await expect(isCurrent({ origin: workflowOrigin })).resolves.toBe(true);
-    // The exact accepted authorization the durable origin carries reaches the
-    // live owner unchanged; the Run identity is never used as the principal.
-    expect(isWorkflowRunAuthorizationCurrent).toHaveBeenCalledWith({ authorization });
-    isWorkflowRunAuthorizationCurrent.mockResolvedValueOnce(false);
-    await expect(isCurrent({ origin: workflowOrigin })).resolves.toBe(false);
+      .resolves.toBe(true);
   });
 
   it('rejects replay when current Session or Run permission no longer admits the captured effective mode', async () => {

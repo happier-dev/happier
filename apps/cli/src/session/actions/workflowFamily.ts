@@ -38,7 +38,8 @@ import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/e
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from './workflowMaterializationHost';
 import { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
-import { createCredentialedWorkflowRunEncryptionResolver } from '@/daemon/workflows/workflowActionAdmission';
+import { createCredentialedWorkflowRunEncryptionResolver, createWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
+import { createWorkflowActionContextResolver, readWorkflowActionPolicyContext } from '@/daemon/workflows/workflowActionContext';
 import type { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence, resolveWorkflowSessionConversation } from '@/daemon/workflows/invocationRecoveryObserver';
 import type { createWorkflowInvocationRecoveryFactWriter } from '@/daemon/workflows/recovery';
 import type { createWorkflowRunPushNotificationClient } from '@/daemon/workflows/production';
@@ -106,6 +107,7 @@ export type CliWorkflowFamily = Readonly<{
   workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null;
   resolveWorkflowMaterializer: ReturnType<typeof createCredentialedWorkflowMaterializationHostV1> | null;
   readWorkflowApprovedOperation: ReturnType<typeof createWorkflowApprovedOperationReader> | undefined;
+  readWorkflowActionStartContext: (context: ActionExecutorContext) => Promise<ActionExecutorContext['agentStartContext'] | null>;
   workflowAction: ActionExecutorDeps['workflowAction'] | null;
   workflowActionPort: NonNullable<ActionExecutorDeps['workflowAction']>;
   startCombinedWorkflow: (request: WorkflowCombinedRunStartV1) => Promise<unknown>;
@@ -318,6 +320,22 @@ export function createCliWorkflowFamily(
     resolveEncryption: createCredentialedWorkflowRunEncryptionResolver({ credentials: params.credentials,
       serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),
   }) : undefined;
+  const readWorkflowActionAdmission = params.credentials ? createWorkflowActionAdmissionReader({
+    storage: workflowRunStorage,
+    resolveEncryption: createCredentialedWorkflowRunEncryptionResolver({ credentials: params.credentials,
+      serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),
+  }) : null;
+  const resolveWorkflowActionContext = resolveWorkflowMaterializer
+    ? createWorkflowActionContextResolver(resolveWorkflowMaterializer) : null;
+  const readWorkflowActionStartContext: CliWorkflowFamily['readWorkflowActionStartContext'] = async context => {
+    if (!context.approvedActionReplay || context.actionCaller?.kind !== 'workflowRun'
+      || !readWorkflowActionAdmission || !resolveWorkflowActionContext) return null;
+    const admission = await readWorkflowActionAdmission({ runId: context.actionCaller.runId, context, phase: 'approval_replay' });
+    if (!admission) return null;
+    const policy = await readWorkflowActionPolicyContext({ admission, context, phase: 'approval_replay',
+      resolveContext: resolveWorkflowActionContext });
+    return policy?.agentStartContext ?? null;
+  };
   const resolveWorkflowRunEncryption = async (
     caller: Readonly<{ actionId: string; context: ActionExecutorContext }>,
     signal?: AbortSignal,
@@ -498,7 +516,7 @@ export function createCliWorkflowFamily(
           observeRecovery: async ({ run, progress, signal }) => {
             const { observeWorkflowInvocationRecoveryEvidence } = await import("@/daemon/workflows/invocationRecoveryObserver");
             return await observeWorkflowInvocationRecoveryEvidence({
-            credentials: params.credentials!, machineId: run.machineId, progress,
+            runId: run.id, credentials: params.credentials!, machineId: run.machineId, progress,
             getApproval: async artifactId => ({ artifactId,
               request: await approvalsStore?.approvalsGet({ artifactId, serverId: null }) }),
             getOperation: async (operation) => await callMachineAction({ serverId: operation.serverId,
@@ -661,6 +679,6 @@ export function createCliWorkflowFamily(
       }
     };
 
-  return { workflowTriggers, resolveWorkflowMaterializer, readWorkflowApprovedOperation, workflowAction, workflowActionPort,
+  return { workflowTriggers, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations };
 }

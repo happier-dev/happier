@@ -12,7 +12,7 @@ type ActionExecution = Extract<NonNullable<WorkflowProgressEnvelopeV1['execution
 /** The retained envelope identifies custody; only the approval owner can settle its effect. */
 export async function readWorkflowActionApprovalSettlement(params: Readonly<{
   /** Host settlement reads are limited to this admitted Run's exact recorded invocation. */
-  runId?: string;
+  runId: string;
   execution: ActionExecution;
   read: (artifactId: string) => Promise<unknown>;
 }>): Promise<WorkflowInvocationRecoveryObservation | null> {
@@ -31,13 +31,11 @@ export async function readWorkflowActionApprovalSettlement(params: Readonly<{
     if (!request.success) {
       return { kind: 'unresolved', code: 'approval_unavailable' };
     }
-    if (params.runId !== undefined) {
-      const origin = 'executionOriginV1' in request.data ? request.data.executionOriginV1 : undefined;
-      if (body?.artifactId !== envelope.data.artifactId || origin?.caller.kind !== 'workflowRun'
-        || origin.caller.runId !== params.runId || origin.requestId !== params.execution.actionRequestId
-        || origin.actionId !== envelope.data.actionId) {
-        return { kind: 'unresolved', code: 'approval_unavailable' };
-      }
+    const origin = 'executionOriginV1' in request.data ? request.data.executionOriginV1 : undefined;
+    if (body?.artifactId !== envelope.data.artifactId || origin?.caller.kind !== 'workflowRun'
+      || origin.caller.runId !== params.runId || origin.requestId !== params.execution.actionRequestId
+      || origin.actionId !== envelope.data.actionId) {
+      return { kind: 'unresolved', code: 'approval_unavailable' };
     }
     if (builtin) {
       const core = 'actionArgs' in request.data ? request.data : null;

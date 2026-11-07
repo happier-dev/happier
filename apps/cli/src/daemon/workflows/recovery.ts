@@ -4,7 +4,7 @@ import { classifyWorkflowReviewEntryV1, applyWorkflowInvocationFactV1, WorkflowR
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
-import { resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1, type WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import type { WorkflowRunEncryptionV1, JsonValue, WorkflowAcceptedSnapshotV1, WorkflowInvocationLifecycleV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowUsageV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
 
 import { getRandomBytes } from '@/api/encryption';
@@ -442,7 +442,7 @@ export type WorkflowDiscussionModelReservationReplay = Readonly<{
 
 export type WorkflowDiscussionModelReservationCustody = Readonly<{
   storage: Storage;
-  resolveAccountEncryption: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1>;
+  resolveAccountEncryption: (signal?: AbortSignal) => Promise<WorkflowRunReadEncryptionV1 | null>;
 }>;
 
 /** Editable approval metadata is only a pointer to the accepted Run's custody. */
@@ -475,7 +475,9 @@ export async function isWorkflowDiscussionModelReservationCurrent(params: Workfl
     operation: 'run-key.census', runId: caller.runId,
   }, options));
   if (census.runId !== caller.runId || census.ownerAccountId !== params.accountId) return false;
-  const resolved = resolveWorkflowRunDataKeyV1({ census, encryption: await params.resolveAccountEncryption(params.signal) });
+  const encryption = await params.resolveAccountEncryption(params.signal);
+  if (!encryption) return false;
+  const resolved = resolveWorkflowRunDataKeyV1({ census, encryption });
   if (resolved.kind !== 'available') return false;
   const reader = createWorkflowInvocationRecoveryFactWriter({ accountId: params.accountId, run: run.data,
     parentAttempt: 0, encryption: resolved.encryption, storage: params.storage, requireActiveCustody: true, ...options });

@@ -2066,7 +2066,6 @@ describe('production daemon Workflow bootstrap', () => {
         return { tokens: [] };
       },
       resolveCurrentPluginOccurrenceId: async () => null,
-      resolveCurrentPluginSourceCustody: async () => null,
       isMediatedSourceCurrent: async () => false,
     });
     const authorization = { admittedPermissionCeiling: 'default' as const,
@@ -2082,7 +2081,6 @@ describe('production daemon Workflow bootstrap', () => {
       accountId: 'account-1',
       listAccountApiTokens: async () => ({ tokens: [] }),
       resolveCurrentPluginOccurrenceId: async () => 'current-mediator',
-      resolveCurrentPluginSourceCustody: async () => null,
       isMediatedSourceCurrent: async () => false,
     });
     const principal = { kind: 'session' as const, sessionId: 'deleted-origin-session' };
@@ -2094,7 +2092,7 @@ describe('production daemon Workflow bootstrap', () => {
       .resolves.toBe(false);
   });
 
-  it('revalidates only revocable API and plugin principals at the canonical owners', async () => {
+  it('revalidates API and mediated-source admission while retaining trusted plugin attribution', async () => {
     const tokenId = '8f250f0e-4f31-4f7d-8f68-61638b73b526';
     const listAccountApiTokens = vi.fn(async (): Promise<AccountApiTokensListActionOutputV1> => ({
       tokens: [{
@@ -2119,13 +2117,11 @@ describe('production daemon Workflow bootstrap', () => {
       kind: 'development' as const,
       registeredRootId: 'happier-example-root',
     };
-    const resolveCurrentPluginSourceCustody = vi.fn(async () => pluginSourceCustody);
     const isMediatedSourceCurrent = vi.fn(async (): Promise<boolean> => true);
     const isCurrent = createWorkflowAcceptedAuthorizationCurrentness({
       accountId: 'account-1',
       listAccountApiTokens,
       resolveCurrentPluginOccurrenceId,
-      resolveCurrentPluginSourceCustody,
       isMediatedSourceCurrent,
       now: () => Date.parse('2026-01-02T00:00:00.000Z'),
     });
@@ -2152,7 +2148,6 @@ describe('production daemon Workflow bootstrap', () => {
       accountId: 'account-1',
       listAccountApiTokens,
       resolveCurrentPluginOccurrenceId,
-      resolveCurrentPluginSourceCustody,
       isMediatedSourceCurrent,
       now: () => Date.parse('2026-01-04T00:00:00.000Z'),
     });
@@ -2174,7 +2169,7 @@ describe('production daemon Workflow bootstrap', () => {
         principal: { kind: 'plugin', pluginId: 'happier.example',
           sourceCustody: { ...pluginSourceCustody, registeredRootId: 'retired-example-root' } },
       },
-    })).resolves.toBe(false);
+    })).resolves.toBe(true);
     await expect(isCurrent({
       authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
     })).resolves.toBe(true);
@@ -2218,7 +2213,6 @@ describe('production daemon Workflow bootstrap', () => {
     })).resolves.toBe(false);
     expect(listAccountApiTokens).toHaveBeenCalledTimes(2);
     expect(resolveCurrentPluginOccurrenceId).toHaveBeenCalledTimes(3);
-    expect(resolveCurrentPluginSourceCustody).toHaveBeenCalledTimes(2);
     expect(isMediatedSourceCurrent).toHaveBeenCalledTimes(2);
   });
 

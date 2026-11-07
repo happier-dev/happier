@@ -33,8 +33,11 @@ import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions
 import type { ResolveExternalActionTarget } from './executeExternalAction';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
 import { timeApprovalPhase, withApprovalActionTrace } from './webLatencyTrace';
-import { createCredentialedWorkflowActionAdmissionReader,
+import { createCredentialedWorkflowActionAdmissionReader, createCredentialedWorkflowRunEncryptionResolver,
   type createWorkflowActionAdmissionReader } from '../workflows/workflowActionAdmission';
+import { isWorkflowDiscussionModelReservationCurrent,
+  type WorkflowDiscussionModelReservationCustody } from '../workflows/recovery';
+import { createWorkflowRunStorageClient } from '../workflows/workflowRunStorageClient';
 import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
@@ -124,21 +127,8 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
     caller: Extract<ApprovalExecutionOriginV1['caller'], Readonly<{ kind: 'session' }>>;
     signal?: AbortSignal;
   }>) => Promise<boolean> | boolean;
-  /**
-   * The live Workflow admission owner's own accepted-authorization currentness
-   * check, reused verbatim for replay. Its parameter shape is the daemon
-   * Workflow runtime's `WorkflowAcceptedAuthorizationCurrentness`, so the same
-   * function answers both the live and the replayed question rather than a
-   * second principal recheck growing beside it.
-   */
-  isWorkflowRunAuthorizationCurrent?: (input: Readonly<{
-    authorization: Extract<
-      ApprovalExecutionOriginV1['caller'],
-      Readonly<{ kind: 'workflowRun' }>
-    >['authorization'];
-    reservation?: import('../workflows/recovery').WorkflowDiscussionModelReservationReplay;
-    signal?: AbortSignal;
-  }>) => Promise<boolean> | boolean;
+  /** Binds editable invitation consent to the exact accepted Run and input. */
+  workflowDiscussionModelReservationCustody?: WorkflowDiscussionModelReservationCustody;
   resolveCurrentPermissionMode?: (
     origin: ApprovalExecutionOriginV1,
     signal?: AbortSignal,
@@ -346,22 +336,20 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           ...(signal ? { signal } : {}) })) return stale('session_changed');
       }
 
-      // A Workflow Run's durable origin carries the exact accepted
-      // authorization its live admission already opened, so replay rechecks the
-      // same principal through the same owner. Without that owner the principal
-      // cannot be rechecked at all, which fails closed exactly like the
-      // Automation arm beside it.
-      if (origin.caller.kind === 'workflowRun') {
-        if (!input.isWorkflowRunAuthorizationCurrent) return stale('workflow_authorization_unavailable');
-        if (!await input.isWorkflowRunAuthorizationCurrent({
-          authorization: origin.caller.authorization,
-          ...(origin.caller.discussionModelReservation ? { reservation: { origin, input: operands } } : {}),
+      // A model invitation's editable pointer still binds to its original Run;
+      // the Run's admitted principal is not re-authorized during replay.
+      if (origin.caller.kind === 'workflowRun' && origin.caller.discussionModelReservation) {
+        if (!input.workflowDiscussionModelReservationCustody) return stale('workflow_authorization_unavailable');
+        if (!await isWorkflowDiscussionModelReservationCurrent({
+          ...input.workflowDiscussionModelReservationCustody,
+          accountId: input.accountId,
+          reservation: { origin, input: operands },
           ...(signal ? { signal } : {}),
         })) return stale('workflow_authorization_changed');
       }
 
       if (origin.callerPermissionMode !== undefined || origin.causalPermissionAuthority !== undefined) {
-        // Local Workflow callers retain their already rechecked accepted authorization.
+        // Local Workflow callers retain their accepted authorization ceiling.
         const currentPermissionMode = origin.caller.kind === 'workflowRun'
           ? origin.caller.authorization.admittedPermissionCeiling
           : input.resolveCurrentPermissionMode ? await input.resolveCurrentPermissionMode(origin, signal) : null;
@@ -451,7 +439,6 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
   currentMachineHomeDir?: string | null;
   isAutomationRunCurrent?: Parameters<typeof createDaemonApprovalExecutionOriginCurrentness>[0]['isAutomationRunCurrent'];
   isSessionCallerCurrent?: Parameters<typeof createDaemonApprovalExecutionOriginCurrentness>[0]['isSessionCallerCurrent'];
-  isWorkflowRunAuthorizationCurrent?: Parameters<typeof createDaemonApprovalExecutionOriginCurrentness>[0]['isWorkflowRunAuthorizationCurrent'];
   resolveCurrentPermissionMode?: Parameters<typeof createDaemonApprovalExecutionOriginCurrentness>[0]['resolveCurrentPermissionMode'];
   resolveCurrentSessionAgentSpawnPolicyV1?: Parameters<typeof createDaemonApprovalExecutionOriginCurrentness>[0]['resolveCurrentSessionAgentSpawnPolicyV1'];
   resolveServerFeaturesSnapshot?: () =>
@@ -532,9 +519,12 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
       : {}),
     ...(input.isAutomationRunCurrent ? { isAutomationRunCurrent: input.isAutomationRunCurrent } : {}),
     ...(input.isSessionCallerCurrent ? { isSessionCallerCurrent: input.isSessionCallerCurrent } : {}),
-    ...(input.isWorkflowRunAuthorizationCurrent
-      ? { isWorkflowRunAuthorizationCurrent: input.isWorkflowRunAuthorizationCurrent }
-      : {}),
+    workflowDiscussionModelReservationCustody: {
+      storage: createWorkflowRunStorageClient({ token: input.credentials.token, serverHttpBaseUrl: input.serverApiUrl }),
+      resolveAccountEncryption: signal => createCredentialedWorkflowRunEncryptionResolver({
+        credentials: input.credentials, serverHttpBaseUrl: input.serverApiUrl,
+      })({ ...(signal ? { signal } : {}) }),
+    },
     readWorkflowActionAdmission: request => createCredentialedWorkflowActionAdmissionReader({
       credentials: input.credentials, serverHttpBaseUrl: input.serverApiUrl })(request),
     resolveCurrentPermissionMode: input.resolveCurrentPermissionMode ?? (async (origin, signal) => {

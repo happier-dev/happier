@@ -135,7 +135,7 @@ describe('accepted Workflow Action approval replay', () => {
         displayPrefix: 'hap_v1_test', expiresAt: '2000-01-01T00:00:00.000Z', createdAt: '1999-01-01T00:00:00.000Z',
         lastUsedAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
         parentTokenId: null, activeChildCount: 0, embedConfig: null, grant: API_TOKEN_FULL_GRANT_V1 }] }),
-      resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
+      resolveCurrentPluginOccurrenceId: async () => null,
       isMediatedSourceCurrent: async () => false });
     const admission = await h.readAdmission({ runId: h.runId, context: h.context });
     if (!admission) throw new Error('Expected admitted deployment leaf');

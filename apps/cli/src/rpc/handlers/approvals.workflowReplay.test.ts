@@ -14,6 +14,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { configuration, reloadConfiguration } from '@/configuration';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
@@ -35,7 +36,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
 import { registerApprovalRpcHandlers } from './approvals';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
+import { buildWorkflowActionContext, createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
 
 const HOME_URL = 'https://workflow-replay-home.example.test';
 const ACCOUNT_ID = 'account-workflow-replay';
@@ -68,6 +69,7 @@ const authorization: WorkflowAcceptedAuthorizationV1 = {
 
 const rows = new Map<string, Record<string, unknown>>();
 let currentTokens: unknown[] = [];
+let tokenInventoryReads = 0;
 const poolDeletes: unknown[] = [];
 
 function tokenSummary(tokenId: string): AccountApiTokenSummaryV1 {
@@ -139,6 +141,7 @@ function installAccountServer(): void {
   vi.spyOn(axios, 'request').mockImplementation(async (config) => {
     const { url, data } = config as { url?: string; data?: unknown };
     if (url === `${HOME_URL}${ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1}`) {
+      tokenInventoryReads++;
       return { status: 200, data: { tokens: currentTokens } };
     }
     if (url === `${HOME_URL}/v1/machines/pools/delete`) {
@@ -179,6 +182,7 @@ beforeEach(async () => {
   rows.clear();
   poolDeletes.length = 0;
   currentTokens = [tokenSummary(WORKFLOW_CREDENTIAL_ID)];
+  tokenInventoryReads = 0;
   resetInMemoryAccountSettingsContextForTests();
   resetServerFeaturesClientForTests();
   files.readStoredCredentials.mockResolvedValue(credentials);
@@ -241,14 +245,23 @@ async function createOpenWorkflowApproval(
     machineId: MACHINE_ID,
     workflowAcceptedAuthorizationCurrentness,
   });
+  const workflowContext = buildWorkflowActionContext({
+    runId: 'workflow-run-1',
+    authorization,
+    origin: {
+      kind: 'direct',
+      originSessionId: 'workflow-origin-session',
+      authenticatedStarterV1: {
+        requestRef: 'workflow-person-request',
+        requester: { serverId: 'srv_workflow_replay', accountId: ACCOUNT_ID },
+      },
+    },
+  });
   const admitted = await workflowExecutor.execute(
     'machines.pools.delete',
     { poolId: POOL_ID, expectedRevision: 3 },
     {
-      surface: 'agent',
-      authority: 'account_automation',
-      actionCaller: { kind: 'workflowRun', runId: 'workflow-run-1', authorization },
-      callerPermissionMode: authorization.admittedPermissionCeiling,
+      ...workflowContext,
       // Every Workflow step stamps its own exact request identity
       // (`executionRunStepExecutor.ts`), which the durable origin requires.
       actionRequestId: 'workflow-run-1:step-1',
@@ -263,7 +276,11 @@ async function createOpenWorkflowApproval(
   expect(open).toMatchObject({
     v: 2,
     status: 'open',
-    executionOriginV1: { caller: { kind: 'workflowRun', authorization } },
+    executionOriginV1: {
+      caller: { kind: 'workflowRun', authorization },
+      authority: 'account_automation',
+      actionRequestAttributionV1: workflowContext.actionRequestAttributionV1,
+    },
   });
   return { artifactId, open };
 }
@@ -287,6 +304,61 @@ function registerProductionApprovalHandlers() {
 }
 
 describe('machine RPC replay of a deferred Workflow-origin approval', () => {
+  it.each([RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, RPC_METHODS.APPROVAL_REQUEST_DECIDE])(
+    'refuses %s when the receiving daemon has no credentials for the authenticated original Account', async method => {
+      const artifactId = await createApprovedWorkflowApproval(daemonWorkflowCurrentness());
+      files.readStoredCredentials.mockResolvedValue({ ...credentials, token: syntheticAccountToken('other-account') });
+      const handlers = new Map<string, (input: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+      registerApprovalRpcHandlers({ rpcHandlerManager: { registerHandler: (name, handler) => { handlers.set(name, handler); } } });
+      const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId: ACCOUNT_ID, custodianAccountId: ACCOUNT_ID, machineId: MACHINE_ID,
+          installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => true };
+      const result = await handlers.get(method)!({ artifactId, decision: 'approve' }, context);
+      expect(result).toMatchObject({ ok: false, errorCode: 'account_mismatch',
+        error: expect.stringContaining('original Account') });
+      expect(poolDeletes).toEqual([]);
+    });
+
+  it.each(['other_account', 'unavailable'] as const)('keeps approved replay with its recorded Account when the profile is %s', async profile => {
+    const workflowAcceptedAuthorizationCurrentness = daemonWorkflowCurrentness();
+    const artifactId = await createApprovedWorkflowApproval(workflowAcceptedAuthorizationCurrentness);
+    const executor = createCliActionExecutorFromCredentials({ credentials, machineId: MACHINE_ID,
+      workflowAcceptedAuthorizationCurrentness, readCredentials: files.readStoredCredentials });
+    const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
+    registerApprovalRpcHandlers({ actionExecutor: executor,
+      rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+    const other = { ...credentials, token: syntheticAccountToken('other-account') };
+    files.readStoredCredentials.mockResolvedValue(profile === 'unavailable' ? null : other);
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    const foreignApprovalReads: string[] = [];
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      if (String(url).startsWith(`${HOME_URL}/v1/artifacts/`) && config?.headers?.Authorization === `Bearer ${other.token}`) {
+        foreignApprovalReads.push(String(url));
+        return { status: 404, data: { error: 'not_found' } };
+      }
+      return get(url, config);
+    });
+    const request = vi.mocked(axios.request).getMockImplementation()!;
+    vi.mocked(axios.request).mockImplementation(async config => {
+      if (config.headers?.Authorization === `Bearer ${other.token}`) {
+        foreignApprovalReads.push(String(config.url));
+        return { status: 403, data: { error: 'account_mismatch' } };
+      }
+      return request(config);
+    });
+    const result = await handlers.get(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED)!({ artifactId });
+    if (profile === 'unavailable') {
+      expect(result).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'account_mismatch',
+        error: expect.stringContaining('original Account') });
+      expect(poolDeletes).toEqual([]);
+    } else {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(poolDeletes).toEqual([{ poolId: POOL_ID, expectedRevision: 3 }]);
+    }
+    expect(foreignApprovalReads).toEqual([]);
+  });
+
   it('performs the approved effect exactly once while the accepted authorization is current', async () => {
     const workflowAcceptedAuthorizationCurrentness = daemonWorkflowCurrentness();
     const artifactId = await createApprovedWorkflowApproval(workflowAcceptedAuthorizationCurrentness);
@@ -310,7 +382,7 @@ describe('machine RPC replay of a deferred Workflow-origin approval', () => {
     });
   });
 
-  it('refuses the effect once the accepted authorization credential is revoked before replay', async () => {
+  it('finishes approved admitted work after credential revocation without rereading the token inventory', async () => {
     const workflowAcceptedAuthorizationCurrentness = daemonWorkflowCurrentness();
     const artifactId = await createApprovedWorkflowApproval(workflowAcceptedAuthorizationCurrentness);
     const replay = registerProductionApprovalHandlers();
@@ -318,16 +390,18 @@ describe('machine RPC replay of a deferred Workflow-origin approval', () => {
     // Revoking the Workflow's API credential leaves the daemon Account itself
     // authenticated; only the Run's accepted authorization is no longer current.
     currentTokens = [];
+    tokenInventoryReads = 0;
 
     await expect(replay({ artifactId })).resolves.toMatchObject({
       ok: true,
-      result: { status: 'failed' },
+      result: { status: 'executed' },
     });
-    expect(poolDeletes).toHaveLength(0);
+    expect(poolDeletes).toEqual([{ poolId: POOL_ID, expectedRevision: 3 }]);
+    expect(tokenInventoryReads).toBe(0);
     const store = createCliApprovalsArtifactStore({ credentials });
     await expect(store.approvalsGet({ artifactId, serverId: null })).resolves.toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
+      status: 'executed',
+      execution: { ok: true },
     });
   });
 

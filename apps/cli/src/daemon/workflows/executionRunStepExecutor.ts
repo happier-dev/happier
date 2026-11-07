@@ -617,7 +617,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
           : ExecutionRunResumeHandleProviderSessionV1Schema.safeParse(existing.input.providerResumeIdentity);
         if (providerResumeIdentity && !providerResumeIdentity.success) return { kind: 'needs_attention', code: 'continuation_unavailable' };
         const context = await actionContextFor(deps, params, { localInputId: existing.localInputId, runtimeSelection: retained.data });
-        const settlement = await readWorkflowActionApprovalSettlement({ execution: existing,
+        const settlement = await readWorkflowActionApprovalSettlement({ runId: params.runId, execution: existing,
           read: async artifactId => {
             const observed = await deps.actionExecutor.execute('approval.request.get', { artifactId }, context);
             return observed.ok ? observed.result : null;

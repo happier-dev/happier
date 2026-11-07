@@ -372,7 +372,7 @@ describe('production workflow coordinator', () => {
           hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
           parentTokenId: null, activeChildCount: 0, embedConfig: null }] };
       },
-      resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
+      resolveCurrentPluginOccurrenceId: async () => null,
       isMediatedSourceCurrent: async () => false,
     });
     const inputs: string[] = [];

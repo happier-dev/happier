@@ -1136,7 +1136,7 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
         getOperation: NonNullable<Parameters<typeof observeWorkflowInvocationRecoveryEvidence>[0]['getOperation']>
           = target => recoveryOperations.handlers.getV2({ operationId: target.operationId }),
       ) => observeWorkflowInvocationRecoveryEvidence({
-        credentials: { token: 'token', encryption: null }, machineId, progress: currentProgress,
+        runId, credentials: { token: 'token', encryption: null }, machineId, progress: currentProgress,
         getOperation,
         getRun: async () => { throw new Error('startup_has_no_execution_run'); },
       });

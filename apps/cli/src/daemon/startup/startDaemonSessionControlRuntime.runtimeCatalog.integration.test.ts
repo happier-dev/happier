@@ -3675,11 +3675,9 @@ describe('startDaemonSessionControlRuntime', () => {
             );
 
             // The explicit replay checker this composition hands the executor
-            // wins over the executor's own fallback, so it must carry the same
-            // Workflow accepted-authorization owner: a deferred Workflow-origin
-            // approval (exactly as the Workflow coordinator's context stamps it,
-            // with its admitted ceiling as caller permission) replays only while
-            // that owner says the Run's accepted authorization is current.
+            // wins over the executor's own fallback. A deferred Workflow-origin
+            // approval retains the Run's accepted ceiling without consulting
+            // the authority reader used for new Action admissions.
             const composedApprovalCurrentness = createCliActionExecutorFromCredentialsMock.mock.calls
                 .at(-1)?.[0]?.isApprovalExecutionOriginCurrent;
             if (!composedApprovalCurrentness) throw new Error('Expected composed approval currentness');
@@ -3709,11 +3707,9 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             onTestFinished(() => tokenListRequest.mockRestore());
             await expect(composedApprovalCurrentness({ origin: workflowOrigin })).resolves.toBe(true);
-            expect(workflowAcceptedAuthorizationCurrentness).toHaveBeenCalledWith(
-                expect.objectContaining({ authorization: workflowAuthorization }),
-            );
+            expect(workflowAcceptedAuthorizationCurrentness).not.toHaveBeenCalled();
             workflowAcceptedAuthorizationCurrentness.mockResolvedValueOnce(false);
-            await expect(composedApprovalCurrentness({ origin: workflowOrigin })).resolves.toBe(false);
+            await expect(composedApprovalCurrentness({ origin: workflowOrigin })).resolves.toBe(true);
 
             const capturePortableTargetExecutor = vi.fn(async () => ({
                 ok: true as const,

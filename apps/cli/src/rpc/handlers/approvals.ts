@@ -1,11 +1,9 @@
 import { readStoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { configuration } from '@/configuration';
-import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
+import type { ExternalActionApprovalReplay } from './externalAction';
 import { APPROVAL_RPC_SCOPES } from './actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -15,16 +13,13 @@ import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/pr
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { canUseCustodianAccountForMachineRequest } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { selectApprovalReplayCredentials } from '@/session/actions/approvals/replayCredentials';
 
 type ApprovalActionId = typeof ACTION_ID_FAMILIES_V1.approvals[number];
 
 type ApprovalRpcActionExecutor = RpcActionExecutor<ApprovalActionId> & Readonly<{
   continueConfidentialApprovalRequest?: (input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
-  replayApprovedApprovalRequest?: (args: Readonly<{
-    artifactId: string;
-    signal?: AbortSignal;
-    callerAuthority?: RpcHandlerContext['callerAuthority'];
-  }>) => Promise<unknown>;
+  replayApprovedApprovalRequest?: ExternalActionApprovalReplay;
 }>;
 
 type RpcRegistrar = Readonly<{
@@ -34,9 +29,9 @@ type RpcRegistrar = Readonly<{
   ): void;
 }>;
 
-async function resolveProductionActionExecutor(): Promise<ApprovalRpcActionExecutor> {
+async function resolveProductionActionExecutor(expectedAccountId?: string): Promise<ApprovalRpcActionExecutor> {
   const credentials = await readStoredCredentials().catch(() => null);
-  if (!credentials) {
+  if (!credentials && !expectedAccountId) {
     return {
       execute: async () => ({
         ok: false,
@@ -45,24 +40,15 @@ async function resolveProductionActionExecutor(): Promise<ApprovalRpcActionExecu
       }),
     };
   }
-  // The Workflow accepted-authorization owner, composed for these credentials
-  // exactly as the daemon composes it (`startDaemon`). The credential-backed
-  // executor builds the canonical daemon replay currentness checker itself
-  // (this daemon's Machine from settings, the active Home) and hands this owner
-  // to it, so a replayed Workflow origin is rechecked like its live admission
-  // instead of failing closed for want of the owner.
-  const accountId = readAccountIdFromToken(credentials.token);
+  const selection = selectApprovalReplayCredentials(credentials, credentials, expectedAccountId);
+  if (!selection.ok) return {
+    execute: async () => selection,
+    replayApprovedApprovalRequest: async () => selection,
+    continueConfidentialApprovalRequest: async () => selection,
+  };
+  const replayCredentials = selection.credentials;
   return createCliActionExecutorFromCredentials({
-    credentials,
-    ...(accountId
-      ? {
-          workflowAcceptedAuthorizationCurrentness: createProductionDaemonWorkflowRuntime({
-            credentials,
-            accountId,
-            serverId: configuration.activeServerId,
-          }).isAcceptedAuthorizationCurrent,
-        }
-      : {}),
+    credentials: replayCredentials,
   });
 }
 
@@ -77,12 +63,12 @@ export function registerApprovalRpcHandlers(params: Readonly<{
     // custodian to the current Home/installation; only its own admitted caller
     // may borrow the daemon's fallback reader. Prepared requester custody wins.
     if (!await canUseCustodianAccountForMachineRequest(context)) return null;
-    return params.actionExecutor ?? await resolveProductionActionExecutor();
+    return params.actionExecutor ?? await resolveProductionActionExecutor(context?.machineAdmission?.actorAccountId);
   };
   registerActionSpecRpcHandlers<ApprovalActionId>({
     rpcHandlerManager: params.rpcHandlerManager,
     actionExecutor: params.actionExecutor,
-    resolveActionExecutor: resolveProductionActionExecutor,
+    resolveActionExecutor: request => resolveProductionActionExecutor(request.ingress?.machineAdmission?.actorAccountId),
     actionIds: ACTION_ID_FAMILIES_V1.approvals,
     scopes: APPROVAL_RPC_SCOPES,
   });
@@ -95,21 +81,27 @@ export function registerApprovalRpcHandlers(params: Readonly<{
         ? (input as { artifactId: string }).artifactId.trim()
         : '';
       if (!artifactId) {
-        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        return { ok: false, effectAttempted: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
       // The admitted requester executor is produced by this same daemon's
       // ingress owner. It supplies Account custody; replay still loads and
       // validates the Artifact's immutable original execution origin.
-      const executor = await resolveAccountExecutor(context);
-      if (!executor) return { ok: false, errorCode: 'requester_account_material_unavailable', error: 'requester_account_material_unavailable' };
+      let executor: ApprovalRpcActionExecutor | null;
+      try {
+        executor = await resolveAccountExecutor(context);
+      } catch {
+        return { ...projectUnexpectedActionFailureV1(false), effectAttempted: false };
+      }
+      if (!executor) return { ok: false, effectAttempted: false, errorCode: 'requester_account_material_unavailable', error: 'requester_account_material_unavailable' };
       if (!executor.replayApprovedApprovalRequest) {
-        return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+        return { ok: false, effectAttempted: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
       }
       return await executor.replayApprovedApprovalRequest({
         artifactId,
         ...(context?.signal ? { signal: context.signal } : {}),
         ...(context?.callerAuthority ? { callerAuthority: context.callerAuthority } : {}),
-      });
+      }, context ? { signal: context.signal, machineAdmission: context.machineAdmission,
+        verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : undefined);
     },
   );
   params.rpcHandlerManager.registerHandler(RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE, async (input, context) => {

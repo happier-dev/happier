@@ -30,7 +30,6 @@ import type { StoredCredentials } from '@/persistence';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore, createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
 import { createWorkflowCoordinator, workflowInvocationKey } from '@/daemon/workflows/coordinator';
-import { createCredentialedWorkflowAcceptedAuthorizationCurrentness } from '@/daemon/workflows/daemonRuntime';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
@@ -431,9 +430,8 @@ async function runPublicationCase(mode: typeof publicationModes[number] | 'start
     definitions: { get: async () => { throw new Error('No mutable definition read'); } },
     resolveEncryption: async () => accountEncryption,
     normalizeAbsolutePath: path => path, randomBytes: () => { throw new Error('No plaintext keys'); } });
-  const acceptedCurrent = createCredentialedWorkflowAcceptedAuthorizationCurrentness({ credentials, accountId, serverId, serverHttpBaseUrl: serverUrl });
   const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId, serverId,
-    serverApiUrl: serverUrl, isWorkflowRunAuthorizationCurrent: acceptedCurrent });
+    serverApiUrl: serverUrl });
   if (!currentness) throw new Error('Missing bound approval currentness');
   const store = createCliApprovalsArtifactStore({ credentials, serverId, serverHttpBaseUrl: serverUrl });
   const sent: DiscussionWorkflowPostPublicationV1[] = [];

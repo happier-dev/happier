@@ -2,7 +2,6 @@ import type { Server, Socket } from 'socket.io';
 import { ManagedInstallationCapabilityRequestV1Schema, readManagedInstallationPurposeV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { auth } from '@/app/auth/auth';
 import { admitManagedInstallationPurpose } from '@/app/machines/managed/managedInstallation';
 import { ManagedMachineError } from '@/app/machines/managed/managedRows';
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '../machineSocketInstallationProof';
@@ -21,10 +20,9 @@ export async function forwardManagedInstallationResponse(input: Readonly<{
     const parsed = ManagedInstallationCapabilityRequestV1Schema.safeParse(params);
     if (!parsed.success || input.inboundAuthorization !== undefined
         || input.method !== `${parsed.data.params.controller.machineId}:${RPC_METHODS.CAPABILITIES_INVOKE}`) return refused;
-    const token = input.socket.handshake?.auth?.token;
-    const credential = typeof token === 'string' ? await auth.verifyTokenForRoute(token) : null;
-    if (!credential || credential.userId !== input.actorAccountId || credential.authTokenKind !== 'account'
-        || credential.authority !== 'present_user') return refused;
+    const credential = input.socket.data;
+    if (credential?.userId !== input.actorAccountId || credential.authTokenKind !== 'account'
+        || credential.authAuthority !== 'present_user') return refused;
     try {
         const authorization = await admitManagedInstallationPurpose({ actorAccountId: input.actorAccountId,
             purpose: readManagedInstallationPurposeV1(parsed.data.params) });

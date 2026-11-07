@@ -1,5 +1,5 @@
-import { createWorkflowRunRecoveryReader } from '@/daemon/workflows/recovery';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createServer } from 'node:http';
 import axios from 'axios';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,13 +8,18 @@ import { ApiClient } from '@/api/api';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import * as machineTransport from '@/session/transport/rpc/machineRpc';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
-import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { reloadConfiguration } from '@/configuration';
-import { updateSettings } from '@/persistence';
+import { updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { resolveExternalActionRootInvocationAuthority, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import {
   ExternalActionExecutionAuthorizationRequestV1Schema,
@@ -62,6 +67,28 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import { DaemonVoiceInferenceStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { createWorkflowAccountRunActionOwner, materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+  sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
+  serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol';
+import { DiscussionMachinePublicationV2Schema, DISCUSSION_AGENT_POST_EVENT_V1 } from '@happier-dev/protocol/discussions/api';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '../workflows/workflowRunStorage.testkit';
+import { createWorkflowRunRecoveryReader } from '../workflows/recovery';
+import { createWorkflowDiscussionResultPublisher } from '../workflows/workflowDiscussionPublication';
+import { createDiscussionReplyReturnPublisher } from '@/discussions/discussionReplyReturnPublisher';
+import { createApprovedDiscussionAgentPublisher } from '@/discussions/approvedDiscussionAgentPublisher';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '../externalActions/daemonExternalActionTargetResolver';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { WorkflowInvocationGetRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 const automationWorkerMocks = vi.hoisted(() => ({
   startAutomationWorker: vi.fn(),
@@ -149,7 +176,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       serverId: 'home', machineId: 'attachment-worker', accountId: 'attachment-account', credentials,
       serverHttpBaseUrl: 'https://attachment-home.invalid', workerAdmission: admission,
       nativeIo: { resolveTool: async () => null }, resolveWorkspaceExecutionConfig: async () => null,
-      environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+      environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
     }) });
     const events: string[] = [];
     let settleProcess!: () => void;
@@ -217,10 +244,10 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       vi.restoreAllMocks();
     }
   });
-  it('reads the personal SOURCE manifest through portable Home admission and refuses lost binding or credential custody', async () => {
+  it('reads the personal SOURCE manifest through portable Home admission and refuses lost binding or cancellation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'finite-source-inspection-'));
     const home = await mkdtemp(join(tmpdir(), 'finite-source-home-'));
-    const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+    const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
     const serverId = 'source-local-profile';
     const homeId = 'srv_sourceHome';
     const serverHttpBaseUrl = 'https://source-home.invalid';
@@ -229,27 +256,31 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
     const source = { id: 'source-ref', serverId: homeId, machineId: 'source-machine', rootPath: root, projectKey: 'project', createdAtMs: 1 };
-    let current = true;
     let custodian: string | undefined = accountId;
-    let retireDuringMachineRead = false;
-    let retireDuringReply = false;
     let malformedReply = false;
     let issued = 0;
-    const machinePublication = () => ExternalActionMachineBootstrapV1Schema.parse({
-      id: source.machineId, kind: 'persistent', active: true, installationId: 'source-installation',
-      revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-      ...(custodian === undefined ? {} : { access: {
-        custodian: { accountId: custodian, displayName: 'Source owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
-      } }),
-    });
+    let sourcePublicationReads = 0;
+    const inspectionInputs: unknown[] = [];
+    let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>> | undefined;
     try {
-      scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId });
+      scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_SERVER_URL: serverHttpBaseUrl });
       reloadConfiguration();
       const profile = { id: serverId, name: 'Source', serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl,
         createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
         homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
           canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] }) };
       await updateSettings(settings => ({ ...settings, activeServerId: serverId, servers: { [serverId]: profile } }));
+      await writeStoredCredentialsForServerId(serverId, credentials);
+      reloadConfiguration();
+      currentnessChannel = await createRequesterCurrentnessSocketHarness();
+      const installation = await readOrCreateInstallationIdentity();
+      const machinePublication = () => ({ ...ExternalActionMachineBootstrapV1Schema.parse({
+        id: source.machineId, kind: 'persistent', active: true, installationId: installation.installationId,
+        revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+        ...(custodian === undefined ? {} : { access: {
+          custodian: { accountId: custodian, displayName: 'Source owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+        } }),
+      }), installationPublicKey: Buffer.from(installation.publicKey, 'base64url').toString('base64') });
       await mkdir(join(root, '.happier'));
       await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
         scripts: { check: { source: { kind: 'command', command: 'must-not-run' }, execution: 'portable',
@@ -262,29 +293,39 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         if (url.endsWith('/v2/account/settings')) {
           return { status: 200, data: { content: { t: 'plain', v: {} }, version: 0 } };
         }
+        if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+          mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+        } };
         if (url.endsWith('/v1/machines')) return { status: 200, data: [machinePublication()] };
         if (url.endsWith(`/v1/machines/${source.machineId}`)) {
-          if (retireDuringMachineRead) current = false;
+          sourcePublicationReads++;
           return { status: 200, data: { machine: {
             ...machinePublication(), storageMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
           } } };
         }
         return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
       });
-      const handlers = new Map<string, (input: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+      const sourceRpc = new RpcHandlerManager({ scopePrefix: source.machineId, localMachineId: source.machineId, encryptionMode: 'plain' });
+      const projectDefinitionAction = createProjectDefinitionAction({ serverId, machineId: source.machineId, workingDirectory: root,
+        accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+      const sourceParams = { token, credentials, sessionId: '', mode: 'plain' as const, ctx: null,
+        serverId, serverIdentityId: homeId, serverHttpBaseUrl, projectDefinitionAction,
+        externalActionMachineInstallationId: installation.installationId, externalActionMachineRequestPrivateKey: installation.privateKey,
+        machineActionDirectTargetTransport: { machineId: source.machineId,
+          invoke: (method: string, input: unknown, options: Parameters<RpcHandlerManager['invokeLocal']>[2]) => sourceRpc.invokeLocal(method, input, options) } };
+      const sourceExecutor = createActionExecutor(createCliActionDeps(sourceParams));
       registerProjectDefinitionHandlers({ machineId: source.machineId,
-        rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
-        actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(), projectDefinitionAction: createProjectDefinitionAction({
-          serverId, machineId: source.machineId, workingDirectory: root,
-          accessPolicy: { kind: 'restrictedRoots', roots: [root] },
-        }) }),
+        rpcHandlerManager: sourceRpc, actionExecutor: sourceExecutor,
       });
       vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
         expect(resolveServerHttpBaseUrl()).toBe(serverHttpBaseUrl);
+        if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
         expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
         expect(request.machineId).toBe(source.machineId);
+        inspectionInputs.push(envelope.input);
         expect(envelope).toMatchObject({ target: { kind: 'machine', machineId: source.machineId },
           input: { workspace: { serverId: expect.stringMatching(new RegExp(`^(${homeId}|${serverId})$`)),
             workspaceId: source.id, machineId: source.machineId, rootPath: root } } });
@@ -292,7 +333,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
           return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
             token: 'source-home-authorization', binding: { accountId, custodianAccountId: accountId,
               authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
-              serverIdentityId: homeId, machineId: source.machineId, installationId: 'source-installation',
+              serverIdentityId: homeId, machineId: source.machineId, installationId: installation.installationId,
               actionId: 'projects.inspect', requestId: envelope.requestId, target: envelope.target,
               requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             } }) };
@@ -300,29 +341,48 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         expect(url).toBe(`${serverHttpBaseUrl}/v1/actions/projects.inspect`);
         expect(options?.headers?.[AUTHORITY_CEILING_HEADER_V1]).toBe('account_automation');
         expect(request.executionAuthorization?.binding).toMatchObject({ serverIdentityId: homeId,
-          accountId, machineId: source.machineId, installationId: 'source-installation' });
+          accountId, machineId: source.machineId, installationId: installation.installationId });
         issued++;
-        const handler = handlers.get('daemon.projects.inspect.v1');
-        if (!handler) throw new Error('Wrong source Action transport');
-        const result = await handler(envelope.input, { signal });
-        if (retireDuringReply) current = false;
-        return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect',
-          requestId: envelope.requestId, execution: { ok: true,
-            result: malformedReply ? { definition: result, detection: {}, extraAuthority: true } : result,
-          } }) };
+        const authorization = request.executionAuthorization;
+        if (!authorization || !('authentication' in authorization.binding)) throw new Error('Missing SOURCE Account admission');
+        const result = await executeExternalAction({ actionId: 'projects.inspect', envelope,
+          principal: { accountId, authority: resolveExternalActionRootInvocationAuthority(authorization), authentication: authorization.binding.authentication },
+          currentMachineId: source.machineId, currentServerId: serverId, currentServerHttpBaseUrl: serverHttpBaseUrl,
+          currentInstallationId: installation.installationId, externalActionMachineRequestPrivateKey: installation.privateKey,
+          executionAuthorization: authorization, resolveTarget: createDaemonExternalActionTargetResolver({ credentials }), executor: sourceExecutor,
+          verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
+            privateKey: installation.privateKey, installationId: installation.installationId, serverHttpBaseUrl }),
+          prepareRequesterAccountContext: input => prepareInstalledRequesterAccountActionContext({ ...input,
+            purpose: input.purpose ?? { kind: 'external_action' }, machineId: source.machineId, serverId, serverHttpBaseUrl,
+            ownCredentials: credentials,
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: source.machineId }),
+            createExecutor: context => createActionExecutor(createCliActionDeps({ ...sourceParams,
+              token: context.credentials.token, credentials: context.credentials })) }),
+        });
+        if (result.kind !== 'response') throw new Error(`SOURCE inspection ingress refused: ${result.errorCode}`);
+        if (result.response.v !== 1) throw new Error(`Unexpected SOURCE response version: ${result.response.v}`);
+        return { status: 200, data: malformedReply ? ExternalActionResponseEnvelopeV1Schema.parse({ ...result.response,
+          execution: { ok: true, result: { definition: result.response.execution, detection: {}, extraAuthority: true } } }) : result.response };
       });
       vi.spyOn(machineTransport, 'callExactMachineRpc').mockRejectedValue(new Error('Source inspection must use Home admission'));
       vi.spyOn(machineTransport, 'callMachineRpc').mockRejectedValue(new Error('Source inspection must not retarget'));
-      const inspect = createProjectFiniteSourceManifestInspector({ api: await ApiClient.create(credentials),
-        credentials, serverId, serverHttpBaseUrl, accountId,
-        ingress: { signal: new AbortController().signal }, isCurrent: async () => current });
+      const inspect = createProjectFiniteSourceManifestInspector({ credentials, serverId, serverHttpBaseUrl, accountId,
+        ingress: { signal: new AbortController().signal } });
       const signal = new AbortController().signal;
-      expect(await inspect({ source, signal })).toMatchObject({ document: { status: 'valid', manifest: {
+      const inspected = await inspect({ source, signal, command: { usage: 'script', name: 'check' } });
+      expect(inspectionInputs[0]).toMatchObject({ read: { kind: 'execution', command: { usage: 'script', name: 'check' } } });
+      expect(inspected).toMatchObject({ document: { status: 'valid', manifest: {
         scripts: { check: { execution: 'portable', memoryDemand: { bytes: 123 } } },
       } } });
+      expect(inspected.document).not.toHaveProperty('bytes');
+      expect(inspected.document).not.toHaveProperty('original');
       expect(issued).toBe(1);
+      // The original-Account dispatcher reads one publication for admission;
+      // Inspect must not surround that decision with extra custody reads.
+      expect(sourcePublicationReads - issued).toBe(0);
       expect(await inspect({ source: { ...source, serverId }, signal })).toMatchObject({ document: { status: 'valid' } });
       expect(issued).toBe(2);
+      expect(sourcePublicationReads - issued).toBe(0);
       for (const scenario of ['ambiguous', 'retired'] as const) {
         await updateSettings(settings => {
           const servers: Record<string, typeof profile> = scenario === 'ambiguous'
@@ -332,27 +392,23 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'target_mismatch' });
       }
       await updateSettings(settings => ({ ...settings, servers: { [serverId]: profile } }));
-      for (const unproved of ['foreign-account', undefined]) {
+      for (const [unproved, errorCode] of [
+        ['foreign-account', 'requester_account_material_unavailable'],
+        [undefined, 'admission_unavailable'],
+      ] as const) {
         custodian = unproved;
-        await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+        await expect(inspect({ source, signal })).rejects.toMatchObject({ code: errorCode });
       }
       custodian = accountId;
       await expect(inspect({ source: { ...source, serverId: 'wrong-home' }, signal })).rejects.toMatchObject({ code: 'target_mismatch' });
-      current = false;
-      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
+      const cancellation = new AbortController(); cancellation.abort();
+      await expect(inspect({ source, signal: cancellation.signal })).rejects.toMatchObject({ code: 'cancelled' });
       expect(issued).toBe(2);
-      current = true;
-      retireDuringMachineRead = true;
-      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
-      expect(issued).toBe(2);
-      retireDuringMachineRead = false;
-      current = true;
       malformedReply = true;
       await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'invalid_action_output' });
       malformedReply = false;
-      retireDuringReply = true;
-      await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });
     } finally {
+      await currentnessChannel?.close();
       vi.restoreAllMocks();
       scope.restore(); reloadConfiguration();
       await rm(root, { recursive: true, force: true });
@@ -524,7 +580,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
   it('installs the broker application for the registered machine, advertises it only while live, and shuts it down', async () => {
     const resolveProviderBrokerApplicationTarget = vi.fn(async () => ({ port: 47_001, localCapability: 'local-capability' }));
     const resolveExternalProviderBrokerApplicationTarget = vi.fn(async () => ({ port: 47_002, localCapability: 'external-capability' }));
-    const checkRunnerCredentialSelectionCurrentness = vi.fn(async () => 'available' as const);
+    const checkRunnerCredentialSelectionCurrentness = vi.fn(async () => ({ kind: 'available' as const }));
     const close = vi.fn(async () => undefined);
     const setProviderBrokerIngressLive = vi.fn(async () => undefined);
     const startProviderBrokerApplication = vi.fn(async () => ({
@@ -893,6 +949,205 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     expect(recover).toHaveBeenCalledWith('startup', undefined, undefined);
   });
 
+  it('retires cancelled publication custody after the last approved original returns without reconnecting', async () => {
+    const accountId = 'account';
+    const machineId = 'publication-worker';
+    const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.fixture`, encryption: null };
+    const origin = { discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 };
+    const sessionId = 'c123456789012345678901234';
+    const returned = new Set<string>();
+    const artifacts = new Map<string, Record<string, unknown>>();
+    const httpCalls: string[] = [];
+    const home = createServer(async (request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.setHeader('connection', 'close');
+      const path = request.url?.split('?')[0] ?? '';
+      httpCalls.push(`${request.method} ${path}`);
+      const reply = (value: unknown, status = 200) => { response.statusCode = status; response.end(JSON.stringify(value)); };
+      if (path === '/v1/features') return reply({ features: { sessions: { enabled: true, conversations: { enabled: true } },
+        sharing: { enabled: true, session: { enabled: true } } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } });
+      if (path === '/v1/account/profile') return reply({ id: accountId });
+      if (path === '/v1/account/encryption') return reply({ mode: 'plain', updatedAt: 1 });
+      if (path === '/v1/account/encryption/currentness') return reply({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+      if (path === '/v2/account/settings') return reply({ version: 1, content: { t: 'plain', v: {} } });
+      if (path === `/v2/sessions/${sessionId}`) return reply({ session: createSessionRecordFixture({ id: sessionId,
+        active: false, encryptionMode: 'plain', metadata: JSON.stringify({ machineId, path: '/repo' }) }) });
+      if (path === '/v1/discussions/discussion/participants') return reply({ discussionId: 'discussion', ownerAccountId: accountId,
+        access: 'owner', grants: [], participants: [{ participant: { kind: 'session', sessionId }, answerPolicy: 'drafts_for_approval', createdAt: 1 }] });
+      if (path === '/v1/discussions/discussion') return reply({ discussion: { id: 'discussion', ownerAccountId: accountId,
+        encryptionMode: 'plain', anchor: null, access: 'owner', keyReadiness: true, dataEncryptionKey: null, creationLocalId: 'create',
+        titleContent: { t: 'plain', v: { v: 1, title: 'Question' } }, latestMessage: { id: 'question', localId: 'question', seq: 1,
+          authorAccountId: accountId, accountActor: { v: 1, accountId, profile: null }, producerV1: null, createdAt: 1 },
+        messageSeq: 1, lastReadSeq: 0, unreadCount: 1, unreadMentionCount: 0, recentAuthorAccountIds: [], archivedAt: null,
+        capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true, sendToSession: true, manageAccess: true, leave: false } } });
+      if (path.startsWith('/v1/artifacts')) {
+        const id = decodeURIComponent(path.split('/')[3] ?? '');
+        if (path.endsWith('/access/recipients')) return reply({ artifactId: id, ownerAccountId: accountId, encryptionMode: 'plain',
+          access: 'owner', dataEncryptionKey: artifacts.get(id)?.dataEncryptionKey, callerDataEncryptionKey: artifacts.get(id)?.dataEncryptionKey, recipients: [] });
+        if (request.method === 'GET') return reply(artifacts.get(id) ?? { error: 'not_found' }, artifacts.has(id) ? 200 : 404);
+        let bytes = ''; for await (const chunk of request) bytes += chunk.toString();
+        const body: Record<string, unknown> = JSON.parse(bytes);
+        if (path === '/v1/artifacts' && typeof body.id === 'string') {
+          if (artifacts.has(body.id)) return reply({ error: 'conflict' }, 409);
+          artifacts.set(body.id, { ...body, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+          return reply({ id: body.id, headerVersion: 1, bodyVersion: 1 });
+        }
+        const row = artifacts.get(id);
+        if (!row) return reply({ error: 'not_found' }, 404);
+        if (row.headerVersion !== body.expectedHeaderVersion || row.bodyVersion !== body.expectedBodyVersion) return reply({ success: false, error: 'version-mismatch' });
+        Object.assign(row, { header: body.header, body: body.body, headerVersion: Number(row.headerVersion) + 1,
+          bodyVersion: Number(row.bodyVersion) + 1, seq: Number(row.seq) + 1, updatedAt: Number(row.updatedAt) + 1 });
+        return reply({ success: true, headerVersion: row.headerVersion, bodyVersion: row.bodyVersion });
+      }
+      return reply({ error: 'not_found' }, 404);
+    });
+    await new Promise<void>(resolve => home.listen(0, '127.0.0.1', resolve));
+    onTestFinished(() => new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve())));
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('Missing Home address');
+    const serverUrl = `http://127.0.0.1:${address.port}`;
+    await runWithServerHttpBaseUrl(serverUrl, async () => {
+      setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+      onTestFinished(() => resetActiveAccountSettingsSnapshotForTests());
+      const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition: { version: 1, inputs: [], defaults: {
+        agentTarget: { kind: 'agent', identity: { pluginId: 'external.agent', localId: 'test' } },
+      }, blocks: ['one', 'two'].map(id => ({ kind: 'step' as const, id,
+        document: { text: 'Answer', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } })) },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+          workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+          origin: { kind: 'direct', discussion: origin }, resultDelivery: { kind: 'originating_discussion', ...origin },
+          authorization: { principal: { kind: 'host' } } }, admission: { kind: 'user' },
+        effects: { resolveTargetAvailability: async () => true } });
+      if (!admitted.ok) throw new Error('Workflow admission failed');
+      const storage = createWorkflowRunStorageTestkit({ accountId, machineId, runId, origin: { kind: 'direct' },
+        acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: admitted.snapshot })) });
+      const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint: { kind: 'happier.workflow-checkpoint.v1',
+          rootRecordId: 'root', nextSequence: '3', frontier: { nextBlockOrdinal: 2, paused: false } } }));
+      const seal = (id: string, sequence: string) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id, sequence,
+          parentRecordId: id === 'root' ? null : 'root', memberOrdinal: id === 'two' ? '1' : '0', attempt: '0' },
+        progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: id === 'root' ? '$root' : id, scope: [] },
+          blockKind: id === 'root' ? 'root' : 'step', attempt: '0', logicalInvocationRecordId: id,
+          ...(id === 'root' ? {} : { execution: { kind: 'session' as const, sessionId, localInputId: id } }) } }));
+      await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
+        rootInvocation: { id: 'root', contentEnvelope: seal('root', '0') } });
+      await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, checkpointEnvelope,
+        invocations: ['one', 'two'].map((id, index) => ({ id, sequence: String(index + 1), parentRecordId: 'root',
+          memberOrdinal: String(index), lifecycle: 'cancelled', contentEnvelope: seal(id, String(index + 1)) })) });
+      storage.requestControl('cancelled');
+      const runOwner = createWorkflowAccountRunActionOwner({ storage, resolveAccountId: async () => accountId,
+        definitions: { get: async () => { throw new Error('No mutable definition read'); } },
+        resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        normalizeAbsolutePath: path => path, randomBytes: () => { throw new Error('No plain Account keys'); } });
+      const recoverySelections: unknown[] = [];
+      // HTTP and Machine Socket.IO are the only substituted boundaries. The
+      // bootstrap, strict packets, stored readers, publisher and settlement stay real.
+      const get = axios.get.bind(axios);
+      vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+        if (!url.includes('/messages/by-local-id/')) return get(new URL(url, serverUrl).pathname.startsWith('/v1/artifacts')
+          ? url : serverUrl + new URL(url).pathname, config);
+        const id = decodeURIComponent(url.split('/messages/by-local-id/')[1]!.split('/')[0]!);
+        return { status: 200, data: { v: 1, status: 'available', progress: {
+          v: 1, mode: 'wait', workflow: { purpose: 'invocation', runId, invocationRecordId: id },
+          discussion: { discussionId: 'discussion', messageId: 'question', throughSeq: 1, participantSessionId: sessionId },
+          disposition: returned.has(id) ? 'returned' : 'observing', outcome: { kind: 'cancelled' },
+        } } };
+      });
+      const publish = createDiscussionReplyReturnPublisher({ credentials, machineId, serverId: 'home', serverHttpBaseUrl: serverUrl,
+        workflowAuthorization: admitted.snapshot.authorization, signal: new AbortController().signal, isCurrent: async () => true,
+        actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}), getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+          actions: { 'discussion.reply': { approvalRequiredSurfaces: ['agent'] } } }) },
+        postWorkflowMessage: async (publication, options) => await client.postAgentDiscussionMessage(publication, options) });
+      const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
+        api: await ApiClient.create(credentials), credentials, workspaceSyncHandoffAdapter: undefined,
+        isWorkflowFeatureEnabled: () => true,
+        createWorkflowRecoveryForMachine: () => createWorkflowRunRecoveryReader({ accountId, machineId,
+          storage: { execute: async (operation, options) => {
+            if (operation.operation === 'recovery.list') {
+              recoverySelections.push(operation.runId);
+              return { candidates: storage.run().workflowCustodyState === 'pending' ? [{ run: storage.run(), parentAttempt: 0 }] : [] };
+            }
+            return await storage.execute(operation as WorkflowRunStorageTestkitOperation, options);
+          } },
+          resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+          reconcileInvocation: async () => { throw new Error('A terminal child must not execute again'); },
+          onInvocationSettled: async ({ invocation }) => await createWorkflowDiscussionResultPublisher({ credentials, origin,
+            isCurrent: async () => true, publish,
+          })({ runId, invocation }),
+        }),
+      }));
+      const client = await runtime.createConnectedApiMachine({ id: machineId, encryptionMode: 'plain',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+      if (!client) throw new Error('Missing actual Machine client');
+      try {
+        const publications: unknown[] = [];
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (event, raw) => {
+          if (event !== DISCUSSION_AGENT_POST_EVENT_V1) throw new Error('Unexpected native work');
+          const packet = DiscussionMachinePublicationV2Schema.parse(raw);
+          if (packet.operation !== 'approved_replay' || !packet.publication.replyReturn?.workflow) throw new Error('Expected Workflow approval replay');
+          const publication = packet.publication;
+          returned.add(publication.replyReturn!.requestLocalId);
+          publications.push(packet);
+          return { v: 1, ok: true, value: { messageSeq: publications.length + 1, message: { id: `reply-${publications.length}`,
+            discussionId: 'discussion', localId: publication.request.localId, seq: publications.length + 1, authorAccountId: accountId,
+            accountActor: { v: 1, accountId, profile: null }, producerV1: { v: 1, kind: 'agent', sessionId },
+            content: publication.request.content, mentionedAccountIds: [], createdAt: 1 } } };
+        } });
+        Reflect.set(client, 'socket', socket);
+        await runtime.recoverWorkflowRuns?.('startup');
+        expect(storage.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'pending' });
+        const store = createCliApprovalsArtifactStore({ credentials, serverId: 'home', serverHttpBaseUrl: serverUrl });
+        const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId, serverId: 'home',
+          serverApiUrl: serverUrl });
+        if (!currentness) throw new Error('Missing approval currentness');
+        const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+          serverId: 'home', serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+          postAgentDiscussionMessage: async (request, options) => {
+            if (!options?.approvedActionReplay) throw new Error('Expected recorded approval execution');
+            return await createApprovedDiscussionAgentPublisher({ credentials, machineId, serverId: 'home', serverUrl,
+              isApprovalExecutionOriginCurrent: currentness, publish: (publication, options) => client.postAgentDiscussionMessage(publication, options),
+              executeSourceAction: async (actionId, input, context) => actionId === 'workflow.run.invocations.get'
+                ? { ok: true, result: await runOwner.execute({ actionId, input: WorkflowInvocationGetRequestV1Schema.parse(input), context }) }
+                : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' },
+            })(request, { ...options, approvedActionReplay: options.approvedActionReplay, callerAuthority: 'present_user' });
+          },
+        }, { isApprovalExecutionOriginCurrent: currentness });
+        for (const id of ['one', 'two']) {
+          // Startup owns the first Ask; the first committed return wakes the
+          // same reader to reach the second. The test never requests a retry.
+          const { artifactId, captured } = await vi.waitFor(async () => {
+            const candidates = await Promise.all([...artifacts.keys()].map(async artifactId => ({ artifactId,
+              request: await store.approvalsGet({ artifactId }) })));
+            const pending = candidates.find(({ request }) => request?.v === 2 && request.status === 'open'
+              && request.executionOriginV1.discussionReplyReturn && 'requestLocalId' in request.executionOriginV1.discussionReplyReturn
+              && request.executionOriginV1.discussionReplyReturn.requestLocalId === id);
+            if (pending?.request?.v !== 2) throw new Error(`Missing ${id} publication approval`);
+            return { artifactId: pending.artifactId, captured: pending.request };
+          });
+          const approved = ApprovalRequestV2Schema.parse({ ...captured, status: 'approved', updatedAtMs: captured.updatedAtMs + 1,
+            decision: { kind: 'approve', authority: 'present_user', decidedAtMs: captured.updatedAtMs + 1 } });
+          expect(await store.approvalsUpdate({ artifactId, request: approved })).toEqual({ ok: true });
+          const replayed = await runWithServerHttpBaseUrl(serverUrl, () => executor.replayApprovedApprovalRequest({ artifactId,
+            callerAuthority: 'present_user' }));
+          expect(replayed, JSON.stringify({ replayed, httpCalls })).toMatchObject({ ok: true, result: { status: 'executed' } });
+          if (id === 'one') {
+            await vi.waitFor(() => expect(recoverySelections).toEqual([undefined, runId]));
+            expect(storage.run().workflowCustodyState).toBe('pending');
+          }
+        }
+        await vi.waitFor(() => expect(storage.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'settled' }));
+        expect([...returned]).toEqual(['one', 'two']);
+        expect(publications).toHaveLength(2);
+        expect(recoverySelections).toEqual([undefined, runId, runId]);
+      } finally { await client.shutdown(); vi.restoreAllMocks(); }
+    });
+  });
+
   it('forwards the daemon runtime-open attestation reader into machine bootstrap', () => {
     const awaitAgentSessionOpen = vi.fn();
     const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
@@ -996,6 +1251,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       machineAdmissionTransport: expect.any(Function),
       machineActionDirectTargetTransport: {
         machineId: 'machine_1',
+        machineServiceAction: expect.any(Function),
         invoke: expect.any(Function),
       },
     });

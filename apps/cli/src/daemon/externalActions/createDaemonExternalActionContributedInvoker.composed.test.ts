@@ -132,7 +132,7 @@ import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/acti
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { createCommittedContributedActionInvoker, createCommittedContributedActionSchemaReader } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
-import { buildWorkflowActionContext, createWorkflowAcceptedAuthorizationCurrentness } from '@/daemon/workflows/daemonRuntime';
+import { buildWorkflowActionContext } from '@/daemon/workflows/daemonRuntime';
 import { projectOccurrenceBoundExecutablePluginToolCatalog } from '@/plugins/runtime/toolCatalog';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { createDaemonControlApp } from '@/daemon/controlServer';
@@ -1406,7 +1406,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const row = () => store.list().find(item => item.blockId === 'inspect');
     try {
       const held = await createCoordinator().run(input);
-      expect(held).toMatchObject({ state: 'paused', reason: 'approval_required' });
+      expect(held, JSON.stringify(held)).toMatchObject({ state: 'paused', reason: 'approval_required' });
       expect(stored?.status).toBe('open');
       expect(effects).toBe(0);
       expect(row()).toMatchObject({ lifecycle: 'waiting_for_approval', execution: {
@@ -1428,7 +1428,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
       });
       expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
-      const afterRestart = await recovery({ progress: WorkflowProgressEnvelopeV1Schema.parse({
+      const afterRestart = await recovery({ run: { id: input.runId }, progress: WorkflowProgressEnvelopeV1Schema.parse({
         kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'inspect', scope: [] },
         blockKind: 'action', attempt: '0', logicalInvocationRecordId: row()!.logicalInvocationRecordId ?? row()!.recordId,
         execution: JSON.parse(JSON.stringify(row()!.execution)),
@@ -1437,14 +1437,14 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         ? { kind: 'completed', result: { surface: 'agent' } } : { kind: 'failed', code: 'approval_rejected' });
       const savedProgress = WorkflowProgressEnvelopeV1Schema.parse((await store.readInvocationBindingRow!(row()!.recordId))!.progress);
       expect(await observeWorkflowInvocationRecoveryEvidence({
-        credentials: { token: 'daemon-token', encryption: null }, machineId: workspace.machineId, progress: savedProgress,
+        runId: input.runId, credentials: { token: 'daemon-token', encryption: null }, machineId: workspace.machineId, progress: savedProgress,
         getRun: async () => { throw new Error('Approval has no native Run'); },
         getApproval: async artifactId => {
           const read = await executor.execute('approval.request.get', { artifactId }, { surface: 'agent' });
           return read.ok ? read.result : null;
         },
       })).toMatchObject({ activity: 'not_active', canReattach: true, canContinueConversation: false });
-      expect(await recovery({ progress: savedProgress, terminalParent: false, cancellationRequested: false, observationOnly: true }))
+      expect(await recovery({ run: { id: input.runId }, progress: savedProgress, terminalParent: false, cancellationRequested: false, observationOnly: true }))
         .toMatchObject(afterRestart);
       // The public boundary control must admit the retained Run after restart.
       // The storage boundary enforces the server's paused-only resume contract;
@@ -1731,7 +1731,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const context = buildWorkflowActionContext({ runId: 'workflow-run', authorization });
     try {
       const result = await invoker({ action: { pluginId: 'acme.external', localId: 'inspect' }, input: {}, context });
-      expect(result).toMatchObject({ ok: true });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
       expect(seeds).toHaveLength(1);
       expect(seeds[0]?.initiatingActionCaller).toEqual(context.actionCaller);
       if (origin === 'host_waived') {
@@ -2899,17 +2899,13 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         persona: { serverId: 'server-external', sessionId: 'origin' }, origin: null },
     };
     const unusedAuthorityRead = async (): Promise<never> => { throw new Error('Host acceptance has no delegated credential'); };
-    const workflowCurrentness = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'account-1',
-      listAccountApiTokens: unusedAuthorityRead, resolveCurrentPluginOccurrenceId: unusedAuthorityRead,
-      resolveCurrentPluginSourceCustody: unusedAuthorityRead, isMediatedSourceCurrent: unusedAuthorityRead,
-    });
     const originCurrentness = createDaemonApprovalExecutionOriginCurrentness({
       accountId: 'account-1', machineId: 'machine-local', serverId: 'server-external',
       // Installed Home/Machine identity is the OS boundary; currentness owners remain real.
       resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'server-external', machineId: 'machine-local' }),
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
       isAccountCurrent: async () => (await axios.get<{ id: string }>('http://fixture-home/v1/account/profile')).data.id === 'account-1',
-      listAccountApiTokens: unusedAuthorityRead, isWorkflowRunAuthorizationCurrent: workflowCurrentness,
+      listAccountApiTokens: unusedAuthorityRead,
     });
     try {
       const deferred = await invoke({ action: { pluginId: 'happier.channels', localId: 'conversation/start-v1' }, input: {},

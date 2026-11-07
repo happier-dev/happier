@@ -4093,8 +4093,7 @@ export async function startDaemon(
                       && !homeTransportCancellation.signal.aborted && !isDaemonQuiescing()
                       && stamp && stamp.accountId === selectedAccountId && stamp.machineId === input.machineId
                       && stamp.serverId === requesterRuntimeServerId && configuration.activeServerId === requesterRuntimeServerId
-                      && stamp.installationId === readInstallationIdentityIfExistsSync()?.installationId
-                      && request.authorization && await runtime.isAcceptedAuthorizationCurrent({ authorization: request.authorization }));
+                      && stamp.installationId === readInstallationIdentityIfExistsSync()?.installationId);
                     if (!client || !stamp || !externalActionAccountId || !sameStoredCredentials(request.request.credentials, selectedCredentials) || !await current()) {
                       throw Object.assign(new Error('Workflow requester Session authority unavailable'), { code: 'project_requester_credentials_unavailable' });
                     }

@@ -19,6 +19,7 @@ import type { WorkflowAccountRunActionDeps, WorkflowProgressEnvelopeV1, Workflow
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readProjectSetupConsentHoldV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -168,6 +169,7 @@ export async function resolveWorkflowSessionConversation(params: Readonly<{
 
 /** Fresh exact native facts only; the Protocol owner decides which controls they permit. */
 export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly<{
+  runId: string;
   credentials: StoredCredentials;
   machineId: string;
   progress: WorkflowProgressEnvelopeV1;
@@ -184,7 +186,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
   if (execution.kind === 'session_ready') return { activity: 'not_active', canReattach: true, canContinueConversation: false };
   try {
     if (execution.kind === 'action') {
-      const approval = await readWorkflowActionApprovalSettlement({ execution,
+      const approval = await readWorkflowActionApprovalSettlement({ runId: params.runId, execution,
         read: async artifactId => await params.getApproval?.(artifactId) });
       if (approval) return { activity: approval.kind === 'unresolved' ? 'unknown' : 'not_active',
         canReattach: approval.kind !== 'unresolved' || approval.code === 'approval_required', canContinueConversation: false };
@@ -397,13 +399,14 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
     }
     if (execution.kind === 'session_ready') return { kind: 'completed', result: '' };
     if (execution.kind === 'action') {
-      const approval = await readWorkflowActionApprovalSettlement({ execution, read: async artifactId => {
+      const approval = input.run ? await readWorkflowActionApprovalSettlement({ runId: input.run.id, execution, read: async artifactId => {
         const observed = await params.actionExecutor.execute('approval.request.get', { artifactId }, {
           surface: 'agent', authority: 'account_automation', executionRunTargetMachineId: params.machineId,
           ...(input.signal ? { signal: input.signal } : {}),
         });
         return observed.ok ? observed.result : null;
-      } });
+      } }) : ActionApprovalRequestCreatedResultSchema.safeParse(execution.output).success
+        ? { kind: 'unresolved' as const, code: 'approval_unavailable' } : null;
       if (approval) {
         if (input.progress.blockKind === 'step' && execution.actionId === 'discussion.invite' && approval.kind === 'completed') {
           // A reserved slot is not a Session or a completed Workflow input.

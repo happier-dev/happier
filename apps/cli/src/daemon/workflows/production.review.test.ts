@@ -157,7 +157,7 @@ describe('durable review coordinator', () => {
       resolveAccountEncryption: async signal => { executionSignal = signal; return { kind: 'available', witness: encryption.witness }; },
       isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
         listAccountApiTokens: async () => { authorityReads++; if (outcome === 'transport') throw new Error('transport disconnected'); return { tokens: [] }; },
-        resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
+        resolveCurrentPluginOccurrenceId: async () => null,
         isMediatedSourceCurrent: async () => false,
       }), onCommittedTransition: async () => {}, onReviewEntered: async () => {},
       storage: { observeChanges: boundary.observeChanges, execute: async (operation, options) => {
@@ -289,7 +289,6 @@ describe('durable review coordinator', () => {
       isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
         listAccountApiTokens: async () => { throw new Error('host has no token principal'); },
         resolveCurrentPluginOccurrenceId: async () => { throw new Error('host has no plugin principal'); },
-        resolveCurrentPluginSourceCustody: async () => { throw new Error('host has no plugin custody'); },
         isMediatedSourceCurrent: async () => { throw new Error('host has no source mediator'); },
       }), onCommittedTransition: async () => {}, onReviewEntered: async () => { entries++; }, storage: boundary,
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
@@ -447,7 +446,6 @@ describe('durable review coordinator', () => {
       isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
         listAccountApiTokens: async () => { throw new Error('host admission has no API token'); },
         resolveCurrentPluginOccurrenceId: async () => { throw new Error('host admission has no plugin mediator'); },
-        resolveCurrentPluginSourceCustody: async () => { throw new Error('host admission has no plugin custody'); },
         isMediatedSourceCurrent: async () => { throw new Error('host admission has no mediated source'); },
       }), onCommittedTransition: async () => {}, onReviewEntered: async () => {},
       storage: { observeChanges: boundary.observeChanges, execute: async (operation, options) => {

@@ -635,8 +635,6 @@ resolveServerFeaturesSnapshot?: () =>
         ? createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
             credentials, machineId: params.machineId, serverId: params.serverId,
             serverApiUrl: requesterAccountContext.serverHttpBaseUrl, isSessionCallerCurrent,
-            ...(params.workflowAcceptedAuthorizationCurrentness
-              ? { isWorkflowRunAuthorizationCurrent: params.workflowAcceptedAuthorizationCurrentness } : {}),
             ...(params.resolveServerFeaturesSnapshot
               ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
           })
@@ -672,9 +670,6 @@ resolveServerFeaturesSnapshot?: () =>
                 serverApiUrl: source.serverHttpBaseUrl, isSessionCallerCurrent,
                 ...(params.resolveCurrentMachineExecutionOriginContext ? {
                   resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
-                } : {}),
-                ...(params.workflowAcceptedAuthorizationCurrentness ? {
-                  isWorkflowRunAuthorizationCurrent: params.workflowAcceptedAuthorizationCurrentness,
                 } : {}),
                 ...(params.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
               });
