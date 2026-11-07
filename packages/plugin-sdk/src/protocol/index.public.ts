@@ -106,9 +106,11 @@ export { ProtocolArtifactGetOutputV1Schema } from './artifact.js';
 export {
     ProtocolDeploymentPreviewProvenanceV1Schema,
     ProtocolDeploymentSourceIntentV1Schema,
+    ProtocolDeploymentReceiptOperationV1Schema,
     readDeploymentArtifactJsonBodyV1,
     readDeploymentReceiptArtifactV1,
     readDeploymentTargetLinkArtifactV1,
+    readDeploymentDomainServingUrlV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
 } from './deployment.js';
@@ -134,6 +136,7 @@ export {
     isInternalTaskReferenceV1,
     TriageSourceInstanceIdV1Schema,
     TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
+    TriageEntryRefV1Fields,
     TriageEntryRefV1Schema,
     TriageEntryRefV1JsonSchema,
     TriageIdentifierV1ProtocolSchema,

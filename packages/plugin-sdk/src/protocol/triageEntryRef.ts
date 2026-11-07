@@ -12,6 +12,9 @@ export type TriageEntryRefV1 = Readonly<{
 }>;
 
 /** The SDK projects the same executable values; it owns no identity parser. */
+export const TriageEntryRefV1Fields: {
+    readonly [Field in keyof TriageEntryRefV1]: ProtocolComposableSchema<TriageEntryRefV1[Field]>;
+} = canonical.TriageEntryRefV1Fields;
 export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1> = canonical.TriageEntryRefV1Schema;
 export const TriageEntryRefV1JsonSchema: PluginJsonSchema = canonical.TriageEntryRefV1JsonSchema;
 export const TriageIdentifierV1ProtocolSchema: ProtocolComposableSchema<string> = canonical.TriageIdentifierV1ProtocolSchema;

@@ -85,6 +85,7 @@ export { TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 } from './triageEntryRef.js';
 export type { TranscriptAnnotationV1 } from './transcriptAnnotation.js';
 export { TriageCollisionScopeV1ProtocolSchema } from './triageEntryRef.js';
 export type { TriageEntryRefV1 } from './triageEntryRef.js';
+export { TriageEntryRefV1Fields } from './triageEntryRef.js';
 export { TriageEntryRefV1JsonSchema } from './triageEntryRef.js';
 export { TriageEntryRefV1Schema } from './triageEntryRef.js';
 export { TriageIdentifierV1ProtocolSchema } from './triageEntryRef.js';

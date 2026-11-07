@@ -54,12 +54,15 @@ export type TriageEntryRefV1 = Readonly<{
  * remain Triage-owned. Both this envelope and its source identity are closed.
  * Keep this leaf independent of the SDK and Triage feature protocol.
  */
-export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1> = defineProtocolObject({
+export const TriageEntryRefV1Fields = {
   source: PluginContributionIdentityV1Schema,
   kindId: TriageIdentifierV1ProtocolSchema,
   collisionScope: TriageCollisionScopeV1ProtocolSchema,
   entryId: TriageIdentifierV1ProtocolSchema,
-}, { policy: 'closed' });
+} as const;
+export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1> = defineProtocolObject(
+  TriageEntryRefV1Fields, { policy: 'closed' },
+);
 export const TriageEntryRefV1JsonSchema: PluginJsonSchemaV2 = /* @__PURE__ */ (() => TriageEntryRefV1Schema.jsonSchema)();
 
 /** Personal aliases use the authenticated viewer; explicit owners remain stable across viewers. */
