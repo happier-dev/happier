@@ -1237,7 +1237,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(next).toBeDefined();
         expect(next.draftId).not.toBe(pending.draftId);
         const seed = readNewSessionDraftProjectionFromRepository({ draftId: next.draftId, scope: boundary.scope });
-        expect(seed?.draft.input).toContain(`definitionId=${copyId}`);
+        // The person's text is the plain lead; the copy's identity rides the seed's current-screen context (F2).
+        expect(seed?.draft.input).not.toContain(copyId);
+        expect(seed?.draft.composerAttachmentSeeds?.[0]?.value).toMatchObject({
+            value: { entity: { kind: 'workflow', reference: { definitionId: copyId } } },
+        });
         await act(async () => { next.onSessionCreated('/session/copy-author', { sessionId: 'copy-author', serverId: boundary.scope.serverId }); });
         expect(readBodyProps()!.authoringSessionId).toBe('copy-author');
     });
@@ -3090,11 +3094,16 @@ describe('WorkflowEditorHostScreen composition', () => {
         const authoringDraft = readBodyProps()?.authoringDraft;
         if (!authoringDraft) throw new Error('Expected the Agent tab draft');
         const seed = readNewSessionDraftProjectionFromRepository({ draftId: authoringDraft.draftId, scope: { serverId: 'server-a', accountId: 'account-a' } });
+        // The person's text names the saved workflow only; its identity and revision ride the seed's
+        // current-screen context, never the local draft (F2).
         expect(seed?.draft.input).toContain('name=Saved');
-        expect(seed?.draft.input).toContain(`definitionId=${definitionId}`);
-        expect(seed?.draft.input).toContain('headerVersion=4');
-        expect(seed?.draft.input).toContain('bodyVersion=8');
+        expect(seed?.draft.input).not.toContain(definitionId);
         expect(seed?.draft.input).not.toContain('Unsaved local name');
+        expect(seed?.draft.composerAttachmentSeeds?.[0]?.value).toMatchObject({
+            value: { entity: { kind: 'workflow', label: 'Saved',
+                reference: { definitionId, revision: { headerVersion: 4, bodyVersion: 8 } } } },
+        });
+        expect(JSON.stringify(seed?.draft.composerAttachmentSeeds)).not.toContain('Unsaved local name');
     });
     it('on a phone, Edit with an agent stays in ⋯ and opens the seeded sheet', async () => {
         nativeRouteBoundary.width = 390;
