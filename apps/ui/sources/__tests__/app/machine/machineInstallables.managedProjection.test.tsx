@@ -62,7 +62,10 @@ const capabilityResponse = { protocolVersion: 1, ...{
 
 async function loadMachineInstallablesSection() {
     const { MachineInstallablesSection } = await import('@/components/machines/installables/MachineInstallablesSection');
-    machine = { ...machine, active: testState.online, activeAt: testState.online ? Date.now() : Date.now() - 86400000 };
+    const hydratedMachine = home!.storage.getState().machines[machine.id];
+    if (!hydratedMachine) throw new Error('Expected the Machine hydrated by the Home runtime');
+    // Presence changes preserve the runtime's admitted content mode and key basis.
+    machine = { ...hydratedMachine, active: testState.online, activeAt: testState.online ? Date.now() : Date.now() - 86400000 };
     home!.storage.getState().applyMachines([machine], true, {
         sourceServerId: home!.home.id, sourceAccountId: home!.home.accountId,
     });
@@ -89,8 +92,6 @@ describe('machine managed installables projection', () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-
-
             resourcesById: {},
             settingsById: {},
             diagnostics: [],
@@ -156,26 +157,53 @@ describe('machine managed installables projection', () => {
         network.resetRequests();
     });
 
-    it('shows only the projected managed PyPI descriptor, behind its existing install confirmation', async () => {
+    it('shows only the projected managed PyPI descriptor and installs through the present-user Action default', async () => {
             const MachineInstallablesScreen = await loadMachineInstallablesSection();
             const screen = await renderSettingsView(home!.element(MachineInstallablesScreen));
 
             await vi.waitFor(() => {
                 expect(screen.findRowByTitle('Antigravity localharness')).not.toBeNull();
-                expect(screen.findRowByTitle('Antigravity localharness')?.props.subtitle).toBe('Local browser harness • deps.ui.notInstalled');
-                expect(screen.findRowByTitle('common.open')?.props.subtitle).toBe('https://docs.example.test/antigravity/localharness');
+                // One row per tool: its state on the row, its policy only once the tool is opened.
+                expect(screen.findRowByTitle('Antigravity localharness')?.props.subtitle)
+                    .toBe('machineDetailPage.toolsPage.experimental · Local browser harness');
                 expect(screen.findRowByTitle('Raw declaration must not become an install action')).toBeNull();
+                expect(screen.findRowByTitle('common.install')).not.toBeNull();
             });
+            expect(screen.findRowByTitle('machineDetailPage.toolsPage.autoInstallTitle')).toBeNull();
+            await act(async () => {
+                screen.pressRow('machine-tool-dep.antigravity.localharness');
+            });
+            await vi.waitFor(() => {
+                expect(screen.findRowByTitle('machineDetailPage.toolsPage.autoInstallTitle')).not.toBeNull();
+                expect(screen.findRowByTitle('machineDetailPage.toolsPage.setupGuide')?.props.subtitle).toBe('https://docs.example.test/antigravity/localharness');
+            });
+
+            // Tools publishes the same exact-Account held read that the passive Overview consumes.
+            const { getMachineCapabilitiesCacheState } = await import('@/hooks/server/useMachineCapabilitiesCache');
+            const { readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            const { getInstallablesRegistryEntries } = await import('@/capabilities/installablesRegistry');
+            const { summarizeInstallables } = await import('@/capabilities/installablesSummary');
+            await vi.waitFor(() => expect(getMachineCapabilitiesCacheState(machine.id, home!.home.id, undefined, home!.home.accountId))
+                .toMatchObject({ status: 'loaded' }));
+            const projection = readCachedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: home!.home.id });
+            if (projection?.kind !== 'ready') throw new Error('Tools projection has not settled');
+            const entries = getInstallablesRegistryEntries({ pluginProjection: projection.inputs.pluginProjectionV2 ?? undefined });
+            const reads = network.requests.length;
+            for (let read = 0; read < 12; read++) {
+                expect(summarizeInstallables(entries, getMachineCapabilitiesCacheState(machine.id, home!.home.id, undefined, home!.home.accountId)))
+                    .toEqual({ status: 'ready', installed: 0, ready: 0, held: false });
+            }
+            expect(network.requests).toHaveLength(reads);
 
             await act(async () => {
                 screen.pressRowByTitle('common.install');
             });
-            // Install runs through the front-door `machines.capabilities.install` Action, which asks for
-            // its confirmation first and then reaches the machine RPC.
+            // The canonical Action policy admits this reversible present-user
+            // intent directly; an extra installer confirmation would be a second floor.
             await vi.waitFor(() => expect(testState.invoke).toHaveBeenCalledWith('machine-1', expect.objectContaining({
                 id: 'dep.antigravity.localharness', method: 'install',
             })));
-            expect(testState.confirm).toHaveBeenCalledTimes(1);
+            expect(testState.confirm).not.toHaveBeenCalled();
 
             await screen.unmount();
         });
@@ -190,12 +218,10 @@ describe('machine managed installables projection', () => {
                 && Array.isArray(node.props.options)
             ))[0]?.props.options.map((option: { label: string }) => option.label) as string[] | undefined;
 
-            // A tool's update policy sits inside its row; open the first listed tool.
-            await vi.waitFor(() => expect(screen.listRows('machine-tool-').length).toBeGreaterThan(0));
-            const firstToolId = screen.listRows('machine-tool-').map((node) => node.props.testID as string)
-                .find((id) => !id.includes('.'))!;
+            // Exercise the settled projected row, rather than a transient catalog fallback.
+            await vi.waitFor(() => expect(screen.findRowByTitle('Antigravity localharness')).not.toBeNull());
             await act(async () => {
-                screen.pressRow(firstToolId);
+                screen.pressRow('machine-tool-dep.antigravity.localharness');
             });
             await vi.waitFor(() => {
                 expect(optionLabels()?.length).toBeGreaterThan(0);
@@ -237,7 +263,8 @@ describe('machine managed installables projection', () => {
 
             await vi.waitFor(() => {
                 expect(screen.findRowByTitle('Antigravity localharness')).not.toBeNull();
-                expect(screen.findRowByTitle('common.install')?.props.disabled).toBe(true);
+                // Offline, the row keeps its last answer and offers no install it cannot run.
+                expect(screen.findRowByTitle('common.install')).toBeNull();
             });
 
             } finally { vi.useRealTimers(); }

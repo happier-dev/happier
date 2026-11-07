@@ -56,7 +56,7 @@ export async function arrangeMachineDetailsHomeForTests(
     network: SessionOpsNetworkBoundary,
     options: Readonly<{ serverUrl: string; machines?: readonly Machine[]; sessions?: readonly Session[]; settings?: Partial<Settings> }>,
 ): Promise<MachineDetailsHome> {
-    const { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol');
+    const { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER} = await import('@happier-dev/protocol/machines/machineStoredContent');
     const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
     const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
     const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
