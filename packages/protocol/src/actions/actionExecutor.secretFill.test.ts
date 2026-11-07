@@ -408,7 +408,7 @@ describe('confidential secret-fill approval continuation', () => {
     admitted = true;
     expect(await executor.continueConfidentialApprovalRequest(privateInput, {
       ...humanContext,
-    })).toEqual({ ok: true, result: { status: 'refused', code: 'approval_changed' } });
+    })).toEqual({ ok: false, errorCode: 'approval_changed', error: 'approval_changed' });
     expect(delivered).toBe(0);
   });
 

@@ -1,15 +1,19 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { ComputerSecretFillRequestV1Schema, SecretFillSettlementV1Schema } from '../computer/v1.js';
+import { ComputerSecretFillRequestV1Schema, SecretFillRefusalCodeV1Schema, SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { BrowserAutomationSecretFillRequestV1Schema } from '../browser/automation/v1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { ApprovalExecutionV2Schema, ApprovalRequestOriginV1Schema } from './approvalRequestV1.js';
 import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
 
-const ConfidentialApprovalFailureCodeSchema = lazyZodSchema(() => z.enum([
-  'approval_stale', 'approval_context_unavailable', 'approval_execution_outcome_unknown',
-  'confidential_choice_required', 'unsupported_action', 'invalid_parameters', 'present_user_required',
-  'approval_not_found', 'approval_invalid', 'approval_not_open', 'action_disabled', 'credential_scope_denied',
+const ConfidentialApprovalFailureCodeSchema = lazyZodSchema(() => z.union([
+  // Settlement projects native refusals into code-only failures on the same durable receipt.
+  SecretFillRefusalCodeV1Schema,
+  z.enum([
+    'approval_stale', 'approval_context_unavailable', 'approval_execution_outcome_unknown',
+    'confidential_choice_required', 'unsupported_action', 'invalid_parameters', 'present_user_required',
+    'approval_not_found', 'approval_invalid', 'approval_not_open', 'action_disabled', 'credential_scope_denied',
+  ]),
 ]));
 
 /** The durable record keeps the exact value-free input; the domain admits its target at execution. */

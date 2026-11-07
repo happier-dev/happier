@@ -4,6 +4,8 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { createApprovalRequestArtifact } from '@happier-dev/protocol/approvals/creation';
+import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { ActionDefinitionV1, ApprovalRequest } from '@happier-dev/protocol';
 import { createCliApprovalsArtifactStore } from './artifactStore';
@@ -38,15 +40,20 @@ vi.mock('axios', () => ({ default: http }));
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44322, stop: async () => {} }) }));
 
 const request = { serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in',
-  sourceId: 'source', target: { kind: 'window', displayId: 'display', pid: 1, windowId: 2 },
-  captureId: 'capture', geometry: { captureWidth: 100, captureHeight: 100, nativeWidth: 100, nativeHeight: 100,
-    originX: 0, originY: 0, scaleX: 1, scaleY: 1, crop: { x: 0, y: 0, width: 100, height: 100 } },
-  field: { fieldId: 'password', focusId: 'focus' } } as const;
+  browserSessionId: 'session', viewId: 'view', tabId: 'tab', frameId: 'frame',
+  documentId: 'document', navigationGeneration: 1, origin: 'https://example.test',
+  field: { fieldId: '41', focusId: '41', locator: '#password' } } as const;
 
 afterEach(resetActiveAccountSettingsSnapshotForTests);
 
 describe('confidential continuation Artifact custody', () => {
-  it.each(['credential fallback', 'installed Machine owner', 'daemon startup owner'] as const)('consumes %s registration with isolated stored credentials and real Home/Session currentness', async registrationKind => {
+  it.each([
+    { registrationKind: 'credential fallback', settlement: { status: 'filled', code: 'filled' } },
+    { registrationKind: 'installed Machine owner', settlement: { status: 'filled', code: 'filled' } },
+    { registrationKind: 'daemon startup owner', settlement: { status: 'filled', code: 'filled' } },
+    { registrationKind: 'daemon startup owner', settlement: { status: 'refused', code: 'target_changed' } },
+  ] satisfies readonly { registrationKind: string; settlement: SecretFillSettlementV1 }[])(
+    'retains $settlement.code through Action → Ask → $registrationKind continuation → Artifact read', async ({ registrationKind, settlement: targetSettlement }) => {
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_TOKEN',
       'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE', 'HAPPIER_ACCOUNT_SETTINGS_MODE', 'HAPPIER_ACTIONS_SETTINGS_V1']);
     try {
@@ -72,11 +79,17 @@ describe('confidential continuation Artifact custody', () => {
         const sessionId = 'c123456789012345678901234';
         const session = { ...createSessionNotificationContextFixture(sessionId), encryptionMode: 'plain',
           metadata: JSON.stringify({ machineId: 'machine' }) };
-        const reviewedRequest = { ...request, serverId, sessionId };
-        let created: ApprovalRequest | null = null;
-        await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
-          created = request; return { artifactId: 'approval' };
-        }, isActionApprovalRequired: () => false }).execute('computer.secret.fill', reviewedRequest, {
+        const reviewedRequest = { serverId, sessionId, machineId: 'machine', purpose: 'Sign in',
+          browserSessionId: sessionId, viewId: 'view', tabId: 'tab', frameId: 'frame',
+          documentId: 'document', navigationGeneration: 1, origin: 'https://example.test',
+          field: { fieldId: '41', focusId: '41', locator: '#password' } };
+        const rows = new Map<string, { header: Record<string, unknown>; body: string; access: string }>();
+        const ask = await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
+          return createApprovalRequestArtifact({ request, accountId: 'alice',
+            newId: () => 'unused', read: async id => rows.get(id) ?? null,
+            create: async (id, header, body) => { rows.set(id, { header, body, access: 'owner' }); },
+          });
+        }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', reviewedRequest, {
           surface: registrationKind === 'daemon startup owner' ? 'ui' : 'agent',
           authority: registrationKind === 'daemon startup owner' ? 'present_user' : 'account_automation', serverId, serverIdentityId: 'srv_private_approval',
           defaultSessionId: sessionId, defaultSessionMachineId: 'machine', runtimeAccountId: 'alice',
@@ -84,11 +97,14 @@ describe('confidential continuation Artifact custody', () => {
             ? { externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}),
           actionRequestId: 'request', actionCaller: { kind: 'host' },
         });
-        const approval = ApprovalRequestV2Schema.parse(created);
-        let record = { id: 'approval', ownerAccountId: 'alice', access: 'owner', encryptionMode: 'plain',
+        expect(rows.size).toBe(1);
+        const [artifactId, row] = [...rows.entries()][0]!;
+        expect(ask).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId } });
+        const approval = ApprovalRequestV2Schema.parse(JSON.parse(row.body));
+        let record = { id: artifactId, ownerAccountId: 'alice', access: 'owner', encryptionMode: 'plain',
           dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-          header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
-          body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }),
+          header: encodePlainArtifactStoredContent(row.header),
+          body: encodePlainArtifactStoredContent({ body: row.body }),
           headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
         const currentness = createAccountEncryptionCurrentnessFixture({ mode: 'plain' });
         vi.stubGlobal('fetch', async (input: string | URL | Request) => {
@@ -103,7 +119,7 @@ describe('confidential continuation Artifact custody', () => {
           if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: currentness };
           if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
           if (url.endsWith('/v1/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: settings } } };
-          if (url.includes('/v1/artifacts/approval')) return { status: 200, data: { ...record } };
+          if (url.includes(`/v1/artifacts/${artifactId}`)) return { status: 200, data: { ...record } };
           throw new Error('Unexpected Home HTTP boundary');
         });
         http.request.mockImplementation(async ({ url, method }: { url: string; method: string }) => {
@@ -131,11 +147,10 @@ describe('confidential continuation Artifact custody', () => {
             return mode;
           },
           // Only the actual native OS preparation/delivery boundary is substituted.
-          prepareTarget: async () => ({ nativeObservation: 'not_observable', recheck: async () => true,
-            fill: async (bytes, _signal, beforeDelivery) => {
-              if (!await beforeDelivery?.()) return { status: 'refused', code: 'approval_changed' };
+          prepareTarget: async () => targetSettlement.status === 'refused' ? targetSettlement : ({ nativeObservation: 'not_observable',
+            fill: async (bytes) => {
               expect(Buffer.from(bytes).toString()).toBe(value); effects += 1;
-              return { status: 'filled', code: 'filled' };
+              return targetSettlement;
             }, finish: async () => {} }),
         });
         const startup = registrationKind === 'daemon startup owner'
@@ -177,7 +192,7 @@ describe('confidential continuation Artifact custody', () => {
           const foreign = await rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`,
             callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice',
               machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
-            params: { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'computer.secret.fill', request: reviewedRequest,
+            params: { v: 1, artifactId, requestId: 'request', actionId: 'browser.automation.secret.fill', request: reviewedRequest,
               choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false } });
           expect(foreign).toEqual({ status: 'refused', code: 'target_unavailable' });
           expect(http.get.mock.calls.filter(([url]) => String(url).includes('/v1/artifacts/'))).toEqual([]);
@@ -187,12 +202,15 @@ describe('confidential continuation Artifact custody', () => {
           const settlement = await rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`,
             callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice',
               machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-            params: { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'computer.secret.fill', request: reviewedRequest,
+            params: { v: 1, artifactId, requestId: 'request', actionId: 'browser.automation.secret.fill', request: reviewedRequest,
               choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false } });
-          expect(settlement).toEqual({ status: 'filled', code: 'filled' });
-          expect(effects).toBe(1);
+          expect(settlement).toEqual(targetSettlement);
+          expect(effects).toBe(targetSettlement.status === 'refused' ? 0 : 1);
           const stored = await createCliApprovalsArtifactStore({ credentials, getAccountEncryptionMode: async () => 'plain' })
-            .approvalsGet({ artifactId: 'approval', serverId });
+            .approvalsGet({ artifactId, serverId });
+          expect(stored, 'The private executor must retain its typed receipt instead of approval_not_found').not.toBeNull();
+          expect(stored?.execution).toMatchObject(targetSettlement.status === 'filled'
+            ? { ok: true, result: targetSettlement } : { ok: false, errorCode: targetSettlement.code, error: targetSettlement.code });
           expect(JSON.stringify(stored)).not.toContain(value);
           expect(ApprovalRequestV2Schema.parse(stored).actionArgs).toEqual(reviewedRequest);
           expect(ApprovalRequestV2Schema.parse(stored).executionOriginV1).toEqual(approval.executionOriginV1);
@@ -212,7 +230,7 @@ describe('confidential continuation Artifact custody', () => {
     let created: ApprovalRequest | null = null;
     await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
-    }, isActionApprovalRequired: () => false }).execute('computer.secret.fill', request, {
+    }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', request, {
       surface: 'agent', authority: 'account_automation', serverId: 'home', serverIdentityId: 'srv_verified_home',
       defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
     });
@@ -232,7 +250,9 @@ describe('confidential continuation Artifact custody', () => {
         headerVersion: record.headerVersion + 1, bodyVersion: record.bodyVersion + 1 };
       return { status: 200, data: { success: true, headerVersion: record.headerVersion, bodyVersion: record.bodyVersion } };
     });
-    const credentials = { token: `private-wrapper-${localHome}-${mode}-${hostIdentity}`, encryption: null,
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'alice',
+      fixture: `${localHome}-${mode}-${hostIdentity}`,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null,
       credentialProvenance: 'stored_session' as const };
     const scopeKey = resolveAccountSettingsScopeKeyForToken(credentials.token)!;
     const settings = AccountSettingsSchema.parse({});
@@ -247,9 +267,8 @@ describe('confidential continuation Artifact custody', () => {
       // Native preparation and delivery are the OS boundary; the trusted executor and materializer remain real.
       prepareTarget: async ({ request: reviewed }) => {
         expect(reviewed).toEqual(request);
-        return { nativeObservation: 'not_observable', recheck: async () => true,
-          fill: async (bytes, _signal, beforeDelivery) => {
-            if (!await beforeDelivery?.()) return { status: 'refused', code: 'approval_changed' };
+        return { nativeObservation: 'not_observable',
+          fill: async (bytes) => {
             expect(Buffer.from(bytes).toString()).toBe(value);
             physicalBytes.push(bytes); effects += 1;
             if (code === 'delivery_unknown') throw new Error(value);
@@ -276,13 +295,13 @@ describe('confidential continuation Artifact custody', () => {
       const result = await rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`,
         callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice',
           machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
-        params: { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'computer.secret.fill', request,
+        params: { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'browser.automation.secret.fill', request,
           choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false } });
       expect(result).toEqual({ status: code === 'filled' ? 'filled' : code === 'delivery_unknown' ? 'unknown' : 'refused', code });
       expect(effects).toBe(code === 'filled' || code === 'delivery_unknown' ? 1 : 0);
       if (code === 'approval_changed') {
         expect(await executor.continueConfidentialApprovalRequest({ v: 1, artifactId: 'approval', requestId: 'request',
-          actionId: 'computer.secret.fill', request, choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false },
+          actionId: 'browser.automation.secret.fill', request, choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false },
         { authority: 'present_user', surface: 'rpc', serverIdentityId: 'srv_verified_home',
           runtimeAccountId: 'alice', verifyMachineAdmissionCurrent: async () => true }))
           .toEqual({ ok: false, errorCode: 'approval_stale', error: 'approval_stale' });
@@ -391,12 +410,12 @@ describe('confidential continuation Artifact custody', () => {
     expect(JSON.stringify(stored)).not.toContain(value);
     expect(JSON.stringify(record)).not.toContain(value);
   });
-  it('rechecks the deciding custodian human admission after preparation through the real relay handler', async () => {
+  it('finishes the admitted private fill when the deciding human grant changes during preparation', async () => {
     let created: ApprovalRequest | null = null;
     const creator = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
     }, isActionApprovalRequired: () => false });
-    await creator.execute('computer.secret.fill', request, { surface: 'agent', authority: 'account_automation',
+    await creator.execute('browser.automation.secret.fill', request, { surface: 'agent', authority: 'account_automation',
       serverId: 'home', defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request',
       actionCaller: { kind: 'host' } });
     const approval = ApprovalRequestV2Schema.parse(created);
@@ -440,10 +459,10 @@ describe('confidential continuation Artifact custody', () => {
     const value = 'REVOKED-HUMAN-PRIVATE-D26';
     const result = await rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`,
       callerAuthority: 'present_user', machineAdmission,
-      params: { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'computer.secret.fill', request,
+      params: { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'browser.automation.secret.fill', request,
         choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false } });
-    expect(result).toEqual({ status: 'refused', code: 'approval_changed' });
-    expect(effects).toBe(0);
+    expect(result).toEqual({ status: 'filled', code: 'filled' });
+    expect(effects).toBe(1);
     expect(JSON.stringify(record)).not.toContain(value);
   });
   it('uses the real approval transition and HTTP revision CAS to issue only one concurrent effect', async () => {
@@ -451,7 +470,7 @@ describe('confidential continuation Artifact custody', () => {
     const creator = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
     }, isActionApprovalRequired: () => false });
-    await creator.execute('computer.secret.fill', request, { surface: 'agent', authority: 'account_automation',
+    await creator.execute('browser.automation.secret.fill', request, { surface: 'agent', authority: 'account_automation',
       serverId: 'home', defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request',
       actionCaller: { kind: 'host' } });
     const approval = ApprovalRequestV2Schema.parse(created);
@@ -479,7 +498,7 @@ describe('confidential continuation Artifact custody', () => {
         return { status: 'filled', code: 'filled' };
       } });
     const value = 'CONCURRENT-PRIVATE-D26';
-    const continuation = { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'computer.secret.fill', request,
+    const continuation = { v: 1, artifactId: 'approval', requestId: 'request', actionId: 'browser.automation.secret.fill', request,
       choice: { kind: 'once', value }, accountEncryptionMode: 'plain', submit: false } as const;
     const results = await Promise.all([0, 1].map(() => executor.continueConfidentialApprovalRequest(continuation,
       { serverId: 'home', authority: 'present_user' })));
@@ -494,7 +513,7 @@ describe('confidential continuation Artifact custody', () => {
     let created: ApprovalRequest | null = null;
     await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
-    }, isActionApprovalRequired: () => false }).execute('computer.secret.fill', request, {
+    }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', request, {
       surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'alice',
       defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
     });
@@ -522,9 +541,8 @@ describe('confidential continuation Artifact custody', () => {
     let effects = 0;
     const consumer = createConfidentialSecretFillExecutor({ expectedScopeKey: 'deciding-actor', expectedAccountId: 'alice',
       serverId: 'home', machineId: 'machine', readAccountMode: async () => 'plain',
-      prepareTarget: async () => ({ nativeObservation: 'not_observable', recheck: async () => true,
-        fill: async (bytes, _signal, beforeDelivery) => {
-          if (!await beforeDelivery?.()) return { status: 'refused', code: 'approval_changed' };
+      prepareTarget: async () => ({ nativeObservation: 'not_observable',
+        fill: async (bytes) => {
           expect(Buffer.from(bytes).toString()).toBe(value); effects += 1;
           return { status: 'filled', code: 'filled' };
         }, finish: async () => {} }),
@@ -534,11 +552,11 @@ describe('confidential continuation Artifact custody', () => {
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...store, isApprovalExecutionOriginCurrent: async () => true,
       confidentialSecretFill: consumer });
     expect(await executor.continueConfidentialApprovalRequest({ v: 1, artifactId: 'approval', requestId: 'request',
-      actionId: 'computer.secret.fill', request, choice: { kind: 'saved', ref: 'personal', fingerprint: 'personal:personal:1', revision: null },
+      actionId: 'browser.automation.secret.fill', request, choice: { kind: 'saved', ref: 'personal', fingerprint: 'personal:personal:1', revision: null },
       accountEncryptionMode: 'plain', submit: false }, { authority: 'present_user', surface: 'rpc', serverId: 'home',
       runtimeAccountId, verifyMachineAdmissionCurrent: async () => true }))
-      .toEqual({ ok: true, result: runtimeAccountId ? { status: 'filled', code: 'filled' }
-        : { status: 'refused', code: 'saved_secret_forbidden' } });
+      .toEqual(runtimeAccountId ? { ok: true, result: { status: 'filled', code: 'filled' } }
+        : { ok: false, errorCode: 'saved_secret_forbidden', error: 'saved_secret_forbidden' });
     expect(effects).toBe(runtimeAccountId ? 1 : 0);
     expect(JSON.stringify(record)).not.toContain(value);
     const stored = await store.approvalsGet({ artifactId: 'approval', serverId: 'home' });
