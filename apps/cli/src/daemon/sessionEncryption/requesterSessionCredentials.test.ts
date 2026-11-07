@@ -1,11 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
-import { logger } from '@/ui/logger';
-import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { definePlugin } from '@happier-dev/plugin-sdk';
-import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { access, mkdtemp, rm, readFile, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import axios from 'axios';
@@ -30,13 +24,19 @@ import { createContinueWithReplayLifecycleActionHandler } from '@/session/action
 import { createMachineSessionStopLifecycleActionExecutor } from '@/session/actions/lifecycle/createStopSessionLifecycleActionExecutor';
 import { loadSessionHandoffRemoteMetadata, registerMachineSessionHandoffRpcHandlers } from '@/api/machine/sessionHandoff/handlers';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
+import { PRIVATE_SPAWN_SESSION_RPC_METHODS } from '@/rpc/handlers/spawnSessionOptionsContract';
 import type { RpcHandler } from '@/api/rpc/types';
-import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { normalizeServerHttpBaseUrl, publishServerHttpRuntimeOrigin, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -68,7 +68,10 @@ import { resolveSpawnBackendIdentity } from '@/daemon/spawn/resolveSpawnBackendI
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { ApiClient } from '@/api/api';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createOnChildExited } from '../sessions/onChildExited';
+import { subscribeManagedSessionDirectoryRemoval } from '../sessions/subscribeManagedSessionDirectoryRemoval';
+import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { promisify } from 'node:util';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -104,8 +107,15 @@ import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTarge
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { admitRequesterSessionBootstrap, prepareRequesterSessionBootstrap, createRequesterSessionCredentialCustody, resolveRequesterSessionBootstrap, verifyRequesterSessionCredentialBinding, verifyRequesterSessionMachineAdmissionCurrent, resolveRequesterSessionCredentials, readRequesterSessionCredentialsForChild, listRequesterSessionCredentialBindings, requesterSessionCredentialPath, REQUESTER_SESSION_ID_ENV, type RequesterSessionMachineAdmissionBoundary } from "./requesterSessionCredentials";
-import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+
 import { prepareWorkflowSessionRequester } from '@/daemon/workflows/workflowSessionStartup';
+import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMachineTransport';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { registerActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
+import { logger } from '@/ui/logger';
+import { withWebLatencyTrace } from '../externalActions/webLatencyTrace';
+import { observeConnectedServiceMaterializationPhase } from '../connectedServices/materialize/materializationPhase';
 
 // Genuine socket boundary: these custody tests do not establish runner availability.
 vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Runner socket unavailable'); } }));
@@ -120,6 +130,111 @@ let restore: (() => void) | undefined;
 let directory: string | undefined;
 let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
 let sessionControlFixture: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
+
+it.each(['alice', 'bob'])('keeps Workflow startup operation reads and recovery cancellation in requester custody (custodian=%s)', async custodianAccountId => {
+  await home({ custodianAccountId });
+  const prepared = await prepareRequesterSessionBootstrap({ credentials, attribution,
+    boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+      getObservedServerIdentityId: () => 'srv_workflow_home' },
+    verifyMachineAdmissionCurrent: async () => true });
+  expect(prepared).not.toBeNull();
+  if (!prepared) throw new Error('Requester fixture was not admitted');
+  const operations = createHostActionOperationRuntime({ machineId: attribution.machineId,
+    custodyBinding: { serverId: attribution.serverId, installationId: attribution.installationId },
+    resolveAccountId: async () => custodianAccountId, supportsCoreCancellation: () => true,
+    generateOperationId: () => 'workflow-startup-operation' });
+  const receiver = new RpcHandlerManager({ scopePrefix: attribution.machineId, encryptionMode: 'plain', logger: () => {} });
+  registerActionOperationRpcHandlers(receiver, operations.handlers);
+  const runId = 'admitted-workflow-run';
+  const bindTransport = (withRequester = true) => createWorkflowRunMachineTransport({ runId, credentials,
+    ...(withRequester ? { requesterWorkAttributionV1: attribution } : {}),
+    boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+      getObservedServerIdentityId: () => 'srv_workflow_home' },
+    isCurrent: async () => true,
+    transport: { machineId: attribution.machineId, invoke: (method, input, options) => receiver.invokeLocal(method, input, options) } });
+  let transport = bindTransport();
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  let finish!: () => void;
+  const nativeCompletion = new Promise<void>(resolve => { finish = resolve; });
+  const execution = operations.observeExecution({ actionId: 'session.spawn_new', actionRequestId: 'workflow:birth',
+    input: { creationKey: 'workflow:birth', directory: { kind: 'path', path: '/workspace' }, observeSessionCommit: true,
+      executionTarget: { serverId: attribution.serverId, machineId: attribution.machineId } },
+    rpcContext: { requesterSessionBootstrap: prepared.admitted },
+    // Native Session process completion is the external boundary; the operation owner/store remain real.
+    execute: async operation => { started(); operation.signal.addEventListener('abort', finish, { once: true });
+      await nativeCompletion;
+      return operation.signal.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
+        : { ok: true, result: { type: 'success', sessionId: 'workflow-child' } }; } });
+  try {
+    await ready;
+    const request = { operationId: 'workflow-startup-operation' };
+    const expected = { kind: 'found', operation: { operationId: request.operationId, state: 'running',
+      scope: { accountId: attribution.accountId, machineId: attribution.machineId } } };
+    // Production's startup observer and retained-operation recovery supply no local Action context.
+    expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request)).toMatchObject(expected);
+    if (custodianAccountId === attribution.accountId) {
+      const ordinaryOwner = bindTransport(false);
+      try { expect(await ordinaryOwner.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request)).toMatchObject(expected); }
+      finally { await ordinaryOwner.dispose(); }
+    }
+    for (const localActionContext of [
+      { executionRunWorkflowRunId: 'another-run', requesterWorkAttributionV1: attribution },
+      { requesterWorkAttributionV1: attribution },
+      { executionRunWorkflowRunId: runId, requesterWorkAttributionV1: { ...attribution, accountId: 'unrelated-account' } },
+    ]) expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request, { localActionContext }))
+      .toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+    expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request,
+      { executionRunWorkflowRunId: 'another-run' }))
+      .toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+    expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request,
+      { executionRunWorkflowRunId: 'another-run', localActionContext: {
+        executionRunWorkflowRunId: runId, requesterWorkAttributionV1: attribution,
+      } }))
+      .toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+    await transport.dispose();
+    transport = bindTransport();
+    expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request)).toMatchObject(expected);
+    expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V1.cancel, request)).toMatchObject({ kind: 'requested' });
+    await execution;
+    expect(await transport.transport.invoke(ACTION_OPERATION_RPC_METHODS_V2.get, request))
+      .toMatchObject({ kind: 'found', operation: { state: 'cancelled', scope: { accountId: attribution.accountId } } });
+    if (custodianAccountId !== attribution.accountId) expect(await operations.handlers.getV2(request)).toEqual({ kind: 'not_found' });
+  } finally {
+    finish(); await execution; await transport.dispose(); await prepared.cleanupOnFailure();
+  }
+});
+
+it('retains and retires Workflow trigger custody through private requester bootstrap without spawning a Session', async () => {
+  const host = await home();
+  const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
+    serverHttpBaseUrl: origin, boundary: host.boundary });
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
+    authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+      resolveCustodianAccountId: async () => 'alice', resolveInstallationId: () => 'installation',
+      verifyMachineAdmission: current }) });
+  const launched: unknown[] = [];
+  sessionLifecycleRpc.registerSessionSpawnNewRpcHandlers({ rpcHandlerManager: rpc,
+    requesterBootstrapBoundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+      getObservedServerIdentityId: () => 'srv_workflow_home',
+      spawnLifecycleHandler: async input => { launched.push(input); return { type: 'success', sessionId: 'unexpected' }; } },
+  });
+  const { acquireWorkflowRequesterCredentials } = await import('../workflows/requesterCustody');
+  const input = { kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',
+    input: { executionTarget: { serverId: attribution.serverId, machineId: 'machine' }, scopeId: 'schedule', operation: 'retain' },
+    requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(credentials) } };
+  const options = { rpcContext: { machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
+    installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true } };
+  expect(await rpc.invokeLocal(RPC_METHODS.SESSION_SPAWN_NEW, input, options)).toEqual({ ok: true });
+  expect(launched).toEqual([]);
+  const binding = { scopeId: 'schedule', happyHomeDir: directory!, serverId: attribution.serverId,
+    machineId: 'machine', installationId: 'installation', serverHttpBaseUrl: origin };
+  const retained = await acquireWorkflowRequesterCredentials(binding);
+  expect(retained?.attribution.accountId).toBe('bob');
+  await retained?.release();
+  expect(await rpc.invokeLocal(RPC_METHODS.SESSION_SPAWN_NEW, { ...input, input: { ...input.input, operation: 'retire' } }, options)).toEqual({ ok: true });
+  expect(await acquireWorkflowRequesterCredentials(binding)).toBeNull();
+});
 afterAll(async () => { await runtimeFixture?.dispose(); runtimeFixture = undefined; });
 afterEach(async () => {
   await sessionControlFixture?.dispose(); sessionControlFixture = undefined;
@@ -130,10 +245,70 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
+it.each([
+  ['workflow', 'owner'], ['workflow', 'member'], ['workflow', 'misbound'], ['workflow', 'missing-home'],
+  ['direct', 'owner'], ['direct', 'member'],
+] as const)('admits %s owner MCP with retained Home custody (%s)', async (ingress, caller) => {
+  const custodianAccountId = caller === 'member' ? 'alice' : 'bob';
+  const host = await home({ custodianAccountId });
+  const birth = { ...attribution, serverId: configuration.activeServerId };
+  const homeServerIdentityId = 'srv_workflow_home';
+  let currentHome: string | null = caller === 'missing-home' ? null : homeServerIdentityId;
+  const { adoptServerProfileHomeConnectionDescriptor } = await import('@/server/serverProfiles');
+  const { readMcpExecutionSource, assertMcpStdioExecutionSupported } = await import('@/mcp/runtime/mcpExecutionSource');
+  await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: birth.serverId, createIfMissing: true,
+    observation: 'exact', descriptor: { v: 1, homeServerIdentityId, canonicalServerUrl: 'https://workflow-home.example.test',
+      revision: 1, endpoints: [{ kind: 'https', url: 'https://workflow-home.example.test' }] } });
+  const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution: birth, sessionId: 'session',
+    serverHttpBaseUrl: origin, boundary: host.boundary });
+  const boundary = { serverId: birth.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+    getObservedServerIdentityId: () => currentHome };
+  const beforePreparation = host.requests.length;
+  // Direct receivers must not need Workflow's adapter to retain the receiving
+  // Home when their already-admitted profile supplies its exact identity.
+  const prepare = ingress === 'workflow' ? prepareWorkflowSessionRequester : prepareRequesterSessionBootstrap;
+  const prepared = await prepare({ credentials, attribution: birth,
+    boundary: ingress === 'direct' ? { serverId: boundary.serverId,
+      serverHttpBaseUrl: boundary.serverHttpBaseUrl, happyHomeDir: boundary.happyHomeDir } : boundary,
+    machineAdmission: { actorAccountId: birth.accountId, custodianAccountId }, verifyMachineAdmissionCurrent: current });
+  if (caller === 'missing-home') {
+    expect(prepared).toBeNull();
+    expect(host.requests).toHaveLength(beforePreparation);
+    return;
+  }
+  if (!prepared) throw new Error('Workflow requester preparation failed');
+  requesterCredentialOwner.bindRequesterSessionRuntimeMachineAdmissionCurrentness({ bootstrap: prepared.admitted,
+    boundary: { ...host.boundary, getObservedServerIdentityId: boundary.getObservedServerIdentityId } });
+  try {
+    const custody = await prepared.admitted.bindSession('session', host.correspondence.sessionCreationTag);
+    if (!custody) throw new Error('Workflow Session custody failed');
+    vi.stubEnv(REQUESTER_SESSION_ID_ENV, 'session');
+    const child = await runWithServerHttpBaseUrl(origin, () => readRequesterSessionCredentialsForChild(custody.path));
+    if (!child) throw new Error('Workflow child credentials unavailable');
+    expect(child.requesterSessionCredentialScope?.requesterSession?.homeServerIdentityId).toBe(homeServerIdentityId);
+    // Real requester preparation, protected birth writer and child opener feed
+    // the exact MCP consumer. A different Session must not borrow this birth.
+    const beforeMcp = host.readReturnedRows().machine;
+    const admission = readMcpExecutionSource({ credentials: child, catalogCredentials: child,
+      sessionId: caller === 'misbound' ? 'another-session' : 'session', machineId: birth.machineId, serverHttpBaseUrl: origin })
+      .then(source => assertMcpStdioExecutionSupported(source, false));
+    if (caller === 'owner') {
+      await expect(admission).resolves.toMatchObject({ kind: 'requester',
+        identity: { kind: 'isolated', separationRequired: false }, hostHomeServerIdentityId: homeServerIdentityId });
+      currentHome = 'srv_replaced_home';
+      expect(await prepared.admitted.isCurrent()).toBe(false);
+    } else {
+      await expect(admission).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
+        details: { reason: caller === 'misbound' ? 'session_requester_unavailable' : 'agent_launch_kind_unavailable' } });
+    }
+    expect(host.readReturnedRows().machine - beforeMcp).toBe(caller === 'misbound' ? 0 : 1);
+  } finally { await prepared.cleanupOnFailure(); }
+});
+
 async function home(options: Readonly<{ sessionId?: string; creationMachineId?: string; bot?: boolean; custodianAccountId?: string; requesterReadsOnly?: boolean;
   machineGrantCount?: number;
   sessionActive?: boolean; sessionSeq?: number; encryptionSecret?: Uint8Array; beforeProfileRead?: () => Promise<void>;
-  beforeMachineAccessRead?: () => Promise<void> }> = {}) {
+  beforeMachineAccessRead?: () => Promise<void>; beforeSettingsRead?: () => Promise<void> }> = {}) {
   const sessionId = options.sessionId ?? 'session';
   const custodianAccountId = options.custodianAccountId ?? 'alice';
   directory = await mkdtemp(join(tmpdir(), 'requester-custody-'));
@@ -197,9 +372,9 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
     pendingInputs.push(request.body);
     return { didWrite: true, terminal: false };
   });
-  app.get('/v2/account/settings', async (_request, reply) => settingsAvailable
+  app.get('/v2/account/settings', async (_request, reply) => { await options.beforeSettingsRead?.(); return settingsAvailable
     ? accountMode === 'plain' ? { content: { t: 'plain', v: {} }, version: 1 } : { content: null, version: 0 }
-    : reply.code(500).send({ error: 'database_unavailable' }));
+    : reply.code(500).send({ error: 'database_unavailable' }); });
   app.get('/v1/account/entity-rows/acp', async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: acpCatalog } }));
   app.get('/v1/machines/machine/access', async (_request, reply) => {
     await options.beforeMachineAccessRead?.();
@@ -234,12 +409,15 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
       purpose?: { kind: 'requester_session_currentness'; sessionId: string };
       proof: Parameters<typeof verifyMachineInstallationProof>[0]['proof'] };
     if (!body?.context || !body.method && !body.purpose) throw new Error('Missing fresh C41 request');
-    if (body.method !== undefined || body.purpose?.kind !== 'requester_session_currentness'
-      || body.purpose.sessionId !== sessionId) return reply.code(403).send({ error: 'wrong_currentness_purpose' });
+    const purpose = body.purpose?.kind === 'requester_session_currentness' && body.purpose.sessionId === sessionId
+      && body.method === undefined ? { purpose: body.purpose }
+      : body.purpose === undefined && Object.values(PRIVATE_SPAWN_SESSION_RPC_METHODS).some(method => body.method === `machine:${method}`)
+        ? { method: body.method! } : null;
+    if (!purpose) return reply.code(403).send({ error: 'wrong_currentness_purpose' });
     const valid = verifyMachineInstallationProof({ publicKey: keyPair.publicKey, proof: body.proof,
       payload: { version: 1, accountId: custodianAccountId, machineId: 'machine', installationId: 'installation',
-        rpcAdmission: { context: body.context, purpose: body.purpose } } });
-    expect(body.context.actorAccountId).toBe('bob');
+        rpcAdmission: { context: body.context, ...purpose } } });
+    expect(body.context.actorAccountId).toBe(accountId);
     if (loseDuringVerification) installationId = 'replacement';
     return valid && access ? { v: 1, ok: true } : reply.code(403).send({ error: 'access_denied' });
   });
@@ -263,6 +441,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
     share: sessionRole === 'owner' ? null : { accessLevel: 'view', canApprovePermissions: false },
   }) }));
   app.get(`/v1/access-keys/${sessionId}/machine`, async () => ({ accessKey: { id: 'existing' } }));
+  app.post('/v3/automations/runs/workflow-storage', async () => ({ runs: [] }));
   await app.ready();
   restore = installAxiosFastifyAdapter({ app, origin });
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'alice-daemon',
@@ -280,6 +459,58 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
 }
 
 describe('requester Session lifecycle custody', () => {
+  it.each(['plain', 'e2ee'] as const)('retires %s requester custody only after definite non-admission at Resume', async mode => {
+    const secret = new Uint8Array(32).fill(23);
+    const host = await home(mode === 'e2ee' ? { encryptionSecret: secret } : {});
+    const requesterCredentials = { ...credentials, encryption: mode === 'e2ee' ? { type: 'legacy' as const, secret } : null };
+    const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials: requesterCredentials,
+      homeServerIdentityId: 'srv_original_home',
+      machineAdmission: { custodianAccountId: 'alice', role: 'use' } });
+    const child = spawn(process.execPath, ['-e', 'process.exitCode = 0'], { stdio: 'ignore' });
+    const pid = child.pid;
+    if (pid === undefined) throw new Error('Missing requester child fixture');
+    await new Promise<void>((resolve, reject) => { child.once('exit', () => resolve()); child.once('error', reject); });
+    const exited = createOnChildExited({ pidToTrackedSession: new Map([[pid, { pid, happySessionId: binding.sessionId,
+      startedBy: 'daemon', requesterWorkAttributionV1: attribution } satisfies TrackedSession]]),
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+    await exited(pid, { reason: 'process-exited', code: 0, signal: null });
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrap({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary });
+    const resumed = await recover();
+    expect(resumed?.getBoundSessionId()).toBe(binding.sessionId);
+    await resumed?.dispose();
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    host.setAccess(false);
+    expect(await recover()).toBeNull();
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('retires only the deleted requester Session through the existing deletion subscription', async () => {
+    await home();
+    const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'deleted',
+      attribution, credentials, machineAdmission: { custodianAccountId: 'alice', role: 'use' } });
+    const retained = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'retained', attribution, credentials });
+    const workflow = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'deleted',
+      attribution, credentials, scope: 'workflow_trigger' });
+    let deleted: ((change: { sessionId: string }) => void | Promise<void>) | undefined;
+    const dispose = await subscribeManagedSessionDirectoryRemoval({
+      directories: createManagedSessionDirectories({ activeServerDir: directory! }), token: 'custodian-fixture',
+      stopSession: async () => ({ status: 'not_found' }),
+      onSessionDeletedChange: listener => { deleted = listener; return () => { deleted = undefined; }; },
+      onSessionAccessReset: () => () => {},
+      requesterCustody: { happyHomeDir: directory!, serverId: attribution.serverId },
+    });
+    try {
+      if (!deleted) throw new Error('Missing existing deletion subscription');
+      await deleted({ sessionId: 'deleted' });
+      await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(retained.path)).resolves.toBeUndefined();
+      await expect(access(workflow.path)).resolves.toBeUndefined();
+      await deleted({ sessionId: 'deleted' });
+    } finally { dispose(); }
+  });
   it.each(['plain', 'e2ee'] as const)('discovers each custody scope in the current Home store and recovers Sync with its captured identity (%s)', async mode => {
     const secret = new Uint8Array(32).fill(19);
     const host = await home({ sessionId: 'sync-relationship', ...(mode === 'e2ee' ? { encryptionSecret: secret } : {}) });
@@ -434,7 +665,7 @@ describe('requester Session lifecycle custody', () => {
     await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['direct', 'cold', 'session-binding'] as const)('preserves ordinary requester custody after refused %s recovery following a crash', async recovery => {
+  it.each(['direct', 'cold', 'session-binding'] as const)('retires ordinary crash custody only after definite %s recovery refusal', async recovery => {
     const host = await home();
     const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
     const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
@@ -456,10 +687,17 @@ describe('requester Session lifecycle custody', () => {
       .rejects.toMatchObject({ code: 1 });
     await expect(access(custody.path)).resolves.toBeUndefined();
     await expect(recover()).resolves.toBeNull();
-    await expect(access(custody.path)).resolves.toBeUndefined();
+    // The direct caller supplies only an opaque boolean; cold recovery owns
+    // the Home evidence that distinguishes withdrawal from unavailability.
+    if (recovery === 'direct') await expect(access(custody.path)).resolves.toBeUndefined();
+    else await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(access(other.path)).resolves.toBeUndefined();
     host.setAccess(true);
     host.setSessionRole('owner');
+    if (recovery !== 'direct') {
+      await expect(recover()).resolves.toBeNull();
+      await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+    }
     const recovered = await recover();
     expect(recovered).not.toBeNull();
     if (recovered && 'dispose' in recovered) await recovered.dispose();
@@ -468,7 +706,7 @@ describe('requester Session lifecycle custody', () => {
   });
 
   it.each(['home-withdrawal', 'machine-refusal', 'session-role-withdrawal'] as const)(
-    'preserves ordinary Session custody across direct %s recovery', async failure => {
+    'retires direct Session custody only when %s recovery yields definite withdrawal', async failure => {
       const host = await home();
       let homeCurrent = true;
       const boundary = { ...host.boundary, isHomeCurrent: () => homeCurrent };
@@ -482,10 +720,15 @@ describe('requester Session lifecycle custody', () => {
       if (failure === 'machine-refusal') host.setAccess(false);
       if (failure === 'session-role-withdrawal') host.setSessionRole('view');
       await expect(recover()).resolves.toBeNull();
-      await expect(access(custody.path)).resolves.toBeUndefined();
+      if (failure === 'session-role-withdrawal') await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      else await expect(access(custody.path)).resolves.toBeUndefined();
       homeCurrent = true;
       host.setAccess(true);
       host.setSessionRole('owner');
+      if (failure === 'session-role-withdrawal') {
+        await expect(recover()).resolves.toBeNull();
+        await createRequesterSessionCredentialCustody({ ...binding, credentials });
+      }
       expect((await recover())?.token).toBe(credentials.token);
       await expect(access(custody.path)).resolves.toBeUndefined();
     });
@@ -568,6 +811,80 @@ describe('requester Session lifecycle custody', () => {
       expect(await verify()).toBe(false);
     } finally { phases.mockRestore(); }
   });
+  it.each(['plain', 'e2ee'] as const)('shares one in-flight Settings read across 16 identical requester admissions, then reads fresh again (%s)', async mode => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const secret = new Uint8Array(32).fill(31);
+    const requesterCredentials = { ...credentials, encryption: mode === 'e2ee' ? { type: 'legacy' as const, secret } : null };
+    const host = await home({ beforeSettingsRead: () => held, ...(mode === 'e2ee' ? { encryptionSecret: secret } : {}) });
+    const phases = vi.spyOn(logger, 'infoFile');
+    const prepare = () => prepareRequesterSessionBootstrap({ credentials: requesterCredentials, attribution,
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({ credentials: requesterCredentials, attribution,
+        sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }), boundSessionId: 'session' });
+    const pending = Promise.all(Array.from({ length: 16 }, prepare));
+    let reads = 0;
+    try {
+      await expect.poll(() => phases.mock.calls.filter(([label, fact]) => label === '[accountSettings] Bootstrap phase'
+        && fact !== null && typeof fact === 'object' && 'phase' in fact && fact.phase === 'cache_read'
+        && 'status' in fact && fact.status === 'completed').length).toBe(16);
+      await expect.poll(() => host.requests.filter(request => request.path === '/v2/account/settings').length).toBeGreaterThan(0);
+      reads = host.requests.filter(request => request.path === '/v2/account/settings').length;
+    } finally { release(); phases.mockRestore(); }
+    const admitted = await pending;
+    try {
+      expect(reads).toBe(1);
+      expect(admitted.every(value => value?.admitted.accountSettingsContext.source === 'network')).toBe(true);
+      expect(new Set(admitted.map(value => value?.admitted.savedSecretOperationContext)).size).toBe(16);
+      const next = await prepare();
+      expect(next).not.toBeNull();
+      await next?.cleanupOnFailure();
+      expect(host.requests.filter(request => request.path === '/v2/account/settings')).toHaveLength(2);
+    } finally { await Promise.all(admitted.map(value => value?.cleanupOnFailure())); }
+  });
+
+  it('reads distinct requester credential scopes once each', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const host = await home({ beforeSettingsRead: () => held });
+    const rotated = { ...credentials, token: credentials.token.replace('.fixture', '.rotated') };
+    const pending = Promise.all([credentials, rotated].map(requesterCredentials => prepareRequesterSessionBootstrap({
+      credentials: requesterCredentials, attribution,
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({ credentials: requesterCredentials,
+        attribution, sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }), boundSessionId: 'session' })));
+    try { await expect.poll(() => host.requests.filter(request => request.path === '/v2/account/settings').length).toBe(2); }
+    finally { release(); }
+    const admitted = await pending;
+    try { expect(admitted.every(value => value !== null)).toBe(true); }
+    finally { await Promise.all(admitted.map(value => value?.cleanupOnFailure())); }
+  });
+
+  it('does not reuse a superseded Account read when the requester Account switches mid-flight', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const host = await home({ beforeSettingsRead: () => held });
+    const controller = new AbortController();
+    const prepare = (accountId: string, token: string, signal?: AbortSignal) => prepareRequesterSessionBootstrap({
+      credentials: { token, encryption: null }, attribution: { ...attribution, accountId }, signal,
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({
+        credentials: { token, encryption: null }, attribution: { ...attribution, accountId },
+        sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }) });
+    const old = prepare('bob', credentials.token, controller.signal).catch(() => null);
+    await expect.poll(() => host.requests.filter(request => request.path === '/v2/account/settings').length).toBe(1);
+    controller.abort();
+    host.setAccountId('alice');
+    const aliceToken = `e30.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.fixture`;
+    const next = prepare('alice', aliceToken);
+    try { await expect.poll(() => host.requests.filter(request => request.path === '/v2/account/settings').length).toBe(2); }
+    finally { release(); }
+    expect(await old).toBeNull();
+    const admitted = await next;
+    try { expect(admitted?.admitted.attribution.accountId).toBe('alice'); }
+    finally { await admitted?.cleanupOnFailure(); }
+  });
+
   it.each(['plain', 'e2ee'] as const)('admits early original requester input through exact retained Session custody without another credential box (%s)', async mode => {
     const sessionId = 'c123456789012345678901234';
     const secret = new Uint8Array(32).fill(31);
@@ -621,6 +938,9 @@ describe('requester Session lifecycle custody', () => {
               serverIdentityId: 'srv_requester_home', serverHttpBaseUrl: origin,
               externalActionMachineRequestPrivateKey: host.keyPair.secretKey,
               externalActionMachineInstallationId: attribution.installationId,
+              machineActionDirectTargetTransport: { machineId: attribution.machineId, invoke: async () => {
+                throw new Error('Early Session input uses the installed Machine admission transport');
+              } },
               machineAdmissionTransport: async (raw, options) => {
                 const request = SessionPendingEnqueueByMachineRequestV1Schema.parse(raw);
                 expect(options?.callerInputAuthorization?.token).toBe(authorization.token);
@@ -670,18 +990,20 @@ describe('requester Session lifecycle custody', () => {
           installationId: change.installationId ?? attribution.installationId,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } } });
     };
+    let expectedAdmissions = 1;
     const expectRefused = async (request = dispatch) => {
       const result = await runWithServerHttpBaseUrl(origin, () => invoke(request));
       expect(result).not.toBeNull();
       expect(executionFor(result, request)?.ok).not.toBe(true);
-      expect(admittedInputs).toHaveLength(1);
+      expect(admittedInputs).toHaveLength(expectedAdmissions);
       expect(host.pendingInputs).toHaveLength(0);
     };
     try {
       const result = await runWithServerHttpBaseUrl(origin, invoke);
       const execution = executionFor(result);
       expect(execution, JSON.stringify({ resultKind: result?.kind,
-        refusalCode: result?.kind === 'invalid_request' ? result.errorCode : undefined }))
+        refusalCode: result?.kind === 'invalid_request' ? result.errorCode : undefined,
+        requestedPaths: host.requests.map(request => request.path) }))
         .toEqual({ ok: true, result: { status: 'accepted', localId: input.localId } });
       expect(admittedInputs).toHaveLength(1);
       expect(host.pendingInputs).toHaveLength(0);
@@ -697,139 +1019,51 @@ describe('requester Session lifecycle custody', () => {
       host.setAccess(false);
       await expectRefused();
       host.setAccess(true);
+      // A successful send does not make subsequent Home evidence available.
+      // Exercise the next-send refusal through registered RPC and retained
+      // Session custody, then recover with the same durable input identity.
+      host.setUnavailablePath(`/v2/sessions/${sessionId}`);
+      const unavailable = await runWithServerHttpBaseUrl(origin, invoke);
+      expect(unavailable).toMatchObject({ kind: 'response' });
+      expect(executionFor(unavailable)).toMatchObject({ ok: false,
+        errorCode: 'target_unavailable', effectAttempted: false });
+      expect(admittedInputs).toHaveLength(1);
+      host.setUnavailablePath(null);
+      expect(executionFor(await runWithServerHttpBaseUrl(origin, invoke)))
+        .toEqual({ ok: true, result: { status: 'accepted', localId: input.localId } });
+      expectedAdmissions = 2;
+      expect(admittedInputs).toHaveLength(expectedAdmissions);
+      expect(admittedInputs.map(request => SessionPendingEnqueueByMachineRequestV1Schema.parse(request).localId))
+        .toEqual([input.localId, input.localId]);
       await prepared.cleanupOnFailure();
       await expectRefused();
     } finally { identity.mockRestore(); await prepared.cleanupOnFailure(); }
   });
-  it('observes replacement runtime admission without joining the previous pending verifier', async () => {
-    let release: (() => void) | undefined;
-    let entered: (() => void) | undefined;
-    let held: Promise<void> | undefined;
-    const host = await home({ beforeProfileRead: async () => { entered?.(); await held; } });
-    const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
-      serverHttpBaseUrl: origin, boundary: host.boundary });
-    const prepared = await prepareRequesterSessionBootstrap({ credentials: { ...credentials }, attribution,
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
-      verifyMachineAdmissionCurrent: current, boundSessionId: 'session', preparedSessionId: 'session' });
-    if (!prepared) throw new Error('Missing requester bootstrap');
-    held = new Promise<void>(resolve => { release = resolve; });
-    const started = new Promise<void>(resolve => { entered = resolve; });
-    const pending = prepared.admitted.isCurrent();
-    await started;
-    prepared.admitted.bindRuntimeMachineAdmissionCurrentness(() => verifyRequesterSessionMachineAdmissionCurrent({
-      credentials, attribution, sessionId: 'session', serverHttpBaseUrl: origin,
-      boundary: { ...host.boundary, readInstallation: () => null },
-    }));
-    let replacement: boolean | undefined;
-    const replaced = prepared.admitted.isCurrent().then(value => { replacement = value; });
-    try {
-      await expect.poll(() => replacement).toBe(false);
-    } finally {
-      release?.();
-      await replaced;
-      await expect(pending).resolves.toBe(true);
-      await prepared.cleanupOnFailure();
-    }
-  });
-
-  it('retires a pending requester authority observation without waiting for its Home response', async () => {
-    let release: (() => void) | undefined;
-    let entered: (() => void) | undefined;
-    let held: Promise<void> | undefined;
-    const host = await home({ beforeProfileRead: async () => { entered?.(); await held; } });
-    const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
-      serverHttpBaseUrl: origin, boundary: host.boundary });
-    const prepared = await prepareRequesterSessionBootstrap({ credentials: { ...credentials }, attribution,
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
-      verifyMachineAdmissionCurrent: current, boundSessionId: 'session', preparedSessionId: 'session' });
-    if (!prepared) throw new Error('Missing requester bootstrap');
-    held = new Promise<void>(resolve => { release = resolve; });
-    const started = new Promise<void>(resolve => { entered = resolve; });
-    const pending = prepared.admitted.isCurrent();
-    await started;
-    let disposed = false;
-    const disposal = prepared.admitted.dispose().then(() => { disposed = true; });
-    try {
-      await expect.poll(() => disposed).toBe(true);
-      await expect(prepared.admitted.isCurrent()).resolves.toBe(false);
-    } finally {
-      release?.();
-      await disposal;
-      await expect(pending).resolves.toBe(false);
-      await prepared.cleanupOnFailure();
-    }
-  });
-
-  it('shares concurrent requester authority observations without retaining a result across later revocation', async () => {
-    let release: (() => void) | undefined;
-    let entered: (() => void) | undefined;
-    let held: Promise<void> | undefined;
-    const host = await home({ beforeProfileRead: async () => { entered?.(); await held; } });
-    const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
-      serverHttpBaseUrl: origin, boundary: host.boundary });
-    const prepared = await prepareRequesterSessionBootstrap({ credentials: { ...credentials }, attribution,
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
-      verifyMachineAdmissionCurrent: current, boundSessionId: 'session', preparedSessionId: 'session' });
-    if (!prepared) throw new Error('Missing requester bootstrap');
-    try {
-      const profileReads = () => host.requests.filter(request => request.path === '/v1/account/profile').length;
-      const baseline = profileReads();
-      await expect(prepared.admitted.isCurrent()).resolves.toBe(true);
-      const singleObservationReads = profileReads() - baseline;
-      expect(singleObservationReads).toBeGreaterThan(0);
-      const before = profileReads();
-      held = new Promise<void>(resolve => { release = resolve; });
-      const started = new Promise<void>(resolve => { entered = resolve; });
-      const observations = Promise.all([prepared.admitted.isCurrent(), prepared.admitted.isCurrent()]);
-      await started;
-      release?.();
-      await expect(observations).resolves.toEqual([true, true]);
-      // This is the Home request fan-out contract: one live observation serves
-      // concurrent consumers, while the next admission must observe revocation.
-      expect(profileReads() - before).toBe(singleObservationReads);
-      held = undefined;
-      host.setAccess(false);
-      await expect(prepared.admitted.isCurrent()).resolves.toBe(false);
-    } finally { release?.(); await prepared.cleanupOnFailure(); }
-  });
-
-  it('keeps retirement and nested checkpoint revocation binding while sharing native preparation reads', async () => {
+  it('admits requester preparation once, avoids Machine rechecks for admitted readers, and refuses the next admission after revocation', async () => {
     const host = await home();
-    const prepared = await prepareRequesterSessionBootstrap({ credentials: { ...credentials }, attribution,
+    const prepare = () => prepareRequesterSessionBootstrap({ credentials: { ...credentials }, attribution,
       boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
       verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution,
-        sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }), boundSessionId: 'session' });
+        sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }) });
+    const prepared = await prepare();
     if (!prepared) throw new Error('Missing requester bootstrap');
+    const admissions = () => host.requests.filter(request => request.path.endsWith('/admission/verify')).length;
     try {
-      await runWithRequesterSessionCurrentnessCheckpoint(async () => {
+      expect(admissions()).toBe(1);
+      host.requests.length = 0;
+      for (let reader = 0; reader < 16; reader++) {
         await expect(prepared.admitted.isCurrent()).resolves.toBe(true);
-        host.setAccess(false);
-        await runWithRequesterSessionCurrentnessCheckpoint(async () => {
-          await expect(prepared.admitted.isCurrent()).resolves.toBe(false);
-        });
-        // Resuming a preparation after a fresh effect check cannot resurrect
-        // its earlier successful observation.
-        await expect(prepared.admitted.isCurrent()).resolves.toBe(false);
-      });
-      host.setAccess(true);
-      let release: (() => void) | undefined;
-      const held = new Promise<void>(resolve => { release = resolve; });
-      const escaped = await runWithRequesterSessionCurrentnessCheckpoint(async () => {
-        await expect(prepared.admitted.isCurrent()).resolves.toBe(true);
-        // Promise continuations retain their originating async context even
-        // after its callback returns. A closed checkpoint must not grant them
-        // its earlier authority observation.
-        return { observation: held.then(() => prepared.admitted.isCurrent()) };
-      });
+      }
+      expect(admissions()).toBe(0);
       host.setAccess(false);
-      release?.();
-      await expect(escaped.observation).resolves.toBe(false);
-      host.setAccess(true);
-      await runWithRequesterSessionCurrentnessCheckpoint(async () => {
-        await expect(prepared.admitted.isCurrent()).resolves.toBe(true);
-        await prepared.admitted.dispose();
-        await expect(prepared.admitted.isCurrent()).resolves.toBe(false);
-      });
+      await expect(prepared.admitted.isCurrent()).resolves.toBe(true);
+      await expect(prepare()).resolves.toBeNull();
+      // The next admission refuses at its authenticated Machine-access read,
+      // before Home needs another signed admission verification.
+      expect(host.requests.filter(request => request.path === '/v1/machines/machine')).toHaveLength(1);
+      expect(admissions()).toBe(0);
+      await prepared.admitted.dispose();
+      await expect(prepared.admitted.isCurrent()).resolves.toBe(false);
     } finally { await prepared.cleanupOnFailure(); }
   });
 
@@ -860,7 +1094,7 @@ describe('requester Session lifecycle custody', () => {
     } finally { await prepared?.cleanupOnFailure(); }
   });
 
-  it.each(['/v1/account/profile', '/v2/sessions/session', '/v1/machines/machine/access', '/v1/machines/machine/admission/verify', 'admission-timeout', 'machine-access-timeout'])(
+  it.each(['/v1/account/profile', '/v2/sessions/session', '/v1/machines/machine', '/v1/machines/machine/admission/verify', 'admission-timeout', 'machine-access-timeout'])(
     'preserves requester custody across an unavailable Home read at %s without treating it as revocation', async path => {
       const host = await home();
       const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
@@ -871,20 +1105,31 @@ describe('requester Session lifecycle custody', () => {
       if (!prepared) throw Error('Missing real requester bootstrap');
       const context = prepared.admitted.savedSecretOperationContext;
       const snapshot = context.readSnapshot();
+      await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution,
+        credentials, homeServerIdentityId: 'srv_original_home' });
+      const recover = () => resolveRequesterSessionBootstrap({ happyHomeDir: directory!, sessionId: 'session', attribution,
+        serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary });
       try {
         if (path === 'admission-timeout') {
           // Axios is the Home transport boundary. Reproduce the exact loaded
           // Machine-admission ECONNABORTED without a production timer.
           vi.spyOn(axios, 'post').mockRejectedValueOnce(new axios.AxiosError('never-log-request', 'ECONNABORTED'));
         } else if (path === 'machine-access-timeout') {
-          vi.spyOn(axios, 'request').mockRejectedValueOnce(new axios.AxiosError('never-log-request', 'ECONNABORTED'));
+          const get = axios.get.bind(axios);
+          vi.spyOn(axios, 'get').mockImplementation((url, config) => String(url).endsWith('/v1/machines/machine')
+            ? Promise.reject(new axios.AxiosError('never-log-request', 'ECONNABORTED')) : get(url, config));
         } else host.setUnavailablePath(path);
-        await expect(context.isCurrent()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
+        await expect(recover()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
         expect(context.readSnapshot()).toBe(snapshot);
         host.setUnavailablePath(null);
-        expect(await context.isCurrent()).toBe(true);
+        vi.restoreAllMocks();
+        const recovered = await recover();
+        expect(await recovered?.isCurrent()).toBe(true);
+        await recovered?.dispose();
         host.setAccess(false);
-        expect(await context.isCurrent()).toBe(false);
+        expect(await recover()).toBeNull();
+        expect(await context.isCurrent()).toBe(true);
+        await prepared.admitted.dispose();
         expect(context.readSnapshot()).toBeNull();
       } finally { host.setUnavailablePath(null); vi.restoreAllMocks(); await prepared.cleanupOnFailure(); }
     },
@@ -892,10 +1137,13 @@ describe('requester Session lifecycle custody', () => {
 
   it.each(['protected', 'legacy'] as const)('preserves a retryable Home read failure during %s requester recovery and admits only after recovery', async kind => {
     const host = await home();
-    if (kind === 'protected') await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials });
+    if (kind === 'protected') await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials,
+      homeServerIdentityId: 'srv_original_home' });
     const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!,
       serverId: attribution.serverId, sessionId: 'session', serverHttpBaseUrl: origin,
-      machineAdmissionBoundary: host.boundary, expectedAttribution: attribution, legacyOwnerCredentials: credentials });
+      machineAdmissionBoundary: host.boundary, expectedAttribution: attribution, legacyOwnerCredentials: kind === 'legacy'
+        ? bindRequesterSessionCredentialScope({ ...credentials }, { serverId: attribution.serverId, serverHttpBaseUrl: origin,
+          requesterSession: { sessionId: 'session', attribution, homeServerIdentityId: 'srv_original_home' } }) : credentials });
     host.setSettingsAvailable(false);
     const failure = await recover().then(() => { throw new Error('Home failure must refuse requester recovery'); }, error => error as unknown);
     expect(failure).toMatchObject({ code: 'project_requester_home_unavailable' });
@@ -916,13 +1164,25 @@ describe('requester Session lifecycle custody', () => {
   it.each(['protected', 'legacy'] as const)('restores %s existing-Session custody through the real local resume registration and refuses revoked or substituted ownership', async custodyKind => {
     const sessionId = 'caaaaaaaaaaaaaaaaaaaaaaaa';
     const host = await home({ sessionId, sessionSeq: 17, requesterReadsOnly: true });
-    if (custodyKind === 'protected') await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId, attribution, credentials });
+    if (custodyKind === 'protected') await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId, attribution, credentials,
+      homeServerIdentityId: 'srv_original_home' });
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId,
       serverHttpBaseUrl: origin, boundary: host.boundary });
     const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
       installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const };
     const launched: SpawnSessionOptions[] = [];
-    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+    let localAdmission: Awaited<ReturnType<typeof authorizeMachineRpcRequest>> | undefined;
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: async request => localAdmission = await authorizeMachineRpcRequest(request, {
+        machineId: 'machine', resolveInstallationId: () => host.boundary.readInstallation()?.installationId ?? null,
+        resolveCustodianAccountId: async () => 'alice',
+        verifyMachineAdmission: async ({ context, method, signal }) => {
+          const installation = host.boundary.readInstallation();
+          return !!installation && await verifyMachineRpcAdmissionCurrent({ context, method,
+            privateKey: installation.privateKey, daemonToken: host.boundary.daemonToken,
+            serverHttpBaseUrl: origin, signal });
+        },
+      }) });
     const registry = new ConnectedServiceRuntimeRegistry();
     const trackedSessions = new Map<number, TrackedSession>();
     let requester: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
@@ -933,7 +1193,9 @@ describe('requester Session lifecycle custody', () => {
     const resolve = async (sessionId: string, expected?: typeof attribution) => {
       const bootstrap = await requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!, sessionId,
         serverId: attribution.serverId, expectedAttribution: expected ?? attribution, serverHttpBaseUrl: origin,
-        machineAdmissionBoundary: host.boundary, legacyOwnerCredentials: { ...credentials } });
+        machineAdmissionBoundary: host.boundary, legacyOwnerCredentials: custodyKind === 'legacy'
+          ? bindRequesterSessionCredentialScope({ ...credentials }, { serverId: attribution.serverId, serverHttpBaseUrl: origin,
+            requesterSession: { sessionId, attribution, homeServerIdentityId: 'srv_original_home' } }) : credentials });
       if (!bootstrap) return null;
       requester = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap, activeServerDir: directory!,
         connectedServicesMaterializationBaseDir: join(directory!, 'materialized'),
@@ -967,7 +1229,10 @@ describe('requester Session lifecycle custody', () => {
     if (!deps.sessionOpen) throw new Error('Missing canonical Session open owner');
     const resume = () => runWithServerHttpBaseUrl(origin, () => deps.sessionOpen!({ sessionId,
       serverId: 'portable-bob-home', intent: 'resume', resumeRequest: input }));
-    await expect(resume()).resolves.toMatchObject({ ok: true, status: 'opened', sessionId });
+    const resumed = await resume();
+    expect(resumed, JSON.stringify({ admission: localAdmission?.ok === false ? localAdmission.admissionPredicate : localAdmission?.ok,
+      errorCode: resumed && typeof resumed === 'object' ? Reflect.get(resumed, 'errorCode') : null }))
+      .toMatchObject({ ok: true, status: 'opened', sessionId });
     expect(launched).toHaveLength(1);
     expect(launched[0]).toMatchObject({ existingSessionId: sessionId, resume: 'same-native-session',
       requesterWorkAttributionV1: attribution, callerInputConstraints: constraints,
@@ -1048,8 +1313,13 @@ describe('requester Session lifecycle custody', () => {
     const admittedLaunches = launched.length;
     await expect(rpc.invokeLocal(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, input, {
       rpcContext: { ...options.rpcContext, machineAdmission: { ...machineAdmission, actorAccountId: 'eve' } },
-    })).resolves.toMatchObject({ ok: false });
+    })).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     host.setAccess(false);
+    await expect(resolve(sessionId)).resolves.toBeNull();
+    await expect(access(requesterCredentialOwner.requesterSessionCredentialPath({ happyHomeDir: directory!, sessionId, attribution })))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(rpc.invokeLocal(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, input, options))
+      .resolves.toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
     await expect(resume()).resolves.toMatchObject({ ok: false });
     expect(launched).toHaveLength(admittedLaunches);
   });
@@ -1248,7 +1518,7 @@ describe('requester Session lifecycle custody', () => {
     host.setAccess(false);
     expect(await bindExisting('session')).toBeNull();
   });
-  it.each(['revoked', 'different-parent', 'admitted'] as const)('keeps %s stop on the exact admitted requester Session before the process boundary', async state => {
+  it.each(['disposed', 'different-parent', 'admitted'] as const)('keeps %s stop on the exact admitted requester Session before the process boundary', async state => {
     const host = await home();
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -1260,7 +1530,7 @@ describe('requester Session lifecycle custody', () => {
     // This callback is the genuine process-stop boundary; all custody/admission remains real.
     const executor = createMachineSessionStopLifecycleActionExecutor({ stopSession: async sessionId => {
       stopped.push(sessionId); return { status: 'requested' }; } });
-    if (state === 'revoked') host.setAccess(false);
+    if (state === 'disposed') await custody.admitted.dispose();
     const result = await executor.execute('session.stop', { sessionId: state === 'different-parent' ? 'different-session' : 'session' }, {
       surface: 'rpc', signal: new AbortController().signal, requesterSessionBootstrap: custody.admitted,
       machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
@@ -1269,7 +1539,7 @@ describe('requester Session lifecycle custody', () => {
       expect(result).toMatchObject({ ok: true, result: { status: 'requested' } }); expect(stopped).toEqual(['session']);
     } else { expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' }); expect(stopped).toEqual([]); }
   });
-  it.each(['revoked', 'different-parent', 'admitted'] as const)('keeps %s handoff metadata reads in the exact requester custody', async state => {
+  it.each(['disposed', 'different-parent', 'admitted'] as const)('keeps %s handoff metadata reads in the exact requester custody', async state => {
     const host = await home();
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -1277,7 +1547,7 @@ describe('requester Session lifecycle custody', () => {
       boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
       verifyMachineAdmissionCurrent: current, boundSessionId: 'session', preparedSessionId: 'session' });
     if (!custody) throw new Error('Missing requester bootstrap');
-    if (state === 'revoked') host.setAccess(false);
+    if (state === 'disposed') await custody.admitted.dispose();
     const before = host.requests.filter(request => request.path.startsWith('/v2/sessions/')).length;
     const metadata = await runWithServerHttpBaseUrl(origin, () => loadSessionHandoffRemoteMetadata(
       state === 'different-parent' ? 'different-session' : 'session', {
@@ -1292,7 +1562,7 @@ describe('requester Session lifecycle custody', () => {
       expect(reads.every(request => request.bearer === `Bearer ${credentials.token}`)).toBe(true);
     } else { expect(metadata).toBeNull(); expect(reads).toEqual([]); }
   });
-  it.each(['revoked', 'different-parent'] as const)('refuses %s continue before requester or custodian Account effects', async state => {
+  it.each(['disposed', 'different-parent'] as const)('refuses %s continue before requester or custodian Account effects', async state => {
     const host = await home();
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -1310,7 +1580,7 @@ describe('requester Session lifecycle custody', () => {
     const handler = createContinueWithReplayLifecycleActionHandler({ sessionHostBridge: bridge,
       spawnSession: async () => { throw new Error('Unexpected physical launch'); } });
     const executor = createSessionLifecycleRpcActionExecutor({ 'session.continue_with_replay': handler });
-    if (state === 'revoked') host.setAccess(false);
+    if (state === 'disposed') await custody.admitted.dispose();
     const before = host.requests.filter(request => request.path.startsWith('/v2/sessions/')).length;
     const result = await executor.execute('session.continue_with_replay', input, { surface: 'rpc',
       signal: new AbortController().signal, requesterSessionBootstrap: custody.admitted,
@@ -1320,7 +1590,7 @@ describe('requester Session lifecycle custody', () => {
       errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE } });
     expect(host.requests.filter(request => request.path.startsWith('/v2/sessions/'))).toHaveLength(before);
   });
-  it.each(['revoked', 'different-parent', 'admitted'] as const)('keeps %s fork preflight bound to the original requester Session through the lifecycle Action adapter', async (state) => {
+  it.each(['disposed', 'different-parent', 'admitted'] as const)('keeps %s fork preflight bound to the original requester Session through the lifecycle Action adapter', async (state) => {
     const host = await home();
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -1338,7 +1608,7 @@ describe('requester Session lifecycle custody', () => {
       requesterSessionBootstrap: custody.admitted, machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice',
         machineId: 'machine', installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
       verifyMachineAdmissionCurrent: current };
-    if (state === 'revoked') host.setAccess(false);
+    if (state === 'disposed') await custody.admitted.dispose();
     const before = host.requests.filter(request => request.path === '/v2/sessions/session').length;
     const input = SessionForkRpcParamsSchema.parse({ v: 1,
       parentSessionId: state === 'different-parent' ? 'different-session' : 'session',
@@ -1383,7 +1653,7 @@ describe('requester Session lifecycle custody', () => {
     await custody.cleanupOnFailure();
   });
 
-  it('uses exact admitted Session credentials for serviceability and performs no read after admission loss', async () => {
+  it('uses exact admitted Session credentials for serviceability and performs no read after custody disposal', async () => {
     const host = await home();
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -1399,14 +1669,14 @@ describe('requester Session lifecycle custody', () => {
     const reads = host.requests.filter(request => request.path === '/v2/sessions/session');
     expect(reads).not.toHaveLength(0);
     expect(reads.every(request => request.bearer === `Bearer ${credentials.token}`)).toBe(true);
-    host.setAccess(false);
+    await custody.admitted.dispose();
     const before = reads.length;
     await runWithServerHttpBaseUrl(origin, () => probeAlreadyRunningExistingSessionServiceability(options));
     expect(host.requests.filter(request => request.path === '/v2/sessions/session')).toHaveLength(before);
     await custody.cleanupOnFailure();
   });
 
-  it.each(['rpc', 'trusted-child'] as const)('launches the same ordinary lifecycle with actual %s requester custody and refuses it after access loss', async (originKind) => {
+  it.each(['rpc', 'trusted-child'] as const)('launches the admitted lifecycle with actual %s requester custody and refuses it after custody disposal', async (originKind) => {
     const host = await home();
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -1431,8 +1701,13 @@ describe('requester Session lifecycle custody', () => {
     expect(launched[0]?.requesterSessionBootstrap).toBe(custody.admitted);
     expect(launched[0]?.requesterWorkAttributionV1).toEqual(attribution);
     host.setAccess(false);
+    // This handler consumes an admitted invocation. A new request must pass
+    // admission independently; Machine withdrawal does not dispose this one.
+    expect(await handler(input, context)).toMatchObject({ type: 'success', sessionId: 'bob-child' });
+    expect(launched).toHaveLength(2);
+    await custody.admitted.dispose();
     expect(await handler(input, context)).toMatchObject({ type: 'error' });
-    expect(launched).toHaveLength(1);
+    expect(launched).toHaveLength(2);
     await custody.cleanupOnFailure();
   });
 
@@ -1442,7 +1717,8 @@ describe('requester Session lifecycle custody', () => {
     const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
       serverHttpBaseUrl: origin, boundary: host.boundary });
     const prepared = await prepareWorkflowSessionRequester({ credentials, attribution,
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+        getObservedServerIdentityId: () => 'srv_workflow_home' },
       verifyMachineAdmissionCurrent: current, signal: observation.signal });
     if (!prepared) throw new Error('Missing Workflow requester bootstrap');
     prepared.admitted.bindRuntimeMachineAdmissionCurrentness(current);
@@ -1455,7 +1731,11 @@ describe('requester Session lifecycle custody', () => {
         expect(custody).not.toBeNull();
         expect(await prepared.admitted.isCurrent()).toBe(true);
         host.setAccess(false);
-        expect(await prepared.admitted.isCurrent()).toBe(false);
+        expect(await prepared.admitted.isCurrent()).toBe(true);
+        expect(await prepareWorkflowSessionRequester({ credentials, attribution,
+          boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+            getObservedServerIdentityId: () => 'srv_workflow_home' },
+          verifyMachineAdmissionCurrent: current })).toBeNull();
       }
     } finally { await prepared.cleanupOnFailure(); }
   });
@@ -1466,7 +1746,8 @@ describe('requester Session lifecycle custody', () => {
       serverHttpBaseUrl: origin, boundary: host.boundary });
     const prepared = await prepareWorkflowSessionRequester({ credentials, attribution,
       machineAdmission: { actorAccountId: 'bob', custodianAccountId },
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+        getObservedServerIdentityId: () => 'srv_workflow_home' },
       verifyMachineAdmissionCurrent: current });
     if (!prepared) throw new Error('Missing Workflow requester bootstrap');
     try {
@@ -1478,7 +1759,9 @@ describe('requester Session lifecycle custody', () => {
       expect(recovered?.allowNativeAccountCredentials).toBe(custodianAccountId === 'bob');
       await recovered?.dispose();
       host.setAccess(false);
-      expect(await prepared.admitted.isCurrent()).toBe(false);
+      expect(await prepared.admitted.isCurrent()).toBe(true);
+      expect(await resolveRequesterSessionBootstrap({ happyHomeDir: directory!, sessionId: 'session', attribution,
+        serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toBeNull();
     } finally { await prepared.cleanupOnFailure(); }
   });
 
@@ -1492,7 +1775,8 @@ describe('requester Session lifecycle custody', () => {
     // attribution cannot independently authorize using the Machine's native login.
     const prepared = await prepareWorkflowSessionRequester({ credentials, attribution,
       ...(caller !== 'misbound' ? { machineAdmission: { actorAccountId: 'bob', custodianAccountId } } : {}),
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+        getObservedServerIdentityId: () => 'srv_workflow_home' },
       verifyMachineAdmissionCurrent: current });
     if (!prepared) throw new Error('Missing Workflow requester bootstrap');
     prepared.admitted.bindRuntimeMachineAdmissionCurrentness(current);
@@ -1693,6 +1977,33 @@ describe('requester Session lifecycle custody', () => {
     expect(result.admitted.getBoundSessionId()).toBe('session');
   });
 
+  it('retains the birth Home separately from the saved profile through private child custody', async () => {
+    await home();
+    const birth = { ...attribution, serverId: configuration.activeServerId };
+    const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'birth-home',
+      attribution: birth, credentials, homeServerIdentityId: 'srv_distinct_birth_home' });
+    const previous = process.env[REQUESTER_SESSION_ID_ENV];
+    process.env[REQUESTER_SESSION_ID_ENV] = 'birth-home';
+    try {
+      const child = await readRequesterSessionCredentialsForChild(custody.path);
+      expect(child?.requesterSessionCredentialScope).toMatchObject({ serverId: birth.serverId,
+        requesterSession: { sessionId: 'birth-home', attribution: birth, homeServerIdentityId: 'srv_distinct_birth_home' } });
+      expect(JSON.stringify(child)).not.toContain('homeServerIdentityId');
+      let installationReads = 0;
+      for (const currentHome of ['srv_retargeted_home', null]) {
+        expect(await resolveRequesterSessionBootstrap({ happyHomeDir: directory!, sessionId: 'birth-home', attribution: birth,
+          serverHttpBaseUrl: origin, machineAdmissionBoundary: { machineId: birth.machineId, daemonToken: 'daemon-boundary',
+            isHomeCurrent: () => true, getObservedServerIdentityId: () => currentHome,
+            // Installation storage is an OS boundary; withdrawal must precede opening it.
+            readInstallation() { installationReads++; throw new Error('Unexpected installation read'); } } })).toBeNull();
+      }
+      expect(installationReads).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env[REQUESTER_SESSION_ID_ENV];
+      else process.env[REQUESTER_SESSION_ID_ENV] = previous;
+    }
+  });
+
   it('reads additive custody fields without dropping exact bounds or private decryption material, but rejects malformed required fields', async () => {
     const host = await home();
     const childAttribution = { ...attribution, serverId: configuration.activeServerId };
@@ -1746,7 +2057,8 @@ describe('requester Session lifecycle custody', () => {
 
   it('recovers only the exact cold handoff Session from existing protected custody with current Home admission', async () => {
     const host = await home();
-    await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials });
+    await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials,
+      homeServerIdentityId: 'srv_original_home' });
     const recover = Reflect.get(requesterCredentialOwner, 'resolveRequesterSessionBootstrapFromCustody') as
       (input: unknown) => Promise<import('./requesterSessionCredentials').AdmittedRequesterSessionBootstrap | null>;
     expect(typeof recover).toBe('function');
@@ -1761,13 +2073,16 @@ describe('requester Session lifecycle custody', () => {
     recovered?.savedSecretOperationContext.withdrawCatalog();
   });
 
-  it.each([false, true])('recovers legacy Session ownership with retained attribution=%s from authenticated owner evidence, without writing requester custody', async stamped => {
+  it.each([false, true])('recovers legacy Session ownership with retained Home and attribution=%s without writing requester custody', async stamped => {
     const host = await home();
     const recover = requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody;
+    const retained = bindRequesterSessionCredentialScope({ ...credentials }, { serverId: attribution.serverId,
+      serverHttpBaseUrl: origin, requesterSession: { sessionId: 'session', attribution, homeServerIdentityId: 'srv_original_home' } });
     const recovered = await recover({ happyHomeDir: directory!, serverId: attribution.serverId, sessionId: 'session',
-      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary, legacyOwnerCredentials: { ...credentials },
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary, legacyOwnerCredentials: retained,
       ...(stamped ? { expectedAttribution: attribution } : {}) });
     expect(recovered?.getBoundSessionId()).toBe('session');
+    expect(recovered?.homeServerIdentityId).toBe('srv_original_home');
     expect(recovered?.attribution).toEqual(attribution);
     expect(await recovered?.isCurrent()).toBe(true);
     const snapshot = { status: 'ok' as const, capturedAtMs: 1000, logicalCpus: 4, rows: [10, 20].map(pid => ({
@@ -1787,6 +2102,41 @@ describe('requester Session lifecycle custody', () => {
       machineId: attribution.machineId, installationId: attribution.installationId })).toEqual({ status: 'ready', bindings: [] });
     await recovered?.dispose();
   });
+
+  it('does not invent a historical Home from current authenticated legacy ownership', async () => {
+    const host = await home();
+    expect(await requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!,
+      serverId: attribution.serverId, sessionId: 'session', serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: host.boundary, legacyOwnerCredentials: credentials })).toBeNull();
+  });
+
+  it('does not treat a declared but unavailable requester scope as ordinary Account absence', async () => {
+    const host = await home();
+    const unavailable = { ...credentials };
+    Object.defineProperty(unavailable, 'requesterSessionCredentialScope', { value: undefined, enumerable: false });
+    const reads = host.requests.length;
+    expect(await requesterCredentialOwner.resolveRequesterSessionExecutionIdentityForHost({ happyHomeDir: directory!,
+      serverId: attribution.serverId, serverHttpBaseUrl: origin, sessionId: 'session', machineId: 'machine',
+      hostHomeServerIdentityId: 'srv_original_home', credentials: unavailable, runtimeContext: null,
+      isCurrent: () => true })).toEqual({ kind: 'unknown', reason: 'session_requester_unavailable' });
+    expect(host.requests).toHaveLength(reads);
+  });
+
+  it.each(['different Session', 'different HTTP Home', 'missing retained Home', 'retargeted Home', 'unavailable Home'] as const)(
+    'refuses legacy recovery with %s without rebinding original custody', async mismatch => {
+      const host = await home();
+      const retained = bindRequesterSessionCredentialScope({ ...credentials }, { serverId: attribution.serverId,
+        serverHttpBaseUrl: mismatch === 'different HTTP Home' ? 'https://other-home.test' : origin,
+        requesterSession: { sessionId: mismatch === 'different Session' ? 'another-session' : 'session', attribution,
+          ...(mismatch === 'missing retained Home' ? {} : { homeServerIdentityId: 'srv_original_home' }) } });
+      expect(await requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!,
+        serverId: attribution.serverId, sessionId: 'session', serverHttpBaseUrl: origin,
+        machineAdmissionBoundary: { ...host.boundary, getObservedServerIdentityId: () => mismatch === 'unavailable Home'
+          ? null : mismatch === 'retargeted Home' ? 'srv_other_home' : 'srv_original_home' },
+        legacyOwnerCredentials: retained })).toBeNull();
+      expect(retained.requesterSessionCredentialScope?.requesterSession?.homeServerIdentityId)
+        .toBe(mismatch === 'missing retained Home' ? undefined : 'srv_original_home');
+    });
 
   it.each(['shared Session', 'changed installation', 'lost access', 'foreign custody', 'malformed custody'] as const)(
     'does not infer legacy Session ownership after %s', async failure => {
@@ -1814,7 +2164,8 @@ describe('requester Session lifecycle custody', () => {
 
   it('recovers exact retained custody independently of an unreadable unrelated Session reference', async () => {
     const host = await home();
-    await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials });
+    await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials,
+      homeServerIdentityId: 'srv_original_home' });
     await writePrivateOwnerFile({ path: requesterSessionCredentialPath({ happyHomeDir: directory!, sessionId: 'unrelated', attribution }), contents: '{}' });
     const recovered = await requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!,
       serverId: attribution.serverId, sessionId: 'session', serverHttpBaseUrl: origin,
@@ -1858,10 +2209,11 @@ describe('requester Session lifecycle custody', () => {
   it('recovers a Bot with exact protected requester custody and removes access after final revoke', async () => {
     const host = await home({ bot: true });
     const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
-    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials });
+    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
     const alice = getActiveAccountSettingsSnapshot();
     const recovered = await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
       machineAdmissionBoundary: host.boundary });
+    onTestFinished(async () => { await recovered?.dispose(); });
     expect(recovered?.getBoundSessionId()).toBe('session');
     expect(recovered?.credentials).toMatchObject({ ...credentials, credentialProvenance: 'stored_session' });
     expect(recovered?.credentials.requesterSessionCredentialScope).toEqual({ serverId: attribution.serverId, serverHttpBaseUrl: origin });
@@ -1878,87 +2230,98 @@ describe('requester Session lifecycle custody', () => {
     host.setSessionRole('view');
     expect(await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
       machineAdmissionBoundary: host.boundary })).toBeNull();
-    host.setSessionRole('owner'); host.setAccountMode('e2ee');
-    expect(await recovered?.isCurrent()).toBe(false);
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    // A new admitted rejoin supplies fresh custody after withdrawal retired it.
+    host.setSessionRole('owner');
+    await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+    host.setAccountMode('e2ee');
+    // This fixture has no live socket. Changed Home encryption is enforced by
+    // independent recovery, not a new HTTP probe from an admitted reader.
+    expect(await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: host.boundary })).toBeNull();
+    await recovered?.dispose();
     host.setAccountMode('plain'); host.setAccess(false);
     expect(await recovered?.savedSecretOperationContext.isCurrent()).toBe(false);
-    expect(await readFile(custody.path, 'utf8')).toContain(credentials.token);
     host.setAccess(true);
+    await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
     const reconnected = await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
       machineAdmissionBoundary: host.boundary });
+    onTestFinished(async () => { await reconnected?.dispose(); });
     expect(await reconnected?.savedSecretOperationContext.isCurrent()).toBe(true);
     expect(reconnected?.getBoundSessionId()).toBe('session');
     expect(recovered?.savedSecretOperationContext.readSnapshot()).toBeNull();
     expect(host.correspondence.recipe.identity).toEqual({ bot: { kind: 'bot' }, createdAsBot: true });
     host.setAccess(false);
-    expect(await reconnected?.isCurrent()).toBe(false);
+    // Revocation is enforced by the next admission, not by rechecking admitted work.
+    expect(await reconnected?.isCurrent()).toBe(true);
     expect(await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
       machineAdmissionBoundary: host.boundary })).toBeNull();
-  });
-
-  it('retires an outstanding shared requester admission read when the bootstrap is disposed', async () => {
-    let stall = false;
-    let accepted!: () => void;
-    let release!: () => void;
-    const acceptedRead = new Promise<void>(resolve => { accepted = resolve; });
-    const heldRead = new Promise<void>(resolve => { release = resolve; });
-    const host = await home({ beforeMachineAccessRead: async () => {
-      if (stall) { accepted(); await heldRead; }
-    } });
-    // Use the existing real Home routes over TCP so abort must reach Axios.
-    restore?.(); restore = undefined;
-    const url = await app!.listen({ host: '127.0.0.1', port: 0 });
-    const custody = await prepareRequesterSessionBootstrap({ credentials, attribution,
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: url, happyHomeDir: directory! },
-      boundSessionId: 'session', verifyMachineAdmissionCurrent: (signal?: AbortSignal) =>
-        verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
-          serverHttpBaseUrl: url, boundary: host.boundary, signal }) });
-    if (!custody) throw new Error('Missing requester bootstrap');
-    stall = true;
-    const pending = Promise.all([custody.admitted.isCurrent(), custody.admitted.isCurrent()]);
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await acceptedRead;
-      const result = await Promise.race([Promise.all([custody.admitted.dispose(), pending]),
-        new Promise<never>((_, reject) => {
-          watchdog = setTimeout(() => reject(new Error('Bootstrap retirement did not settle admission')), 500);
-        })]);
-      expect(result[1]).toEqual([false, false]);
-    } finally {
-      clearTimeout(watchdog);
-      stall = false;
-      release();
-      await pending;
-      await custody.admitted.dispose();
-    }
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    host.setAccess(true);
+    expect(await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: host.boundary })).toBeNull();
+    await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+    const restored = await resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: host.boundary });
+    onTestFinished(async () => { await restored?.dispose(); });
+    expect(restored?.getBoundSessionId()).toBe('session');
+    await expect(access(custody.path)).resolves.toBeUndefined();
   });
 
   it('binds runtime currentness to the actual Session after custody binding', async () => {
     const host = await home();
     const rpc = new AbortController();
+    let observedHome = 'srv_retained_birth_home';
+    let beforeHomeRead: (() => Promise<void>) | undefined;
     const result = await admitRequesterSessionBootstrap({ bootstrap: { v: 1, disposition: 'ordinary_requester',
       credentials: { token: credentials.token }, sessionId: 'session', sessionCreationDisposition: 'rejoined' },
-      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory! },
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+        getObservedServerIdentityId: () => 'srv_retained_birth_home' },
       context: { signal: rpc.signal, machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice',
         machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
         verifyMachineAdmissionCurrent: async () => !rpc.signal.aborted } });
     expect(result).not.toBeNull();
     const admitted = result!.admitted;
+    onTestFinished(() => admitted.dispose());
+    expect(admitted.homeServerIdentityId).toBe('srv_retained_birth_home');
     expect(admitted.preparedSessionId).toBe('session');
     expect(admitted.getBoundSessionId()).toBeNull();
     const bindRuntimeCurrentness = Reflect.get(requesterCredentialOwner,
       'bindRequesterSessionRuntimeMachineAdmissionCurrentness') as
       (input: Readonly<{ bootstrap: typeof admitted; boundary: RequesterSessionMachineAdmissionBoundary }>) => void;
     expect(typeof bindRuntimeCurrentness).toBe('function');
-    bindRuntimeCurrentness({ bootstrap: admitted, boundary: host.boundary });
+    bindRuntimeCurrentness({ bootstrap: admitted,
+      boundary: { ...host.boundary, getObservedServerIdentityId: async () => {
+        await beforeHomeRead?.();
+        return observedHome;
+      } } });
     expect(await admitted.isCurrent()).toBe(true);
     expect(host.requests.some(request => request.path.endsWith('/admission/verify'))).toBe(false);
     const bound = await result!.admitted.bindSession('session', host.correspondence.sessionCreationTag);
     expect(bound).not.toBeNull();
+    expect(JSON.parse(await readFile(bound!.path, 'utf8'))).toMatchObject({
+      attribution, homeServerIdentityId: 'srv_retained_birth_home',
+    });
     expect(admitted.getBoundSessionId()).toBe('session');
     rpc.abort();
     expect(await admitted.savedSecretOperationContext.isCurrent()).toBe(true);
     host.setAccess(false);
+    expect(await admitted.savedSecretOperationContext.isCurrent()).toBe(true);
+    // The retained post-binding fence applies to a new binding attempt.
+    expect(await admitted.bindSession('session', host.correspondence.sessionCreationTag)).toBeNull();
+    observedHome = 'srv_replaced_home';
+    expect(await admitted.savedSecretOperationContext.isCurrent()).toBe(false);
+    observedHome = 'srv_retained_birth_home';
+    let enteredHome!: () => void;
+    let releaseHome!: () => void;
+    const entered = new Promise<void>(resolve => { enteredHome = resolve; });
+    const held = new Promise<void>(resolve => { releaseHome = resolve; });
+    beforeHomeRead = async () => { enteredHome(); await held; };
+    const pendingCurrentness = admitted.isCurrent();
+    await entered;
+    try { await admitted.dispose(); }
+    finally { releaseHome(); }
+    expect(await pendingCurrentness).toBe(false);
     expect(await admitted.savedSecretOperationContext.isCurrent()).toBe(false);
     expect(admitted.savedSecretOperationContext.readSnapshot()).toBeNull();
     expect(await readFile(bound!.path, 'utf8')).toContain(credentials.token);
@@ -1973,15 +2336,3 @@ describe('requester Session lifecycle custody', () => {
     expect(await verifyRequesterSessionMachineAdmissionCurrent(input)).toBe(false);
   });
 });
-
-  it('does not treat a declared but unavailable requester scope as ordinary Account absence', async () => {
-    const host = await home();
-    const unavailable = { ...credentials };
-    Object.defineProperty(unavailable, 'requesterSessionCredentialScope', { value: undefined, enumerable: false });
-    const reads = host.requests.length;
-    expect(await requesterCredentialOwner.resolveRequesterSessionExecutionIdentityForHost({ happyHomeDir: directory!,
-      serverId: attribution.serverId, serverHttpBaseUrl: origin, sessionId: 'session', machineId: 'machine',
-      hostHomeServerIdentityId: 'srv_original_home', credentials: unavailable, runtimeContext: null,
-      isCurrent: () => true })).toEqual({ kind: 'unknown', reason: 'session_requester_unavailable' });
-    expect(host.requests).toHaveLength(reads);
-  });

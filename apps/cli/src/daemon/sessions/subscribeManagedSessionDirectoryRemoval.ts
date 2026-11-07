@@ -1,12 +1,7 @@
 import type { ManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
-import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
-import {
-  collectRetainedSessionInventoryVisibility,
-  fetchSessionInventoryPage,
-  type SessionInventoryVisibilityPageFetcher,
-} from './sessionInventoryVisibility';
 import type { StopSessionResult } from './stopSessionContract';
 import { logger } from '@/ui/logger';
+import { retireRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
 
 type Unsubscribe = () => void;
 type Subscribe<T> = (listener: (change: T) => void | Promise<void>) => Unsubscribe;
@@ -21,49 +16,32 @@ type CreationSessionLookup = (args: Readonly<{
 
 type ManagedSessionDirectoryRemovalParams = Readonly<{
   directories: Pick<ManagedSessionDirectories,
-    'listRecords' | 'bind' | 'removeForSession' | 'removeUnboundCreation' | 'retryPendingRemovals'>;
+    'listRecords' | 'bind' | 'removeForSession' | 'retryPendingRemovals'>;
   token: string;
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   onSessionDeletedChange: Subscribe<Readonly<{ sessionId: string }>>;
   onSessionAccessReset: Subscribe<Readonly<{ cursor: number }>>;
-  onConnectionStateChange: Subscribe<Pick<ManagedConnectionState, 'phase'>>;
-  fetchInventoryPage?: SessionInventoryVisibilityPageFetcher;
   lookupCreationSessions?: CreationSessionLookup;
+  requesterCustody?: Readonly<{
+    happyHomeDir: string;
+    serverId: string;
+  }>;
 }>;
 
 export async function subscribeManagedSessionDirectoryRemoval(
   params: ManagedSessionDirectoryRemovalParams,
 ): Promise<Unsubscribe> {
-  const fetchInventoryPage = params.fetchInventoryPage
-    ?? (async (args) => await fetchSessionInventoryPage({ ...args, token: params.token }));
   const lookupCreationSessions: CreationSessionLookup = params.lookupCreationSessions
     ?? (async (args) => {
       const { lookupSessionsByTags } = await import('@/session/transport/http/sessionsHttp');
       return await lookupSessionsByTags(args);
     });
 
-  const reconcile = async (): Promise<void> => {
-    let sessionIds: string[];
-    let visible: ReadonlySet<string>;
+  const retryPendingRemovals = async (): Promise<void> => {
     try {
-      const records = await params.directories.listRecords();
-      sessionIds = [...new Set(records.flatMap((record) => record.sessionId ? [record.sessionId] : []))];
-      visible = await collectRetainedSessionInventoryVisibility({
-        retainedSessionIds: sessionIds,
-        scopes: ['active', 'archived'],
-        fetchInventoryPage,
-      });
+      await params.directories.retryPendingRemovals({ stopSession: params.stopSession });
     } catch (error) {
-      // Retain unknown allocations and let Account recovery continue. Bootstrap
-      // and the next healthy connection retry through this same inventory owner.
-      logger.warn('[MANAGED SESSION DIRECTORY] Inventory reconciliation pending', { error });
-      return;
-    }
-    // No removal begins until every still-undecided Session has been checked.
-    for (const sessionId of sessionIds) {
-      if (!visible.has(sessionId)) {
-        await params.directories.removeForSession({ sessionId, stopSession: params.stopSession });
-      }
+      logger.warn('[MANAGED SESSION DIRECTORY] Pending removal retry unavailable', { error });
     }
   };
 
@@ -77,9 +55,13 @@ export async function subscribeManagedSessionDirectoryRemoval(
       if (stopped.status !== 'stopped' && stopped.status !== 'not_found') {
         throw new Error('deleted_session_runner_retirement_incomplete');
       }
+      if (params.requesterCustody
+        && !await retireRequesterSessionCredentialCustody({ ...params.requesterCustody, sessionId })) {
+        throw new Error('requester_session_custody_unavailable');
+      }
       await params.directories.removeForSession({ sessionId, stopSession: async () => stopped });
     }),
-    params.onSessionAccessReset(reconcile),
+    params.onSessionAccessReset(retryPendingRemovals),
   ];
   const dispose = (): void => {
     for (const unsubscribe of unsubscribes) unsubscribe();
@@ -97,22 +79,19 @@ export async function subscribeManagedSessionDirectoryRemoval(
         const session = lookup.sessions[0];
         if (session) {
           await params.directories.bind({ allocationId: record.allocationId, sessionId: session.id });
-        } else {
-          await params.directories.removeUnboundCreation({ allocationId: record.allocationId });
         }
+        // A grantee owns its conversation even when it runs on this Machine.
+        // This daemon Account's tag lookup cannot prove another Account's
+        // creation was deleted; retain its files for normal resume binding.
       } catch (error) {
         logger.warn('[MANAGED SESSION DIRECTORY] Startup reconciliation pending', { allocationId: record.allocationId, error });
       }
     }
-    await params.directories.retryPendingRemovals({ stopSession: params.stopSession });
   } catch (error) {
     logger.warn('[MANAGED SESSION DIRECTORY] Startup cleanup unavailable', { error });
   }
-  // A missed deletion can leave a bound allocation without pendingRemoval.
-  // Compare retained ownership to the complete inventory at each existing wake.
-  await reconcile();
-  unsubscribes.push(params.onConnectionStateChange(async (state) => {
-    if (state.phase === 'online') await reconcile();
-  }));
+  // Only a deletion event or a previously recorded removal authorizes cleanup.
+  // Account inventory absence is visibility, never proof of Session deletion.
+  await retryPendingRemovals();
   return dispose;
 }

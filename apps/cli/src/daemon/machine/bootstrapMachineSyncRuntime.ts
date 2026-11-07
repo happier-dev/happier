@@ -12,7 +12,7 @@ import { readLocalHostIdentity } from '@happier-dev/cli-common/process';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 
-import type { ApiMachineClient, MachinePublicationOutcome } from '@/api/apiMachine';
+import type { ApiMachineClient } from '@/api/apiMachine';
 import { rotateMachineIdForActiveServer } from '@/api/machine/ensureMachineRegistered';
 import type { MachineRpcHandlerDeps } from '@/api/machine/rpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -88,6 +88,7 @@ import { configuration } from '@/configuration';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { createProviderAccountSettingsController } from '@/daemon/lifecycle/providerAccountSettings';
 import {
   fetchServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
@@ -507,6 +508,7 @@ export type BootstrapMachineSyncRuntimeResult = Readonly<{
   voiceInferenceWorker: VoiceInferenceWorkerHandle | null;
   daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null;
   machineConnectionStateCleanup: (() => void) | null;
+  stopProviderAccountSettings?: () => Promise<void>;
   stopPeerMediationLoopbackServer: () => Promise<void>;
   stopMachineIrohAcceptor: () => Promise<void>;
   resumeMachineConnectionPublications: () => Promise<void>;
@@ -531,6 +533,7 @@ export type MachineSyncRuntimeAttemptResources = Readonly<
     | 'memoryWorker'
     | 'voiceInferenceWorker'
     | 'machineConnectionStateCleanup'
+    | 'stopProviderAccountSettings'
     | 'stopPeerMediationLoopbackServer'
     | 'stopMachineIrohAcceptor'
   > & {
@@ -552,6 +555,11 @@ export async function retireMachineSyncRuntimeAttempt(
     params.disposeInactiveSessionUsageLimitRecovery?.();
   } catch (error) {
     logger.warn('[DAEMON RUN] Failed to retire inactive usage-limit recovery timers after machine-sync attempt failure', error);
+  }
+  try {
+    await params.stopProviderAccountSettings?.();
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to retire Agent Account settings after machine-sync attempt failure', error);
   }
   try {
     params.machineConnectionStateCleanup?.();
@@ -608,6 +616,8 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   machineId: string;
   machine: Machine;
   credentials?: StoredCredentials;
+  providerAccountSettings?: Pick<Parameters<typeof createProviderAccountSettingsController>[0],
+    'scopeKey' | 'processEnv' | 'materializationBaseDir' | 'activeServerDir'>;
   requesterServerId?: string;
   resolveCurrentMachineExecutionOriginContext?: () => Promise<CurrentMachineExecutionOriginContext | null>;
   resolveRequesterSessionRuntimeContext?: ResolveRequesterSessionRuntimeContext;
@@ -757,6 +767,11 @@ export async function bootstrapMachineSyncRuntime(
   let voiceBinaryTerminalConsumer: PeerTcpTunnelVoiceBinaryTerminalConsumer | undefined;
   let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
   let machineConnectionStateCleanup: (() => void) | null = null;
+  let providerAccountSettingsController: ReturnType<typeof createProviderAccountSettingsController> | null = null;
+  const stopProviderAccountSettings = async () => {
+    await providerAccountSettingsController?.stop();
+    providerAccountSettingsController = null;
+  };
   let peerMediationLoopback: StartedPeerMediationLoopback | null = null;
   let activeMachineIrohRuntime: DaemonMachineIrohRuntime | undefined;
   let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
@@ -766,7 +781,9 @@ export async function bootstrapMachineSyncRuntime(
   let resumeMachineConnectionPublications = async (): Promise<void> => {};
   let disposeInactiveSessionUsageLimitRecovery: (() => void) | null = null;
   const refreshPeerMediationEndpointPublication = async () => {
-    if (!connectedApiMachine || params.isShuttingDown()) return 'suppressed' as const;
+    // The Machine client owns publication quiescence. General admission drains
+    // must not suppress the endpoint needed by already-admitted broker work.
+    if (!connectedApiMachine) return 'suppressed' as const;
     try {
       return await runMachineReconnectPhase('endpoint-publication', () => connectedApiMachine!.updateDaemonState((state) => {
         // The canonical Machine drain owns ordering and conflict reconciliation.
@@ -794,6 +811,7 @@ export async function bootstrapMachineSyncRuntime(
     memoryWorker,
     voiceInferenceWorker,
     machineConnectionStateCleanup,
+    stopProviderAccountSettings,
     stopPeerMediationLoopbackServer,
     stopMachineIrohAcceptor,
     cleanupMachineLiveStreamRelay,
@@ -813,6 +831,20 @@ export async function bootstrapMachineSyncRuntime(
   }
 
   try {
+  if (connectedApiMachine && params.providerAccountSettings) {
+    try {
+      providerAccountSettingsController = createProviderAccountSettingsController({
+        ...params.providerAccountSettings,
+        apiMachine: connectedApiMachine,
+        onError: error => logger.warn('[DAEMON RUN] Agent Account settings application failed', error),
+      });
+      void providerAccountSettingsController.refresh().catch(error => {
+        logger.warn('[DAEMON RUN] Agent Account settings startup application failed', error);
+      });
+    } catch (error) {
+      logger.warn('[DAEMON RUN] Agent Account settings startup is unavailable', error);
+    }
+  }
   const directPeerServerLifecycle = params.directPeerServerLifecycle;
   const directPeerTransferHandlers: SessionHandoffDirectPeerTransferHandle | null = directPeerServerLifecycle
     ? {
@@ -1046,6 +1078,10 @@ export async function bootstrapMachineSyncRuntime(
         stopSession: params.stopSession,
         onSessionDeletedChange: (listener) => connectedApiMachine.onSessionDeletedChange(listener),
         onSessionAccessReset: (listener) => connectedApiMachine.onSessionAccessReset(listener),
+        requesterCustody: {
+          happyHomeDir: configuration.happyHomeDir,
+          serverId: params.requesterServerId ?? configuration.activeServerId,
+        },
       }));
     }
     automationWorker = await timeWebLatencyPhase('machine.bootstrap.automation',
@@ -1676,7 +1712,7 @@ export async function bootstrapMachineSyncRuntime(
       });
     }
 
-    let recoverPendingSessionActivationsAfterConnect = async (): Promise<void> => {};
+    let recoverPendingSessionActivationsAfterConnect = async (_retryAfterEndpointPublication?: Promise<boolean>): Promise<void> => {};
     if (storedCredentials) {
       const credentials = storedCredentials;
       const followMachine = connectedApiMachine;
@@ -1810,16 +1846,17 @@ export async function bootstrapMachineSyncRuntime(
       const activateRequesterSession = async (
         binding: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>,
         hint?: PendingSessionActivationInput,
+        retryAfterEndpointPublication?: Promise<boolean>,
       ): Promise<void> => {
         if (!params.resolveRequesterSessionRuntimeContext || !params.releaseRequesterSessionRuntimeContext
           || !params.resolveCurrentMachineExecutionOriginContext
           || binding.attribution.machineId !== params.machineId) return;
-        await activateRequesterPendingSession({ ...params, binding, hint,
+        await activateRequesterPendingSession({ ...params, binding, hint, retryAfterEndpointPublication,
           resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
           releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext,
           resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext });
       };
-      const activatePendingSession = async (hint: PendingSessionActivationInput): Promise<void> => {
+      const activatePendingSession = async (hint: PendingSessionActivationInput, retryAfterEndpointPublication?: Promise<boolean>): Promise<void> => {
         if (hint.target) {
           const origin = await params.resolveCurrentMachineExecutionOriginContext?.();
           if (!params.requesterServerId || origin?.serverIdentityId !== hint.target.homeId
@@ -1827,7 +1864,7 @@ export async function bootstrapMachineSyncRuntime(
           await activateRequesterSession({ sessionId: hint.target.sessionId, attribution: {
             serverId: params.requesterServerId, accountId: hint.target.accountId,
             machineId: hint.target.machineId, installationId: hint.target.installationId,
-          } }, hint);
+          } }, hint, retryAfterEndpointPublication);
           return;
         }
         const result = await activatePendingInactiveSession({
@@ -1836,6 +1873,7 @@ export async function bootstrapMachineSyncRuntime(
           sessionId: hint.sessionId,
           requestId: hint.requestId,
           pendingVersion: hint.pendingVersion,
+          retryAfterEndpointPublication,
           spawnSessionForInternalResume: params.spawnSessionForInternalResume,
           onActivationRejected: params.onActivationRejected,
         });
@@ -1873,7 +1911,7 @@ export async function bootstrapMachineSyncRuntime(
             .catch(error => logger.warn('[DAEMON RUN] Pending reset reconnect demand remains held', error));
         },
         warn: (message, input, error) => logger.warn(`[DAEMON RUN] ${message}`, { input, error }),
-        recoverRequesterSessions: async () => {
+        recoverRequesterSessions: async retryAfterEndpointPublication => {
           const discovery = await params.readRequesterSessionCredentialBindings?.();
           if (!discovery) return;
           if (discovery.status !== 'ready') {
@@ -1886,7 +1924,7 @@ export async function bootstrapMachineSyncRuntime(
             await reconcileFollowReceiver(binding.sessionId).catch(error => logger.warn('[DAEMON RUN] Requester Follow read remains pending', error));
             await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(binding.sessionId)
               .catch(error => logger.warn('[DAEMON RUN] Requester Pending reset demand remains held', error));
-            await activateRequesterSession(binding).catch(error => logger.warn('[DAEMON RUN] Requester pending recovery item failed; custody retained', {
+            await activateRequesterSession(binding, undefined, retryAfterEndpointPublication).catch(error => logger.warn('[DAEMON RUN] Requester pending recovery item failed; custody retained', {
               sessionId: binding.sessionId, error: serializeAxiosErrorForLog(error),
             }));
           }));
@@ -2144,24 +2182,24 @@ export async function bootstrapMachineSyncRuntime(
       void republishCliUpdateFactsIfChanged();
     }) ?? null;
     let hasPendingMachineConnectionPublications = false;
-    let machineConnectionPublicationsInFlight: Promise<MachinePublicationOutcome | null> | null = null;
+    let machineConnectionPublicationsInFlight: Promise<void> | null = null;
     let pendingOrphanedSessions = params.orphanedDeadDaemonSessions ?? [];
-    const refreshMachineConnectionPublications = async (): Promise<MachinePublicationOutcome | null> => {
+    const refreshMachineConnectionPublications = async (): Promise<void> => {
       hasPendingMachineConnectionPublications = true;
-      if (params.isShuttingDown()) return null;
+      if (params.isShuttingDown()) return;
       if (machineConnectionPublicationsInFlight) {
-        const outcome = await machineConnectionPublicationsInFlight;
+        await machineConnectionPublicationsInFlight;
         if (hasPendingMachineConnectionPublications && !params.isShuttingDown()) {
           return refreshMachineConnectionPublications();
         }
-        return outcome;
+        return;
       }
 
       const operation = (async () => {
         // Registration retains incumbent state. Publish this daemon's lazy
         // transfer declaration only once the Machine transport is connected.
         await runMachineReconnectPhase('transfer-publication', () => params.attachTransferRuntimeStatePublisher(connectedApiMachine));
-        if (params.isShuttingDown()) return null;
+        if (params.isShuttingDown()) return;
         await runMachineReconnectPhase('orphan-settlement', async () => {
           // connect() starts the transport asynchronously. Settle dead markers only
           // on this connected edge; retain failures for reconnect or handoff resume.
@@ -2190,22 +2228,8 @@ export async function bootstrapMachineSyncRuntime(
             });
           }
         });
-        if (params.isShuttingDown()) return null;
-        // Incident Jun-11 H-A / FIX-1a: best-effort snapshot warm on every machine (re)connect.
-        // The changes catch-up only emits a hint when account changes exist past the persisted
-        // cursor, so a freshly restarted daemon can connect and still hold a NULL snapshot.
-        if (params.credentials) {
-          void warmActiveAccountSettingsSnapshotBestEffort({
-            credentials: params.credentials,
-            logger,
-          });
-        }
-
-        const peerPublicationOutcome = await refreshPeerMediationEndpointPublication();
-        if (peerPublicationOutcome === 'suppressed' || params.isShuttingDown()) return null;
-
+        if (params.isShuttingDown()) return;
         hasPendingMachineConnectionPublications = false;
-        return peerPublicationOutcome;
       })();
       machineConnectionPublicationsInFlight = operation;
       try {
@@ -2216,40 +2240,72 @@ export async function bootstrapMachineSyncRuntime(
         }
       }
     };
+    const refreshAccountSettingsAfterConnect = async (): Promise<void> => {
+      if (params.isShuttingDown()) return;
+      try {
+        // Reconnect can be the first live Account snapshot after an offline start.
+        // Keep optional plugin settings independent of Machine publication/readiness.
+        if (params.credentials) {
+          await warmActiveAccountSettingsSnapshotBestEffort({ credentials: params.credentials, logger });
+        }
+        if (!params.isShuttingDown()) await providerAccountSettingsController?.refresh();
+      } catch (error) {
+        logger.warn('[DAEMON RUN] Agent Account settings reconnect application failed', error);
+      }
+    };
     const catchUpAutomationWorkAfterConnect = async (): Promise<void> => {
       if (params.isShuttingDown()) return;
       await runMachineReconnectPhase('automation-catch-up', () => activeAutomationWorker?.catchUp()).catch((error) => {
         logger.warn('[DAEMON RUN] Failed to catch up automation work on machine reconnect', error);
       });
     };
-    resumeMachineConnectionPublications = async () => {
-      await catchUpAutomationWorkAfterConnect();
-      await refreshMachineConnectionPublications();
-      await refreshMachineMetadataPublication();
-      if (params.isShuttingDown()) return;
-      await workflowRecoveryTriggers?.onResumed().catch((error) => {
-        logger.warn('[DAEMON RUN] Workflow custody resume recovery failed; pending custody retained', error);
-      });
-    };
-    const handleMachineConnected = async (): Promise<void> => {
-      if (params.isShuttingDown()) return;
-      const recoverPending = () => runMachineReconnectPhase('pending-recovery', recoverPendingSessionActivationsAfterConnect).catch((error) => {
+    const recoverPendingWithEndpointRetry = (endpointPublication: ReturnType<typeof refreshPeerMediationEndpointPublication>) =>
+      runMachineReconnectPhase('pending-recovery', () => recoverPendingSessionActivationsAfterConnect(
+        endpointPublication.then(outcome => (outcome === 'published' || outcome === 'unchanged') && !params.isShuttingDown()),
+      )).catch(error => {
         logger.warn('[DAEMON RUN] Pending session activation reconnect scan failed; waiting custody retained', error);
       });
-      const pendingRecovery = recoverPending();
+    resumeMachineConnectionPublications = async () => {
+      void refreshAccountSettingsAfterConnect();
+      const endpointPublication = refreshPeerMediationEndpointPublication();
+      const pendingRecovery = params.isShuttingDown() ? undefined : recoverPendingWithEndpointRetry(endpointPublication);
+      await Promise.all([
+        endpointPublication,
+        (async () => {
+          await catchUpAutomationWorkAfterConnect();
+          await refreshMachineConnectionPublications();
+        })(),
+      ]);
+      await refreshMachineMetadataPublication();
+      if (params.isShuttingDown()) return;
+      await Promise.all([
+        pendingRecovery,
+        workflowRecoveryTriggers?.onResumed().catch((error) => {
+          logger.warn('[DAEMON RUN] Workflow custody resume recovery failed; pending custody retained', error);
+        }),
+      ]);
+    };
+    const handleMachineConnected = async (): Promise<void> => {
+      // Broker admission needs this connected Machine's endpoint. Enqueue it
+      // before transfer writes; unrelated Automation and orphan settlement
+      // work may wait on their own network acknowledgements.
+      const endpointPublication = refreshPeerMediationEndpointPublication();
+      if (params.isShuttingDown()) {
+        await endpointPublication;
+        return;
+      }
+      void refreshAccountSettingsAfterConnect();
+      const pendingRecovery = recoverPendingWithEndpointRetry(endpointPublication);
       await Promise.all([
         // Local Pending admission owns target and runner readiness. Unrelated
         // Automation and Machine publications must not hold requester recovery.
         (async () => {
           await catchUpAutomationWorkAfterConnect();
-          const endpointOutcome = await refreshMachineConnectionPublications();
-          await Promise.all([
-            refreshMachineMetadataPublication(),
-            // Cold broker admission requires the published initiator endpoint.
-            // Revisit Pending after its ACK (including unchanged), independently
-            // of other recoveries. The spawn owner coalesces existing launches.
-            endpointOutcome && !params.isShuttingDown() ? recoverPending() : undefined,
-          ]);
+          await refreshMachineConnectionPublications();
+        })(),
+        (async () => {
+          await endpointPublication;
+          await refreshMachineMetadataPublication();
         })(),
         pendingRecovery,
         params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: {} }).catch(error => {
@@ -2314,6 +2370,7 @@ export async function bootstrapMachineSyncRuntime(
     voiceInferenceWorker,
     daemonConnectivityCoordinator,
     machineConnectionStateCleanup,
+    stopProviderAccountSettings,
     stopPeerMediationLoopbackServer,
     stopMachineIrohAcceptor,
     resumeMachineConnectionPublications,

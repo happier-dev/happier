@@ -8877,6 +8877,12 @@ ordinary authenticated `server set --server-id <existing-id>` admission above.
 Daemon startup first materializes ordinary URL-only metadata at that same scope,
 so reconnect can read a saved profile even when exact publication is unavailable.
 This metadata does not establish Home identity authority.
+If an exact authenticated observation finds that another saved profile already
+owns the Home identity, descriptor adoption reuses that owner. URL-only invocation
+metadata may remain at the selected scope; it does not acquire a second Home
+binding or transfer credentials or Machine state. A selected profile already
+bound to a different Home still refuses the observation, as does an advisory
+observation attempting to bind across profiles.
 For an older env-only CLI home with no saved Home binding, explicitly retaining
 `HAPPIER_ACTIVE_SERVER_ID` selects its existing credential and Machine scope at
 the new user-configured destination. A bare changed `HAPPIER_SERVER_URL` still

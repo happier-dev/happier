@@ -977,10 +977,17 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
 }
 
 /** Explicit custody retirement; a resumable Session's physical exit retains birth. */
-export async function retireRequesterSessionCredentialCustody(input: RequesterSessionCredentialBinding): Promise<boolean> {
-  const path = requesterSessionCredentialPath(input);
+export async function retireRequesterSessionCredentialCustody(input: RequesterSessionCredentialBinding
+  | Readonly<{ happyHomeDir: string; serverId: string; sessionId: string }>): Promise<boolean> {
+  const path = requesterSessionCredentialPath('attribution' in input ? input
+    : { ...input, attribution: { serverId: input.serverId } });
   try {
-    if (!await readBoundCustody(path, input)) return false;
+    // An observed deletion names the exact Home and Session. Its stored birth
+    // supplies attribution even if the original installation is no longer live.
+    const binding = 'attribution' in input ? input : { happyHomeDir: input.happyHomeDir, sessionId: input.sessionId,
+      attribution: { ...CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown).attribution,
+        serverId: input.serverId } };
+    if (!await readBoundCustody(path, binding)) return false;
     await removePrivateBearerFile(path);
     return true;
   } catch (error) {
@@ -1036,10 +1043,10 @@ async function resolveRequesterSessionCustody(input: Omit<Parameters<typeof reso
         message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
     }
     // readBoundCustody above has already matched the exact persisted scope,
-    // Account, Session/trigger id and installation attribution. Workspace keeps
-    // its existing authenticated Machine recovery behavior.
+    // Account, Session/trigger id and installation attribution. A definite
+    // refusal retires every scope; Workspace keeps its existing recovery behavior.
     if (!input.signal?.aborted && (input.scope === 'workspace_sync_relationship'
-      || input.scope === 'workflow_trigger' && current === null)) await retireRequesterSessionCredentialCustody(input);
+      || current === null)) await retireRequesterSessionCredentialCustody(input);
     return null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
 }
