@@ -21,6 +21,7 @@ export function buildExecutionRunRuntimeIdentityPublication(
 export function withExecutionRunRuntimeIdentityPublication(params: Readonly<{
   runtime: ExecutionRunHostRuntime;
   identity: EngineRuntimePublication;
+  modelContextWindowTokens?: number;
 }>): ExecutionRunHostRuntime {
   const hub = createNormalizedRuntimeEventPublicationHub<AgentMessage>({
     identity: params.identity,
@@ -35,6 +36,8 @@ export function withExecutionRunRuntimeIdentityPublication(params: Readonly<{
     readPermissionCapability: () => params.runtime.permissionCapability,
     readInteraction: () => params.runtime.interaction,
     readResumeSupport: (opts) => params.runtime.readResumeSupport(opts),
+    readPrepareInputBudget: () => params.runtime.prepareInputBudget?.bind(params.runtime),
+    readModelContextWindowTokens: () => () => params.modelContextWindowTokens,
     readProviderSessionId: () => params.runtime.readProviderSessionId?.bind(params.runtime),
     readCanContinueAfterCancellation: () => params.runtime.canContinueAfterCancellation?.bind(params.runtime),
     async provisionRuntime(opts) {

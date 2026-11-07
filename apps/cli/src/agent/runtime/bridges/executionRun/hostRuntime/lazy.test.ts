@@ -2,8 +2,36 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import { createLazyExecutionRunHostRuntime } from './lazy';
+import { createTestExecutionRunHostRuntime } from '../testkit';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 describe('createLazyExecutionRunHostRuntime', () => {
+  it('retains an early runtime-event observation through lazy opening and releases it with its owner', async () => {
+    const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+    const resolveRuntime = vi.fn(async () => ({
+      ...createTestExecutionRunHostRuntime(),
+      subscribeRuntimeEvents(listener: (event: AgentSessionRuntimeEvent) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    }));
+    const runtime = createLazyExecutionRunHostRuntime({ resolveRuntime });
+    const seen: unknown[] = [];
+    const release = runtime.subscribeRuntimeEvents?.(event => seen.push(event));
+    expect(resolveRuntime).not.toHaveBeenCalled();
+    await runtime.provisionRuntime();
+    const ended: AgentSessionRuntimeEvent = { kind: 'runtime-ended', sessionId: 'session-1', sequence: 1,
+      emittedAtMs: 1, cause: 'processExited', retryable: true };
+    for (const listener of listeners) listener(ended);
+    expect(seen).toEqual([ended]);
+    release?.();
+    for (const listener of listeners) listener(ended);
+    expect(seen).toEqual([ended]);
+    runtime.subscribeRuntimeEvents?.(event => seen.push(event));
+    await runtime.dispose();
+    expect(listeners.size).toBe(0);
+  });
+
   it('preserves resolved optional capability presence without fabricating steering', async () => {
     const probeTurnLiveness = vi.fn(async () => ({ active: true, reason: 'busy' }));
     const runtime = createLazyExecutionRunHostRuntime({

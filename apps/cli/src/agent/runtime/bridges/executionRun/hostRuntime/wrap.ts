@@ -11,6 +11,8 @@ export type ExecutionRunHostRuntimeWrapper = Readonly<{
   readPermissionCapability?: () => ExecutionRunPermissionCapability | undefined;
   readInteraction?: () => ExecutionRunInteractionV1 | undefined;
   readResumeSupport: ExecutionRunHostRuntime['readResumeSupport'];
+  readPrepareInputBudget?: () => ExecutionRunHostRuntime['prepareInputBudget'];
+  readModelContextWindowTokens?: () => ExecutionRunHostRuntime['readModelContextWindowTokens'];
   readProviderSessionId?: () => ExecutionRunHostRuntime['readProviderSessionId'];
   readCanContinueAfterCancellation?: () => ExecutionRunHostRuntime['canContinueAfterCancellation'];
   provisionRuntime: ExecutionRunHostRuntime['provisionRuntime'];
@@ -44,6 +46,12 @@ export function wrapExecutionRunHostRuntime(
     },
     async readResumeSupport(opts) {
       return await wrapper.readResumeSupport(opts);
+    },
+    get prepareInputBudget() {
+      return wrapper.readPrepareInputBudget?.();
+    },
+    get readModelContextWindowTokens() {
+      return wrapper.readModelContextWindowTokens?.();
     },
     get readProviderSessionId() {
       return wrapper.readProviderSessionId?.();

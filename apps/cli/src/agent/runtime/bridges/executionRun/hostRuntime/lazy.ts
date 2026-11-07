@@ -1,6 +1,7 @@
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
+  ExecutionRunHostRuntimeEvent,
   ExecutionRunPermissionCapability,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { wrapExecutionRunHostRuntime } from './wrap';
@@ -51,6 +52,8 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
 }>): ExecutionRunHostRuntime {
   const handlers = new Set<ExecutionRunHostRuntimeMessageHandler>();
   const unsubscribeByHandler = new Map<ExecutionRunHostRuntimeMessageHandler, () => void>();
+  const runtimeEventHandlers = new Set<(event: ExecutionRunHostRuntimeEvent) => void>();
+  const unsubscribeRuntimeEvents = new Map<(event: ExecutionRunHostRuntimeEvent) => void, () => void>();
   let resolvedRuntimePromise: Promise<ExecutionRunHostRuntime> | null = null;
   let resolvedRuntime: ExecutionRunHostRuntime | null = null;
   let runtimeProvisionPromise: Promise<string> | null = null;
@@ -65,6 +68,12 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   let startupRecoveryActive = false;
 
   const attachQueuedHandlers = (runtime: ExecutionRunHostRuntime): void => {
+    for (const handler of runtimeEventHandlers) {
+      if (!unsubscribeRuntimeEvents.has(handler)) {
+        const unsubscribe = runtime.subscribeRuntimeEvents?.(handler);
+        if (unsubscribe) unsubscribeRuntimeEvents.set(handler, unsubscribe);
+      }
+    }
     for (const handler of handlers) {
       if (!handlers.has(handler) || unsubscribeByHandler.has(handler)) continue;
       unsubscribeByHandler.set(handler, runtime.subscribeMessages((message) => {
@@ -126,6 +135,8 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
       unsubscribeLifetime = null;
       for (const unsubscribe of unsubscribeByHandler.values()) unsubscribe();
       unsubscribeByHandler.clear();
+      for (const unsubscribe of unsubscribeRuntimeEvents.values()) unsubscribe();
+      unsubscribeRuntimeEvents.clear();
       await resolvedRuntime?.dispose();
       lifetime.signal.throwIfAborted();
       resolvedRuntime = null;
@@ -162,7 +173,12 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
       const runtime = await resolveRuntime();
       return await runtime.readResumeSupport(opts);
     },
+    readPrepareInputBudget: () => async () => {
+      const runtime = await resolveRuntime();
+      return await runtime.prepareInputBudget?.();
+    },
     readProviderSessionId: () => resolvedRuntime?.readProviderSessionId?.bind(resolvedRuntime),
+    readModelContextWindowTokens: () => resolvedRuntime?.readModelContextWindowTokens?.bind(resolvedRuntime),
     readCanContinueAfterCancellation: () => resolvedRuntime?.canContinueAfterCancellation?.bind(resolvedRuntime),
     async provisionRuntime(opts) {
       resumed = Boolean(opts?.resumeRuntimeId);
@@ -227,7 +243,15 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     },
     getRuntimeLifetimeSignal: () => lifetime.signal,
     readSubscribeProviderInputOutcomes: () => resolvedRuntime?.subscribeProviderInputOutcomes?.bind(resolvedRuntime),
-    readSubscribeRuntimeEvents: () => resolvedRuntime?.subscribeRuntimeEvents?.bind(resolvedRuntime),
+    readSubscribeRuntimeEvents: () => handler => {
+      runtimeEventHandlers.add(handler);
+      if (resolvedRuntime) attachQueuedHandlers(resolvedRuntime);
+      return () => {
+        runtimeEventHandlers.delete(handler);
+        unsubscribeRuntimeEvents.get(handler)?.();
+        unsubscribeRuntimeEvents.delete(handler);
+      };
+    },
     readActiveTurnAdmissionWitness: () => resolvedRuntime?.readActiveTurnAdmissionWitness?.bind(resolvedRuntime),
     async cancel(runtimeId) {
       if (startupRecoveryActive) {
@@ -284,11 +308,14 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
       unsubscribeLifetime = null;
       activeRuntimeId = null;
       handlers.clear();
+      runtimeEventHandlers.clear();
       disposePromise = (async () => {
         for (const unsubscribe of unsubscribeByHandler.values()) {
           unsubscribe();
         }
         unsubscribeByHandler.clear();
+        for (const unsubscribe of unsubscribeRuntimeEvents.values()) unsubscribe();
+        unsubscribeRuntimeEvents.clear();
         if (resolvedRuntime) {
           await resolvedRuntime.dispose();
           return;

@@ -40,7 +40,7 @@ export type ExecutionRunNativeOfferedModelReader = (request: Readonly<{
   runtimeDescriptorV1?: PortableRuntimeDescriptorV1;
   connectedServices?: ConnectedServiceBindingsV2 | null;
   secretReferenceOverlay?: SecretReferenceOverlayV1;
-}>) => Promise<AgentProbeModel | undefined>;
+}>, signal?: AbortSignal) => Promise<AgentProbeModel | undefined>;
 
 export type ExecutionRunManagerStartParams = Readonly<{
   /** Host-only caller lifetime for pending Voice initialization; detached after start accepts. */
@@ -140,6 +140,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
   /** Host-private cause of this launch; never persisted as the Run's latest requester. */
   actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
   permissionMode: string;
+  approvalProfileId?: string | null;
   workspaceWrites?: 'allow' | 'deny';
   retentionPolicy: 'ephemeral' | 'resumable';
   runClass: 'bounded' | 'long_lived';
@@ -207,6 +208,7 @@ export type ExecutionRunState = Readonly<{
   intentInput?: unknown;
   display?: ExecutionRunDisplay;
   permissionMode: string;
+  approvalProfileId?: string | null;
   workspaceWrites?: 'allow' | 'deny';
   retentionPolicy: ExecutionRunManagerStartParams['retentionPolicy'];
   runClass: ExecutionRunManagerStartParams['runClass'];

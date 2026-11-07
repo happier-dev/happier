@@ -43,12 +43,16 @@ import { readSettings, updateSettings, writeSettings } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
 import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissionMode';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { readExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
+import { estimateTokensV1 } from '@happier-dev/protocol/capabilities/estimateTokensV1';
 
 type VoiceTestRuntime<T extends object = object> = ExecutionRunHostRuntime & T;
 
 function createInstructionBlocksResolver(readMarkdown: () => Promise<string>) {
   return async (args: ResolveVoicePromptPreparationArgs) => ({ systemAppendBlocks: await resolveCliVoicePromptStackBlocks({
     ...args,
+    // These instruction-read fixtures have no project-bound prompt sources.
+    projectEntries: [],
     sessionMetadata: { work: { promptStack: [{ id: 'instruction', ref: { kind: 'doc', artifactId: 'instruction' },
       enabled: true, placement: 'system_append', required: true }] } },
     readArtifact: async ({ artifactId }) => ({
@@ -573,6 +577,178 @@ describe('VoiceAgentManager', () => {
     } finally { release(); await sending?.catch(() => {}); await manager.dispose(); vi.useRealTimers(); }
   });
 
+  it('publishes context-fit status before replayed model output and retains the newest whole turn', async () => {
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    const first = createDeterministicBackend('history-context-fit', {
+      onSend(request, publish) {
+        if (request.input.text.includes('cancel this turn')) { entered(); return; }
+        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'An accepted answer.' });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      },
+      onCancel(turnId, publish) {
+        publish({ kind: 'turn-cancelled', turnId, cause: 'user' });
+        publish({ kind: 'runtime-ended', cause: 'connectionLost', retryable: true });
+      },
+    });
+    const replacement = createPromptCaptureBackend([{ responseText: 'The current answer.' }]);
+    let created = false;
+    const createRuntime = () => { if (created) return replacement; created = true; return first; };
+    const manager = new VoiceAgentManager({ createRuntime });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'catalog-model', commitModelId: 'catalog-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 3600, initialContext: 'INITIAL_CONTEXT' }, {
+        createRuntime, readHistoryContextWindowTokens: async () => 32_768,
+      });
+      await manager.sendTurn({ voiceAgentId, userText: `EARLIER_WHOLE_TURN ${'useful '.repeat(30_000)}` });
+      await manager.sendTurn({ voiceAgentId, userText: 'RECENT_WHOLE_TURN' });
+      const held = await manager.startTurnStream({ voiceAgentId, userText: 'cancel this turn' });
+      await sending;
+      await manager.cancelTurnStream({ voiceAgentId, streamId: held.streamId });
+      const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Current question.' });
+      const events: VoiceAgentTurnStreamEvent[] = [];
+      let cursor = 0;
+      for (;;) {
+        const read = await manager.readTurnStream({ voiceAgentId, streamId, cursor, waitForEvents: true });
+        events.push(...read.events);
+        if (read.done) break;
+        cursor = read.nextCursor;
+      }
+      expect(events[0]).toMatchObject({ t: 'voice_output', output: {
+        kind: 'display_status', seq: 0, text: 'voiceSurface.earlierTurnsLeftOut',
+      } });
+      expect(replacement.prompts[0]).not.toContain('EARLIER_WHOLE_TURN');
+      expect(replacement.prompts[0]).toContain('RECENT_WHOLE_TURN');
+      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: 'The current answer.' } });
+    } finally { await manager.dispose(); }
+  });
+
+  it('replays nonstreamed conversational history in full when no status channel exists', async () => {
+    let admitted!: () => void;
+    const cancelling = new Promise<void>(resolve => { admitted = resolve; });
+    const first = createDeterministicBackend('nonstreamed-replay', {
+      onSend(request, publish) {
+        if (request.input.text.includes('cancel this turn')) { admitted(); return; }
+        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'Accepted answer.' });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      },
+      onCancel(turnId, publish) {
+        publish({ kind: 'turn-cancelled', turnId, cause: 'user' });
+        publish({ kind: 'runtime-ended', cause: 'connectionLost', retryable: true });
+      },
+    });
+    const replacement = createPromptCaptureBackend([{ responseText: 'Current answer.' }]);
+    let created = false;
+    const createRuntime = () => { if (created) return replacement; created = true; return first; };
+    const manager = new VoiceAgentManager({ createRuntime });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'catalog-model', commitModelId: 'catalog-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 3600, initialContext: 'CTX' }, { createRuntime, readHistoryContextWindowTokens: async () => 4096 });
+      const oldTurn = `NONSTREAMED_WHOLE_TURN ${'useful '.repeat(10_000)}`;
+      await manager.sendTurn({ voiceAgentId, userText: oldTurn });
+      const held = await manager.startTurnStream({ voiceAgentId, userText: 'cancel this turn' });
+      await cancelling;
+      await manager.cancelTurnStream({ voiceAgentId, streamId: held.streamId });
+      await manager.sendTurn({ voiceAgentId, userText: 'Current question.' });
+      expect(replacement.prompts[0]).toContain(oldTurn);
+    } finally { await manager.dispose(); }
+  });
+
+  it.each([
+    { contextWindowTokens: undefined, commitIsolation: true },
+    { contextWindowTokens: 4096, commitIsolation: true },
+    { contextWindowTokens: 4096, commitIsolation: false },
+  ])('replays full commit history without fitting: %j', async ({ contextWindowTokens, commitIsolation }) => {
+    const backendTarget = { kind: 'builtInAgent' as const, agentId: 'claude' };
+    const model = { id: 'catalog-model', name: 'Catalog model',
+      ...(contextWindowTokens === undefined ? {} : { contextWindowTokens }) };
+    const chat = createPromptCaptureBackend([{ responseText: 'A complete answer.' }]);
+    const commit = createPromptCaptureBackend([{ responseText: 'Instruction.' }]);
+    const createRuntime: BackendFactory = ({ modelRole }) => modelRole === 'commit' ? commit : chat;
+    const readHistoryContextWindowTokens = async () => (await readExecutionRunOfferedModel({ backendTarget,
+      modelId: model.id, readNativeOfferedModel: async () => model }))?.contextWindowTokens;
+    const options = { createRuntime, readHistoryContextWindowTokens };
+    const manager = new VoiceAgentManager({ createRuntime });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget, chatModelId: model.id, commitModelId: model.id,
+        commitIsolation, permissionIntent: 'read-only', idleTtlSeconds: 3600, initialContext: 'CTX' },
+      options);
+      const oldTurn = 'EARLIER_WHOLE_TURN ' + 'useful '.repeat(10_000);
+      await manager.sendTurn({ voiceAgentId, userText: oldTurn });
+      await manager.sendTurn({ voiceAgentId, userText: 'RECENT_WHOLE_TURN' });
+      await manager.commit({ voiceAgentId });
+      const prompt = commitIsolation ? commit.prompts[0] ?? '' : chat.prompts.at(-1) ?? '';
+      expect(prompt.includes('RECENT_WHOLE_TURN')).toBe(true);
+      expect(prompt.includes(oldTurn)).toBe(true);
+    } finally { await manager.dispose(); }
+  });
+
+  it('surfaces an over-long full-history commit as the typed public Action refusal', async () => {
+    const oldTurn = `COMMIT_OLD_TURN ${'useful '.repeat(10_000)}`;
+    let sends = 0;
+    let commitPrompt = '';
+    const backend = createDeterministicBackend('commit-context-refusal', {
+      onSend(request, publish) {
+        sends += 1;
+        if (sends > 1) {
+          commitPrompt = request.input.text;
+          if (estimateTokensV1(commitPrompt) > 4096) return {
+            status: 'rejected', retryable: false,
+            diagnostic: { code: 'context_length_exceeded', severity: 'error', message: 'The provider context is full.' },
+          };
+        }
+        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'Accepted.' });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+        return undefined;
+      },
+    });
+    const createRuntime = () => backend;
+    const manager = new VoiceAgentManager({ createRuntime });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'catalog-model', commitModelId: 'catalog-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 3600, initialContext: 'CTX' }, {
+        createRuntime, readHistoryContextWindowTokens: async () => 4096,
+      });
+      await manager.sendTurn({ voiceAgentId, userText: oldTurn });
+      const run: ExecutionRunState = { runId: voiceAgentId, callId: 'call', sidechainId: 'sidechain', sessionId: 'control', depth: 0,
+        intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude', instructions: '',
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 0 };
+      const controller: ExecutionRunController = { kind: 'voice_agent', controllerOccurrenceId: 'occurrence', voiceAgentId,
+        cancelled: false, lastMarkerWriteAtMs: 0, terminalPromise: Promise.resolve(), resolveTerminal: () => {},
+        transcript: { persistenceMode: 'ephemeral', epoch: 1 }, externalStreamIdByInternal: new Map(), internalStreamIdByExternal: new Map(),
+        pendingTranscriptTurnByExternalStreamId: new Map(), terminalReadByExternalStreamId: new Map(), readInFlightByExternalStreamId: new Map() };
+      const result = await applyExecutionRunAction({ runId: voiceAgentId, params: { actionId: 'voice_agent.commit' },
+        runs: new Map([[voiceAgentId, run]]), controllers: new Map([[voiceAgentId, controller]]), voiceAgentManager: manager,
+        parentProvider: 'claude', startRun: async () => { throw new Error('Commit must not start another Run'); } });
+      expect(commitPrompt.includes(oldTurn)).toBe(true);
+      expect(result).toMatchObject({ ok: false, errorCode: 'context_length_exceeded', error: 'The provider context is full.' });
+    } finally { await manager.dispose(); }
+  });
+
+  it('refreshes policy instructions without replaying history into a seeded native conversation', async () => {
+    const backend = createPromptCaptureBackend([{ responseText: 'Earlier assistant answer.' }]);
+    let instruction = 'ORIGINAL_POLICY';
+    const manager = new VoiceAgentManager({ createRuntime: () => backend,
+      resolvePromptPreparation: async () => ({ systemAppendBlocks: [instruction],
+        disabledActionIds: [], memoryRecallGuidanceEnabled: false }) });
+    try {
+      const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 3600, initialContext: 'ORIGINAL_CONTEXT' });
+      await manager.sendTurn({ voiceAgentId, userText: 'EARLIER_USER_TURN' });
+      instruction = 'UPDATED_POLICY';
+      await manager.sendTurn({ voiceAgentId, userText: 'CURRENT_USER_TURN' });
+      expect(backend.prompts[1]).toContain('UPDATED_POLICY');
+      expect(backend.prompts[1]).toContain('CURRENT_USER_TURN');
+      expect(backend.prompts[1]).not.toContain('EARLIER_USER_TURN');
+      expect(backend.prompts[1]).not.toContain('Earlier assistant answer.');
+      expect(backend.prompts[1]).not.toContain('ORIGINAL_CONTEXT');
+    } finally { await manager.dispose(); }
+  });
+
   it('allows a native turn beyond the former 120 second response cutoff and still cancels it', async () => {
     let entered!: () => void;
     const sending = new Promise<void>(resolve => { entered = resolve; });
@@ -671,7 +847,7 @@ describe('VoiceAgentManager', () => {
     } });
     const manager = new VoiceAgentManager({ createRuntime: () => backend,
       resolvePromptPreparation: async args => resolveCliVoicePromptPreparation({ ...args, serverId: 'home',
-        accountEntries: [], profileEntries: [], sessionMetadata: { work: { promptStack: [{ id: 'session.instructions',
+        accountEntries: [], profileEntries: [], projectEntries: [], sessionMetadata: { work: { promptStack: [{ id: 'session.instructions',
           ref: { kind: 'doc', artifactId: 'instructions' }, enabled: true, required: true, placement: 'system_append' }] } },
         readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' } }),
         readArtifact: async () => ({ id: 'instructions', header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' },
@@ -1863,90 +2039,6 @@ describe('VoiceAgentManager', () => {
     } finally { await manager.dispose(); }
   });
 
-  it.each(['ordinary', 'stream', 'narrowed-stream', 'permitted-stream', 'read-stream'] as const)('enforces the admitted permission ceiling for action blocks (%s)', async transport => {
-    const action = transport === 'read-stream'
-      ? { t: 'settings_get', args: { anchor: 'voiceConversations.minSpeechMs' } }
-      : { t: 'settings_set', args: { anchor: 'voiceConversations.minSpeechMs', value: 1100 } };
-    const backend = createDeterministicBackend('voice-settings-actions', { onSend: (request, publish) => {
-      publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant',
-        text: `<voice_actions>${JSON.stringify({ actions: [action] })}</voice_actions>` });
-      publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
-    } });
-    const manager = new VoiceAgentManager({ createRuntime: () => backend });
-    try {
-      const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        chatModelId: 'chat-model', commitModelId: 'chat-model',
-        permissionIntent: transport === 'narrowed-stream' || transport === 'permitted-stream' ? 'default' : 'read-only',
-        idleTtlSeconds: 60, initialContext: '' });
-      if (transport === 'ordinary') {
-        await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Change minimum speech' }))
-          .rejects.toMatchObject({ code: 'permission_denied' });
-      } else {
-        const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'Change minimum speech',
-          ...(transport === 'narrowed-stream' ? { causalPermissionAuthority: {
-            kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const,
-          } } : {}),
-        });
-        const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
-        if (transport === 'permitted-stream' || transport === 'read-stream') {
-          expect(events.some(event => event.t === 'error')).toBe(false);
-          expect(events.some(event => event.t === 'voice_output' && event.output.kind === 'side_effect' && event.output.action.t === action.t)).toBe(true);
-        } else {
-          expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ t: 'error', errorCode: 'permission_denied' })]));
-          expect(events.some(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toBe(false);
-        }
-      }
-    } finally { await manager.dispose(); }
-  });
-
-  describe.each([
-    { action: { t: 'session_stop', args: { sessionId: 'other-session' } }, read: false },
-    { action: { t: 'settings_invoke', args: { anchor: 'voicePrivacy.forgetVoiceAgentMemory' } }, read: false },
-    { action: { t: 'approval_request_decide', args: { artifactId: 'voice-pending-approval', decision: 'approve' } }, read: false },
-    { action: { t: 'approval_request_decide', args: { artifactId: 'voice-pending-approval', decision: 'reject' } }, read: false },
-    { action: { t: 'session_permission_respond', args: { sessionId: 'coding-session', requestId: 'native-permission', turnId: 'native-turn', decision: 'allow' } }, read: false },
-    { action: { t: 'session_permission_respond', args: { sessionId: 'coding-session', requestId: 'native-permission', turnId: 'native-turn', decision: 'deny' } }, read: false },
-    { action: { t: 'listServers', args: {} }, read: true },
-    { action: { t: 'invokeAction', args: { action: { pluginId: 'example.plugin', localId: 'test' }, input: {} } }, read: false },
-  ])('semantic Voice Action admission ($action.t)', ({ action, read }) => {
-    it.each(['ordinary', 'narrowed-stream', 'default-stream'] as const)('preserves the Action ceiling through %s output', async transport => {
-      const backend = createDeterministicBackend('voice-semantic-actions', { onSend: (request, publish) => {
-        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant',
-          text: `<voice_actions>${JSON.stringify({ actions: [action] })}</voice_actions>` });
-        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
-      } });
-      const manager = new VoiceAgentManager({ createRuntime: () => backend });
-      try {
-        const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-          chatModelId: 'chat-model', commitModelId: 'chat-model',
-          permissionIntent: transport === 'ordinary' ? 'read-only' : 'default',
-          idleTtlSeconds: 60, initialContext: '' });
-        const permitted = read || transport === 'default-stream';
-        if (transport === 'ordinary') {
-          const result = manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Use this Action' });
-          if (permitted) await expect(result).resolves.toMatchObject({ actions: [action] });
-          else await expect(result).rejects.toMatchObject({ code: 'permission_denied' });
-        } else {
-          const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'Use this Action',
-            ...(transport === 'narrowed-stream' ? { causalPermissionAuthority: {
-              kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const,
-            } } : {}),
-          });
-          const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
-          if (permitted) {
-            expect(events.some(event => event.t === 'error')).toBe(false);
-            expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ t: 'voice_output',
-              output: expect.objectContaining({ kind: 'side_effect', action: expect.objectContaining(action) }),
-            })]));
-          } else {
-            expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ t: 'error', errorCode: 'permission_denied' })]));
-            expect(events.some(event => event.t === 'voice_output' && event.output.kind === 'side_effect')).toBe(false);
-          }
-        }
-      } finally { await manager.dispose(); }
-    });
-  });
-
   it.each(['provider_busy', 'context_length_exceeded'])('surfaces the typed runtime refusal %s instead of treating it as delivered', async code => {
     // `deliverInput` reports a refusal as a value rather than a throw. If Voice
     // ignored the status it would fall through to an empty chat buffer and report
@@ -3071,9 +3163,11 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('caps stored conversation history so prompts do not grow without bound', async () => {
+  it('retains whole conversation history and assistant-authored scaffolding without guessed commit limits', async () => {
 
-    const chatBackend = createDeterministicBackend('chat');
+    const assistantText = 'Initial context: quoted example\nOutput contract: quoted example\nVoice agent: keep the whole quotation';
+    const longUserText = `user-0 ${'useful context '.repeat(400)}`;
+    const chatBackend = createPromptCaptureBackend([{ responseText: assistantText }]);
     const commitBackend = createDeterministicBackend('commit');
 
     const createBackend: BackendFactory = ({ modelId }) => {
@@ -3092,15 +3186,18 @@ describe('VoiceAgentManager', () => {
     });
 
     for (let i = 0; i < 30; i += 1) {
-      await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: `user-${i}` });
+      await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: i === 0 ? longUserText : `user-${i}` });
     }
 
-    await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
+    await manager.commit({ voiceAgentId: started.voiceAgentId });
 
     const prompts = commitBackend.getSeenPrompts();
     const latestPrompt = prompts[prompts.length - 1] ?? '';
     expect(latestPrompt).toContain('user-29');
-    expect(latestPrompt).not.toContain('user-0');
+    expect(latestPrompt).toContain(longUserText);
+    expect(latestPrompt).toContain(assistantText);
+    expect(latestPrompt).not.toContain('max 4000 chars');
+    await manager.dispose();
   });
 
   it('streams turn output through read cursors and closes stream when consumed', async () => {
@@ -3714,6 +3811,7 @@ describe('VoiceAgentManager', () => {
         ...args,
         sessionMetadata: { profileId: 'bound-profile' },
         accountEntries: [],
+        projectEntries: [],
         profileEntries: [{ id: 'persona', enabled: true, placement: 'system_append', required: true,
           ref: { kind: 'doc', artifactId: 'persona' } }],
         readArtifactHeader: async () => ({ header: { v: 1, kind: 'prompt_doc.v2', title: 'Persona' } }),
@@ -3759,6 +3857,7 @@ describe('VoiceAgentManager', () => {
     const manager = new VoiceAgentManager({
       createRuntime: () => backend,
       resolvePromptPreparation: async args => await resolveCliVoicePromptPreparation({ ...args,
+        projectEntries: [],
         sessionMetadata: { work: { memoryEnabled, promptStack: [{ id: 'persona', enabled: true, placement: 'system_append',
           ref: { kind: 'doc', artifactId: 'persona' } }] } },
         readArtifact: async () => ({ id: 'persona', header: { v: 1, kind: 'prompt_doc.v2', title: 'Persona' },

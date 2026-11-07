@@ -74,9 +74,10 @@ import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
+import { shouldPublishExecutionRunTranscriptMarker } from './executionRunTranscriptPublisher';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
-import { assertExecutionRunStructuredOutputModelAllowed } from './structuredOutputAdmission';
+import { assertExecutionRunStructuredOutputModelAllowed, readExecutionRunOfferedModel } from './structuredOutputAdmission';
 import { executionRunChildSelectionNeedsAppliedParent, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
 import { projectExecutionRunError } from './errors';
 import { resolveExecutionRunInitialInputLocalId } from './initialInput';
@@ -259,7 +260,7 @@ type StartExecutionRunArgs = Readonly<{
   /** Final prompt sizing uses this exact registered runtime's prepared context. */
   finalizeStartParamsForRuntime?: (
     params: ExecutionRunManagerStartParams,
-    runtime: ExecutionRunHostRuntime,
+    prepareRuntime: () => ExecutionRunHostRuntime,
     runId: string,
   ) => Promise<ExecutionRunManagerStartParams>;
   /** The host's captured Account authority; never fall back to ambient state when supplied. */
@@ -297,6 +298,7 @@ type StartExecutionRunArgs = Readonly<{
     actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
     modelId?: string;
     modelSelection?: ProviderBoundModelRef;
+    modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
     teamCredentialModel?: import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     secretReferenceOverlay?: import('@happier-dev/protocol').SecretReferenceOverlayV1;
@@ -364,21 +366,25 @@ export async function startExecutionRun(args: StartExecutionRunArgs): Promise<Ex
   }
   // Generated role guidance cannot supply an authored review scope.
   assertPreparedReviewRunStartAllowed(args.params);
-  try {
-    await args.admitStart?.();
-  } catch (error) {
-    throw markExecutionRunStartFailure(error, 'noRunCreated');
-  }
   const runId = requestBoundRunId ?? `run_${randomUUID()}`;
+  // The scoped daemon request can outlive a maintenance read. Retain this
+  // pending start through that transport, without consuming Run capacity.
   const releasePreparation = args.budgetRegistry?.retainExecutionRunPreparation(runId, args.params.intent, args.params.requesterWorkAttributionV1);
   try {
-    return await startAdmittedExecutionRun(args, runId, requestBoundRunId);
-  } catch (error) {
-    // Start acknowledges creation, not successful execution or initial-input
-    // delivery. Keep a known Run observable even when its initialization fails.
-    const created = args.runs.get(runId);
-    if (created) return projectExistingExecutionRunStartResult(created);
-    throw markExecutionRunStartFailure(error, 'noRunCreated');
+    try {
+      await args.admitStart?.();
+    } catch (error) {
+      throw markExecutionRunStartFailure(error, 'noRunCreated');
+    }
+    try {
+      return await startAdmittedExecutionRun(args, runId, requestBoundRunId);
+    } catch (error) {
+      // Start acknowledges creation, not successful execution or initial-input
+      // delivery. Keep a known Run observable even when its initialization fails.
+      const created = args.runs.get(runId);
+      if (created) return projectExistingExecutionRunStartResult(created);
+      throw markExecutionRunStartFailure(error, 'noRunCreated');
+    }
   } finally {
     releasePreparation?.();
   }
@@ -615,7 +621,7 @@ async function startAdmittedExecutionRun(
     if (existing) return projectExistingExecutionRunStartResult(existing);
   }
   const shouldMaterializeInTranscript = args.params.sessionId !== null
-    && profile.transcriptMaterialization !== 'none';
+    && profile.transcriptMaterialization === 'full';
   const sendAcp: ExecutionRunTranscriptPublisher = shouldMaterializeInTranscript
     ? args.sendAcp
     : async () => {};
@@ -708,8 +714,9 @@ async function startAdmittedExecutionRun(
     throw err;
   }
 
-  let backendBeforeControllerRegistration: ExecutionRunHostRuntime | null = null;
+  const pendingBackend: { runtime: ExecutionRunHostRuntime | null } = { runtime: null };
   let registeredController: ExecutionRunController | null = null;
+  let inputFinalizationFailed = false;
   let retainedInitialPendingCustodyAttempted = false;
   let retainedInitialPendingCustodyOutcomeUnknown = false;
   const notifyParentOnCompletion = args.params.notifyParentOnCompletion
@@ -740,6 +747,7 @@ async function startAdmittedExecutionRun(
       ...(typeof args.params.intentInput !== 'undefined' ? { intentInput: args.params.intentInput } : {}),
       ...(args.params.display ? { display: args.params.display } : {}),
       permissionMode: args.params.permissionMode,
+      approvalProfileId: args.params.approvalProfileId ?? null,
       workspaceWrites: args.params.workspaceWrites,
       retentionPolicy: args.params.retentionPolicy,
       runClass: args.params.runClass,
@@ -772,6 +780,7 @@ async function startAdmittedExecutionRun(
       ...(requestedConfiguration ? { requestedConfiguration } : {}),
       ...(resolvedSelection ? { resolvedSelection } : {}),
       permissionMode: args.params.permissionMode,
+      approvalProfileId: args.params.approvalProfileId ?? null,
       retentionPolicy: args.params.retentionPolicy,
       runClass: args.params.runClass,
       ioMode: args.params.ioMode,
@@ -785,10 +794,148 @@ async function startAdmittedExecutionRun(
       return startResult;
     }
 
+    let preparedBackend: Readonly<{
+      backend: ExecutionRunHostRuntime;
+      controller: ExecutionRunBackendController;
+      start: ExecutionRunBackendStartContext;
+    }> | undefined;
+    const prepareBackendRuntime = () => {
+      if (preparedBackend) return preparedBackend;
+      let ctrl: ExecutionRunBackendController | null = null;
+      let backendStartContext!: ExecutionRunBackendStartContext;
+      const backend = args.createRuntime({
+        runId,
+        controllerOccurrenceId,
+        callId,
+        sidechainId,
+        backendId,
+        backendTarget: args.params.backendTarget,
+        permissionMode: args.params.permissionMode,
+        modelSelectionSource: childSelection.modelSelectionSource,
+        workspaceWrites: args.params.workspaceWrites,
+        ...(args.params.causalPermissionAuthority
+          ? { causalPermissionAuthority: args.params.causalPermissionAuthority }
+          : {}),
+        ...(args.params.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.params.actionRequestAttributionV1 } : {}),
+        ...(typeof args.params.modelId === 'string' && args.params.modelId.trim().length > 0
+          ? { modelId: args.params.modelId }
+          : {}),
+        ...(args.params.modelSelection
+          ? { modelSelection: args.params.modelSelection }
+          : {}),
+        ...(args.params.teamCredentialModel
+          ? { teamCredentialModel: args.params.teamCredentialModel }
+          : {}),
+        ...(args.params.sessionConfigOptionOverrides
+          ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
+          : {}),
+        ...(args.params.secretReferenceOverlay
+          ? { secretReferenceOverlay: args.params.secretReferenceOverlay }
+          : {}),
+        ...(initialSecretReferenceEnvironment
+          ? { secretReferenceEnvironment: initialSecretReferenceEnvironment }
+          : {}),
+        accountSettings: args.params.accountSettings ?? null,
+        ...(args.params.connectedServices !== undefined
+          ? { connectedServices: args.params.connectedServices }
+          : {}),
+        ...(args.params.connectedServicesDefaultServiceIds && args.params.connectedServicesDefaultServiceIds.length > 0
+          ? { connectedServicesDefaultServiceIds: args.params.connectedServicesDefaultServiceIds }
+          : {}),
+        start: backendStartContext = {
+          ...startParams,
+          profileId: profileId ?? undefined,
+          ...(startProfileSourceCustody
+            ? { profileSourceCustody: startProfileSourceCustody }
+            : {}),
+          observeWorkflowUsage: ({ turnId, observation }) => {
+            const current = ctrl;
+            const binding = current?.workflowObservation;
+            const inputTurn = current?.currentInputTurn;
+            if (!current || !binding || !inputTurn) return;
+            if (!inputTurn.inputIds.includes(binding.localInputId)) return;
+            if (turnId !== null && turnId !== inputTurn.turnId) return;
+            binding.usage.observe(observation);
+            const usage = binding.usage.current();
+            if (!usage) return;
+            current.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
+              current,
+              () => binding.sink.commit({
+                kind: 'usage',
+                runId,
+                localInputId: binding.localInputId,
+                usage,
+              }),
+              () => args.onPublicStateUpdated?.(runId),
+            );
+          },
+        },
+      });
+      pendingBackend.runtime = backend;
+      let resolveTerminal!: () => void;
+      const terminalPromise = new Promise<void>((resolve) => {
+        resolveTerminal = resolve;
+      });
+      ctrl = {
+        kind: 'backend',
+        ...(args.params.workflowRunId && args.params.projectLaunchContext?.ingress?.requesterSessionBootstrap
+          ? { requesterSessionBootstrap: args.params.projectLaunchContext.ingress.requesterSessionBootstrap } : {}),
+        ...(args.profileCatalog ? { profileCatalog: args.profileCatalog } : {}),
+        ...(args.params.workflowRunId ? { workflowRunId: args.params.workflowRunId } : {}),
+        ...(args.params.workflowScope ? { workflowScope: args.params.workflowScope } : {}),
+        controllerOccurrenceId,
+        backend,
+        backendSupportsResume: false,
+        runtimeId: null,
+        buffer: '',
+        sidechainStreamBuffer: '',
+        sidechainStreamKey: '',
+        streamWriter:
+          shouldMaterializeInTranscript && args.streamedTranscriptSession && args.params.ioMode === 'streaming'
+            ? createStreamedTranscriptWriter({
+                provider: args.parentProvider,
+                session: args.streamedTranscriptSession,
+              })
+            : null,
+        cancelled: false,
+        turnCount: 0,
+        turnEpoch: 0,
+        turnInFlight: false,
+        initialInputPending: args.params.initialInput?.kind !== 'deferred_session_pending'
+          && Boolean(args.params.instructions?.trim()),
+        turnCancelReason: null,
+        turnCancelEpoch: null,
+        admittedLiveInterventions: [],
+        admittedLiveInterventionsSignal: null,
+        lastMarkerWriteAtMs: 0,
+        failureSignal: failureSignal(),
+        pendingHostBarrier: Promise.resolve(),
+        ...(args.params.workflowObservationSink && args.params.localInputId
+          ? {
+              workflowObservation: {
+                workflowRunId: args.params.workflowObservationSink.workflowRunId,
+                localInputId: args.params.localInputId,
+                sink: args.params.workflowObservationSink,
+                usage: createExactTurnUsageAccumulator(),
+              },
+            }
+          : {}),
+        terminalPromise,
+        resolveTerminal,
+      };
+      args.controllers.set(runId, ctrl);
+      registeredController = ctrl;
+      pendingBackend.runtime = null;
+      const releaseOccurrence = args.registerRunOccurrence?.({ runId, sidechainId, controller: ctrl });
+      if (releaseOccurrence) ctrl.releaseSessionInputAttachment = async () => releaseOccurrence();
+      preparedBackend = { backend, controller: ctrl, start: backendStartContext };
+      return preparedBackend;
+    };
+
     const publishStartedRun = async (): Promise<boolean> => {
       // Materialize the prepared run in transcript (tool-call).
-      if (shouldMaterializeInTranscript) {
-        await sendAcp(args.parentProvider, {
+      if (shouldPublishExecutionRunTranscriptMarker(profile, args.params)) {
+        await args.sendAcp(args.parentProvider, {
           type: 'tool-call',
           callId,
           name: 'SubAgentRun',
@@ -924,16 +1071,32 @@ async function startAdmittedExecutionRun(
         disabledActionIds,
       }, {
         ...(args.params.signal ? { signal: args.params.signal } : {}),
+        readHistoryContextWindowTokens: async ({ runtime, signal }) => {
+          const selection = childSelection;
+          if (selection?.teamCredentialModel || selection?.modelSelection?.providerConnectionId) {
+            return runtime.readModelContextWindowTokens?.();
+          }
+          return (await readExecutionRunOfferedModel({
+            ...args.params,
+            modelId: chatModelId,
+            modelSelection: selection?.modelSelection,
+            teamCredentialModel: selection?.teamCredentialModel,
+            connectedServices: selection?.connectedServices,
+            signal,
+          }))?.contextWindowTokens;
+        },
         createRuntime: ({
           backendTarget,
           backendId: runtimeBackendId,
           modelId,
           modelSelection,
+          modelRole,
           sessionConfigOptionOverrides,
           permissionIntent,
           start,
           connectedServices,
         }) => {
+          const roleSelection = modelRole === 'chat' ? childSelection : modelRole === 'commit' ? voiceCommit : null;
           try {
             return args.createRuntime({
               runId,
@@ -941,6 +1104,7 @@ async function startAdmittedExecutionRun(
               backendId: runtimeBackendId,
               backendTarget,
               modelId,
+              modelSelectionSource: roleSelection?.modelId ? roleSelection.modelSelectionSource : 'inherited',
               ...(modelSelection ? { modelSelection } : {}),
               ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
               ...(args.params.secretReferenceOverlay
@@ -1014,154 +1178,39 @@ async function startAdmittedExecutionRun(
       return { ...startResult, ...(startedVoice.preparedInstructionsFor ? { preparedInstructionsFor: startedVoice.preparedInstructionsFor } : {}) };
     }
 
-    let ctrl: ExecutionRunBackendController | null = null;
-    let backendStartContext!: ExecutionRunBackendStartContext;
-    const backend = args.createRuntime({
-      runId,
-      controllerOccurrenceId,
-      callId,
-      sidechainId,
-      backendId,
-      backendTarget: args.params.backendTarget,
-      permissionMode: args.params.permissionMode,
-      workspaceWrites: args.params.workspaceWrites,
-      ...(args.params.causalPermissionAuthority
-        ? { causalPermissionAuthority: args.params.causalPermissionAuthority }
-        : {}),
-      ...(args.params.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.params.actionRequestAttributionV1 } : {}),
-      ...(typeof args.params.modelId === 'string' && args.params.modelId.trim().length > 0
-        ? { modelId: args.params.modelId }
-        : {}),
-      ...(args.params.modelSelection
-        ? { modelSelection: args.params.modelSelection }
-        : {}),
-      ...(args.params.teamCredentialModel
-        ? { teamCredentialModel: args.params.teamCredentialModel }
-        : {}),
-      ...(args.params.sessionConfigOptionOverrides
-        ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
-        : {}),
-      ...(args.params.secretReferenceOverlay
-        ? { secretReferenceOverlay: args.params.secretReferenceOverlay }
-        : {}),
-      ...(initialSecretReferenceEnvironment
-        ? { secretReferenceEnvironment: initialSecretReferenceEnvironment }
-        : {}),
-      accountSettings: args.params.accountSettings ?? null,
-      ...(args.params.connectedServices !== undefined
-        ? { connectedServices: args.params.connectedServices }
-        : {}),
-      ...(args.params.connectedServicesDefaultServiceIds && args.params.connectedServicesDefaultServiceIds.length > 0
-        ? { connectedServicesDefaultServiceIds: args.params.connectedServicesDefaultServiceIds }
-        : {}),
-      start: backendStartContext = {
-        ...startParams,
-        profileId: profileId ?? undefined,
-        ...(startProfileSourceCustody
-          ? { profileSourceCustody: startProfileSourceCustody }
-          : {}),
-        observeWorkflowUsage: ({ turnId, observation }) => {
-          const current = ctrl;
-          const binding = current?.workflowObservation;
-          const inputTurn = current?.currentInputTurn;
-          if (!current || !binding || !inputTurn) return;
-          if (!inputTurn.inputIds.includes(binding.localInputId)) return;
-          if (turnId !== null && turnId !== inputTurn.turnId) return;
-          binding.usage.observe(observation);
-          const usage = binding.usage.current();
-          if (!usage) return;
-          current.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
-            current,
-            () => binding.sink.commit({
-              kind: 'usage',
-              runId,
-              localInputId: binding.localInputId,
-              usage,
-            }),
-            () => args.onPublicStateUpdated?.(runId),
-          );
-        },
-      },
-    });
-    backendBeforeControllerRegistration = backend;
-    let resolveTerminal!: () => void;
-    const terminalPromise = new Promise<void>((resolve) => {
-      resolveTerminal = resolve;
-    });
-    ctrl = {
-      kind: 'backend',
-      ...(args.profileCatalog ? { profileCatalog: args.profileCatalog } : {}),
-      ...(args.params.workflowRunId ? { workflowRunId: args.params.workflowRunId } : {}),
-        ...(args.params.workflowRunId && args.params.projectLaunchContext?.ingress?.requesterSessionBootstrap
-          ? { requesterSessionBootstrap: args.params.projectLaunchContext.ingress.requesterSessionBootstrap } : {}),
-      ...(args.params.workflowScope ? { workflowScope: args.params.workflowScope } : {}),
-      controllerOccurrenceId,
-      backend,
-      backendSupportsResume: false,
-      runtimeId: null,
-      buffer: '',
-      sidechainStreamBuffer: '',
-      sidechainStreamKey: '',
-      streamWriter:
-        shouldMaterializeInTranscript && args.streamedTranscriptSession && args.params.ioMode === 'streaming'
-          ? createStreamedTranscriptWriter({
-              provider: args.parentProvider,
-              session: args.streamedTranscriptSession,
-            })
-          : null,
-      cancelled: false,
-      turnCount: 0,
-      turnEpoch: 0,
-      turnInFlight: false,
-      initialInputPending: args.params.initialInput?.kind !== 'deferred_session_pending'
-        && Boolean(args.params.instructions?.trim()),
-      turnCancelReason: null,
-      turnCancelEpoch: null,
-      admittedLiveInterventions: [],
-      admittedLiveInterventionsSignal: null,
-      lastMarkerWriteAtMs: 0,
-      failureSignal: failureSignal(),
-      pendingHostBarrier: Promise.resolve(),
-      ...(args.params.workflowObservationSink && args.params.localInputId
-        ? {
-            workflowObservation: {
-              workflowRunId: args.params.workflowObservationSink.workflowRunId,
-              localInputId: args.params.localInputId,
-              sink: args.params.workflowObservationSink,
-              usage: createExactTurnUsageAccumulator(),
-            },
-          }
-        : {}),
-      terminalPromise,
-      resolveTerminal,
-    };
-    args.controllers.set(runId, ctrl);
-    registeredController = ctrl;
-    backendBeforeControllerRegistration = null;
-    const releaseOccurrence = args.registerRunOccurrence?.({ runId, sidechainId, controller: ctrl });
-    if (releaseOccurrence) ctrl.releaseSessionInputAttachment = async () => releaseOccurrence();
-    const finalizedProfilePromise = (async (): Promise<boolean> => {
-      if (!args.finalizeStartParamsForRuntime) return true;
-      const finalized = await args.finalizeStartParamsForRuntime(args.params, backend, runId);
-      if (!isExecutionRunControllerCurrent({ runId, controller: ctrl, controllers: args.controllers })
-        || args.runs.get(runId)?.status !== 'running') return false;
+    if (args.finalizeStartParamsForRuntime) {
+      let finalized: ExecutionRunManagerStartParams;
+      try {
+        finalized = await args.finalizeStartParamsForRuntime(args.params, () => prepareBackendRuntime().backend, runId);
+      } catch (error) {
+        inputFinalizationFailed = true;
+        throw error;
+      }
+      const prepared = preparedBackend;
+      if ((prepared && !isExecutionRunControllerCurrent({ runId, controller: prepared.controller, controllers: args.controllers }))
+        || args.runs.get(runId)?.status !== 'running') {
+        if (prepared) await settleExecutionRunController({ runId, controller: prepared.controller, controllers: args.controllers });
+        return startResult;
+      }
       // Native adapters retain this exact start context. Only input fields may
       // change after policy, working directory and context were prepared.
       const inputPatch = { instructions: finalized.instructions, intentInput: finalized.intentInput };
       args = { ...args, params: { ...args.params, ...inputPatch } };
       Object.assign(startParams, inputPatch);
-      Object.assign(backendStartContext, inputPatch);
+      if (prepared) Object.assign(prepared.start, inputPatch);
       const current = args.runs.get(runId)!;
       args.runs.set(runId, { ...current, instructions: finalized.instructions ?? '', intentInput: finalized.intentInput });
-      ctrl.initialInputPending = args.params.initialInput?.kind !== 'deferred_session_pending'
+      if (prepared) prepared.controller.initialInputPending = args.params.initialInput?.kind !== 'deferred_session_pending'
         && Boolean(args.params.instructions?.trim());
       args.onPublicStateUpdated?.(runId);
       await args.writeActivityMarker(runId, args.getNowMs(), { force: true });
-      if (!isExecutionRunControllerCurrent({ runId, controller: ctrl, controllers: args.controllers })
-        || args.runs.get(runId)?.status !== 'running') return false;
-      return await publishStartedRun();
-    })();
-    void finalizedProfilePromise.catch(() => undefined);
+      if ((prepared && !isExecutionRunControllerCurrent({ runId, controller: prepared.controller, controllers: args.controllers }))
+        || args.runs.get(runId)?.status !== 'running' || !await publishStartedRun()) {
+        if (prepared) await settleExecutionRunController({ runId, controller: prepared.controller, controllers: args.controllers });
+        return startResult;
+      }
+    }
+    const { backend, controller: ctrl } = prepareBackendRuntime();
     // A lazy host runtime may have to spawn/connect to the native backend before it can
     // answer its resume capabilities. The run is already accepted and registered, so keep
     // that optional discovery inside controller-owned provisioning instead of withholding
@@ -1170,10 +1219,6 @@ async function startAdmittedExecutionRun(
       backendSupportsResume: boolean;
       backendSupportsInitialResume: boolean;
     }> | null> => {
-        if (!await finalizedProfilePromise) {
-          await settleExecutionRunController({ runId, controller: ctrl, controllers: args.controllers });
-          return null;
-        }
         const supportsInitialResume = await backend.readResumeSupport();
         const supportsResume = args.params.runClass === 'long_lived'
           ? await backend.readResumeSupport({ captureReplay: true })
@@ -1307,7 +1352,6 @@ async function startAdmittedExecutionRun(
       return startResult;
     }
 
-    if (args.finalizeStartParamsForRuntime && !await finalizedProfilePromise) return startResult;
     const initialInstructions = args.params.initialInput?.kind !== 'deferred_session_pending' && typeof args.params.instructions === 'string'
       ? args.params.instructions
       : '';
@@ -1673,13 +1717,14 @@ async function startAdmittedExecutionRun(
         }
       }
       await settleExecutionRunController({ runId, controller: ctrl, controllers: args.controllers });
-    } else if (backendBeforeControllerRegistration) {
+    } else if (pendingBackend.runtime) {
       try {
-        await backendBeforeControllerRegistration.dispose();
+        await pendingBackend.runtime.dispose();
       } catch {
         // best effort
       }
     }
+    if (inputFinalizationFailed && args.params.runClass === 'bounded') return startResult;
     throw e;
   }
 }

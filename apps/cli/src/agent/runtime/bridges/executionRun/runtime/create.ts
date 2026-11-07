@@ -33,7 +33,7 @@ import { SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecr
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import {
     LaunchSecretReferenceOverlayError,
-    readLaunchSecretReferenceOverlayProviderErrorCodeV1,
+    attachLaunchSecretReferenceOverlayProviderError,
     resolveSecretReferenceOverlayEnvironment,
 } from '@/settings/secrets/secretReferenceOverlay';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
@@ -149,6 +149,7 @@ type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionR
 
 function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
+    readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
     cwd: string;
     runId?: string;
     controllerOccurrenceId?: string;
@@ -164,6 +165,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     agentTarget?: AgentExecutionTargetV1;
     backendSourceKind?: string;
     modelId?: string;
+    modelSelectionSource?: CreateCliExecutionRunBackendParams['modelSelectionSource'];
     onEffectiveEngine?: (engine: Readonly<{ agentId: string; modelId?: string }>) => void;
     modelSelection?: ProviderBoundModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
@@ -239,6 +241,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const boundedOpenInputs = effectiveBackendTarget
                 ? buildExecutionRunConfiguration({
                     backendTarget: effectiveBackendTarget,
+                    modelSelectionSource: opts.modelSelectionSource,
                     ...(opts.modelId ? { modelId: opts.modelId } : {}),
                     ...(opts.modelSelection
                         ? { modelSelection: opts.modelSelection }
@@ -290,6 +293,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     providerLaunch: opts.providerLaunch,
                     controllerOccurrenceId: opts.controllerOccurrenceId,
                     ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
+                    sessionConfigOptionOverrides: opts.sessionConfigOptionOverrides,
                     ...(opts.teamCredentialModel ? { teamCredentialModel: opts.teamCredentialModel } : {}),
                     backendTarget: effectiveBackendTarget,
                     machineId: opts.machineId,
@@ -351,6 +355,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 connectedServicesEnv = await trace('connected_services_materialization', () => resolveExecutionRunConnectedServicesEnv({
                     signal,
                     runId: connectedServicesRunKey,
+                    ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
                     backendId: engineResolution.backendId,
                     backendSourceKind: opts.backendSourceKind ?? 'built_in',
                     ...(opts.connectedServices !== undefined
@@ -410,9 +415,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                         error instanceof LaunchSecretReferenceOverlayError
                         || error instanceof SavedSecretOperationAdmissionError
                     ) {
-                        throw Object.assign(error, {
-                            code: readLaunchSecretReferenceOverlayProviderErrorCodeV1(error.reason),
-                        });
+                        throw attachLaunchSecretReferenceOverlayProviderError(error);
                     }
                     throw error;
                 }
@@ -514,6 +517,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 accountSettings: opts.accountSettings ?? null,
                 ...(opts.resolveAccountSettingsSnapshot ? { resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot } : {}),
                 ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
+                ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
                 start: opts.start ?? null,
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
@@ -566,6 +570,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const runtimeWithIdentity = withExecutionRunRuntimeIdentityPublication({
                 runtime,
                 identity: buildExecutionRunRuntimeIdentityPublication(engineResolution),
+                modelContextWindowTokens: providerLaunch?.providerBinding?.model.contextWindowTokens,
             });
             opts.onEffectiveEngine?.({
                 agentId: engineResolution.agentId,
@@ -623,6 +628,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 
 export function createExecutionRunRuntime(opts: Readonly<{
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
+    readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
     projectLaunchContext?: CreateCliExecutionRunBackendParams['projectLaunchContext'];
     projectSetupOperation?: CreateCliExecutionRunBackendParams['projectSetupOperation'];
     resolveProjectSetupOperation?: CreateCliExecutionRunBackendParams['resolveProjectSetupOperation'];
@@ -636,6 +642,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     modelId?: string;
+    modelSelectionSource?: CreateCliExecutionRunBackendParams['modelSelectionSource'];
     onEffectiveEngine?: (engine: Readonly<{ agentId: string; modelId?: string }>) => void;
     modelSelection?: ProviderBoundModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
@@ -697,6 +704,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
         : resolvedBackendTarget?.canonical;
     const runtimeShellConfig = createEngineExecutionRunRuntimeShellConfig({
             ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
+            ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
             ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
             ...(opts.projectSetupOperation ? { projectSetupOperation: opts.projectSetupOperation } : {}),
             ...(opts.resolveProjectSetupOperation ? { resolveProjectSetupOperation: opts.resolveProjectSetupOperation } : {}),
@@ -714,6 +722,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
             ...(runtimeBackendTarget ? { backendTarget: runtimeBackendTarget } : {}),
             backendSourceKind: resolvedBackendTarget?.canonical.sourceKind ?? 'built_in',
             modelId: opts.modelId,
+            modelSelectionSource: opts.modelSelectionSource,
             ...(opts.onEffectiveEngine ? { onEffectiveEngine: opts.onEffectiveEngine } : {}),
             ...(opts.modelSelection
                 ? { modelSelection: opts.modelSelection }

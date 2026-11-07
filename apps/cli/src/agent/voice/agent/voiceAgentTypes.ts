@@ -113,6 +113,8 @@ export type BackendFactory = (opts: {
   backendTarget: BackendTargetRefV1;
   backendId: string;
   modelId: string;
+  /** Host-private role of this native model request, including chat replacement. */
+  modelRole?: 'chat' | 'commit';
   modelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   permissionIntent: PermissionIntent;
@@ -136,6 +138,12 @@ export type VoicePromptPreparation = Readonly<{
 }>;
 
 export type VoiceAgentTurn = { role: 'user' | 'assistant' | 'context'; text: string };
+
+/** Host-private projection of the exact runtime's already selected model fact. */
+export type VoiceHistoryContextWindowReader = (input: Readonly<{
+  runtime: ExecutionRunHostRuntime;
+  signal: AbortSignal;
+}>) => Promise<number | undefined>;
 
 export type VoiceAgentTurnStreamState = {
   id: string;
@@ -165,6 +173,7 @@ export type VoiceAgentInstance = {
   backendTarget: BackendTargetRefV1;
   backendId: string;
   createRuntime: BackendFactory;
+  readHistoryContextWindowTokens?: VoiceHistoryContextWindowReader;
   chatBackend: ExecutionRunHostRuntime;
   replacementChatBackend: ExecutionRunHostRuntime | null;
   chatSessionId: string;
@@ -189,6 +198,7 @@ export type VoiceAgentInstance = {
   systemAppendBlocksContext: ResolveVoicePromptPreparationArgs;
   systemAppendBlocks: readonly string[];
   chatSessionSeeded: boolean;
+  chatInstructionsDirty: boolean;
   welcomed: boolean;
   history: VoiceAgentTurn[];
   cancelIdleDeadline: (() => void) | null;

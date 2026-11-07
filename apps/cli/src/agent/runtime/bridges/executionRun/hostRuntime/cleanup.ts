@@ -9,6 +9,8 @@ export function withExecutionRunHostRuntimeCleanup(
         readPermissionCapability: () => runtime.permissionCapability,
         readInteraction: () => runtime.interaction,
         readResumeSupport: (opts) => runtime.readResumeSupport(opts),
+        readPrepareInputBudget: () => runtime.prepareInputBudget?.bind(runtime),
+        readModelContextWindowTokens: () => runtime.readModelContextWindowTokens?.bind(runtime),
         readProviderSessionId: () => runtime.readProviderSessionId?.bind(runtime),
         readCanContinueAfterCancellation: () => runtime.canContinueAfterCancellation?.bind(runtime),
         provisionRuntime: (opts) => runtime.provisionRuntime(opts),

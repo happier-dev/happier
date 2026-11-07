@@ -17,7 +17,14 @@ export function borrowExecutionRunRuntimeTurn(
         readPermissionCapability: () => runtime.permissionCapability,
         readInteraction: () => runtime.interaction,
         readResumeSupport: opts => runtime.readResumeSupport(opts),
+        readPrepareInputBudget: () => runtime.prepareInputBudget ? async () => {
+            assertCurrent();
+            const budget = await runtime.prepareInputBudget!();
+            assertCurrent();
+            return budget;
+        } : undefined,
         readProviderSessionId: () => runtime.readProviderSessionId?.bind(runtime),
+        readModelContextWindowTokens: () => runtime.readModelContextWindowTokens?.bind(runtime),
         readCanContinueAfterCancellation: () => runtime.canContinueAfterCancellation?.bind(runtime),
         async provisionRuntime() {
             assertCurrent();

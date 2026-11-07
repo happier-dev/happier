@@ -147,8 +147,8 @@ export function buildVoiceAgentSeededUserTurnPrompt(params: Readonly<{
 
 export function buildVoiceAgentCommitPrompt(params: Readonly<{
   initialContext: string;
-  history: VoiceAgentTurn[];
-  maxChars: number;
+  history: readonly VoiceAgentTurn[];
+  maxChars?: number;
 }>): string {
   const conversationText = params.history.length > 0 ? renderConversationHistory(params.history) : '';
 
@@ -160,7 +160,9 @@ export function buildVoiceAgentCommitPrompt(params: Readonly<{
         scope: 'bootstrap',
         text: [
           'You are preparing a single instruction message for an AI coding agent.',
-          `Return ONLY the instruction text (no preamble), max ${params.maxChars} chars.`,
+          params.maxChars === undefined
+            ? 'Return ONLY the instruction text (no preamble).'
+            : `Return ONLY the instruction text (no preamble), max ${params.maxChars} chars.`,
         ].join('\n'),
       },
       {

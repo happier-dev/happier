@@ -3,7 +3,6 @@ import { isDeepStrictEqual } from 'node:util';
 import { waitForChange } from '@/utils/async/waitForChange';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { logger } from '@/ui/logger';
-import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import {
@@ -14,12 +13,12 @@ import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionR
 import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { extractVoiceActionsFromAssistantText } from '@happier-dev/protocol/voice/actions';
-import { listVoiceActionBlockSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
+import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
+import { canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV1, ProviderBoundModelRef, ExecutionRunResumeHandle, VoiceAssistantAction } from '@happier-dev/protocol';
 
-import { appendVoiceAgentHistoryContext, appendVoiceAgentHistoryTurn } from './voiceAgentHistory';
+import { appendVoiceAgentHistoryContext, appendVoiceAgentHistoryTurn, fitVoiceAgentHistoryPrompt } from './voiceAgentHistory';
 import {
   buildVoiceAgentBootstrapPrompt,
   buildVoiceAgentCommitPrompt,
@@ -42,6 +41,7 @@ import type {
   VoiceAgentStartResult,
   VoiceAgentTurnStreamReadResult,
   VoiceAgentTurnStreamStartResult,
+  VoiceHistoryContextWindowReader,
 } from './voiceAgentTypes';
 import type { PermissionIntent } from '@happier-dev/agents';
 import { VoiceAgentError } from './voiceAgentTypes';
@@ -50,7 +50,6 @@ import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/session
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import { isSessionProviderInputOutcomeTerminal } from '@/agent/runtime/session/input/providerInputOutcome';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
-import { resolveHappierActionPermission } from '@/agent/permissions/happierActionPermission';
 
 export type {
   VoiceAgentCommitResult,
@@ -100,8 +99,6 @@ function assertVoiceModelSelectionMatches(
 }
 
 export class VoiceAgentManager {
-  private static readonly MAX_HISTORY_TURNS = 48;
-  private static readonly MAX_TURN_TEXT_CHARS = 4_000;
   private readonly createRuntime: BackendFactory;
   private readonly resolvePromptPreparation: (args: ResolveVoicePromptPreparationArgs) => Promise<VoicePromptPreparation>;
   private readonly responseTimeoutMs: number | null;
@@ -336,9 +333,48 @@ export class VoiceAgentManager {
       voiceAgent.systemAppendBlocks = [...blocks];
       voiceAgent.memoryRecallGuidanceEnabled = preparation.memoryRecallGuidanceEnabled;
       voiceAgent.disabledActionIds = disabledActionIds;
-      voiceAgent.chatSessionSeeded = false;
+      voiceAgent.chatInstructionsDirty = true;
     }
     return { ensureCurrent, preparedInstructionsFor: preparation.preparedInstructionsFor };
+  }
+
+  private async fitHistoryPrompt(
+    voiceAgent: VoiceAgentInstance,
+    history: readonly VoiceAgentTurn[],
+    render: (history: readonly VoiceAgentTurn[]) => string,
+    signal?: AbortSignal,
+  ) {
+    const runtime = voiceAgent.chatBackend;
+    const lifetime = runtime.getRuntimeLifetimeSignal();
+    const readSignal = signal ? AbortSignal.any([lifetime, signal]) : lifetime;
+    readSignal.throwIfAborted();
+    const contextWindowTokens = history.length ? await voiceAgent.readHistoryContextWindowTokens?.({
+      runtime, signal: readSignal,
+    }) : undefined;
+    readSignal.throwIfAborted();
+    return fitVoiceAgentHistoryPrompt({ history, contextWindowTokens, render });
+  }
+
+  private async buildChatTurnPrompt(voiceAgent: VoiceAgentInstance, userText: string, stream?: VoiceAgentTurnStreamState) {
+    if (voiceAgent.chatSessionSeeded && !voiceAgent.chatInstructionsDirty) {
+      return { prompt: buildVoiceAgentUserTurnPrompt({ userText }), omittedTurns: 0 };
+    }
+    const history = voiceAgent.chatSessionSeeded ? [] : voiceAgent.history;
+    const render = (history: readonly VoiceAgentTurn[]) => buildVoiceAgentSeededUserTurnPrompt({
+      verbosity: voiceAgent.verbosity,
+      initialContext: voiceAgent.chatSessionSeeded ? '' : voiceAgent.initialContext,
+      history,
+      voicePolicy: voiceAgent.voicePolicy,
+      welcomeAlreadyDelivered: voiceAgent.welcomed,
+      userText,
+      disabledActionIds: voiceAgent.disabledActionIds,
+      memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
+      systemAppendBlocks: voiceAgent.systemAppendBlocks,
+    });
+    // Only a stream can publish the omission notice. Other callers replay all
+    // reference history and let the provider's typed refusal remain visible.
+    if (!stream) return { prompt: render(history), omittedTurns: 0 };
+    return await this.fitHistoryPrompt(voiceAgent, history, render, stream.preparationAbortController.signal);
   }
 
   private async prepareFollowContextForPrompt(
@@ -366,8 +402,6 @@ export class VoiceAgentManager {
         if (voiceAgent?.chatBackend !== backend || followContext.updates.length === 0) return;
         appendVoiceAgentHistoryContext(voiceAgent.history, {
           text: renderSessionInputContextPromptV1({ transformedUserText: '', sessionFollowUpdates: followContext.updates }),
-          maxTurns: VoiceAgentManager.MAX_HISTORY_TURNS,
-          maxTurnTextChars: VoiceAgentManager.MAX_TURN_TEXT_CHARS,
         });
       },
     };
@@ -447,22 +481,6 @@ export class VoiceAgentManager {
     );
   }
 
-  private assertActionBlockPermissions(
-    actions: readonly VoiceAssistantAction[],
-    authority: Extract<ReturnType<typeof resolveExecutionRunInputAuthority>, { ok: true }>,
-  ): void {
-    if (actions.length === 0) return;
-    const specs = listVoiceActionBlockSpecs();
-    for (const action of actions) {
-      const spec = specs.find(spec => spec.bindings?.voiceClientToolName === action.t);
-      // The original input's admitted mode follows blocks outside the native
-      // transport. MCP exposure and auto-approval do not define Action effects.
-      if (!spec || resolveHappierActionPermission({ spec, permissionMode: authority.effectiveCallerPermissionMode }) === 'denied') {
-        throw Object.assign(new Error('permission_denied'), { code: 'permission_denied' });
-      }
-    }
-  }
-
   private subscribeToChatBackend(
     voiceAgent: VoiceAgentInstance,
     backend: ExecutionRunHostRuntime,
@@ -518,6 +536,7 @@ export class VoiceAgentManager {
         backendTarget: voiceAgent.backendTarget,
         backendId: voiceAgent.backendId,
         modelId: voiceAgent.chatModelId,
+        modelRole: 'chat',
         ...(voiceAgent.chatModelSelection ? { modelSelection: voiceAgent.chatModelSelection } : {}),
         ...(voiceAgent.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
@@ -684,6 +703,7 @@ export class VoiceAgentManager {
         backendTarget: voiceAgent.backendTarget,
         backendId: voiceAgent.backendId,
         modelId: voiceAgent.commitModelId,
+        modelRole: 'commit',
         ...(voiceAgent.commitModelSelection ? { modelSelection: voiceAgent.commitModelSelection } : {}),
         ...(voiceAgent.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
@@ -733,7 +753,7 @@ export class VoiceAgentManager {
 
   async start(
     params: VoiceAgentStartParams,
-    options?: Readonly<{ createRuntime?: BackendFactory; signal?: AbortSignal }>,
+    options?: Readonly<{ createRuntime?: BackendFactory; signal?: AbortSignal; readHistoryContextWindowTokens?: VoiceHistoryContextWindowReader }>,
   ): Promise<VoiceAgentStartResult> {
     if (this.disposed) {
       throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Manager is disposed');
@@ -831,6 +851,7 @@ export class VoiceAgentManager {
         backendTarget: params.backendTarget,
         backendId,
         modelId: params.chatModelId,
+        modelRole: 'chat',
         ...(params.chatModelSelection ? { modelSelection: params.chatModelSelection } : {}),
         ...(params.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
@@ -867,6 +888,7 @@ export class VoiceAgentManager {
         backendTarget: params.backendTarget,
         backendId,
         createRuntime,
+        readHistoryContextWindowTokens: options?.readHistoryContextWindowTokens,
         chatBackend,
         replacementChatBackend: null,
         chatSessionId,
@@ -896,6 +918,7 @@ export class VoiceAgentManager {
         systemAppendBlocksContext,
         systemAppendBlocks: [...systemAppendBlocks],
         chatSessionSeeded: false,
+        chatInstructionsDirty: false,
         welcomed: Boolean(resume.chatSessionId),
         history: [] as VoiceAgentTurn[],
         cancelIdleDeadline: null,
@@ -1041,38 +1064,24 @@ export class VoiceAgentManager {
 		    const run = (async () => {
 		      const { ensureCurrent } = await this.prepareSystemAppendBlocks(voiceAgent);
 		      voiceAgent.clearChatBuffer();
-          const prompt = voiceAgent.chatSessionSeeded
-            ? buildVoiceAgentUserTurnPrompt({ userText: params.userText })
-            : buildVoiceAgentSeededUserTurnPrompt({
-                verbosity: voiceAgent.verbosity,
-                initialContext: voiceAgent.initialContext,
-                history: voiceAgent.history,
-                voicePolicy: voiceAgent.voicePolicy,
-                welcomeAlreadyDelivered: voiceAgent.welcomed,
-                userText: params.userText,
-                disabledActionIds: voiceAgent.disabledActionIds,
-                memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
-                systemAppendBlocks: voiceAgent.systemAppendBlocks,
-              });
+          const { prompt } = await this.buildChatTurnPrompt(voiceAgent, params.userText);
           const followContext = await this.prepareFollowContextForPrompt(
             voiceAgent.chatBackend,
             prompt,
           );
           ensureCurrent();
-		      const authority = await this.deliverPrompt(voiceAgent, voiceAgent.chatBackend, voiceAgent.chatSessionId, prompt, undefined, followContext);
+		      await this.deliverPrompt(voiceAgent, voiceAgent.chatBackend, voiceAgent.chatSessionId, prompt, undefined, followContext);
 		      if (voiceAgent.chatBackend.waitForTurnCompletion) {
 		        await voiceAgent.chatBackend.waitForTurnCompletion(this.resolveResponseTimeoutMs());
 		      }
           voiceAgent.chatSessionSeeded = true;
+          voiceAgent.chatInstructionsDirty = false;
           voiceAgent.welcomed = true;
 		      const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer);
-		      this.assertActionBlockPermissions(extracted.actions, authority);
 		      const assistantText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
 		      appendVoiceAgentHistoryTurn(voiceAgent.history, {
 		        userText: params.userText,
 		        assistantText,
-		        maxTurns: VoiceAgentManager.MAX_HISTORY_TURNS,
-		        maxTurnTextChars: VoiceAgentManager.MAX_TURN_TEXT_CHARS,
 		      });
 		      return extracted.actions.length > 0 ? { assistantText, actions: extracted.actions } : { assistantText };
 		    })();
@@ -1124,6 +1133,7 @@ export class VoiceAgentManager {
       const assistantText = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer).assistantText;
       voiceAgent.clearChatBuffer();
       voiceAgent.chatSessionSeeded = true;
+      voiceAgent.chatInstructionsDirty = false;
       voiceAgent.welcomed = true;
       return { assistantText, ...(preparedInstructionsFor ? { preparedInstructionsFor } : {}) };
     })();
@@ -1194,19 +1204,7 @@ export class VoiceAgentManager {
     const run = (async () => {
       try {
         const { ensureCurrent, preparedInstructionsFor } = await this.prepareSystemAppendBlocks(voiceAgent, stream);
-        const prompt = voiceAgent.chatSessionSeeded
-          ? buildVoiceAgentUserTurnPrompt({ userText: params.userText })
-          : buildVoiceAgentSeededUserTurnPrompt({
-              verbosity: voiceAgent.verbosity,
-              initialContext: voiceAgent.initialContext,
-              history: voiceAgent.history,
-              voicePolicy: voiceAgent.voicePolicy,
-              welcomeAlreadyDelivered: voiceAgent.welcomed,
-              userText: params.userText,
-              disabledActionIds: voiceAgent.disabledActionIds,
-              memoryRecallGuidanceEnabled: voiceAgent.memoryRecallGuidanceEnabled,
-              systemAppendBlocks: voiceAgent.systemAppendBlocks,
-            });
+        const { prompt, omittedTurns } = await this.buildChatTurnPrompt(voiceAgent, params.userText, stream);
         const followContext = await this.prepareFollowContextForPrompt(
           voiceAgent.chatBackend,
           prompt,
@@ -1221,7 +1219,15 @@ export class VoiceAgentManager {
         // Follow frontier for content nothing ever consumed.
         if (settleCancelled()) return;
         ensureCurrent();
-        const authority = await this.deliverPrompt(
+        if (omittedTurns > 0) {
+          const output = { v: 1, kind: 'display_status', turnId: stream.id, seq: stream.outputSeq,
+            statusId: `${stream.id}:context-fit`, text: VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT } as const;
+          stream.outputBudget = ingestVoiceAgentOutputEventV1(stream.outputBudget, output).state;
+          stream.events.push({ t: 'voice_output', output });
+          stream.outputSeq += 1;
+          stream.onEventsChanged();
+        }
+        await this.deliverPrompt(
           voiceAgent,
           voiceAgent.chatBackend,
           voiceAgent.chatSessionId,
@@ -1243,6 +1249,7 @@ export class VoiceAgentManager {
         }
         if (settleCancelled()) return;
         voiceAgent.chatSessionSeeded = true;
+        voiceAgent.chatInstructionsDirty = false;
         voiceAgent.welcomed = true;
         if (settleCancelled()) return;
 
@@ -1261,7 +1268,6 @@ export class VoiceAgentManager {
         if (settleCancelled()) return;
         const assistantText = voiceAgent.chatBuffer.trim();
         const extracted = extractVoiceActionsFromAssistantText(assistantText);
-        this.assertActionBlockPermissions(extracted.actions, authority);
         const desiredText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
         const finalCandidate = { v: 1, kind: 'turn_final', turnId: stream.id, seq: stream.outputSeq, text: desiredText } as const;
         let cleanText = fitVoiceAgentOutputTextV1(stream.outputBudget, finalCandidate, '', VOICE_OUTPUT_INCOMPLETE_TEXT);
@@ -1311,8 +1317,6 @@ export class VoiceAgentManager {
         appendVoiceAgentHistoryTurn(voiceAgent.history, {
           userText: params.userText,
           assistantText: cleanText,
-          maxTurns: VoiceAgentManager.MAX_HISTORY_TURNS,
-          maxTurnTextChars: VoiceAgentManager.MAX_TURN_TEXT_CHARS,
         });
         if (settleCancelled()) return;
         stream.completedHistory = true;
@@ -1434,7 +1438,7 @@ export class VoiceAgentManager {
           if (canReuseChatBackend) {
             voiceAgent.clearChatBuffer();
             const effectiveMaxChars =
-              typeof params.maxChars === 'number' && Number.isFinite(params.maxChars) && params.maxChars > 0 ? Math.floor(params.maxChars) : 4000;
+              typeof params.maxChars === 'number' && Number.isFinite(params.maxChars) && params.maxChars > 0 ? Math.floor(params.maxChars) : undefined;
             const prompt = buildVoiceAgentCommitPrompt({
               initialContext: voiceAgent.initialContext,
               history: voiceAgent.history,
@@ -1461,7 +1465,7 @@ export class VoiceAgentManager {
 
 		      voiceAgent.clearCommitBuffer();
 		      const effectiveMaxChars =
-		        typeof params.maxChars === 'number' && Number.isFinite(params.maxChars) && params.maxChars > 0 ? Math.floor(params.maxChars) : 4000;
+		        typeof params.maxChars === 'number' && Number.isFinite(params.maxChars) && params.maxChars > 0 ? Math.floor(params.maxChars) : undefined;
 		      const prompt = buildVoiceAgentCommitPrompt({
 		        initialContext: voiceAgent.initialContext,
 		        history: voiceAgent.history,
