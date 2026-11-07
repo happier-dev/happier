@@ -903,37 +903,39 @@ export const WorkflowTargetUnavailableDetailsV1Schema = lazyZodSchema(() => z.st
 export type WorkflowTargetUnavailableDetailsV1 = z.infer<typeof WorkflowTargetUnavailableDetailsV1Schema>;
 
 /** Closed semantic failure returned by the Workflow Action family dependency. */
-export const WorkflowActionFailureV1Schema = lazyZodSchema(() => z.discriminatedUnion('errorCode', [
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('cancelled'), error: z.string().check(z.trim(), z.minLength(1)),
+export const WorkflowActionFailureV1Schema = lazyZodSchema(() => {
+  // Public Action metadata survives every Workflow consumer; semantic details
+  // remain closed by the owning variant below.
+  const envelope = z.omit(ActionExecuteFailureSchema, { errorCode: true, details: true });
+  return z.discriminatedUnion('errorCode', [
+  z.extend(envelope, {
+    errorCode: z.literal('cancelled'),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('workflow_http_error'), error: z.string().check(z.trim(), z.minLength(1)),
+  z.extend(envelope, {
+    errorCode: z.literal('workflow_http_error'),
     details: WorkflowHttpErrorDetailsV1Schema,
-    effectAttempted: z.optional(z.boolean()),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('workflow_conversation_unavailable'), error: z.string().check(z.trim(), z.minLength(1)),
+  z.extend(envelope, {
+    errorCode: z.literal('workflow_conversation_unavailable'),
     details: z.optional(WorkflowConversationUnavailableDetailsV1Schema),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('content_unavailable'), error: z.string().check(z.trim(), z.minLength(1)),
-    requestId: ActionExecuteFailureSchema.shape.requestId,
+  z.extend(envelope, {
+    errorCode: z.literal('content_unavailable'),
     details: z.optional(z.strictObject({ reason: z.union([WorkflowDefinitionContentUnavailableReasonV1Schema,
       z.literal('account_role_overrides_unavailable')]) })),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.enum(AGENT_START_REFUSAL_CODES_V1.filter((code) => code !== 'target_unavailable')), error: z.string().check(z.trim(), z.minLength(1)),
+  z.extend(envelope, {
+    errorCode: z.enum(AGENT_START_REFUSAL_CODES_V1.filter((code) => code !== 'target_unavailable')),
     details: zMini.optional(AgentStartRefusalV1Schema),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('target_unavailable'), error: z.string().check(z.trim(), z.minLength(1)),
+  z.extend(envelope, {
+    errorCode: z.literal('target_unavailable'),
     // Admission policy refusals retain their canonical ORC contract. Concrete
     // machine availability refusals use the Workflow owner's diagnostic facts.
     details: z.optional(z.union([WorkflowTargetUnavailableDetailsV1Schema, AgentStartRefusalV1Schema])),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('invalid_input'), error: z.string().check(z.trim(), z.minLength(1)),
+  z.extend(envelope, {
+    errorCode: z.literal('invalid_input'),
     details: z.optional(z.strictObject({
       code: z.optional(z.enum(['invalid_input', 'invalid_trigger_target',
         'session_trigger_scope_required', 'session_trigger_kind_unsupported', 'session_trigger_source_mismatch', 'session_trigger_project_mismatch',
@@ -944,33 +946,26 @@ export const WorkflowActionFailureV1Schema = lazyZodSchema(() => z.discriminated
       })]))),
     })),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false),
+  z.extend(envelope, {
     errorCode: z.literal('legacy_conversion_unsupported'),
-    error: z.string().check(z.trim(), z.minLength(1)),
     details: z.strictObject({ reason: LegacyAutomationWorkflowConversionReasonV1Schema }),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false),
+  z.extend(envelope, {
     errorCode: z.literal('currentness_conflict'),
-    error: z.string().check(z.trim(), z.minLength(1)),
     details: z.optional(z.union([
       z.strictObject({ revision: z.number().check(z.int(), z.nonnegative(), z.int()) }),
       z.strictObject({ reason: z.literal('event_contribution_not_current') }),
     ])),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false),
+  z.extend(envelope, {
     errorCode: z.literal('workflow_wait_self_dependency'),
-    error: z.string().check(z.trim(), z.minLength(1)),
     details: z.strictObject({ runId: WorkflowRunIdV1Schema }),
   }),
-  z.strictObject({
-    failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false),
+  z.extend(envelope, {
     errorCode: z.enum(WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1),
-    error: z.string().check(z.trim(), z.minLength(1)),
   }),
-]));
+  ]);
+});
 export type WorkflowActionFailureV1 = z.infer<typeof WorkflowActionFailureV1Schema>;
 
 export const WorkflowErrorV1Schema = lazyZodSchema(() => z.strictObject({

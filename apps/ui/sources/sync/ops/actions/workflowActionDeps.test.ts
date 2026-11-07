@@ -86,6 +86,7 @@ import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import type { WorkflowActionTransport } from './workflowActionTransport';
 import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { buildWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
+import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
@@ -113,6 +114,7 @@ import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } f
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { buildKeepGoingTriggerAddRequest } from '@/components/sessions/workState/sessionGoalContinuation';
+import { buildGuidedAutomationRequest } from '@/components/workflows/triggers/guidedAutomation';
 import { projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
@@ -2208,24 +2210,27 @@ describe('UI Workflow Action front door', () => {
         }
     });
 
-    it.each(['plain', 'e2ee'] as const)('preserves the %s Event declaration refusal through HTTP and the public Action front door', async mode => {
+    it.each(['plain', 'e2ee'] as const)('preserves the %s Event declaration refusal through HTTP and the UI Workflow Action consumer', async mode => {
         const h = await createHarness(mode, { automationCreateRefusal: 'event_contribution_not_current' });
         try {
-            const result = await h.execute('workflow.trigger.add', {
-                project: { machineId: 'machine-a', directory: '/repo' },
-                target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
-                    actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Deployment failed' } } }] } },
-                trigger: { kind: 'pluginEvent', enabled: true,
+            const request = buildGuidedAutomationRequest({
+                when: { kind: 'pluginEvent', value: { kind: 'pluginEvent', enabled: true,
                     eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
                     sourceInstanceId: 'environment:qa', sourceContractVersion: 1,
                     displayLabel: 'QA deployment',
                     sourceConfig: { environmentId: 'qa', serverId: h.home.id, periodMs: 1000, v: 1 },
                     observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
                         machineId: 'machine-a', materializationId: 'machine-services-a', pluginId: 'happier.machine.services',
-                    } }, filter: null, maximumObservationAgeMs: null },
-            }, h.context);
-            expect(result, JSON.stringify(result)).toMatchObject({ ok: false,
-                errorCode: 'currentness_conflict', details: { reason: 'event_contribution_not_current' } });
+                    } }, filter: null, maximumObservationAgeMs: null } },
+                lookAt: ['logs', 'health'], mode: 'investigate', channels: [],
+                selection: { agentTarget: { kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+            }, { subjectName: 'QA deployment', project: { machineId: 'machine-a', directory: '/repo' } });
+            expect(request).not.toBeNull();
+            await expect(callWorkflowAction({ actionId: 'workflow.trigger.add', input: request,
+                context: h.context, execute: h.execute, parseResult: WorkflowTriggerWriteResultV1Schema.parse,
+            })).rejects.toMatchObject({ failure: { ok: false,
+                errorCode: 'currentness_conflict', details: { reason: 'event_contribution_not_current' } } });
             expect(h.automationRows.size).toBe(0);
         } finally { h.account.dispose(); }
     });
