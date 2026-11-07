@@ -11,6 +11,7 @@ import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWor
 import { storage } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useScmSessionAutoRefresh } from './useScmSessionAutoRefresh';
+import { ingestWorkspaceMutationMessages } from './workspaceMutationIngestionRuntime';
 import { buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { getCachedWorkspaceRepositoryDirectoryEntries, setCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
@@ -273,6 +274,44 @@ describe('presented workspace push through Session and Project demand', () => {
         expect(storage.getState().getSessionProjectScmSnapshot('watch-session', scope.serverId)?.branch.head).toBe('fallback-edit');
         expect(storage.getState().getSessionProjectScmSnapshotError('watch-session', scope.serverId)).toBeNull();
         expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(watchRequests);
+        await hook.unmount();
+    });
+
+    it('lets the ready watch own unknown mutation hints while preserving real edits and unavailable-watch recovery', async () => {
+        const { hook } = await mount();
+        const toolMessage = (id: string, name: string, input: Record<string, string>) => ({
+            id, localId: null, createdAt: Date.now(), role: 'agent' as const, isSidechain: false,
+            content: [{ type: 'tool-call' as const, id, name, input, description: null, uuid: id, parentUUID: null }],
+        });
+        const before = statusReads();
+        for (const id of ['unknown-one', 'unknown-two']) {
+            ingestWorkspaceMutationMessages('watch-session', [toolMessage(id, 'bash', { command: 'echo hello' })], scope.serverId);
+            await advance(31_000);
+        }
+        await act(async () => { await scmStatusSync.invalidateFromAutoRefreshAndAwait('watch-session', scope.serverId); });
+        expect(statusReads() - before).toBe(0);
+
+        current = { ...initial, branch: { ...initial.branch, head: 'native-edit' } };
+        await act(async () => {
+            change?.({ status: 'changed', revision: ++revision });
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(statusReads() - before).toBe(1);
+        expect(hook.getCurrent().snapshot?.branch.head).toBe('native-edit');
+
+        current = { ...initial, branch: { ...initial.branch, head: 'known-edit' } };
+        ingestWorkspaceMutationMessages('watch-session', [toolMessage('known-edit', 'file-edit', { filePath: 'a.ts' })], scope.serverId);
+        await advance(1_000);
+        expect(hook.getCurrent().snapshot?.branch.head).toBe('known-edit');
+
+        await act(async () => {
+            observation?.({ status: 'unavailable', reason: { code: 'ENOSPC', message: 'Workspace watch limit reached' } });
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        current = { ...initial, branch: { ...initial.branch, head: 'unknown-recovery' } };
+        ingestWorkspaceMutationMessages('watch-session', [toolMessage('unknown-recovery', 'bash', { command: 'echo recovery' })], scope.serverId);
+        await advance(31_000);
+        expect(hook.getCurrent().snapshot?.branch.head).toBe('unknown-recovery');
         await hook.unmount();
     });
 

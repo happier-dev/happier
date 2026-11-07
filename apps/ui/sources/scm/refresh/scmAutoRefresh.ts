@@ -45,6 +45,7 @@ export class ScmAutoRefresh {
     constructor(private resolve: (demand: ScmAutoRefreshDemand) => Target | null) {}
 
     hasDemand(key: string): boolean { return this.polls.has(key); }
+    hasReadyWatch(key: string): boolean { return this.polls.get(key)?.watchState.status === 'ready'; }
     getUnavailable(key: string): ScmWorkspaceWatchUnavailable | null {
         const state = this.polls.get(key)?.watchState;
         return state?.status === 'unavailable' ? state.reason : null;

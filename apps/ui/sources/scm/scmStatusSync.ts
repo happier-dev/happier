@@ -140,6 +140,7 @@ export class ScmStatusSync {
     }
 
     private shouldSkipAutoRefreshForProject(projectKey: string): boolean {
+        if (this.autoRefresh.hasReadyWatch(projectKey)) return true;
         const minIntervalMs = readScmAutoRefreshProjectMinIntervalMs();
         if (minIntervalMs <= 0) return false;
         const lastAutoRefreshAt = this.projectLastAutoRefreshAt.get(projectKey);
