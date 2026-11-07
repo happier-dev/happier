@@ -1,3 +1,4 @@
+import { watch } from 'node:fs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
@@ -525,6 +526,105 @@ test(`QA browser terminal retains redacted forward exit evidence during ${phase}
 });
 }
 
+
+for (const phase of ['before-readiness', 'after-readiness']) {
+test(`SSH exit 255 ${phase} retires its real remote browser worker through lifeline EOF`,
+  { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-browser-ssh-loss-', registerCleanup: false });
+  const { root } = fixture;
+  const chromePort = await fakeChromeCommandLine(t);
+  const closeMarker = join(root, 'browser-closed');
+  const remoteCompletionPath = join(root, 'remote-completed');
+  const { binDir } = writeFakeBin({ root, name: 'agent-browser', content: `#!${process.execPath}
+const fs=require('node:fs');const path=require('node:path');const args=process.argv.slice(2);
+const session=args[args.indexOf('--session')+1];
+if(args.includes('open'))fs.writeFileSync(path.join(args[args.indexOf('--profile')+1],'DevToolsActivePort'),${JSON.stringify(`${chromePort}\n/devtools/browser/fixture-browser\n`)});
+else if(!session.startsWith('hstack-discovery-'))fs.writeFileSync(${JSON.stringify(closeMarker)},session);
+` });
+  const transportPath = join(root, 'ssh-transport.cjs');
+  // Only SSH's network/process boundary is substituted. The detached peer
+  // executes the authored command, custody FIFO, worker and close subprocess.
+  // Exit 255 closes the transport's real pipe without signaling that peer.
+  await writeFile(transportPath, `
+const {spawn}=require('node:child_process');
+const peer=spawn('/bin/bash',['-c',
+  'bash -c "$1"; status=$?; printf "%s" "$status" > "$BROWSER_REMOTE_COMPLETION"; exit "$status"',
+  'browser-peer',process.argv[2]],{detached:true,stdio:['pipe','pipe','pipe']});
+process.stdin.pipe(peer.stdin);
+peer.stdout.pipe(process.stdout);
+peer.stderr.pipe(process.stderr);
+peer.stdin.on('error',()=>{});
+process.on('SIGUSR1',()=>process.exit(255));
+peer.once('close',code=>process.exit(code??1));
+`);
+  let observed;
+  let transport;
+  let advertised = false;
+  t.signal.addEventListener('abort', () => t.diagnostic(`Worker observed=${Boolean(observed)}; advertised=${advertised}`), { once: true });
+  const signals = new EventEmitter();
+  let observer;
+  const retired = new Promise((resolve, reject) => {
+    const inspect = async () => {
+      const status = await readFile(remoteCompletionPath, 'utf8').catch(() => null);
+      if (status !== null) resolve(status);
+    };
+    observer = watch(root, () => { void inspect().catch(reject); });
+    observer.once('error', reject);
+    t.signal.addEventListener('abort', () => reject(t.signal.reason), { once: true });
+  });
+  void retired.catch(() => {});
+  // Observe failure immediately, including the pre-readiness branch.
+  const session = runQaBrowserSession({
+    target: { name: 'absent', platform: 'posix', ssh: 'fixture',
+      repoDir: fileURLToPath(new URL('../../../../../', import.meta.url)), cliHomeDir: root,
+      remotePath: [binDir, dirname(process.execPath)] },
+    stackName: 'browser-ssh-loss', stackBaseDir: root, sessionName: phase,
+    url: 'http://127.0.0.1:3000',
+    env: { ...process.env, TMPDIR: root, BROWSER_REMOTE_COMPLETION: remoteCompletionPath },
+    onReady: () => { advertised = true; transport.kill('SIGUSR1'); },
+  }, {
+    signalSource: signals,
+    capture: captureReadyRemote,
+    spawnProcess: (label, _command, args, env, options) => {
+      if (label.startsWith('browser-forward:')) {
+        return { completion: new Promise(() => {}) };
+      }
+      transport = spawnProc(label, process.execPath, [transportPath, args.at(-1)], env, {
+        ...options,
+        onLine: event => {
+          if (event.line.startsWith('HSTACK_QA_BROWSER=')) {
+            observed = JSON.parse(event.line.slice('HSTACK_QA_BROWSER='.length));
+            if (phase === 'before-readiness') { transport.kill('SIGUSR1'); return; }
+          }
+          options.onLine?.(event);
+        },
+      });
+      return transport;
+    },
+    stopProcess: async () => {},
+    fetchImpl: async () => ({ ok: true, json: async () => ({ webSocketDebuggerUrl: 'ws://localhost/devtools/browser/fixture-browser' }) }),
+  }).then(() => null, error => error);
+  try {
+    const failure = await session;
+    assert.match(failure?.message ?? '', /remote QA browser worker failed \(255\)/);
+    assert.equal(advertised, phase === 'after-readiness');
+    // Lifeline loss is cancellation (the custody owner can return 130/143).
+    // Its settled process and actual browser cleanup are the contract here.
+    await retired;
+    assert.ok(observed?.pid > 1, 'the real worker must have loaded before transport loss');
+    assert.equal(await readFile(closeMarker, 'utf8'), observed.session);
+    await assert.rejects(access(observed.profile), { code: 'ENOENT' });
+  } finally {
+    observer?.close();
+    signals.emit('SIGINT');
+    await session;
+    const paths = resolveRemoteStackStatePaths({ platform: 'posix', cliHomeDir: root, repoDir: process.cwd() },
+      { stackName: 'browser-ssh-loss', runtimeMode: 'controlled' });
+    await stopQaBrowsers({ stackName: 'browser-ssh-loss', envPath: paths.stackEnvPath });
+    await fixture.cleanup();
+  }
+});
+}
 
 test('lane browser forwards are retired only by their owning QA Stack browser inventory', { skip: process.platform === 'win32' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-qa-browser-ownership-' });
@@ -1451,8 +1551,8 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
           if (method === 'Page.navigate') {
             this.loaded = false;
             const url = new URL(params.url);
-            assert.equal(url.searchParams.get('server'), url.pathname === '/restore/manual' ? canonicalHomeUrl : null,
-              'restore must select the Stack Home through the app gate before accepting stdin');
+            assert.equal(url.searchParams.get('server'), canonicalHomeUrl,
+              'every document load must preserve the explicitly selected Stack Home');
             this.message({ method: 'Network.responseReceived', params: {
               requestId: 'previous', frameId: 'main', loaderId: 'previous',
               response: { url: new URL('/v1/account/profile', origin).href, status: 200 },
