@@ -135,12 +135,13 @@ run_remote_ssh_probe() {
 }
 
 score_load_sample() {
-  # Exclude physically incapable machines, while capable busy machines remain
-  # eligible for admission; AUTO tries the pool once before joining a queue.
-  printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
+  # AUTO reuses admission's achievable capacity: non-admitted memory cannot
+  # be recovered by draining its queue. Explicit pins keep their queue choice.
+  printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" -v pinned="${explicit_target_number:-0}" '
     {
       if ($1 <= 0 || $2 < 0) exit
       if (minimum_capacity > 0 && $8 < minimum_capacity) exit
+      if (pinned == 0 && minimum_capacity > 0 && $19 ~ /^[0-9]+$/ && $19 < minimum_capacity) exit
       ratio = $3
       if ($8 > 0) ratio = $7 / $8
       # Linux admission already accounts for services and unused live-owner
@@ -1398,8 +1399,8 @@ report_placement_exclusion() {
 }
 
 report_insufficient_memory_capacity() {
-  printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB total)\n' \
-    "$1" "$heavyweight_placement_class" "$minimum_memory_capacity_kib" >&2
+  printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB; total/achievable KiB=%s)\n' \
+    "$1" "$heavyweight_placement_class" "$minimum_memory_capacity_kib" "$(printf '%s\n' "$2" | awk '{print $8 "/" $19}')" >&2
 }
 
 probe_target() {

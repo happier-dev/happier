@@ -943,6 +943,48 @@ test('impossible physical capacity settles with a typed refusal instead of an un
   assert.equal(admitted.admitted.floorKiB, 3 * gibKiB);
 });
 
+for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adaptive' : 'fixed'} head yields spare memory and regains its reservation on recovery`, linux, async t => {
+  const clock = captureRecoveryClock(t);
+  let availableMemoryKiB = 60;
+  const { root, broker } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }),
+  });
+  const holder = await acquire(root, 20, t);
+  const held = await holder.admit();
+  const head = await acquire(root, adaptive ? 120 : 80, t, adaptive ? {
+    floorOptions: [{ floorKiB: 120, workers: 2 }, { floorKiB: 80, workers: 1 }],
+  } : {});
+  const check = await request(root, { kind: 'check', floorKiB: 10 });
+  const spare = await check.next();
+  check.socket.destroy();
+  assert.equal(spare.achievableMemoryKiB, 60);
+  assert.equal(spare.unreservedMemoryKiB, 40, 'non-admitted pressure cannot be drained by holding the head reservation');
+  assert.equal(spare.kind, 'admitted', 'read-only checks expose the same spare memory as drain');
+  const follower = await acquire(root, 10, t);
+  const backfill = await follower.admit();
+  assert.equal(broker.status().waitingCount, 1, 'the unachievable head stays queued with its original arrival');
+
+  // Recovery to the minimum floor restores the head reservation even while
+  // a younger backfill is active. That backfill cannot count as older supply.
+  availableMemoryKiB = 80;
+  const samples = broker.status().sampleCount;
+  await clock.tick();
+  assert.equal(broker.status().sampleCount, samples + 1, 'one existing recovery observation serves the queue');
+  assert.equal(broker.status().unreservedMemoryKiB, 0);
+  const younger = await acquire(root, 5, t);
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next();
+  barrier.socket.destroy();
+  assert.equal(broker.status().waitingCount, 2, 'younger arrivals cannot displace the recovered head');
+  await held.release();
+  await backfill.release();
+  const resumed = await head.admit();
+  assert.equal(resumed.admitted.floorKiB, 80);
+  assert.equal(broker.status().waitingCount, 1);
+  await resumed.release();
+  await younger.admit();
+});
+
 test('temporary memory pressure without broker slots is busy, not impossible physical capacity', linux, async t => {
   const { root, broker } = await fixture(t, {
     readMemory: () => ({ availableMemoryKiB: 20, totalMemoryKiB: 100 }),

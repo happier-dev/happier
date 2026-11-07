@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import { killProcessTree } from './utils/proc/proc.mjs';
 import { terminateProcessPid } from './utils/proc/terminate.mjs';
 import { isPidAlive } from './utils/proc/pids.mjs';
@@ -2062,6 +2063,80 @@ for (const dispatcher of ['native', 'javascript']) {
   const dispatch = (invocation, args) => dispatcher === 'native'
     ? spawnSync('/bin/sh', [launcher, '--', ...args], invocation)
     : spawnSync(process.execPath, [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', '--stack=repo-memory', '--', ...args], invocation);
+
+  test(`physical phase capacity ${dispatcher}: unachievable floors receive zero preparation while admitted pressure stays eligible`, async t => {
+    const args = ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/ui/tsconfig.source.json'];
+    const { admissionClass } = resolveTypeScriptCliInvocation({ args: args.slice(2),
+      workspaceDir: repoRoot, repoRoot, admissionClass: 'compilation-ui' });
+    const required = resolveHeavyweightMemoryFloorKiB(admissionClass);
+    const pressured = required - 1;
+    const total = 2 * required;
+    const fixture = await memoryRoutingFixture(t, { availableKiB: pressured, totalKiB: total,
+      roomyLoad: 80, roomyAvailableKiB: pressured, roomyTotalKiB: total });
+    const controller = await installNativeAdmissionControllerFixture(t, fixture.root, { env: fixture.invocation.env });
+    fixture.invocation.env = controller.env;
+    // The 11-07 unachievable-head brief changes placement eligibility, not the
+    // broker's busy/physical-capacity distinction. Consume its achievable fact.
+    await writeFile(fixture.samplePath, `8 0.1 0.5 22000000 20 0 ${pressured} ${total} 0 0 0 0 0 0 0 linux ${pressured} 0 ${pressured} 0\n`);
+    const invoke = (target = 'auto') => dispatcher === 'native'
+      ? spawnSync('/bin/sh', [controller.launcher, ...(target === 'auto' ? [] : [`--target=${target}`]), '--', ...args], fixture.invocation)
+      : spawnSync(process.execPath, [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', target, '--', ...args], fixture.invocation);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = invoke();
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, 'remote:roomy\n', result.stderr);
+    }
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy', 'roomy']);
+
+    const pinned = invoke('starved');
+    assert.equal(pinned.status, 0, pinned.stderr);
+    assert.equal(pinned.stdout, 'remote:starved\n', 'an explicit pin retains the broker queue instead of an AUTO capacity exclusion');
+
+    // Admitted resident pages count toward achievable memory. A capable busy
+    // worker remains eligible even when its current spare memory is too small.
+    const allTargets = fixture.config.targets;
+    fixture.config.targets = allTargets.filter(target => target.name === 'starved');
+    fixture.config.commandExecution.targets = ['starved'];
+    await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+    await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+    await writeFile(fixture.samplePath, `8 0.1 0.5 22000000 20 0 ${pressured} ${total} 0 0 0 0 0 0 0 linux ${pressured} 0 ${total} 0\n`);
+    await rm(join(fixture.stackDir, 'dev-target-command-load-native/starved.cache'), { force: true });
+    await writeFile(fixture.invocation.env.DISPATCHES, '');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = invoke();
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, 'remote:starved\n', result.stderr);
+    }
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'starved']);
+
+    // A physically impossible floor, unlike temporary pressure, must cause
+    // zero preparation/payload dispatches to that worker.
+    fixture.config.targets = allTargets;
+    fixture.config.commandExecution.targets = allTargets.map(target => target.name);
+    await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+    await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+    await writeFile(fixture.samplePath, `8 0.1 1 22000000 20 0 ${pressured} ${pressured} 0 0 0 0 0 0 0 linux ${pressured} 0 ${pressured} 0\n`);
+    await rm(join(fixture.stackDir, 'dev-target-command-load-native/starved.cache'), { force: true });
+    await writeFile(fixture.invocation.env.DISPATCHES, '');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = invoke();
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, 'remote:roomy\n');
+    }
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy', 'roomy'],
+      'both fresh and cached placement must waste zero preparations on an incapable worker');
+
+    fixture.config.targets = fixture.config.targets.filter(target => target.name === 'starved');
+    fixture.config.commandExecution.targets = ['starved'];
+    await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+    await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+    await writeFile(fixture.invocation.env.DISPATCHES, '');
+    const refused = invoke();
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.equal(refused.stdout, '');
+    assert.match(refused.stderr, /HSTACK_ADMISSION_CAPACITY:/);
+    assert.equal(await readFile(fixture.invocation.env.DISPATCHES, 'utf8'), '', 'no preparation when every target is incapable');
+  });
 
   test(`physical phase capacity ${dispatcher}: sequential preparation cannot hide a physically impossible compiler leaf`, async t => {
     const fixture = await memoryRoutingFixture(t, { roomyLoad: 80 });

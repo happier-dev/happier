@@ -130,9 +130,15 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     }
     return Math.max(0, floorKiB - precedingFloorKiB);
   }
+  function canReserveHead(item) {
+    const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
+    // Non-admitted memory cannot be recovered by draining broker slots. Keep
+    // this request's age, but reserve only once the observed floor is achievable.
+    return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB;
+  }
   function status() {
     const memory = slotMemoryBudget();
-    const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed);
+    const head = waiting.find(canReserveHead);
     // Publish the same head reservation used by drain and read-only checks.
     // Publication-blocked demand has no memory reservation.
     return { ...sample, ...memory,
@@ -328,7 +334,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          } else if (!head) {
+          } else if (!head && canReserveHead(item)) {
             head = item;
             availableMemoryKiB = Math.max(0, availableMemoryKiB - headReservationKiB(head));
           }
