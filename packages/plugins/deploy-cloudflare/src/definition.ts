@@ -1,3 +1,4 @@
+import type { DefinePluginInput } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLOUDFLARE_ACCOUNT_ID, cloudflareConnectedAccountRuntime } from './connectedAccounts/runtime.js';
 import { CLOUDFLARE_CALLBACK_URL, CLOUDFLARE_IDENTITY_SCOPES } from './connectedAccounts/oauth.js';
@@ -39,7 +40,21 @@ const tokenConfiguration = { ...accountConfiguration, fields: [...accountConfigu
     schema: { type: 'string', pattern: '^[a-fA-F0-9]{32}$' }, required: false, secret: false },
 ] } as const;
 
-export const definition = {
+const actions = { 'target-options-read': targetOptionsRead, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
+
+const deploymentTargets = { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
+    targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
+    actions: { inspect: 'targets-inspect-v1', link: 'workers-link', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel' } },
+    pages: { role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
+      description: 'Adopt an existing Pages project.',
+      targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
+      actions: { inspect: 'targets-inspect-v1', link: 'pages-link', deploy: 'pages-deploy', observe: 'pages-observe' } } } as const;
+
+export const definition: Pick<DefinePluginInput<typeof actions>,
+  'version' | 'displayName' | 'entrypoints' | 'activation' | 'hostAccess' | 'inputTypes' | 'brand'
+  | 'resources' | 'connectedAccountDescriptors'> & Readonly<{
+  id: 'happier.deploy.cloudflare'; actions: typeof actions; deploymentTargets: typeof deploymentTargets;
+}> = {
   id: 'happier.deploy.cloudflare',
   version: '0.0.0',
   displayName: 'Cloudflare deployments',
@@ -66,14 +81,8 @@ export const definition = {
   brand: { iconResourceId: 'brand-icon' },
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, 'target-options': { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'global',
     execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }, runtime: targetOptions } },
-  actions: { 'target-options-read': targetOptionsRead, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink },
-  deploymentTargets: { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
-    targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
-    actions: { inspect: 'targets-inspect-v1', link: 'workers-link', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel' } },
-    pages: { role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
-      description: 'Adopt an existing Pages project. Deploy exact prepared output with Direct Upload; Git builds select branch HEAD.',
-      targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
-      actions: { inspect: 'targets-inspect-v1', link: 'pages-link', deploy: 'pages-deploy', observe: 'pages-observe' } } },
+  actions,
+  deploymentTargets,
   connectedAccountDescriptors: { [CLOUDFLARE_ACCOUNT_ID]: {
     declaration: { title: 'Cloudflare',
       description: 'Connect Cloudflare to deploy Workers and Pages or manage tunnels and DNS.',

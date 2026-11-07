@@ -1,9 +1,9 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { isPluginError, ActionFailureCauseV1ProtocolSchema } from '@happier-dev/plugin-sdk/errors';
-import type { PluginAccountActionContext, PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError, ActionFailureCauseV1ProtocolSchema, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+import type { PluginAccountActionContext, PluginAccountActionHandler, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolObject as object,
-  defineProtocolString as string, defineProtocolUnion as union } from '@happier-dev/plugin-sdk/protocol';
+  defineProtocolString as string, defineProtocolUnion as union, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 import { reconcileOwnedCloudflareRoutes, CloudflareProviderRefusal, cloudflareResponseOperation, readCloudflareResponse } from './cloudflareRoutes.js';
 import { isObject } from '../connectedAccounts/probe.js';
 
@@ -32,7 +32,14 @@ export const tunnelConfigureInput = object({ credentialRef: QualifiedConnectedAc
   ]),
   owned: array(object({ hostname: text, path: text.optional(), expectedService: text }, closed)),
   desired: array(object({ hostname: text, path: text.optional(), service: text }, closed)), dnsOwnership }, closed);
-export const tunnelConfigureResult = union([
+type TunnelConfigureResult =
+  | Readonly<{ kind: 'prepared'; tunnelId: string; grants: ReturnType<typeof connectorGrants.parse>;
+      dnsOwnership: ReturnType<typeof dnsOwnership.parse> }>
+  | Readonly<{ kind: 'refused' | 'unknown'; code: string; providerOutput?: string;
+      failureCause?: ActionFailureCauseV1; tunnelId?: string;
+      grants?: ReturnType<typeof connectorGrants.parse>; dnsOwnership?: ReturnType<typeof dnsOwnership.parse> }>;
+
+export const tunnelConfigureResult: ProtocolComposableSchema<TunnelConfigureResult> = union([
   // Remote configuration and sealed custody are prepared; P20 still owns
   // the token file, actual container reader and connector verification.
   object({ kind: literal('prepared'), tunnelId: text, grants: connectorGrants, dnsOwnership }, closed),
@@ -114,7 +121,16 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
   }
 };
 
-export const tunnelActions = {
+type TunnelAction<TInput extends ProtocolComposableSchema<unknown, JsonValue>,
+  TResult extends ProtocolComposableSchema<unknown, JsonValue>> = PluginActionDefinition<
+  Omit<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>, 'inputSchema' | 'resultSchema'> & {
+    inputSchema: TInput; resultSchema: TResult;
+  }>;
+
+export const tunnelActions: Readonly<{
+  'cloudflare-named/configure': TunnelAction<typeof tunnelConfigureInput, typeof tunnelConfigureResult>;
+  'cloudflare-named/disable': TunnelAction<typeof tunnelDisableInput, typeof tunnelDisableResult>;
+}> = {
   'cloudflare-named/configure': {
     title: 'Prepare the reviewed Cloudflare tunnel',
     description: 'Create or adopt the exact remote tunnel, reconcile owned routes and seal its connector token for the admitted Machine.',
