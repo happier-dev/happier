@@ -362,12 +362,17 @@ describe('the mounted PRs & Issues window is scoped by its host-owned lifetime',
     expect(afterPaging).toBe(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope));
     expect(afterPaging.loadMore).toEqual({ kind: 'exhausted' });
 
+    const readsBeforeLens = shellHost.calls.length;
     pickerRealm.setTriageListWindowLens({
       ...TRIAGE_LIST_DEFAULT_LENS_V1,
       query: 'only-in-picker',
     }, pickerHost.host, scope);
     const afterLens = shellRealm.readTriageListWindowSnapshot(shellHost.host, scope);
-    expect(afterLens).not.toBe(afterPaging);
+    // This empty retained window has the same local result under the new
+    // text; changing it neither invalidates coverage nor starts acquisition.
+    expect(afterLens).toBe(afterPaging);
+    expect(afterLens.loadMore).toEqual({ kind: 'exhausted' });
+    expect(shellHost.calls).toHaveLength(readsBeforeLens);
     expect(afterLens).toBe(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope));
 
     shellLease.release();

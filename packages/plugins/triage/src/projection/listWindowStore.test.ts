@@ -571,6 +571,51 @@ function createHarness(options: Readonly<{
 }
 
 describe('the mounted PRs & Issues window store', () => {
+    it.each(['complete', 'partial'] as const)('filters 2,000 retained %s rows without provider scans and keeps Load more independent of text', async coverage => {
+        const queries: string[] = [];
+        const harness = createHarness({ configureSourceB: false, scanA: async input => {
+            queries.push(input.query ?? '');
+            const offset = input.page.kind === 'initial' ? 0 : Number(input.page.continuation.token);
+            const count = offset < 2_000 ? Math.min(MAX_TRIAGE_LIST_WINDOW_ROWS_V1, 2_000 - offset) : 1;
+            const observations = Array.from({ length: count }, (_, index) => presentObservation({
+                entryId: `entry-${offset + index}`,
+                title: (offset + index) % 2 === 0 ? 'triage target' : 'Change',
+                sourceUpdatedAtMs: 10_000 - offset - index,
+            }));
+            return coverage === 'complete' && offset + count === 2_000
+                ? { kind: 'complete', evidence: { kind: 'walkFinished' }, observations }
+                : { kind: 'page', evidence: { kind: 'partial', reason: 'more-pages' }, observations,
+                    continuation: { v: 1, token: `${offset + count}` } };
+        } });
+        const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+        try {
+            await store.refresh('view');
+            while ((store.getSnapshot().window?.rows.length ?? 0) < 2_000) await store.loadMore();
+            expect(store.getSnapshot().window?.coverage).toBe(coverage);
+            const scans = queries.length;
+            vi.useFakeTimers();
+            for (let length = 1; length <= 'triage'.length; length += 1) {
+                store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'triage'.slice(0, length) });
+                await vi.runAllTimersAsync();
+                expect(queries).toHaveLength(scans);
+            }
+            expect(store.getSnapshot().window?.rows).toHaveLength(1_000);
+            vi.useRealTimers();
+            if (coverage === 'partial') {
+                expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+                await store.loadMore();
+                expect(queries).toHaveLength(scans + 1);
+                expect(queries.at(-1)).toBe('');
+                expect(harness.actionInputs.at(-1)?.resume?.[0]?.continuation.token).toBe('2000');
+                expect(store.getSnapshot().window?.rows).toHaveLength(1_001);
+            }
+            const scansBeforeClear = queries.length;
+            store.setLens(TRIAGE_LIST_DEFAULT_LENS_V1);
+            expect(store.getSnapshot().window?.rows).toHaveLength(coverage === 'partial' ? 2_001 : 2_000);
+            expect(queries).toHaveLength(scansBeforeClear);
+        } finally { store.dispose(); vi.useRealTimers(); }
+    });
+
     it('retries a previously demanded initial read when the reader changes the lens after enumeration failed', async () => {
         const harness = createHarness();
         const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
@@ -2163,62 +2208,34 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
-    it('reacquires from page one when query, order, or Smart policy changes', async () => {
+    it('projects the latest text over an in-flight neutral read without cancelling or replacing it', async () => {
         const harness = createHarness({ configureSourceB: false });
-        harness.state.sourceAOverDelivers = true;
+        let heldSignal: AbortSignal | undefined;
+        let release = (): void => {};
+        const held = new Promise<void>(resolve => { release = resolve; });
         const store = createTriageListWindowStore({
-            readEntries: harness.readEntries,
             nowMs: () => harness.clock.nowMs,
-        });
-
-        await store.refresh('view');
-        const providerReads = () => harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
-        );
-        const afterInitial = providerReads().length;
-
-        // A React rebind may copy the lens and its arrays without changing the
-        // reader's request. That is not a new generation and must not spend a
-        // provider read merely because object identity changed.
-        store.setLens({
-            ...TRIAGE_LIST_DEFAULT_LENS_V1,
-            filters: {
-                sources: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.sources],
-                types: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.types],
-                scopes: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.scopes],
-                states: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.states],
-                attention: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.attention],
+            readEntries: async (input, options) => {
+                if (input.sources.kind === 'selected') {
+                    heldSignal = options?.signal;
+                    await held;
+                }
+                return await harness.readEntries(input);
             },
         });
-        expect(providerReads()).toHaveLength(afterInitial);
-
-        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'older' });
-        await vi.waitFor(() => {
-            expect(providerReads()).toHaveLength(afterInitial + 1);
-        });
-        expect(providerReads().at(-1)?.resume).toBeUndefined();
-
-        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, order: 'oldest' });
-        await vi.waitFor(() => {
-            expect(providerReads()).toHaveLength(afterInitial + 2);
-        });
-        expect(providerReads().at(-1)?.order).toBe('oldest');
-        expect(store.getSnapshot().window?.rows[0]?.entryRef.entryId).toBe('first-0');
-
-        store.setLens({
-            ...TRIAGE_LIST_DEFAULT_LENS_V1,
-            order: 'oldest',
-            smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
-        });
-        await vi.waitFor(() => {
-            expect(providerReads()).toHaveLength(afterInitial + 3);
-        });
-        expect(providerReads().at(-1)?.smartPolicy).toEqual({
-            v: 1,
-            precedence: ['activity', 'attention'],
-        });
-
-        store.dispose();
+        const cycle = store.refresh('view');
+        try {
+            await vi.waitFor(() => expect(heldSignal).toBeDefined());
+            store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'no match' });
+            store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'normalizer' });
+            expect(heldSignal?.aborted).toBe(false);
+            release();
+            await cycle;
+            expect(store.getSnapshot().window?.rows.map(row => row.entryRef.entryId)).toEqual(['1']);
+            expect(harness.scanCalls.count).toBe(1);
+            expect(harness.actionInputs.every(input => input.query === undefined)).toBe(true);
+            expect(store.getSnapshot().error).toBeUndefined();
+        } finally { release(); await cycle; store.dispose(); }
     });
 
     it('discards the old frontier when a filter changes after Load More', async () => {

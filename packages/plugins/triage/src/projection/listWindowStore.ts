@@ -300,7 +300,6 @@ function sameAcquisitionLens(left: TriageListLensV1, right: TriageListLensV1): b
         && left.smartPolicy.v === right.smartPolicy.v
         && left.smartPolicy.precedence[0] === right.smartPolicy.precedence[0]
         && left.smartPolicy.precedence[1] === right.smartPolicy.precedence[1]
-        && left.query === right.query
         && left.limit === right.limit
         && sameFilterSelection(left.filters, right.filters);
 }
