@@ -1,0 +1,373 @@
+{
+  "schemaVersion": 1,
+  "apps": [
+    {
+      "itemId": "postgresql",
+      "app": {
+        "schemaVersion": 1,
+        "title": "PostgreSQL",
+        "description": "A PostgreSQL database with internal connectivity and logical backups.",
+        "category": "database",
+        "documentationUrl": "https://www.postgresql.org/docs/17/",
+        "compose": {
+          "document": "services:\n  database:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: ${DB_USER}\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n      POSTGRES_DB: ${DB_NAME}\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n      test: [CMD-SHELL, 'pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  postgres-data: {}\n",
+          "profiles": [],
+          "services": [
+            "database"
+          ],
+          "primaryService": "database"
+        },
+        "variables": [
+          {
+            "key": "DB_USER",
+            "label": "Database user",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "happier",
+            "sites": [
+              {
+                "service": "database",
+                "path": [
+                  "environment",
+                  "POSTGRES_USER"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "DB_NAME",
+            "label": "Database name",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "app",
+            "sites": [
+              {
+                "service": "database",
+                "path": [
+                  "environment",
+                  "POSTGRES_DB"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "DB_PASSWORD",
+            "label": "Database password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "database",
+                "path": [
+                  "environment",
+                  "POSTGRES_PASSWORD"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [
+          {
+            "key": "DB_PASSWORD",
+            "purpose": "database-password",
+            "label": "Database password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          }
+        ],
+        "domains": [],
+        "volumes": [
+          {
+            "id": "postgres-data",
+            "service": "database",
+            "target": "/var/lib/postgresql/data",
+            "persistent": true,
+            "backup": true,
+            "consistency": "logicalDump"
+          }
+        ],
+        "health": [
+          {
+            "service": "database",
+            "participates": true
+          }
+        ],
+        "data": {
+          "engine": "postgres",
+          "version": "17",
+          "service": "database",
+          "port": 5432,
+          "variables": {
+            "username": "DB_USER",
+            "password": "DB_PASSWORD",
+            "database": "DB_NAME"
+          },
+          "logicalBackup": {
+            "adapter": "postgres-v1",
+            "database": "DB_NAME",
+            "username": "DB_USER"
+          }
+        },
+        "exports": {
+          "DATABASE_URL": {
+            "service": "database",
+            "port": 5432,
+            "scheme": "postgres",
+            "defaultExposure": "internal",
+            "env": {
+              "DATABASE_URL": "postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}"
+            }
+          },
+          "DIRECT_URL": {
+            "service": "database",
+            "port": 5432,
+            "scheme": "postgres",
+            "defaultExposure": "internal",
+            "env": {
+              "DIRECT_URL": "postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}"
+            }
+          }
+        },
+        "loginFields": {
+          "username": "DB_USER",
+          "password": "DB_PASSWORD"
+        }
+      }
+    },
+    {
+      "itemId": "mysql",
+      "app": {
+        "schemaVersion": 1,
+        "title": "MySQL",
+        "description": "A MySQL database with internal connectivity.",
+        "category": "database",
+        "documentationUrl": "https://dev.mysql.com/doc/refman/8.4/en/",
+        "compose": {
+          "document": "services:\n  mysql:\n    image: mysql:8.4\n    environment:\n      MYSQL_USER: ${MYSQL_APP_USER}\n      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}\n      MYSQL_DATABASE: ${MYSQL_APP_DATABASE}\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}\n    volumes:\n      - mysql-data:/var/lib/mysql\n    healthcheck:\n      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 -u\"$$MYSQL_USER\" -p\"$$MYSQL_PASSWORD\" --silent']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  mysql-data: {}\n",
+          "profiles": [],
+          "services": [
+            "mysql"
+          ],
+          "primaryService": "mysql"
+        },
+        "variables": [
+          {
+            "key": "MYSQL_APP_USER",
+            "label": "Database user",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "happier",
+            "sites": [
+              {
+                "service": "mysql",
+                "path": [
+                  "environment",
+                  "MYSQL_USER"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MYSQL_APP_DATABASE",
+            "label": "Database name",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "default": "app",
+            "sites": [
+              {
+                "service": "mysql",
+                "path": [
+                  "environment",
+                  "MYSQL_DATABASE"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MYSQL_APP_PASSWORD",
+            "label": "Database password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "mysql",
+                "path": [
+                  "environment",
+                  "MYSQL_PASSWORD"
+                ]
+              }
+            ]
+          },
+          {
+            "key": "MYSQL_ROOT_PASSWORD",
+            "label": "Root password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "mysql",
+                "path": [
+                  "environment",
+                  "MYSQL_ROOT_PASSWORD"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [
+          {
+            "key": "MYSQL_APP_PASSWORD",
+            "purpose": "database-password",
+            "label": "Database password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          },
+          {
+            "key": "MYSQL_ROOT_PASSWORD",
+            "purpose": "database-root-password",
+            "label": "Root password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          }
+        ],
+        "domains": [],
+        "volumes": [
+          {
+            "id": "mysql-data",
+            "service": "mysql",
+            "target": "/var/lib/mysql",
+            "persistent": true,
+            "backup": false
+          }
+        ],
+        "health": [
+          {
+            "service": "mysql",
+            "participates": true
+          }
+        ],
+        "data": {
+          "engine": "mysql",
+          "version": "8.4",
+          "service": "mysql",
+          "port": 3306,
+          "variables": {
+            "username": "MYSQL_APP_USER",
+            "password": "MYSQL_APP_PASSWORD",
+            "database": "MYSQL_APP_DATABASE"
+          }
+        },
+        "exports": {
+          "MYSQL_URL": {
+            "service": "mysql",
+            "port": 3306,
+            "scheme": "mysql",
+            "defaultExposure": "internal",
+            "env": {
+              "MYSQL_URL": "mysql://${MYSQL_APP_USER}:${MYSQL_APP_PASSWORD}@mysql:3306/${MYSQL_APP_DATABASE}"
+            }
+          }
+        },
+        "loginFields": {
+          "username": "MYSQL_APP_USER",
+          "password": "MYSQL_APP_PASSWORD"
+        }
+      }
+    },
+    {
+      "itemId": "redis",
+      "app": {
+        "schemaVersion": 1,
+        "title": "Redis",
+        "description": "A Redis cache with internal connectivity and a saved password.",
+        "category": "database",
+        "documentationUrl": "https://redis.io/docs/latest/",
+        "compose": {
+          "document": "services:\n  redis:\n    image: redis:7\n    environment:\n      REDIS_PASSWORD: ${REDIS_PASSWORD}\n    command: [sh, -c, 'exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes']\n    volumes:\n      - redis-data:/data\n    healthcheck:\n      test: [CMD-SHELL, 'redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  redis-data: {}\n",
+          "profiles": [],
+          "services": [
+            "redis"
+          ],
+          "primaryService": "redis"
+        },
+        "variables": [
+          {
+            "key": "REDIS_PASSWORD",
+            "label": "Redis password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "redis",
+                "path": [
+                  "environment",
+                  "REDIS_PASSWORD"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [
+          {
+            "key": "REDIS_PASSWORD",
+            "purpose": "cache-password",
+            "label": "Redis password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          }
+        ],
+        "domains": [],
+        "volumes": [
+          {
+            "id": "redis-data",
+            "service": "redis",
+            "target": "/data",
+            "persistent": true,
+            "backup": false
+          }
+        ],
+        "health": [
+          {
+            "service": "redis",
+            "participates": true
+          }
+        ],
+        "data": {
+          "engine": "redis",
+          "version": "7",
+          "service": "redis",
+          "port": 6379,
+          "variables": {
+            "password": "REDIS_PASSWORD"
+          }
+        },
+        "exports": {
+          "REDIS_URL": {
+            "service": "redis",
+            "port": 6379,
+            "scheme": "redis",
+            "defaultExposure": "internal",
+            "env": {
+              "REDIS_URL": "redis://:${REDIS_PASSWORD}@redis:6379"
+            }
+          }
+        },
+        "loginFields": {
+          "password": "REDIS_PASSWORD"
+        }
+      }
+    }
+  ]
+}

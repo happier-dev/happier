@@ -627,11 +627,12 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   const router = useRouter();
   const back = chosen ? () => setChosen(null) : null;
   if (blocked || !link || !member || definition.kind !== 'stored') {
-    // This Environment can't take a template in place; its one way forward is a database of its own from Store,
-    // on the same Machine, connected later through Variables (the Data card's own guide).
+    // This Environment can't take a template in place: its services live in its repository's Compose file. The
+    // other way forward is a full app of its own from Store, on the same Machine, connected through Variables.
     const openStore = () => {
       onClose();
-      router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', query: 'database',
+      // The Store app catalog picker: the same list Add embeds, not a text search.
+      router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: { category: { include: ['database'], exclude: [] } },
         machine: { serverId: props.lifetime.scope.serverId, machineId: detail.environment.controllerMachineId } }) as never);
     };
     return (
