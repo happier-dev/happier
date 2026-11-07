@@ -6,7 +6,7 @@ import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTest
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { accountDisplayProfileFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
-import { teamCapabilitiesFixture, teamGroupFixture, teamGroupMemberFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamCapabilitiesFixture, teamGroupFixture, teamGroupMemberFixture, teamMembershipFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -47,12 +47,22 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     return mock.module;
 });
 
+// App-bundled plugin bytes are a generated build boundary (absent on synchronized targets);
+// the Agent marks on the members' defaults rows read brand marks from it.
+vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
+    BUNDLED_PLUGIN_UI_APP_ARTIFACTS: Object.freeze([]),
+    BUNDLED_PLUGIN_UI_APP_DECLARATIONS: Object.freeze([]),
+    BUNDLED_PLUGIN_BRAND_MARKS: Object.freeze([]),
+    BUNDLED_PLUGIN_PACKAGED_RESOURCES: Object.freeze([]),
+}));
+
 installSettingsViewCommonModuleMocks({
     storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: groupRouterPush, back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
+        usePathname: () => '/settings/teams',
     }),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -905,5 +915,64 @@ describe('TeamGroupDetailScreen', () => {
         // The shell already holds this Group's unresolved approval, so offering
         // the control again would let one restore be requested twice.
         expect(screen.findByTestId('team-group-restore')?.props.disabled).toBe(true);
+    });
+});
+
+describe('TeamGroupDetailScreen defaults for members', () => {
+    const TEAM_POLICY_PATH = '/v1/teams/policy/set';
+
+    async function claudeTargetKey(): Promise<string> {
+        const { getResolvedAgentCatalogEntries } = await import('@/agents/backendCatalog/agentCatalogProjection');
+        return getResolvedAgentCatalogEntries({ enabledAgentIds: ['claude'] })
+            .find((entry) => entry.agentId === 'claude')!.backendTargetKey!;
+    }
+
+    it('saves this Group\'s member defaults as its own patch, leaving the Team and other Groups alone', async () => {
+        const key = await claudeTargetKey();
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada', teamsEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        const team = teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageGroups: true }),
+            policy: teamPolicyFixture({ managedDefaults: {
+                team: { permissionModeByAgentTargetKey: { [key]: 'default' } },
+                groups: { 'group-2': { permissionModeByAgentTargetKey: { [key]: 'yolo' } } },
+            } }),
+        });
+        harness.answer(serverId, TEAM_GET_PATH, { body: team });
+        harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }) });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, TEAM_POLICY_PATH, { body: team });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-member-defaults-agent:claude:header');
+        await screen.pressByTestIdAsync('team-group-member-defaults-agent:claude:header');
+        await waitForTestId(screen, 'team-group-member-defaults-agent:claude:permission');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const menu = screen.findAllByType(DropdownMenu).find((node) =>
+            node.props.itemTrigger?.itemProps?.testID === 'team-group-member-defaults-agent:claude:permission');
+        await act(async () => menu?.props.onSelect('read-only'));
+
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(TEAM_POLICY_PATH)[0]?.input).toEqual({
+            v: 1,
+            teamId: 'team-1',
+            managedGroupDefaults: { teamGroupId: 'group-1', defaults: { permissionModeByAgentTargetKey: { [key]: 'read-only' } } },
+        });
+    });
+
+    it('shows a Group\'s defaults read-only, with the reason, to someone who cannot manage that Group', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ capabilities: { ...MANAGED_GROUP_CAPABILITIES, manageNativeMembers: false } }),
+        });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-member-defaults-machine');
+        expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.readOnlyGroup');
+        const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
+        expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
     });
 });

@@ -13375,6 +13375,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 unavailableMachine: "你看不到的機器",
                 permissionMode: "權限模式",
                 model: "模型",
+                modelNone: "成員從代理自身的預設值開始。",
                 conflictTeam: "群組之間設定不同。同時屬於多個群組的成員從團隊預設值開始。",
                 conflictGroup: "另一個群組的設定不同。同時屬於兩者的成員從團隊預設值開始。",
                 repairRequired: "無法讀取這些預設值。選擇一項將取代它們。",

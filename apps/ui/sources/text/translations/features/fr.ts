@@ -13442,6 +13442,7 @@ const french: TeamsTranslationRoot = {
                 unavailableMachine: "Une machine que tu ne vois pas",
                 permissionMode: "Mode d’autorisation",
                 model: "Modèle",
+                modelNone: "Les membres partent de la valeur par défaut de l’agent.",
                 conflictTeam: "Les groupes ne sont pas d’accord ici. Les membres de plusieurs groupes partent des valeurs de l’équipe.",
                 conflictGroup: "Un autre groupe définit autre chose. Les membres des deux partent des valeurs de l’équipe.",
                 repairRequired: "Ces valeurs n’ont pas pu être lues. En choisir une les remplace.",

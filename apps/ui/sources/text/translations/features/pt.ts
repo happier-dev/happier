@@ -13395,6 +13395,7 @@ const portuguese: TeamsTranslationRoot = {
                 unavailableMachine: "Uma máquina que não consegues ver",
                 permissionMode: "Modo de permissões",
                 model: "Modelo",
+                modelNone: "Os membros começam com a predefinição do agente.",
                 conflictTeam: "Os grupos discordam aqui. Membros de mais de um começam com as predefinições da equipa.",
                 conflictGroup: "Outro grupo define isto de outra forma. Membros de ambos começam com as predefinições da equipa.",
                 repairRequired: "Não foi possível ler estas predefinições. Escolher uma substitui-as.",

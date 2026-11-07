@@ -13415,6 +13415,7 @@ const polish: TeamsTranslationRoot = {
                 unavailableMachine: "Maszyna, której nie widzisz",
                 permissionMode: "Tryb uprawnień",
                 model: "Model",
+                modelNone: "Członkowie zaczynają od domyślnego ustawienia agenta.",
                 conflictTeam: "Grupy się tu różnią. Członkowie kilku grup zaczynają od ustawień zespołu.",
                 conflictGroup: "Inna grupa ustawia to inaczej. Członkowie obu zaczynają od ustawień zespołu.",
                 repairRequired: "Nie udało się odczytać tych ustawień. Wybranie jednego je zastąpi.",

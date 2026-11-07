@@ -387,6 +387,14 @@ member's applicable Group defaults unless that viewer holds the existing managem
 authority. Denied Team readers receive no defaults. Malformed storage projects no defaults
 and `managedDefaultsStatus: 'repair_required'` for repair through the same writer.
 
+The person path is "Defaults for members" in Team settings (Team layer) and on the Group page
+(that Group's layer): `components/settings/teams/defaults/TeamMemberDefaultsSection.tsx`. It reuses
+New Session's Machine dropdown, permission options, exact-model picker and connected-account
+purpose chooser (Team resources only, since a Team default is chosen for other people), and saves
+through the same `teams.policy.set` Action; `memberDefaults.ts` builds the Team replacement or Group
+patch. Group disagreement shown there is read from `resolveManagedSessionDefaults`. Managed
+presets are not offered there yet; a stored preset is shown by kind.
+
 Defaults preselect choices without copying them into Account settings. Locked policy values
 outrank explicit choices; otherwise precedence is explicit choice, agreeing Group, Team,
 Home, then unlocked policy. Disagreeing Groups fall through per field/purpose. Only the

@@ -13380,6 +13380,7 @@ const japanese: TeamsTranslationRoot = {
                 unavailableMachine: "表示できないマシン",
                 permissionMode: "権限モード",
                 model: "モデル",
+                modelNone: "メンバーはエージェント自身の既定値から始まります。",
                 conflictTeam: "グループ間で異なります。複数に所属するメンバーはチームの既定値から始まります。",
                 conflictGroup: "別のグループが異なる値を設定しています。両方に所属するメンバーはチームの既定値から始まります。",
                 repairRequired: "既定値を読み取れませんでした。選択すると置き換わります。",

@@ -13204,6 +13204,7 @@ const german: TeamsTranslationRoot = {
                 unavailableMachine: "Eine Maschine, die du nicht sehen kannst",
                 permissionMode: "Berechtigungsmodus",
                 model: "Modell",
+                modelNone: "Mitglieder starten mit dem Standard des Agenten.",
                 conflictTeam: "Gruppen sind hier uneinig. Mitglieder in mehreren starten mit den Team-Standards.",
                 conflictGroup: "Eine andere Gruppe legt das anders fest. Mitglieder in beiden starten mit den Team-Standards.",
                 repairRequired: "Diese Standards konnten nicht gelesen werden. Eine Auswahl ersetzt sie.",

@@ -179,6 +179,11 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   >;
   /** The consumer stores one exact account, never a pool: offer accounts only. */
   accountsOnly?: boolean;
+  /**
+   * The choice is made for other people (a Team's defaults for its members), so the
+   * viewer's own accounts and pools are not offered: only Team resources, or none.
+   */
+  teamResourcesOnly?: boolean;
 }>) {
   const profile = useProfile();
   const { present } = useConnectedAccountIdentityPrivacy();
@@ -208,10 +213,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const pickerModalIdRef = React.useRef<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
   const reloadingRef = React.useRef(false);
-  const accounts = effectiveAccountTransport === 'advertised-v4'
+  const accounts = effectiveAccountTransport === 'advertised-v4' && !props.teamResourcesOnly
     ? profile.connectedAccountsV4 ?? EMPTY_ACCOUNTS
     : EMPTY_ACCOUNTS;
-  const groups = effectiveAccountTransport === 'advertised-v4' && !props.accountsOnly
+  const groups = effectiveAccountTransport === 'advertised-v4' && !props.accountsOnly && !props.teamResourcesOnly
     ? profile.connectedAccountGroupsV4 ?? EMPTY_GROUPS
     : EMPTY_GROUPS;
   const teamCatalog = props.teamCredentialCatalog;

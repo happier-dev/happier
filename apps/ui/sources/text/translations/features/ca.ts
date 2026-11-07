@@ -13417,6 +13417,7 @@ const catalan: TeamsTranslationRoot = {
                 unavailableMachine: "Una màquina que no pots veure",
                 permissionMode: "Mode de permisos",
                 model: "Model",
+                modelNone: "Els membres comencen amb el valor per defecte de l’agent.",
                 conflictTeam: "Els grups no coincideixen aquí. Els membres de més d’un comencen amb els valors de l’equip.",
                 conflictGroup: "Un altre grup ho estableix diferent. Els membres d’ambdós comencen amb els valors de l’equip.",
                 repairRequired: "No s’han pogut llegir aquests valors. Triar-ne un els substitueix.",

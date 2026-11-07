@@ -458,6 +458,7 @@ export const english = {
                 unavailableMachine: "A machine you can’t see",
                 permissionMode: "Permission mode",
                 model: "Model",
+                modelNone: "Members start with the Agent’s own default.",
                 conflictTeam: "Groups disagree here. Members in more than one start from the Team’s defaults.",
                 conflictGroup: "Another Group sets this differently. Members in both start from the Team’s defaults.",
                 repairRequired: "These defaults couldn’t be read. Choosing one replaces them.",

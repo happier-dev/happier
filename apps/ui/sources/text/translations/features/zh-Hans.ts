@@ -13375,6 +13375,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 unavailableMachine: "你看不到的机器",
                 permissionMode: "权限模式",
                 model: "模型",
+                modelNone: "成员从智能体自身的默认值开始。",
                 conflictTeam: "群组之间设置不同。同时属于多个群组的成员从团队默认值开始。",
                 conflictGroup: "另一个群组的设置不同。同时属于两者的成员从团队默认值开始。",
                 repairRequired: "无法读取这些默认值。选择一项将替换它们。",

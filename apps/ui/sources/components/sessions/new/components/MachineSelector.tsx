@@ -22,6 +22,8 @@ import { useMachineDestinationWorkerStatus, type MachineDestinationWorkerPlaceme
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EMPTY_MACHINES: readonly Machine[] = [];
+/** The dropdown row that chooses no machine (a trimmed id, so the page field can show it). */
+const CLEAR_OPTION_ID = '__none__';
 
 export interface MachineSelectorProps {
     purpose?: MachineDestinationPurposeV1;
@@ -76,6 +78,19 @@ export interface MachineSelectorProps {
     dropdownSubtitle?: string | null;
     dropdownTestID?: string;
     popoverBoundaryRef?: React.RefObject<RNView> | null;
+    /**
+     * An optional destination (a default, not a launch): the dropdown leads with this row,
+     * which chooses no machine. Its title is also the trigger's answer while nothing is chosen.
+     */
+    dropdownClearOption?: Readonly<{
+        title: string;
+        subtitle?: string;
+        /** Nothing is chosen, so this row is the current answer (false while a choice the list can't show stands). */
+        current: boolean;
+        onSelect: () => void;
+    }>;
+    /** The dropdown row sits inside the caller's own section instead of a section of its own. */
+    dropdownInCallerSection?: boolean;
 }
 
 export function MachineSelector({
@@ -111,6 +126,8 @@ export function MachineSelector({
     dropdownSubtitle,
     dropdownTestID,
     popoverBoundaryRef,
+    dropdownClearOption,
+    dropdownInCallerSection = false,
 }: MachineSelectorProps) {
     const { theme } = useUnistyles();
     const reachabilityRevision = useMachineReachabilityRevision();
@@ -270,14 +287,19 @@ export function MachineSelector({
     ]);
 
     if (presentation === 'dropdown') {
-        return (
-            <ItemGroup title="">
+        const dropdown = (
                 <DropdownMenu
                     open={dropdownOpen}
                     onOpenChange={setDropdownOpen}
-                    items={dropdownItems}
-                    selectedId={selectedMachineId}
+                    items={dropdownClearOption
+                        ? [{ id: CLEAR_OPTION_ID, title: dropdownClearOption.title, subtitle: dropdownClearOption.subtitle }, ...dropdownItems]
+                        : dropdownItems}
+                    selectedId={selectedMachineId ?? (dropdownClearOption?.current ? CLEAR_OPTION_ID : null)}
                     onSelect={(machineId) => {
+                        if (dropdownClearOption && machineId === CLEAR_OPTION_ID) {
+                            dropdownClearOption.onSelect();
+                            return;
+                        }
                         const machine = machineById.get(machineId);
                         if (!machine) return;
                         const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine, scope);
@@ -296,7 +318,9 @@ export function MachineSelector({
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: dropdownTitle ?? t('newSession.selectMachineTitle'),
-                        subtitle: dropdownSubtitle ?? (selectedMachine ? machineName(selectedMachine) : t('newSession.selectMachineDescription')),
+                        subtitle: dropdownSubtitle ?? (selectedMachine
+                            ? machineName(selectedMachine)
+                            : dropdownClearOption?.title ?? t('newSession.selectMachineDescription')),
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,
                         icon: (
@@ -309,8 +333,8 @@ export function MachineSelector({
                         itemProps: { testID: dropdownTestID },
                     }}
                 />
-            </ItemGroup>
         );
+        return dropdownInCallerSection ? dropdown : <ItemGroup title="">{dropdown}</ItemGroup>;
     }
 
     return <MachineSelectorList

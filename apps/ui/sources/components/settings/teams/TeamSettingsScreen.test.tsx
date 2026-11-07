@@ -37,6 +37,9 @@ vi.mock('@/platform/randomUUID', () => ({
 vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
     BUNDLED_PLUGIN_UI_APP_ARTIFACTS: Object.freeze([]),
     BUNDLED_PLUGIN_UI_APP_DECLARATIONS: Object.freeze([]),
+    // The Agent marks on the members' defaults rows read brand marks from the same inventory.
+    BUNDLED_PLUGIN_BRAND_MARKS: Object.freeze([]),
+    BUNDLED_PLUGIN_PACKAGED_RESOURCES: Object.freeze([]),
 }));
 
 // The logo picker reads picked bytes through the platform file API, which has no
@@ -57,6 +60,7 @@ installSettingsViewCommonModuleMocks({
         useRouter: () => ({ push: routerPush, back: routerBack }),
         useNavigation: () => ({ setOptions: vi.fn() }),
         useLocalSearchParams: () => ({}),
+        usePathname: () => '/settings/teams',
     }),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -882,5 +886,77 @@ describe('TeamSettingsScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-settings-name');
         expect(screen.findByTestId('team-unavailable')?.props.accessibilityRole).toBe('alert');
         expect(screen.findByTestId('team-unavailable')?.props.accessibilityLiveRegion).toBe('assertive');
+    });
+});
+
+describe('TeamSettingsScreen defaults for members', () => {
+    async function claudeTargetKey(): Promise<string> {
+        const { getResolvedAgentCatalogEntries } = await import('@/agents/backendCatalog/agentCatalogProjection');
+        const entry = getResolvedAgentCatalogEntries({ enabledAgentIds: ['claude'] }).find((candidate) => candidate.agentId === 'claude');
+        return entry!.backendTargetKey!;
+    }
+
+    it('saves a member default through teams.policy.set and keeps every Group default', async () => {
+        const key = await claudeTargetKey();
+        const groups = { 'group-1': { placement: { kind: 'machine' as const, target: { serverId: 'home', machineId: 'm1' } } } };
+        const team = teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageSettings: true }),
+            policy: teamPolicyFixture({ managedDefaults: { team: {}, groups }, managedDefaultsStatus: 'available' }),
+        });
+        const serverId = await addHomeWithTeam(team);
+        harness.answer(serverId, TEAM_POLICY_PATH, { body: team });
+
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:header');
+        await screen.pressByTestIdAsync('team-settings-member-defaults-agent:claude:header');
+        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:permission');
+        // The menu's popover is a web/native overlay this renderer has no window for; choose
+        // through the real menu's own selection callback, as a person picking the row does.
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const menu = screen.findAllByType(DropdownMenu).find((node) =>
+            node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-agent:claude:permission');
+        expect(menu?.props.items.map((item: { id: string }) => item.id)).toContain('read-only');
+        await act(async () => menu?.props.onSelect('read-only'));
+
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(TEAM_POLICY_PATH)[0]?.input).toEqual({
+            v: 1,
+            teamId: 'team-1',
+            managedDefaults: { team: { permissionModeByAgentTargetKey: { [key]: 'read-only' } }, groups },
+        });
+    });
+
+    it('shows members\' defaults to a viewer who cannot change them as values, with the reason', async () => {
+        const key = await claudeTargetKey();
+        const serverId = await addHomeWithTeam(teamSummaryFixture({
+            // Sharing policy is theirs to change; Team settings (and so these defaults) are not.
+            capabilities: teamCapabilitiesFixture({ managePolicy: true }),
+            policy: teamPolicyFixture({
+                managedDefaults: { team: { permissionModeByAgentTargetKey: { [key]: 'read-only' } }, groups: {} },
+            }),
+        }));
+
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:header');
+        expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.readOnlyTeam');
+        await screen.pressByTestIdAsync('team-settings-member-defaults-agent:claude:header');
+        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:permission');
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.filter((id) => id.startsWith('team-settings-member-defaults-agent:claude:permission:'))).toEqual([]);
+        expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
+    });
+
+    it('says where Groups disagree, as the precedence reader decides it', async () => {
+        const machine = (machineId: string) => ({ kind: 'machine' as const, target: { serverId: 'home', machineId } });
+        const serverId = await addHomeWithTeam(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageSettings: true }),
+            policy: teamPolicyFixture({
+                managedDefaults: { team: {}, groups: { 'group-1': { placement: machine('m1') }, 'group-2': { placement: machine('m2') } } },
+            }),
+        }));
+
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-member-defaults-machine');
+        expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.conflictTeam');
     });
 });

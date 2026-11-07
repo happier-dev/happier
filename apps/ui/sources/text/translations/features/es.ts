@@ -13444,6 +13444,7 @@ const spanish: TeamsTranslationRoot = {
                 unavailableMachine: "Una máquina que no puedes ver",
                 permissionMode: "Modo de permisos",
                 model: "Modelo",
+                modelNone: "Los miembros empiezan con el valor predeterminado del agente.",
                 conflictTeam: "Los grupos no coinciden aquí. Los miembros de más de uno empiezan con los valores del equipo.",
                 conflictGroup: "Otro grupo lo define distinto. Los miembros de ambos empiezan con los valores del equipo.",
                 repairRequired: "No se pudieron leer estos valores. Elegir uno los reemplaza.",

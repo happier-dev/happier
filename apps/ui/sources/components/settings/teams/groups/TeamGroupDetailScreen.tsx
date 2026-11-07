@@ -55,6 +55,8 @@ import {
     teamGroupMemberDetailPath,
     teamIdentityConnectionPath,
 } from '../teamsRoutes';
+import { TeamMemberDefaultsSection } from '../defaults/TeamMemberDefaultsSection';
+import { memberDefaultsAccess } from '../defaults/memberDefaults';
 
 const MEMBER_AVATAR_SIZE = 32;
 const GROUP_DETAIL_CHUNK_SIZE = 12;
@@ -529,6 +531,20 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
 
         if (group.capabilities.updateMetadata) {
             add('metadata', () => <GroupMetadataSection context={context} group={group} current={groupCurrent} />);
+        }
+
+        // What this Group's members' new sessions start with; an archived Group sets none.
+        if (!archived) {
+            const scope = { kind: 'group' as const, groupId };
+            add('member-defaults', () => (
+                <TeamMemberDefaultsSection
+                    testID="team-group-member-defaults"
+                    context={context}
+                    scope={scope}
+                    access={memberDefaultsAccess(scope, context.team.capabilities, group.capabilities)}
+                    writable={context.canMutate && groupCurrent}
+                />
+            ));
         }
 
         for (let start = 0; start < members.rows.length; start += GROUP_DETAIL_CHUNK_SIZE) {
