@@ -1,4 +1,5 @@
 import * as mini from 'zod/mini';
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 
 const text = () => mini.string().check(mini.trim(), mini.minLength(1));
@@ -10,12 +11,16 @@ export const HetznerLaunchV1Schema = defineProtocolObject({
   serverTypeId: portableText, imageId: portableText, locationId: portableText,
   publicNetworking: defineProtocolObject({ ipv4: boolean, ipv6: boolean }, closed),
 }, closed);
-export const HetznerResourceV1Schema = defineProtocolObject({
+const resourceFields = {
   serverId: portableId, owned: defineProtocolObject({ volumeIds: defineProtocolArray(portableId), primaryIpIds: defineProtocolArray(portableId) }, closed),
-}, closed);
+};
+export const HetznerResourceV1Schema = defineProtocolObject(resourceFields, closed);
+export const HetznerDeleteOperationV1Schema = defineProtocolObject({ ...resourceFields, deleteActionId: portableId.optional() }, closed);
 // Native label values have a 63-character boundary (REST v1 label contract).
 export const HetznerCorrelationSchema = defineProtocolString({ minLength: 1, maxLength: 63, pattern: '^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$' });
-export const HetznerNativeOperationV1Schema = defineProtocolObject({ correlation: HetznerCorrelationSchema }, closed);
+export const HetznerNativeOperationV1Schema = defineProtocolUnion([
+  defineProtocolObject({ correlation: HetznerCorrelationSchema }, closed), HetznerDeleteOperationV1Schema,
+]);
 export const HetznerAcquireV1Schema = mini.strictObject({
   launch: mini.pipe(mini.unknown(), mini.transform(value => HetznerLaunchV1Schema.parse(value))),
   // The native create endpoint owns RFC1123 hostname validation, including dots.
@@ -28,7 +33,7 @@ export type HetznerLaunchV1 = ProtocolSchemaOutput<typeof HetznerLaunchV1Schema>
 export type HetznerResourceV1 = ProtocolSchemaOutput<typeof HetznerResourceV1Schema>;
 export type HetznerAcquireV1 = mini.infer<typeof HetznerAcquireV1Schema>;
 export class HetznerNativeError extends Error {
-  constructor(readonly code: string) { super(code); this.name = 'HetznerNativeError'; }
+  constructor(readonly code: string, readonly nativeCause?: MachineProvisionerNativeCauseV1) { super(code); this.name = 'HetznerNativeError'; }
 }
 /** Schema issues and vendor error bodies can contain credentials. */
 export function parseHetznerValue<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown, code = 'native_input_invalid'): T {

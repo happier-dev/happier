@@ -1,5 +1,7 @@
 import type * as React from 'react';
 import type { ProviderPriceFactV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { formatPriceUnit as formatSharedPriceUnit, presentManagedCost as presentSharedManagedCost,
+  type ManagedCost, type ManagedPriceLabels } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 export { formatProviderAmount } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import { t } from '@/text';
@@ -25,10 +27,15 @@ export type ManagedProvisionerCard = Readonly<{
   /** The provisioner's mark at the size its slot draws it (a tile's, a row's). */
   mark: (size: number) => React.ReactNode;
   location: 'local' | 'cloud';
+  /** Who creates it, from the provisioner's declared acquire role: the Account, or one of your computers. */
+  acquire: 'account' | 'daemon';
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
-  /** `choose` opens the configurator; `repair` runs the provisioner's own prerequisite or account step. */
+  /**
+   * `choose` opens the configurator; `repair` runs the provisioner's own prerequisite or account step;
+   * `handoff` sends the person to the app that can reach the provider (web, Needs the app).
+   */
   action: Readonly<{
-    kind: 'choose' | 'repair';
+    kind: 'choose' | 'repair' | 'handoff';
     label: string;
     onPress: () => void;
     /** No step can start (its check could not be read, or the tool is missing): the card draws no button and ignores presses. */
@@ -50,6 +57,8 @@ export type ManagedSizeOption = Readonly<{
   /** The receipt's spec line for this size ("4 vCPU · 8 GB · 80 GB"). */
     spec: string;
     unavailableReason?: string;
+    /** Advice remains visible without changing whether the size can be selected. */
+    warning?: string;
     /** A dependent choice can be staged while its current combination is unavailable. */
     selectable?: boolean;
 }>;
@@ -74,6 +83,14 @@ export type ManagedLocationOption = Readonly<{
     selectable?: boolean;
 }>;
 
+/** One of the provider's public-networking variants, offered beside size, system and place. */
+export type ManagedNetworkOption = Readonly<{
+  id: string;
+  name: string;
+  unavailableReason?: string;
+  selectable?: boolean;
+}>;
+
 export type ManagedReceiptFact = Readonly<{
   id: string;
   label: string;
@@ -89,7 +106,7 @@ export type ManagedReceiptCost =
       /** Who pays, when the receipt is about a shared account ("Billed to Acme’s DigitalOcean team"). */
       billedTo?: string;
     }>
-  | Readonly<{ kind: 'unpriced'; provider: string }>
+  | Readonly<{ kind: 'unpriced'; provider: string | null }>
   | Readonly<{
       kind: 'local';
       /** `null` while the computer's name is still being read. */
@@ -103,14 +120,19 @@ export type ManagedReceiptCost =
       note?: string;
     }>;
 
+function priceLabels(): ManagedPriceLabels {
+  return { perHour: t('managedMachines.price.perHour'), perMonth: t('managedMachines.price.perMonth'),
+    perUnit: unit => t('managedMachines.price.perUnit', { unit }), noBill: t('managedMachines.price.noBill'),
+    unavailable: provider => t('managedMachines.price.unavailable', { provider }) };
+}
+
 /** "an hour" / "a month" for the units providers report; another unit is said as the provider named it. */
 export function formatPriceUnit(unit: string): string {
-  const normalized = unit.trim().toLowerCase();
-  if (normalized === 'hour' || normalized === 'h' || normalized === 'hourly')
-    return t('managedMachines.price.perHour');
-  if (normalized === 'month' || normalized === 'mo' || normalized === 'monthly')
-    return t('managedMachines.price.perMonth');
-  return t('managedMachines.price.perUnit', { unit });
+  return formatSharedPriceUnit(unit, priceLabels());
+}
+
+export function presentManagedCost(cost: ManagedCost): Readonly<{ value: string; unit: string }> {
+  return presentSharedManagedCost(cost, priceLabels());
 }
 
 export function formatPriceSource(
@@ -154,10 +176,3 @@ export function countryFlag(countryCode: string | undefined): string {
     ...[...code].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65),
   );
 }
-
-export type ManagedNetworkOption = Readonly<{
-  id: string;
-  name: string;
-  unavailableReason?: string;
-  selectable?: boolean;
-}>;

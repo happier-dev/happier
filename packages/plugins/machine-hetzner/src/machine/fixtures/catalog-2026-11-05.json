@@ -1,0 +1,363 @@
+{
+  "server_types": [
+    {
+      "name": "cpx11",
+      "cores": 2,
+      "memory": 2,
+      "disk": 40,
+      "architecture": "x86",
+      "id": 11,
+      "locations": [
+        {
+          "name": "fsn1",
+          "available": false,
+          "deprecation": {
+            "announced": "2025-10-16T06:00:00Z",
+            "unavailable_after": "2025-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "nbg1",
+          "available": false,
+          "deprecation": {
+            "announced": "2025-10-16T06:00:00Z",
+            "unavailable_after": "2025-12-31T23:59:59Z"
+          }
+        },
+        {
+          "name": "hel1",
+          "available": false,
+          "deprecation": {
+            "announced": "2025-10-16T06:00:00Z",
+            "unavailable_after": "2025-12-31T23:59:59Z"
+          }
+        }
+      ],
+      "prices": [
+        {
+          "location": "fsn1",
+          "price_hourly": {
+            "gross": "0.0103776000000000",
+            "net": "0.0096000000"
+          },
+          "price_monthly": {
+            "gross": "6.4751900000000000",
+            "net": "5.9900000000"
+          }
+        },
+        {
+          "location": "hel1",
+          "price_hourly": {
+            "gross": "0.0103776000000000",
+            "net": "0.0096000000"
+          },
+          "price_monthly": {
+            "gross": "6.4751900000000000",
+            "net": "5.9900000000"
+          }
+        },
+        {
+          "location": "nbg1",
+          "price_hourly": {
+            "gross": "0.0103776000000000",
+            "net": "0.0096000000"
+          },
+          "price_monthly": {
+            "gross": "6.4751900000000000",
+            "net": "5.9900000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cax11",
+      "cores": 2,
+      "memory": 4,
+      "disk": 40,
+      "architecture": "arm",
+      "id": 12,
+      "locations": [
+        {
+          "name": "fsn1",
+          "available": true,
+          "deprecation": null
+        },
+        {
+          "name": "nbg1",
+          "available": true,
+          "deprecation": null
+        },
+        {
+          "name": "hel1",
+          "available": true,
+          "deprecation": null
+        }
+      ],
+      "prices": [
+        {
+          "location": "fsn1",
+          "price_hourly": {
+            "gross": "0.0121072000000000",
+            "net": "0.0112000000"
+          },
+          "price_monthly": {
+            "gross": "7.5561900000000000",
+            "net": "6.9900000000"
+          }
+        },
+        {
+          "location": "hel1",
+          "price_hourly": {
+            "gross": "0.0121072000000000",
+            "net": "0.0112000000"
+          },
+          "price_monthly": {
+            "gross": "7.5561900000000000",
+            "net": "6.9900000000"
+          }
+        },
+        {
+          "location": "nbg1",
+          "price_hourly": {
+            "gross": "0.0121072000000000",
+            "net": "0.0112000000"
+          },
+          "price_monthly": {
+            "gross": "7.5561900000000000",
+            "net": "6.9900000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cx23",
+      "cores": 2,
+      "memory": 4,
+      "disk": 40,
+      "architecture": "x86",
+      "id": 13,
+      "locations": [
+        {
+          "name": "fsn1",
+          "available": false,
+          "deprecation": null
+        },
+        {
+          "name": "nbg1",
+          "available": false,
+          "deprecation": null
+        },
+        {
+          "name": "hel1",
+          "available": true,
+          "deprecation": null
+        }
+      ],
+      "prices": [
+        {
+          "location": "fsn1",
+          "price_hourly": {
+            "gross": "0.0112424000000000",
+            "net": "0.0104000000"
+          },
+          "price_monthly": {
+            "gross": "7.0156900000000000",
+            "net": "6.4900000000"
+          }
+        },
+        {
+          "location": "hel1",
+          "price_hourly": {
+            "gross": "0.0112424000000000",
+            "net": "0.0104000000"
+          },
+          "price_monthly": {
+            "gross": "7.0156900000000000",
+            "net": "6.4900000000"
+          }
+        },
+        {
+          "location": "nbg1",
+          "price_hourly": {
+            "gross": "0.0112424000000000",
+            "net": "0.0104000000"
+          },
+          "price_monthly": {
+            "gross": "7.0156900000000000",
+            "net": "6.4900000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cpx02",
+      "cores": 1,
+      "memory": 1,
+      "disk": 20,
+      "architecture": "x86",
+      "id": 14,
+      "locations": [
+        {
+          "name": "fsn1",
+          "available": true,
+          "deprecation": null
+        },
+        {
+          "name": "nbg1",
+          "available": true,
+          "deprecation": null
+        },
+        {
+          "name": "hel1",
+          "available": true,
+          "deprecation": null
+        }
+      ],
+      "prices": [
+        {
+          "location": "fsn1",
+          "price_hourly": {
+            "gross": "0.0129720000000000",
+            "net": "0.0120000000"
+          },
+          "price_monthly": {
+            "gross": "8.0966900000000000",
+            "net": "7.4900000000"
+          }
+        },
+        {
+          "location": "hel1",
+          "price_hourly": {
+            "gross": "0.0129720000000000",
+            "net": "0.0120000000"
+          },
+          "price_monthly": {
+            "gross": "8.0966900000000000",
+            "net": "7.4900000000"
+          }
+        },
+        {
+          "location": "nbg1",
+          "price_hourly": {
+            "gross": "0.0129720000000000",
+            "net": "0.0120000000"
+          },
+          "price_monthly": {
+            "gross": "8.0966900000000000",
+            "net": "7.4900000000"
+          }
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "name": "ubuntu-22.04",
+      "architecture": "x86",
+      "os_flavor": "ubuntu",
+      "description": "Ubuntu 22.04",
+      "type": "system",
+      "status": "available",
+      "deprecation": null,
+      "id": 101
+    },
+    {
+      "name": "ubuntu-22.04",
+      "architecture": "arm",
+      "os_flavor": "ubuntu",
+      "description": "Ubuntu 22.04",
+      "type": "system",
+      "status": "available",
+      "deprecation": null,
+      "id": 102
+    },
+    {
+      "name": "ubuntu-24.04",
+      "architecture": "x86",
+      "os_flavor": "ubuntu",
+      "description": "Ubuntu 24.04",
+      "type": "system",
+      "status": "available",
+      "deprecation": null,
+      "id": 103
+    },
+    {
+      "name": "ubuntu-24.04",
+      "architecture": "arm",
+      "os_flavor": "ubuntu",
+      "description": "Ubuntu 24.04",
+      "type": "system",
+      "status": "available",
+      "deprecation": null,
+      "id": 104
+    }
+  ],
+  "locations": [
+    {
+      "id": 1,
+      "name": "fsn1",
+      "description": "Falkenstein DC Park 1",
+      "country": "DE"
+    },
+    {
+      "id": 2,
+      "name": "nbg1",
+      "description": "Nuremberg DC Park 1",
+      "country": "DE"
+    },
+    {
+      "id": 3,
+      "name": "hel1",
+      "description": "Helsinki DC Park 1",
+      "country": "FI"
+    }
+  ],
+  "pricing": {
+    "currency": "USD",
+    "primary_ips": [
+      {
+        "type": "ipv4",
+        "prices": [
+          {
+            "location": "fsn1",
+            "price_hourly": {
+              "net": "0.0010000000",
+              "gross": "0.0010810000000000"
+            },
+            "price_monthly": {
+              "net": "0.6000000000",
+              "gross": "0.6486000000000000"
+            }
+          },
+          {
+            "location": "nbg1",
+            "price_hourly": {
+              "net": "0.0010000000",
+              "gross": "0.0010810000000000"
+            },
+            "price_monthly": {
+              "net": "0.6000000000",
+              "gross": "0.6486000000000000"
+            }
+          },
+          {
+            "location": "hel1",
+            "price_hourly": {
+              "net": "0.0010000000",
+              "gross": "0.0010810000000000"
+            },
+            "price_monthly": {
+              "net": "0.6000000000",
+              "gross": "0.6486000000000000"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "pagination": {
+      "next_page": null
+    }
+  }
+}
