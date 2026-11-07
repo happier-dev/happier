@@ -105,7 +105,7 @@ it('summarizes a Health Event list trigger without a display label using its dec
     }
 });
 
-it('configures a prebound guided deployment Event without exposing its known fields or watcher', async () => {
+it.each([false, true])('configures a prebound guided deployment only when its controller declares the Event (declared=%s)', async (declared) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { PluginEventAutomationEditor, InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
     const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
@@ -132,6 +132,21 @@ it('configures a prebound guided deployment Event without exposing its known fie
     if (!lifetime) throw new Error('Expected guided deployment Account');
     const { event, fresh, projection, inputs, machineId, pluginId } = healthSetupFixture(connection.serverId, serverIdentityId, false,
         { eventId: 'deployment-failed', actionId: 'deployment-failed/setup' });
+    const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error('Expected the admitted Machine services declaration');
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+        availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+            availabilityCursor: 1, hostingCapability: { enabled: false },
+            intent: { pluginId, enabled: true, desiredVersion: null, offlineUiHosting: 'disabled', writableCollections: [], revision: 'guided-declaration' },
+            release: null, uiArtifacts: [], packageAssets: [],
+            currentDeclaration: null,
+            machineDeclarations: [{ machineId, machineInstallationId: 'guided-installation', declaration: {
+                declarationDigestSha256: `sha256:${'d'.repeat(64)}`,
+                manifest: { ...admitted.manifest, contributes: { ...admitted.manifest.contributes,
+                    events: declared ? admitted.manifest.contributes.events : [] } } } }],
+        } }],
+    } });
     const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
     const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
@@ -183,6 +198,14 @@ it('configures a prebound guided deployment Event without exposing its known fie
         expect(screen.findAllHostsByTestId('automation-event-watcher-picker')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('automation-event-picker')).toHaveLength(0);
         expect(screen.findAllByType(TextInput)).toHaveLength(0);
+        if (!declared) {
+            await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.eventCatalogStatus).toBe('ready'));
+            const model = screen.findByType(InlinePluginEventEditor).props.model;
+            expect.soft(model.watcherCandidates).toEqual([]);
+            expect.soft(model.selectedWatcherOrigin).toBeNull();
+            expect(submitted).toEqual([]);
+            return;
+        }
         setupResponse.resolve();
         await waitForHomeGovernance(() => {
             const model = screen!.findAllByType(InlinePluginEventEditor)[0]?.props.model;
@@ -276,6 +299,8 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
 
 describe('carries the Environment health starter and Machine-service health starter subjects into Add check', () => {
 it.each([
+    { label: 'Environment Settings Add check', starter: 'environmentSettingsAddCheck', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
+        subject: { kind: 'environment', environmentId: 'environment-production' } },
     { label: 'Environment', starter: 'healthFailed', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
         subject: { kind: 'environment', environmentId: 'environment-production' } },
     { label: 'Machine-service', starter: 'healthFailed', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
@@ -321,6 +346,7 @@ it.each([
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     let mounted: PluginUiTestkit | undefined;
     let setup: ReturnType<typeof configurePluginEventAutomationSetup> | undefined;
+    let retireController: (() => void) | undefined;
     const operation = new AbortController();
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
@@ -332,13 +358,38 @@ it.each([
         const subjectPageProps = { subject: triggerSubject, subjectName: 'Production',
             ...(triggerSubject.kind === 'environment' ? { controllerMachineId: machineId,
                 deploymentEnvironment: { serverId: connection.serverId, projectSourceId: 'source-production', environmentId: triggerSubject.environmentId } } : {}) };
-        screen = await renderScreen(<SubjectTriggersSection {...subjectPageProps} />);
-        await waitForHomeGovernance(() => expect(screen!.findByTestId(`subject-triggers-starter:${starter}`)).not.toBeNull());
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === `subject-triggers-starter:${starter}`));
+        if (starter === 'environmentSettingsAddCheck') {
+            const { DeploymentEnvironmentSettingsPanel } = await import('@/components/projects/deployments/DeploymentEnvironmentSettingsPanel');
+            const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
+            const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
+            const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+            const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
+            const { createDeploymentActions } = await import('@/components/projects/deployments/deploymentActions');
+            const { ItemList } = await import('@/components/ui/lists/ItemList');
+            const controller = createDeploymentReadControllerV1({ scope: { ...accountLifetime.scope, projectSourceId: 'source-production' },
+                transport: createDeploymentReadTransport(accountLifetime) });
+            retireController = () => controller.retire();
+            const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+                serverId: connection.serverId, id: triggerSubject.environmentId, controllerMachineId: machineId,
+                projectSourceId: 'source-production',
+            }) });
+            screen = await renderScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+                lifetime={accountLifetime} demand={{ mounted: false, visible: false, focused: false }}
+                machineName={id => id} environmentTitle={() => null}
+                editing={{ actions: createDeploymentActions(accountLifetime, 'source-production'), serverId: connection.serverId,
+                    review: { pendingId: null, request: () => {}, open: () => {} }, onChanged: () => {} }} /></ItemList>);
+            await pressTestInstanceAsync(screen.findAllByType(SectionActionButton)
+                .find(row => row.props.testID === 'project-deployments.environment.settings.checks-alerts.add'));
+        } else {
+            screen = await renderScreen(<SubjectTriggersSection {...subjectPageProps} />);
+            await waitForHomeGovernance(() => expect(screen!.findByTestId(`subject-triggers-starter:${starter}`)).not.toBeNull());
+            await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === `subject-triggers-starter:${starter}`));
+        }
         if (starter === 'healthFailed') {
             await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
         }
         const editor = screen.findByType(PluginEventAutomationEditor);
+        expect(editor).not.toBeNull();
         const initialSetupSeed: React.ComponentProps<typeof PluginEventAutomationEditor>['initialSetupSeed'] = editor.props.initialSetupSeed;
         // The native surface adapter is the UI platform boundary; source selection, schema,
         // ephemeral settlement and the contributed Action dispatch all remain canonical.
@@ -399,6 +450,7 @@ it.each([
         await setup;
         await mounted?.dispose();
         await screen?.unmount();
+        retireController?.();
         clearDaemonMergedProjectionCacheForTests();
         connection.dispose();
         disposeLoader();
