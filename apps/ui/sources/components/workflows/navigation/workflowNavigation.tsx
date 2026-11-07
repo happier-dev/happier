@@ -23,6 +23,8 @@ export function useWorkflowNavigation(input: Readonly<{
     pageKind: WorkflowPageKind; identity: string; scope: ServerAccountScope | null;
     activeId: string; phone: boolean; presented: boolean;
     settingsAvailable?: boolean;
+    stepAvailable?: boolean;
+    agentAvailable?: boolean;
     selectPage: (id: string) => void;
     companion?: Readonly<{ activeId: string | null; activeIds?: readonly string[]; select: (id: string) => void; close: () => void }>;
 }>) {
@@ -30,8 +32,8 @@ export function useWorkflowNavigation(input: Readonly<{
     const sideIds = React.useMemo(() => input.companion?.activeIds ?? (sideId ? [sideId] : []), [input.companion?.activeIds, sideId]);
     const locale = usePreferredLanguage();
     const items = React.useMemo(() => resolveDetailNavigationItems({ scope: input.pageKind,
-        settingsAvailable: input.settingsAvailable }),
-    [input.pageKind, input.settingsAvailable, locale]);
+        settingsAvailable: input.settingsAvailable, stepAvailable: input.stepAvailable, agentAvailable: input.agentAvailable }),
+    [input.pageKind, input.settingsAvailable, input.stepAvailable, input.agentAvailable, locale]);
     const mainControls = React.useRef<PaneMainColumnState | null>(null);
     const onMainColumnControlsChange = React.useCallback((controls: PaneMainColumnState | null) => { mainControls.current = controls; }, []);
     const navigation = usePresentedDetailNavigation({ pageKind: input.pageKind, identity: input.identity,
@@ -46,8 +48,10 @@ export function useWorkflowNavigation(input: Readonly<{
         registerSide: Boolean(input.companion) });
     const model = React.useMemo<WorkflowNavigationModel>(() => ({ ...navigation.model,
         pageKind: input.pageKind, sideId, sideIds }), [navigation.model, input.pageKind, sideId, sideIds]);
-    return { model, pages: navigation.pages, companions: navigation.companions,
-        placements: navigation.placements, onMainColumnControlsChange };
+    // Equal navigation facts keep one identity, so a page edit (a Workflow name keystroke) leaves its tabs still.
+    return React.useMemo(() => ({ model, pages: navigation.pages, companions: navigation.companions,
+        placements: navigation.placements, onMainColumnControlsChange }),
+    [model, navigation.pages, navigation.companions, navigation.placements, onMainColumnControlsChange]);
 }
 
 export const selectWorkflowNavigationItem = selectPresentedDetailNavigationItem;

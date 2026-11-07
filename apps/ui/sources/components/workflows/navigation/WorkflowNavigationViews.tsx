@@ -30,7 +30,7 @@ export async function openWorkflowNavigationCustomizer(model: WorkflowNavigation
     Modal.show({ component: DetailNavigationCustomizer, props: workflowNavigationCustomizer(model, 'desktop') });
 }
 
-export function WorkflowPageNavigation(props: Readonly<{
+export const WorkflowPageNavigation = React.memo(function WorkflowPageNavigation(props: Readonly<{
     navigation: ReturnType<typeof useWorkflowNavigation>; phone: boolean; onSelect: (id: string) => void; testIDPrefix: string;
 }>) {
     const { theme } = useUnistyles();
@@ -49,7 +49,7 @@ export function WorkflowPageNavigation(props: Readonly<{
         tabs={pages.map(tab)} activeTabId={model.activeId} onSelectTab={props.onSelect}
         {...(props.phone ? {} : { overflow: { label: t('common.more'), items: placements.overflow.map(tab), orderedIds: placements.ordered.map(item => item.id),
             actions: [{ id: 'customize', label: t('navigationPlacement.customizeTabs'), onPress: () => { void openWorkflowNavigationCustomizer(model); } }] } })} />;
-}
+});
 
 export function WorkflowCompanionNavigation(props: Readonly<{ model: WorkflowNavigationModel; onSelect: (id: string) => void }>) {
     const { model } = props;
@@ -75,5 +75,5 @@ export function WorkflowCockpitTabBar(props: WorkflowCockpitTabBarProps) {
     const presentation = useWorkflowCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.model.sideId ?? props.model.activeId} barTestId={`${props.model.pageKind}-cockpit-tabbar`}
         tabs={presentation.shown.map(detailNavigationTab)} tabTestIdPrefix={`${props.model.pageKind}-cockpit-tab-`}
-        layout="fit" onSurfacePress={props.onSelect} trailing={presentation.menu} />;
+        layout={presentation.layout} onSurfacePress={props.onSelect} trailing={presentation.menu} />;
 }

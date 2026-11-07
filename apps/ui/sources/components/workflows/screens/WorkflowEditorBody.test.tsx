@@ -23,6 +23,7 @@ import { useWorkflowEditorHistory } from '../editor/useWorkflowEditorHistory';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
+import { PresentedDetailNavigationProvider } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -105,9 +106,9 @@ async function renderScreen(element: React.ReactElement, options?: Parameters<ty
     const observeModals = (entries: ModalEntries) => { modalEntries = entries; };
     const wrapper = ({ children }: React.PropsWithChildren) => <InjectedAuthProvider credentials={null}><ModalProvider>
         <ObserveModalEntries observe={observeModals} /><KeyboardShortcutProvider handlers={{}}>
-        <ObserveKeyboardCommands /><AppPaneProvider><InitialPaneState>
+        <ObserveKeyboardCommands /><AppPaneProvider><PresentedDetailNavigationProvider><InitialPaneState>
         {SuppliedWrapper ? <SuppliedWrapper>{children}</SuppliedWrapper> : children}
-    </InitialPaneState></AppPaneProvider></KeyboardShortcutProvider></ModalProvider></InjectedAuthProvider>;
+    </InitialPaneState></PresentedDetailNavigationProvider></AppPaneProvider></KeyboardShortcutProvider></ModalProvider></InjectedAuthProvider>;
     const screen = await renderTestScreen(element, { ...options, wrapper, createNodeMock: nativeElement => {
         const supplied = options?.createNodeMock?.(nativeElement);
         if (supplied !== null && supplied !== undefined) return supplied;
@@ -528,7 +529,9 @@ it('detail-navigation.T1/T2/T6 keeps the editor draft and undo across page and c
 
 async function selectColumnTab(column: 'main' | 'side', tab: string) {
     const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
-    await act(async () => { await invokeScopeAction('shell.column.set', { column, visible: true, tab }); });
+    await act(async () => {
+        expect(await invokeScopeAction('shell.column.set', { column, visible: true, tab })).toEqual({ ok: true });
+    });
 }
 
 /** Use the shared page Action; selecting a picture is still the real document control. */
@@ -1781,6 +1784,9 @@ describe('workflow editor body', () => {
 
     it('opens and closes Flow in the real right pane while Workflow settings use the details slot', async () => {
         const harness = await loadHarness();
+        // This case exercises three columns together. At narrower widths F3
+        // deliberately folds Flow when the Settings companion opens.
+        viewport.window = { width: 1920, height: 1080 };
         const screen = await renderBody(harness, {
             onRunNow: () => {},
             onSave: () => {},
@@ -1789,6 +1795,12 @@ describe('workflow editor body', () => {
             onChangeProjectTarget: () => {},
         });
         const host = screen.findByType(AppPaneScopeHost);
+        // Test Renderer has no DOM layout: feed the actual pane host its wide
+        // measured boundary, rather than the generic 600px popover-anchor mock.
+        await act(async () => {
+            host.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0]!
+                .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1920, height: 1080 } } });
+        });
         expect(host.props.scopeId).toBe('workflow-editor');
         expect(host.props.mainMinWidthPx).toBe(420);
         expect(host.props.rightPaneBuiltinAdapter.destinationIds).toEqual(['workflow-flow']);
