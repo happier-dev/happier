@@ -325,7 +325,12 @@ export function createForgeCiReadsV1({ adapter, scopeKey }: Readonly<{ adapter: 
                 // The provider classifier admitted these change facts once below.
                 await Promise.all([...entries.values()]
                     .filter(entry => forgeCiMutationAffectsReadV1(operation, affected!, entry.operation, entry.input))
-                    .map(entry => refresh(entry)));
+                    .map(async entry => {
+                        // A request already in flight can only describe the
+                        // pre-effect state. Read once after that request settles.
+                        await entry.request;
+                        await refresh(entry);
+                    }));
             }, result, () => affected !== null);
         },
         acquirePaged(operation, input, demand = {}) {

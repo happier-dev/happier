@@ -13,6 +13,18 @@ function adapter(invoke: ForgeCiAdapterOptionsV1['invoke'], bindings = actionRef
 }
 
 describe('public CI adapter', () => {
+    it.each(['plugin_action_current_intent_rejected', 'plugin_action_not_allowed'])(
+        'keeps the settled host denial %s rejected rather than uncertain', async code => {
+            const invoke = vi.fn<ForgeCiAdapterOptionsV1['invoke']>().mockRejectedValue(new PluginError({
+                code: 'denied', retryable: false,
+                diagnostics: [{ code, severity: 'error' }],
+            }));
+            expect(await adapter(invoke).dispatchWorkflow({ repository: vectors.github.repository, workflowId: '9', ref: 'main' })).toEqual({
+                kind: 'rejected', failure: { class: 'permission', code },
+            });
+        },
+    );
+
     it.each([
         { hostCode: 'unavailable', nativeCode: 'plugin_mounted_caller_unavailable', retryable: false, failureClass: 'unsupportedContract' },
         { hostCode: 'stale_surface', nativeCode: 'plugin_occurrence_stale', retryable: false, failureClass: 'unsupportedContract' },
@@ -91,9 +103,13 @@ describe('public CI adapter', () => {
         expect(invoke).toHaveBeenCalledTimes(2);
     });
 
-    it('retains exact workflow/ref and receiver uncertainty after a possible effect without guessing a run', async () => {
+    it.each([
+        new Error('response lost after effect'),
+        new PluginError({ code: 'timeout', retryable: false }),
+        new PluginError({ code: 'unavailable', details: { layer: 'transport', phase: 'settlement' } }),
+    ])('retains exact workflow/ref and receiver uncertainty after a possible effect without guessing a run (%s)', async error => {
         // Host transport may lose the response after the provider has acted.
-        const invoke = vi.fn<ForgeCiAdapterOptionsV1['invoke']>().mockRejectedValue(new Error('response lost after effect'));
+        const invoke = vi.fn<ForgeCiAdapterOptionsV1['invoke']>().mockRejectedValue(error);
         const ci = adapter(invoke);
         const result = await ci.dispatchWorkflow({ repository: vectors.github.repository, workflowId: 'workflow-9', ref: 'refs/heads/topic', inputs: { enabled: false } });
         expect(result).toMatchObject({ kind: 'outcome_unknown', affected: { repository: vectors.github.repository, workflowId: 'workflow-9', ref: 'refs/heads/topic' } });

@@ -94,7 +94,14 @@ function failedInvocation(
     invalidResult: boolean,
     error?: unknown,
 ) {
-    if (family === 'mutation') return unknownMutation(input);
+    if (family === 'mutation') {
+        // A canonical host denial settled before execution; transport loss or
+        // an invalid possible-effect response still cannot prove a non-effect.
+        if (!invalidResult && isPluginError(error) && error.code === 'denied') {
+            return { kind: 'rejected', failure: forgeCiInvocationFailureV1(error, 'ci_invocation_failed') };
+        }
+        return unknownMutation(input);
+    }
     if (family === 'download') return { success: false, status: 'unknown', error: 'Download result is unknown', errorCode: 'ci_download_outcome_unknown' };
     return {
         kind: 'unavailable',

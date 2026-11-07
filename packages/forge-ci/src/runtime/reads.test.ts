@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import {
     ForgeCiActionInputSchemasV1,
     type ForgeCiActionResultByOperationV1,
@@ -44,6 +45,53 @@ function boundary<K extends ForgeCiOperationIdV1>(operation: K, respond: (input:
 afterEach(() => vi.useRealTimers());
 
 describe('exact CI read demand', () => {
+    it('reads once after dispatch settles an older empty GET and publishes the new run without manual refresh', async () => {
+        let settleEarlier!: (value: unknown) => void;
+        const earlier = new Promise<unknown>(resolve => { settleEarlier = resolve; });
+        let readsStarted = 0;
+        let writes = 0;
+        const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef>>;
+        const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async action => {
+            if (action.localId === 'dispatchWorkflow') {
+                writes++;
+                return { kind: 'confirmed', affected: { repository, workflowId: '9', ref: 'main', run: runRef }, receipt: { id: '42' } };
+            }
+            readsStarted++;
+            return readsStarted === 1 ? earlier : { kind: 'value', value: page([run('queued')]) };
+        } });
+        const reads = createForgeCiReadsV1({ adapter, scopeKey: 'dispatch-during-read' });
+        const runs = reads.acquirePaged('listRuns', { repository, filters: {} });
+        try {
+            expect(readsStarted).toBe(1);
+            const result = await adapter.dispatchWorkflow({ repository, workflowId: '9', ref: 'main' });
+            const completed = reads.completeMutation('dispatchWorkflow', result);
+            settleEarlier({ kind: 'value', value: page([]) });
+            await completed;
+            expect(runs.getValue()?.rows).toEqual([run('queued')]);
+            expect(readsStarted).toBe(2);
+            expect(writes).toBe(1);
+        } finally { runs.release(); reads.retire(); }
+    });
+
+    it('settles a declined dispatch with its cause and zero mutation rereads', async () => {
+        let readsStarted = 0;
+        const actionRefs = Object.fromEntries(Object.keys(ForgeCiActionInputSchemasV1).map(key => [key, { pluginId: 'fixture.forge', localId: key }])) as Readonly<Record<ForgeCiOperationIdV1, PluginContributionRef>>;
+        const adapter = createForgeCiAdapterV1({ actionRefs, activeRunPollIntervalMs: 3000, invoke: async action => {
+            if (action.localId === 'dispatchWorkflow') throw new PluginError({ code: 'denied', diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }] });
+            readsStarted++;
+            return { kind: 'value', value: page([]) };
+        } });
+        const reads = createForgeCiReadsV1({ adapter, scopeKey: 'declined-dispatch' });
+        const runs = reads.acquire('listRuns', { repository, filters: {} });
+        try {
+            await runs.refresh();
+            const result = await adapter.dispatchWorkflow({ repository, workflowId: '9', ref: 'main' });
+            await reads.completeMutation('dispatchWorkflow', result);
+            expect(result).toEqual({ kind: 'rejected', failure: { class: 'permission', code: 'plugin_action_current_intent_rejected' } });
+            expect(readsStarted).toBe(1);
+        } finally { runs.release(); reads.retire(); }
+    });
+
     it('walks a valid jobs continuation only on explicit demand and preserves exact selection and retained row identity', async () => {
         const selectedAttempt = { kind: 'attempt', attempt: { run: runRef, attemptId: '2' } } as const;
         const firstJob = { ...job('first'), ref: { selection: selectedAttempt, jobId: 'first' } };
