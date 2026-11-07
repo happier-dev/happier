@@ -1,5 +1,9 @@
 /** Shared fallback messages; native plugins merge this into their declared locale bundle. */
 export const FORGE_CI_ENGLISH_V1 = Object.freeze({
+  'forgeCi.state.declined.title': 'Not done',
+  'forgeCi.state.declined.body': 'You declined the confirmation. Nothing on {forge} was changed.',
+  'forgeCi.state.executionUnavailable.title': '{forge} Actions unavailable',
+  'forgeCi.state.executionUnavailable.body': 'This project’s Machine can’t run {forge} Actions right now. Nothing on {forge} was changed.',
   'forgeCi.state.rateLimited.title': '{forge} request limit',
   'forgeCi.state.rateLimited.reset': '{forge} is limiting requests from {who}. Requests can resume after {time}.',
   'forgeCi.state.rateLimited.waitingTitle': 'Waiting on {forge}',

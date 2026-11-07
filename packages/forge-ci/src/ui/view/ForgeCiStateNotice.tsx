@@ -85,6 +85,18 @@ function failureCopy(
   failure: TriageSourceFailureV1,
   about: ForgeCiStateSubjectV1,
 ) {
+  // The host's canonical current-intent refusal is a person's decision,
+  // independent of the credential's permission to read or write.
+  if (failure.code === 'plugin_action_current_intent_rejected') return {
+    kind: 'denied' as const,
+    title: t('forgeCi.state.declined.title', 'Not done'),
+    body: t('forgeCi.state.declined.body', 'You declined the confirmation. Nothing on {forge} was changed.', { forge: about.forgeName }),
+  };
+  if (failure.code === 'ci_execution_unavailable') return {
+    kind: 'unavailable' as const,
+    title: t('forgeCi.state.executionUnavailable.title', '{forge} Actions unavailable', { forge: about.forgeName }),
+    body: t('forgeCi.state.executionUnavailable.body', 'This project’s Machine can’t run {forge} Actions right now. Nothing on {forge} was changed.', { forge: about.forgeName }),
+  };
   switch (failure.class) {
     case 'rateLimit':
       return { kind: 'warning' as const, ...rateLimitCopy(t, failure, about) };

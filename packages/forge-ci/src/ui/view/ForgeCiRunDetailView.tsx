@@ -66,6 +66,7 @@ import type { ForgeCiMountedViewV1 } from '../mountedCiIntent.js';
 import { useForgeCiMountedViewV1 } from '../useForgeCiMountedView.js';
 
 type Translate = ReturnType<typeof usePluginTranslation>;
+type RunMutation = ReturnType<typeof useForgeCiMutationV1>;
 
 export type ForgeCiRunDetailPresentationV1 =
   /** Full page: shared Summary/Jobs navigation, with job drill-down in Jobs. */
@@ -450,7 +451,7 @@ function RunControls({
   compact,
   onCheckStatus,
   cancelRequested,
-  onCancelAccepted,
+  mutation,
 }: Readonly<{
   ci: ForgeCiBindingV1;
   run: ForgeCiRunV1;
@@ -459,14 +460,11 @@ function RunControls({
   compact: boolean;
   onCheckStatus: () => void;
   cancelRequested: boolean;
-  onCancelAccepted: () => void;
+  mutation: RunMutation;
 }>): ReactElement {
   const t = usePluginTranslation();
   const host = usePluginHostApi();
   const [menuOpen, setMenuOpen] = useState(false);
-  const mutation = useForgeCiMutationV1(ci, (result, operation) => {
-    if (operation === 'cancelRun' && (result.kind === 'accepted' || result.kind === 'confirmed')) onCancelAccepted();
-  });
   const status = presentForgeCiStatusV1(run.state);
   const target = {
     repository: run.ref.repository,
@@ -603,12 +601,12 @@ function RunControls({
  * A run still going after the forge accepted Cancel (lab a4): says how long, why it may be (a long step finishing),
  * and offers the separate Force-cancel, whose one host confirmation explains the skipped cleanup. Never automatic.
  */
-function ForceCancelNotice({ ci, run, selection, acceptedAtMs }: Readonly<{
+function ForceCancelNotice({ ci, run, selection, acceptedAtMs, mutation }: Readonly<{
   ci: ForgeCiBindingV1; run: ForgeCiRunV1; selection: ForgeCiSelectionV1; acceptedAtMs: number;
+  mutation: RunMutation;
 }>): ReactElement | null {
   const t = usePluginTranslation();
   const { locale } = useSurfaceContext();
-  const mutation = useForgeCiMutationV1(ci);
   // This notice is its own small leaf; its clock re-renders only it.
   const nowMs = useForgeCiNowMsV1(true);
   if (ci.adapter === null) return null;
@@ -655,13 +653,14 @@ function ForkApproval({
   ci,
   run,
   selection,
+  mutation,
 }: Readonly<{
   ci: ForgeCiBindingV1;
   run: ForgeCiRunV1;
   selection: ForgeCiSelectionV1;
+  mutation: RunMutation;
 }>): ReactElement | null {
   const t = usePluginTranslation();
-  const mutation = useForgeCiMutationV1(ci);
   if (!run.forkApproval?.required || ci.adapter === null) return null;
   const who = run.forkApproval.contributor;
   const commit = shortForgeCiShaV1(run.headSha);
@@ -800,6 +799,10 @@ function RunDetailBody(
   const [tab, setTab] = useState<'summary' | 'jobs'>('summary');
   // When the forge accepted a normal Cancel: the run may keep going while a long step finishes (lab a4 cancelling).
   const [cancelAcceptedAt, setCancelAcceptedAt] = useState<number | null>(null);
+  // Every run control reports through the existing notice in RunControls.
+  const mutation = useForgeCiMutationV1(ci, (result, operation) => {
+    if (operation === 'cancelRun' && (result.kind === 'accepted' || result.kind === 'confirmed')) setCancelAcceptedAt(Date.now());
+  });
   const refresh = useCallback(() => {
     void runStatus.refresh();
     void jobsStatus.refresh();
@@ -879,7 +882,7 @@ function RunDetailBody(
             compact={compact}
             onCheckStatus={refresh}
             cancelRequested={cancelAcceptedAt !== null}
-            onCancelAccepted={() => setCancelAcceptedAt(Date.now())}
+            mutation={mutation}
           />
           {attempt && (run.attemptCount ?? 1) > 1 && props.onSelectAttempt ? (
             <AttemptPicker attempt={attempt} count={run.attemptCount ?? 1} onSelect={props.onSelectAttempt} />
@@ -912,7 +915,7 @@ function RunDetailBody(
               compact={compact}
               onCheckStatus={refresh}
               cancelRequested={cancelAcceptedAt !== null}
-              onCancelAccepted={() => setCancelAcceptedAt(Date.now())}
+              mutation={mutation}
             />
             {props.chrome}
           </Row>
@@ -932,12 +935,13 @@ function RunDetailBody(
         />
       ) : null}
       {live && cancelAcceptedAt !== null ? (
-        <ForceCancelNotice ci={ci} run={run} selection={selection} acceptedAtMs={cancelAcceptedAt} />
+        <ForceCancelNotice ci={ci} run={run} selection={selection} acceptedAtMs={cancelAcceptedAt} mutation={mutation} />
       ) : null}
       <RunFacts facts={facts} />
       {presentation === 'page' ? <Divider /> : null}
       <ForkApproval
         ci={ci}
+        mutation={mutation}
         run={run}
         selection={selection}
       />
