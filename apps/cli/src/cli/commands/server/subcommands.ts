@@ -345,8 +345,12 @@ async function cmdAdd(args: string[]): Promise<void> {
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : defaultWebappUrlFromServerUrl(serverUrl);
 
+  // --yes skips the URL reachability check (user says "save it unverified").
+  // In interactive mode without --yes, probe first and either save or prompt to confirm.
   if (!assumeYes) {
     await assertRelayUrlAnswersBeforePersisting({ probeUrl: localServerUrl || serverUrl, interactive });
+  } else if (interactive) {
+    console.log(chalk.gray(`Saving ${serverUrl} without verifying it answers (--yes)`));
   }
 
   const created = await addServerProfile({ name, serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
