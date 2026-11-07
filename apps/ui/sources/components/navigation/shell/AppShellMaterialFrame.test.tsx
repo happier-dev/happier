@@ -14,6 +14,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 import { AppShellMaterialFrame, resolveColumnDrawnWidthPx } from './AppShellMaterialFrame';
+import { useAppShellContentPane } from './appShellContentPane';
 import { lightTheme } from '@/theme';
 import { applyGlassDocumentPresentation } from '@/components/ui/glass/glassDocumentPresentation';
 import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
@@ -68,6 +69,22 @@ describe('real shell material planes', () => {
             expect(screen.root.findByType('ChromeLifetimeBoundary').props).toMatchObject({ identity, active: true });
             expect(screen.root.findByType('ChromeLifetimeBoundary').props.identity).toBe(identity);
             expect(screen.findHostByTestId('responsive-route')).toBe(route);
+        } finally {
+            await screen.unmount();
+        }
+    });
+    it('lets a route presented over the whole window find the page sheet it must stay inside', async () => {
+        const seen: { pane: ReturnType<typeof useAppShellContentPane> } = { pane: null };
+        function Probe() {
+            seen.pane = useAppShellContentPane();
+            return null;
+        }
+        const screen = await renderScreen(<AppShellMaterialFrame showChrome dragEnabled={false} leftOffsetPx={0}
+            sidebarWidth={320} titleStrip={null} rail={null} column={null} peek={null}><Probe /></AppShellMaterialFrame>,
+            { createNodeMock: (element: { props: { testID?: string } }) => ({ testID: element.props.testID }) });
+        try {
+            expect(seen.pane?.ref.current).toMatchObject({ testID: 'app-shell-content-sheet' });
+            expect(seen.pane?.radius).toBeGreaterThan(0);
         } finally {
             await screen.unmount();
         }
@@ -148,6 +165,33 @@ describe('real shell material planes', () => {
         }
     });
 
+    it('stacks the column over the page edge its resize target reaches into, under the page\'s seam cast', async () => {
+        // The column's resize handle reaches past the page edge. The page comes later, so the column is lifted
+        // to keep the handle's outer part reachable. The page's slot must not trap the seam cast under it.
+        const screen = await renderScreen(<AppShellMaterialFrame showChrome dragEnabled={false}
+            leftOffsetPx={384} sidebarWidth={320} titleStrip={<View testID="title" />} rail={<View testID="rail" />}
+            column={<View testID="sidebar-body" />} peek={null}>
+            <View testID="route" />
+        </AppShellMaterialFrame>);
+        try {
+            const style = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?? {};
+            const column = screen.findHostByTestId('navigation-sidebar')!;
+            const seam = screen.findAll(node => typeof node.type === 'string' && style(node).boxShadow === lightTheme.colors.shadowSeamCastBothBoxShadow)[0]!;
+            const hostAncestors = (node: ReactTestInstance) => {
+                const result: ReactTestInstance[] = [];
+                for (let parent = node.parent; parent; parent = parent.parent) if (typeof parent.type === 'string') result.push(parent);
+                return result;
+            };
+            const shared = hostAncestors(seam).find(ancestor => hostAncestors(column).includes(ancestor))!;
+            const between = hostAncestors(seam).slice(0, hostAncestors(seam).indexOf(shared));
+            expect(Number(style(column).zIndex ?? 0)).toBeGreaterThan(0);
+            // React Native Web gives every View z-index 0, a stacking context; the seam's own slot opts out.
+            expect(between.map(node => style(node).zIndex)).toEqual(between.map(() => 'auto'));
+            expect(Number(style(seam).zIndex)).toBeGreaterThan(Number(style(column).zIndex));
+        } finally {
+            await screen.unmount();
+        }
+    });
     it('lifts the page alone: the column stands on the navigation plane beside it and the seam traces the page edge', async () => {
         const frame = (column: boolean, width: number, overshootPx = 0) => <AppShellMaterialFrame showChrome dragEnabled={false}
             leftOffsetPx={64 + width} sidebarWidth={width} columnResizeState={{ collapseArmed: false, overshootPx, dragging: overshootPx !== 0 }}

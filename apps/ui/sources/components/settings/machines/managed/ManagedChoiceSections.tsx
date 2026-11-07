@@ -23,19 +23,21 @@ import {
   countryFlag,
   managedImageLabel,
   type ManagedImageOption,
-  type ManagedLocationOption, type ManagedNetworkOption,
+  type ManagedLocationOption,
+  type ManagedNetworkOption,
   type ManagedSizeOption,
 } from './managedMachineDisplay';
 
 /**
- * The configurator's three kinds of choice (plan 51 §8): size is a comparison, so it is a table; the
+ * The configurator's three kinds of choice: size compares specifications and rates; the
  * system is something you can see, so it is a card; a place is a short list of named regions.
  */
 
 const keyOfSize = (size: ManagedSizeOption) => size.id;
 const NOOP_OPEN = () => undefined;
+const NUMBER_COLUMN_MIN_WIDTH_PX = 64;
 
-/** The size comparison: the public Collection table with one radio column and tabular numbers. */
+/** Specifications stay together as the last comparison column to yield to the narrow list. */
 export const ManagedSizeTable = React.memo(function ManagedSizeTable(
   props: Readonly<{
     sizes: readonly ManagedSizeOption[];
@@ -62,29 +64,14 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
     props.headroomTitle !== undefined &&
     props.sizes.some((size) => size.headroom !== undefined);
   const anatomy = React.useMemo((): CollectionAnatomy<ManagedSizeOption> => {
-    const fields: CollectionField<ManagedSizeOption>[] = [
-      numberField(
-        'cpu',
-        t('managedMachines.config.columns.cpu'),
-        (size) => size.cpu,
-        4,
-      ),
-      numberField(
-        'memory',
-        t('managedMachines.config.columns.memory'),
-        (size) => size.memory,
-        3,
-      ),
-    ];
-    // Disk stays a column wherever the table has room; the table's own priorities drop it, not a device label.
-    fields.push(
-      numberField(
-        'disk',
-        t('managedMachines.config.columns.disk'),
-        (size) => size.disk,
-        2,
-      ),
-    );
+    const fields: CollectionField<ManagedSizeOption>[] = [numberField(
+      'spec',
+      [t('managedMachines.config.columns.cpu'), t('managedMachines.config.columns.memory'), t('managedMachines.config.columns.disk')].join(' · '),
+      size => sizeByline(size, true),
+      // A rate or refusal alone cannot replace the machine's resource facts (CLOUD40).
+      Number.POSITIVE_INFINITY,
+      3 * NUMBER_COLUMN_MIN_WIDTH_PX,
+    )];
     if (hasHourly)
       fields.push(
         numberField(
@@ -116,9 +103,11 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
     return {
       glyph: () => null,
       title: (size) => size.name,
+      // Specifications never compete with the rate or refusal columns for visibility.
+      byline: size => sizeByline(size),
       fields,
       accessibilityLabel: (size) =>
-        [size.name, size.spec, size.hourly, size.unavailableReason]
+        [size.name, sizeByline(size), size.unavailableReason, size.warning]
           .filter(Boolean)
           .join(', '),
       testID: (size) => `${props.testID}:${size.id}`,
@@ -140,7 +129,7 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
         isItemSelectable: (size: ManagedSizeOption) =>
           size.selectable ?? size.unavailableReason === undefined,
         unavailableReason: (size: ManagedSizeOption) =>
-          size.unavailableReason ?? null,
+          [size.unavailableReason, size.warning].filter(Boolean).join(' · ') || null,
       },
     }),
     [props.onChange, props.value],
@@ -182,12 +171,24 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
   );
 });
 
+function sizeByline(size: ManagedSizeOption, fieldColumns = false): string {
+  const cores = Number(size.cpu);
+  return [
+    size.cpu === '' ? null : Number.isFinite(cores) ? t('managedMachines.receipt.cores', { count: cores }) : size.cpu,
+    size.memory,
+    size.disk,
+    fieldColumns || size.hourly === undefined ? null : `${size.hourly} ${t('managedMachines.price.perHour')}`,
+  ]
+    .filter((part) => part !== null && part !== '')
+    .join(' · ');
+}
+
 function numberField(
   key: string,
   title: string,
   read: (size: ManagedSizeOption) => string,
   priority: number,
-  minWidth = 64,
+  minWidth = NUMBER_COLUMN_MIN_WIDTH_PX,
 ): CollectionField<ManagedSizeOption> {
   return {
     key,
@@ -318,21 +319,7 @@ export const ManagedLocationGroup = React.memo(function ManagedLocationGroup(
 /** A city and its country on one line each; narrower than this, a region takes the full row. */
 const LOCATION_TILE_MIN_WIDTH_PX = 200;
 
-const styles = StyleSheet.create((theme) => ({
-  tabular: {
-    ...Typography.default(),
-    ...Typography.tabular(),
-    ...happierPageTextMetrics('rowTitle'),
-    color: theme.colors.text.primary,
-    textAlign: 'right',
-  },
-  flag: {
-    ...happierPageTextMetrics('rowTitle'),
-  },
-}));
-
-const NETWORK_TILE_MIN_WIDTH_PX = 150;
-
+/** The provider's networking variants as short named cells of one sheet, side by side where there is room. */
 export const ManagedNetworkGroup = React.memo(function ManagedNetworkGroup(
   props: Readonly<{
     title: string;
@@ -374,3 +361,17 @@ export const ManagedNetworkGroup = React.memo(function ManagedNetworkGroup(
 });
 
 /** A short name such as "IPv4 and IPv6" fits three across; narrower than this, a variant takes the full row. */
+const NETWORK_TILE_MIN_WIDTH_PX = 150;
+
+const styles = StyleSheet.create((theme) => ({
+  tabular: {
+    ...Typography.default(),
+    ...Typography.tabular(),
+    ...happierPageTextMetrics('rowTitle'),
+    color: theme.colors.text.primary,
+    textAlign: 'right',
+  },
+  flag: {
+    ...happierPageTextMetrics('rowTitle'),
+  },
+}));

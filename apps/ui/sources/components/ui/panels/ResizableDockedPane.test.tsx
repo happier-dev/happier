@@ -287,6 +287,23 @@ describe('ResizableDockedPane (web pointer drag)', () => {
         expect(await order('left')).toEqual(['handle', 'content']);
     });
 
+    it('paints the pane above the neighbour its handle\'s target reaches into', async () => {
+        // The handle's web target reaches past the pane edge, over the neighbour (the page beside the
+        // settings rail). The neighbour comes later and would paint over that part unless the pane is lifted.
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+        const pane = async (resizable: boolean) => {
+            const screen = await renderScreen(
+                <ResizableDockedPane testID="pane" widthPx={320} minWidthPx={200} maxWidthPx={resizable ? 480 : 200}
+                    resizeEdge="right" onCommitWidthPx={vi.fn()}>
+                    <ViewStub />
+                </ResizableDockedPane>,
+            );
+            return Number(flattenStyle(screen.findHostByTestId('pane')!.props.style).zIndex ?? 0);
+        };
+        expect(await pane(true)).toBeGreaterThan(0);
+        expect(await pane(false)).toBe(0);
+    });
+
     it('renders the shared column resize handle frame for docked panes', async () => {
         const { ResizableDockedPane } = await import('./ResizableDockedPane');
 

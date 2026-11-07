@@ -16,7 +16,8 @@ export type ResizableDockedPaneProps = Readonly<{
     onCollapseArmedChange?: (armed: boolean) => void;
     onCollapse?: () => void;
     onResetRequest?: () => void;
-    resizeEdge?: 'left' | 'right';
+    /** `both`: a pane centred by its host, resized from either side edge around that centre. */
+    resizeEdge?: 'left' | 'right' | 'both';
     /**
      * The width the host draws while a drag gives past a bound (its rubber band), when that differs
      * from the size the core keeps. The content and the handle follow the drawn edge.
@@ -43,9 +44,10 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
         panHandlers,
         webHandleProps,
         accessibilityHandleProps,
+        endHandle,
     } = useResizableSize({
         axis: 'x',
-        resizeEdge: resizeEdge === 'left' ? 'start' : 'end',
+        resizeEdge: resizeEdge === 'both' ? 'both' : resizeEdge === 'left' ? 'start' : 'end',
         sizePx: props.widthPx,
         minSizePx: props.minWidthPx,
         maxSizePx: props.maxWidthPx,
@@ -60,16 +62,16 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
     // The handle sits on the edge it resizes in document order too, because order is focus order: a
     // modal focuses its first focusable element on open, and a leading pane's handle must not come
     // before that pane's own content (the settings rail's search field).
-    const handle = canResize ? (
+    const renderHandle = (edge: 'left' | 'right', handleProps: Readonly<{ webHandleProps: typeof webHandleProps; panHandlers: typeof panHandlers }>) => canResize ? (
         <ResizablePaneDividerHandle
             labels={{ label: t('ui.resizableDockedPane.resizeA11y'), hint: t('ui.resizableDockedPane.resizeHint'), value: (px) => t('ui.resizableDockedPane.resizeValue', { px }) }}
             axis="x"
-            edge={resizeEdge === 'left' ? 'start' : 'end'}
-            interactionProps={Platform.OS === 'web' ? webHandleProps : panHandlers}
+            edge={edge === 'left' ? 'start' : 'end'}
+            interactionProps={Platform.OS === 'web' ? handleProps.webHandleProps : handleProps.panHandlers}
             accessibilityHandleProps={accessibilityHandleProps}
             style={{
                 position: 'absolute',
-                ...(resizeEdge === 'left' ? { left: 0 } : { right: 0 }),
+                ...(edge === 'left' ? { left: 0 } : { right: 0 }),
                 top: 0,
                 bottom: 0,
                 width: 10,
@@ -80,6 +82,9 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
             inkColor={theme.colors.text.primary}
         />
     ) : null;
+    const startHandle = resizeEdge === 'right' ? null : renderHandle('left', { webHandleProps, panHandlers });
+    const trailingHandle = resizeEdge === 'left' ? null
+        : renderHandle('right', resizeEdge === 'both' && endHandle ? endHandle : { webHandleProps, panHandlers });
 
     return (
         <View
@@ -90,11 +95,14 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
                 alignSelf: 'stretch',
                 height: '100%',
                 minHeight: 0,
+                // The handle's web target reaches past the pane edge; lifted, that outer part paints (and is
+                // hit-tested) above the neighbour beside it.
+                ...(canResize && Platform.OS === 'web' ? { zIndex: 1 } : null),
             }}
         >
-            {resizeEdge === 'left' ? handle : null}
+            {startHandle}
             <View style={{ flex: 1, width: '100%', minHeight: 0 }}>{props.children}</View>
-            {resizeEdge === 'right' ? handle : null}
+            {trailingHandle}
         </View>
     );
 });

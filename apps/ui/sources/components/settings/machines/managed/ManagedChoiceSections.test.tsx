@@ -22,6 +22,7 @@ installSettingsViewCommonModuleMocks({
     );
   },
 });
+const { ManagedSizeTable } = await import('./ManagedChoiceSections');
 afterEach(() => standardCleanup());
 
 const sizes = [
@@ -46,6 +47,42 @@ const sizes = [
 ];
 
 describe('managed size comparison', () => {
+  it.each([390, 960])('shows a memory warning while keeping the size selectable at %ipx', async width => {
+    const warning = 'Low memory for Happier and an agent';
+    const onChange = vi.fn();
+    const screen = await renderScreen(<ManagedSizeTable sizes={[{ ...sizes[0]!, warning }]}
+      value={null} onChange={onChange} testID="sizes" />);
+    await act(async () => {
+      invokeTestInstanceHandler(screen.findByTestId('sizes:stage'), 'onLayout', {
+        nativeEvent: { layout: { x: 0, y: 0, width, height: 600 } },
+      });
+    });
+    expect(screen.getTextContent()).toContain(warning);
+    const radio = screen.tree.findAll(node => node.props.accessibilityRole === 'radio'
+      && typeof node.props.onPress === 'function' && node.props.testID === 'sizes:small')[0];
+    expect(radio?.props.accessibilityLabel).toContain(warning);
+    expect(radio?.props.disabled).not.toBe(true);
+    await screen.pressByTestIdAsync('sizes:small');
+    expect(onChange).toHaveBeenCalledWith('small');
+    await screen.unmount();
+  });
+  it.each([390, 590, 960])('keeps CPU and RAM facts readable in a %ipx configurator', async width => {
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedSizeTable sizes={sizes.map(size => ({ ...size, hourly: '€0.01',
+      unavailableReason: 'Not available with your other choices', selectable: true }))}
+      value="small" onChange={vi.fn()} testID="sizes" />);
+    await act(async () => {
+      invokeTestInstanceHandler(screen.findByTestId('sizes:stage'), 'onLayout', {
+        nativeEvent: { layout: { x: 0, y: 0, width, height: 600 } },
+      });
+    });
+    const text = screen.getTextContent();
+    expect(text).toContain('8 GB');
+    expect(text).toContain('16 GB');
+    expect(text).toContain(t('managedMachines.receipt.cores', { count: 4 }));
+    expect(text).toContain(t('managedMachines.receipt.cores', { count: 6 }));
+    await screen.unmount();
+  });
   it('discloses an unknown rate beside a known native rate in the comparison table', async () => {
     const { ManagedSizeTable } = await import('./ManagedChoiceSections');
     const { t } = await import('@/text');

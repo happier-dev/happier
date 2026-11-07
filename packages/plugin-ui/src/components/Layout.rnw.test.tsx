@@ -254,6 +254,26 @@ describe('plugin-ui semantic layout', () => {
     mount.unmount();
   });
 
+  it('keeps a button on its own width in a default column and lets a column that asks to stretch fill it', () => {
+    const mount = mountLayout(
+      <Stack testID="default" gap="small">
+        <Button title="Inline action" onPress={() => undefined} />
+      </Stack>,
+    );
+    const slotOf = (container: HTMLElement, id: string) =>
+      container.querySelector(`[data-testid="${id}"] > *`) as HTMLElement;
+    expect(slotOf(mount.container, 'default').getAttribute('role')).not.toBe('button');
+    mount.unmount();
+
+    const stretched = mountLayout(
+      <Stack testID="stretched" gap="small" align="stretch">
+        <Button title="Filling action" onPress={() => undefined} />
+      </Stack>,
+    );
+    expect(slotOf(stretched.container, 'stretched').getAttribute('role')).toBe('button');
+    stretched.unmount();
+  });
+
   it('keeps Row logical under an RTL surface context instead of reversing it manually', () => {
     // Physical reversal and a blanket `writingDirection` are the two wrong
     // answers here: a horizontal Row is logical order under the layout

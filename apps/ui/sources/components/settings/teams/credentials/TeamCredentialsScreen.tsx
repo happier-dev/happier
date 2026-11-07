@@ -3,6 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type {
     TeamCredentialResourceListFilterV1,
     TeamCredentialResourceSummaryV1,
+    TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -11,8 +12,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useTeamCredentialResources } from '@/hooks/teams/useTeamCredentialResources';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { getPreferredLanguage, t } from '@/text';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -22,12 +21,12 @@ import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamCredentialCreatePath, teamCredentialDetailPath } from '../teamsRoutes';
 import {
-    orderTeamCredentialResources,
     resourceAdministrationSummaryLines,
     resourceAccessibilityLabel,
     resourceConnectedServiceMarkId,
 } from './teamCredentialPresentation';
 import { TeamCredentialResourceFilterPicker } from './TeamCredentialResourceFilterPicker';
+import { useTeamCredentialsProjection } from './useTeamCredentialsProjection';
 
 /**
  * One shared credential row.
@@ -39,7 +38,7 @@ import { TeamCredentialResourceFilterPicker } from './TeamCredentialResourceFilt
  */
 const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
     address: TeamAddress;
-    resource: TeamCredentialResourceSummaryV1;
+    resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1;
     language: string;
 }>) {
     const router = useRouter();
@@ -57,6 +56,7 @@ const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
             title={resource.displayName}
             icon={<ConnectedServiceMark legacyServiceId={resourceConnectedServiceMarkId(resource, registry)} size="row" />}
             subtitle={summaryLines.join('\n')}
+            subtitleLines={0}
             accessibilityLabel={resourceAccessibilityLabel(resource)}
             onPress={() => router.push(teamCredentialDetailPath(address, resource.id))}
         />
@@ -64,35 +64,11 @@ const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
 });
 
 /**
- * The Home's own decision about this exact Home, not the Home set the person happens to be looking
- * at: a Team screen is bound to one Home for its whole lifetime, and the destination must answer
- * for that one. The list and the header's action read one shared observation.
- */
-function useTeamCredentialsProjection(
-    context: TeamSectionContext,
-    search?: string,
-    filter?: TeamCredentialResourceListFilterV1,
-) {
-    const featureEnabled = useFeatureEnabled('teams.credentialResources', {
-        scopeKind: 'spawn',
-        serverId: context.scope.serverId,
-    });
-    const projection = useTeamCredentialResources({
-        scope: context.scope,
-        address: context.address,
-        enabled: featureEnabled,
-        search,
-        filter,
-    });
-    return { featureEnabled, projection };
-}
-
-/**
  * Offering your own source is the Home's separate decision from administering the Team's resources:
  * it appears only once the Home has said this viewer may, never present-then-gone.
  */
 function mayOfferCredential(
-    viewer: ReturnType<typeof useTeamCredentialResources>['viewer'],
+    viewer: ReturnType<typeof useTeamCredentialsProjection>['projection']['viewer'],
     context: TeamSectionContext,
 ): boolean {
     return viewer?.offerOwnCredential === true && context.canMutate;
@@ -104,8 +80,8 @@ function mayOfferCredential(
  */
 const ShareCredentialAction = React.memo(function ShareCredentialAction(props: Readonly<{ context: TeamSectionContext }>) {
     const router = useRouter();
-    const { featureEnabled, projection } = useTeamCredentialsProjection(props.context);
-    if (!featureEnabled || projection.rows.length === 0 || !mayOfferCredential(projection.viewer, props.context)) return null;
+    const { featureEnabled, projection, rows } = useTeamCredentialsProjection(props.context);
+    if (!featureEnabled || rows.length === 0 || !mayOfferCredential(projection.viewer, props.context)) return null;
     return (
         <SectionActionButton
             testID="team-credentials-share"
@@ -123,8 +99,8 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
     const router = useRouter();
     const [search, setSearch] = React.useState('');
     const [filter, setFilter] = React.useState<TeamCredentialResourceListFilterV1>('all');
-    const { featureEnabled, projection } = useTeamCredentialsProjection(context, search.trim() || undefined, filter);
-    const showSearch = projection.rows.length >= 10 || projection.hasMore || search.length > 0;
+    const { featureEnabled, projection, rows, recipientPending, error, settled, retry } = useTeamCredentialsProjection(context, search.trim() || undefined, filter);
+    const showSearch = rows.length >= 10 || projection.hasMore || search.length > 0;
 
     if (!featureEnabled) {
         return (
@@ -149,7 +125,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
     if (projection.viewer !== null
         && !projection.viewer.manageCredentials
         && !projection.viewer.offerOwnCredential
-        && projection.rows.length === 0) {
+        && rows.length === 0 && settled) {
         return (
             <SurfaceStateCard
                 testID="team-credentials-forbidden"
@@ -161,23 +137,22 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
         );
     }
 
-    const rows = orderTeamCredentialResources(projection.rows);
     const hasActiveFilter = filter !== 'all' || search.trim().length > 0;
-    const retryLine = projection.error ? (
+    const retryLine = error ? (
         // Rows already read stay on screen through a failure; the failure is one line beside them.
         <SurfaceStateCard
             testID="team-credentials-error"
             kind="error"
             size="line"
             title={t('teams.unavailable.offline')}
-            action={{ label: t('common.retry'), onPress: () => void projection.retry(), testID: 'team-credentials-retry' }}
+            action={{ label: t('common.retry'), onPress: () => void retry(), testID: 'team-credentials-retry' }}
             accessibilitySemantics="alert"
         />
     ) : null;
 
     // Nothing shared yet, and no search or filter narrowing it: the page itself becomes the invitation
     // (what sharing does, and the one way to start). Search and the filter would act on an empty set.
-    if (rows.length === 0 && projection.status === 'ready' && !hasActiveFilter) {
+    if (rows.length === 0 && settled && !hasActiveFilter) {
         return (
             <>
                 <SurfaceStateCard
@@ -221,14 +196,14 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
                 </ItemGroup>
             ) : null}
             <ItemGroup>
-                {projection.status === 'loading' && rows.length === 0 ? (
+                {(projection.status === 'loading' || recipientPending) && rows.length === 0 ? (
                     <ItemLoadStateRows
                         testID="team-credentials-loading"
                         state={{ kind: 'loading' }}
                         rows={3}
                         accessibilityLabel={t('common.loading')}
                     />
-                ) : rows.length === 0 && projection.status === 'ready' ? (
+                ) : rows.length === 0 && settled ? (
                     // Only a real search or filter reaches here: say so, with the way back.
                     <SurfaceStateCard
                         testID="team-credentials-empty"

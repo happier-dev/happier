@@ -70,15 +70,29 @@ describe('AgentInputFolderChip', () => {
         document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
     });
 
-    it('reserves no × slot on a touch device: removal stays on the picker row and the screen-reader action', async () => {
+    it('shows × on keyboard focus even with a touch primary pointer (plan 03 §4.1)', async () => {
         platformBoundary.os = 'ios';
-        const { screen, onRemove } = await renderChip({});
+        const { screen, onPress, onRemove } = await renderChip({});
+        expect(screen.findByTestId('agent-input-path-chip-remove')).toBeFalsy();
         const chip = screen.findByTestId('agent-input-path-chip')!;
         await act(async () => { chip.props.onFocus({}); });
-        expect(screen.findByTestId('agent-input-path-chip-remove')).toBeFalsy();
-        expect(flattenStyle(chip.props.style).paddingRight).not.toBe(2);
-        await act(async () => { chip.props.onAccessibilityAction({ nativeEvent: { actionName: 'remove' } }); });
+        const remove = screen.findByTestId('agent-input-path-chip-remove');
+        expect(remove).toBeTruthy();
+        expect(remove!.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('agent-input-path-chip-remove');
         expect(onRemove).toHaveBeenCalledOnce();
+        expect(onPress).not.toHaveBeenCalled();
+        await act(async () => { chip.props.onAccessibilityAction({ nativeEvent: { actionName: 'remove' } }); });
+        expect(onRemove).toHaveBeenCalledTimes(2);
+    });
+
+    it('lays × over the folder glyph, taking no room in the row before or while it shows', async () => {
+        const { screen } = await renderChip({});
+        establishKeyboardFocus();
+        const chip = screen.findByTestId('agent-input-path-chip')!;
+        await act(async () => { chip.props.onFocus({}); });
+        expect(flattenStyle(screen.findByTestId('agent-input-path-chip')!.props.style).paddingRight).toBeUndefined();
+        expect(flattenStyle(screen.findByTestId('agent-input-path-chip-remove-slot')!.props.style).position).toBe('absolute');
     });
 
     it('paints the canonical focus ring on the chip and on × for keyboard focus', async () => {
@@ -159,6 +173,17 @@ describe('AgentInputFolderChip', () => {
         await act(async () => { consumed = (pressable.props.onKeyDown as (key: string, event: unknown) => boolean)('Delete', {}); });
         expect(consumed).toBe(false);
         expect(onRemove).not.toHaveBeenCalled();
+    });
+
+    it('settles a failed folder read, exposes its reason and still opens folder choices', async () => {
+        const { screen, onPress } = await renderChip({ state: { kind: 'failed', reason: 'Could not check your folders' } });
+        const chip = screen.findByTestId('agent-input-path-chip')!;
+        expect(textsOf(chip)).toContain('newSession.folder.addFolder');
+        expect(chip.props.accessibilityLabel).toBe('Could not check your folders');
+        expect(screen.findByTestId('agent-input-path-chip-remove')).toBeFalsy();
+        await screen.pressByTestIdAsync('agent-input-path-chip');
+        expect(onPress).toHaveBeenCalledOnce();
+        await screen.unmount();
     });
 
     it('never offers “Add folder” or × while the folder is loading', async () => {

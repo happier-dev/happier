@@ -49,6 +49,8 @@ export const ResizableDockedPaneVertical = React.memo((props: ResizableDockedPan
                 alignSelf: 'stretch',
                 width: '100%',
                 minHeight: 0,
+                // The handle's web target reaches past the pane edge; lifted, that outer part stays reachable.
+                ...(canResize && Platform.OS === 'web' ? { zIndex: 1 } : null),
             }}
         >
             {canResize ? (

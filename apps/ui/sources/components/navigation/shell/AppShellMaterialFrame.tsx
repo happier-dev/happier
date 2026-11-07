@@ -29,6 +29,14 @@ import { resolveSidebarInsetSplit } from '@/components/navigation/safeArea/horiz
 const CONTENT_SHEET_RADIUS_PX = APP_SHELL_SHEET_RADIUS_PX;
 const CONTENT_SHEET_WINDOW_INSET_PX = APP_SHELL_SHEET_INSET_PX;
 
+/**
+ * The column stands above the page (`zIndex: 1` on the web) so its resize handle's target, which reaches past
+ * the page edge, stays reachable over the page. React Native Web gives every View `z-index: 0`, a stacking
+ * context; the page's slot opts out so the seam cast it holds still paints over the column. React Native's
+ * style types have no `auto`, which only the web reads.
+ */
+const WEB_NO_STACKING_CONTEXT = Platform.OS === 'web' ? { zIndex: 'auto' as unknown as number } : null;
+
 const stylesheet = StyleSheet.create((theme) => ({
     columnContent: { flex: 1, minHeight: 0, minWidth: 0 },
     // Armed to hide: the rows step back so the capsule's sentence leads (lab D2).
@@ -66,12 +74,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         minWidth: 0,
         minHeight: 0,
+        ...WEB_NO_STACKING_CONTEXT,
     },
     sheetColumn: {
         flex: 1,
         minWidth: 0,
         minHeight: 0,
         position: 'relative',
+        ...WEB_NO_STACKING_CONTEXT,
     },
     sheetColumnInset: {
         paddingBottom: CONTENT_SHEET_WINDOW_INSET_PX,
@@ -256,7 +266,8 @@ export function AppShellMaterialFrame(props: Readonly<{
     return <DesktopMainContentDragSurface enabled={props.dragEnabled} leftOffsetPx={props.leftOffsetPx}
         style={styles.root}>
         {/* The atmosphere's picture lies under every plane; route changes only change the content coat. */}
-        <AtmosphereLayer sheetRadius={CONTENT_SHEET_RADIUS_PX} chrome={props.showChrome} />
+        <AtmosphereLayer sheetRadius={CONTENT_SHEET_RADIUS_PX} chrome={props.showChrome}
+            resizing={props.columnResizeState?.dragging === true} />
         {props.titleStrip ? <AppShellMaterialPlane group="chrome" color={theme.colors.background.canvas} translucentColor={theme.colors.surface.selected} style={styles.chromePlane}>
             <RetainedPanelSurface isActive={props.showChrome}>
                 <View style={titlePadding}><AppShellTitleMoreHostProvider value={attachTitleMoreHost}>{props.titleStrip}</AppShellTitleMoreHostProvider></View>
@@ -274,6 +285,7 @@ export function AppShellMaterialFrame(props: Readonly<{
                 translucentColor={theme.colors.surface.selected} style={[appShellColumnSurface.column, {
                     // Past either bound the edge gives a little (rubber band), a pure function of the drag.
                     width: resolveColumnDrawnWidthPx(props.sidebarWidth, props.columnResizeState?.overshootPx ?? 0),
+                    ...(Platform.OS === 'web' ? { zIndex: 1 } : null),
                 }, columnSpringBack]}>
                 <View style={[styles.columnContent, props.columnResizeState?.collapseArmed ? styles.columnArmed : null]}>
                     {props.column}
