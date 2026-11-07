@@ -73,6 +73,7 @@ export function projectProviderAccountUsageSnapshotToAuthGroupRuntimeState(
   if (snapshot.state !== 'loaded_data' || snapshot.meters.length === 0) return null;
   return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
     capturedAtMs: snapshot.fetchedAtMs,
+    staleAfterMs: snapshot.staleAfterMs,
     meters: snapshot.meters,
     subscription: snapshot.subscription,
   });
@@ -80,6 +81,7 @@ export function projectProviderAccountUsageSnapshotToAuthGroupRuntimeState(
 
 export function buildConnectedServiceAuthGroupRuntimeStateFromMeters(input: Readonly<{
   capturedAtMs: number;
+  staleAfterMs: number;
   meters: readonly ConnectedServiceQuotaMeterV1[];
   subscription?: ProviderAccountSubscriptionV1;
 }>): ConnectedServiceAuthGroupMemberRuntimeState {
@@ -90,10 +92,12 @@ export function buildConnectedServiceAuthGroupRuntimeStateFromMeters(input: Read
     providerResetsAtMs: effectiveMeter?.resetAtMs ?? readProviderResetsAtMs(input),
     quotaSnapshot: {
       capturedAtMs: input.capturedAtMs,
+      staleAfterMs: input.staleAfterMs,
       effectiveMeterId: effectiveMeter?.meterId ?? null,
       effectiveRemainingPercent: effectiveMeter?.remainingPct ?? null,
       meters: normalizedMeters.map((meter, index) => ({
         meterId: meter.meterId,
+        ...(input.meters[index]?.modelId ? { modelId: input.meters[index]?.modelId } : {}),
         limitCategory: meter.limitCategory,
         remainingPct: meter.remainingPct,
         resetAtMs: meter.resetAtMs,

@@ -343,8 +343,11 @@ export async function observeWorkflowSessionInputResult(params: Readonly<{
   localId: string;
   deadlineMs?: number;
   timeoutAfterInputMs?: number;
+  /** Physical cancellation custody is independent of original reply publication. */
+  observeReply?: boolean;
   beforeInputObservation?: () => Promise<void>;
   onInputMaterialized?: (acceptedAtMs: number) => Promise<void>;
+  onAttentionRequired?: (required: boolean) => Promise<void>;
   signal?: AbortSignal;
 }>): Promise<WaitForSessionInputReplyResult> {
   const observation: SessionInputResultObservationV1 = params.deadlineMs === undefined
@@ -355,10 +358,11 @@ export async function observeWorkflowSessionInputResult(params: Readonly<{
     credentials: params.credentials,
     idOrPrefix: params.sessionId,
     localId: params.localId,
-    observeReply: true,
+    observeReply: params.observeReply !== false,
     observation,
     ...(params.beforeInputObservation ? { beforeInputObservation: params.beforeInputObservation } : {}),
     ...(params.onInputMaterialized ? { onInputMaterialized: params.onInputMaterialized } : {}),
+    ...(params.onAttentionRequired ? { onAttentionRequired: params.onAttentionRequired } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
   });
 }

@@ -1,5 +1,5 @@
 import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
-import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1 } from '@happier-dev/protocol';
+import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
 
@@ -31,6 +31,9 @@ import { join, relative } from 'node:path';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { readPluginManifest } from '@/plugins/manifest/read';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import { projectPluginAttributedCompatibilityFailure, projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
 import {
   evaluateManifestPluginDevelopmentCandidate,
   evaluatePluginDevelopmentCandidate,
@@ -127,8 +130,12 @@ type ResolvedDaemonLocalPathSource = ResolvedLocalPathPluginSourceSuccess & Read
 }>;
 
 export function createDaemonPathPluginChangePreparer(params: Readonly<{
+  /** Held target-daemon facts only; preparing a review never probes. */
+  readDaemonRights?: () => MachineDaemonRightsV1;
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
+  /** Already-admitted runtime declarations include bundled incumbents with no install record. */
+  readActivePluginManifest?: (pluginId: string) => CanonicalPluginManifest | null;
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   runManagedPluginPnpm?: RunManagedPluginPnpmBoundary;
   runPluginUiArtifactBuild?: RunPluginUiArtifactBuildBoundary;
@@ -261,9 +268,21 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
               source: developmentAuthoringSource.source,
               sourceAuthority,
             }));
-        const projected = developmentAuthoringSource.kind === 'code'
+        const authored = developmentAuthoringSource.kind === 'code'
           ? projectEvaluatedPluginDevelopmentSource(evaluated.evaluated)
           : evaluated.evaluated;
+        const admission = ingestCanonicalPluginManifest(authored.manifest, {
+          purpose: 'admission', sourceProvenance: 'localSource',
+        });
+        if (!admission.ok) {
+          const failure = projectPluginAttributedCompatibilityFailure(
+            admission.diagnostics.map(projectPluginManifestCompatibilityDiagnostic),
+          );
+          throw new DaemonPluginChangePreparationError(
+            failure?.code ?? 'plugin_manifest_invalid', failure?.message ?? 'Plugin development manifest admission failed',
+          );
+        }
+        const projected = { ...authored, manifest: admission.manifest };
         if (expectedPluginId && projected.manifest.id !== expectedPluginId) {
           throw new PluginRegistryCandidateConflictError(
             `Plugin development source identity changed from '${expectedPluginId}' to '${projected.manifest.id}'`,
@@ -294,7 +313,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
             pluginId: projected.manifest.id,
             distribution,
           });
-        let incumbentAuthorityManifest = registrySnapshot.approvedAuthorityManifestsByPluginId[projected.manifest.id];
+        let incumbentAuthorityManifest: CanonicalPluginManifest | undefined =
+          registrySnapshot.approvedAuthorityManifestsByPluginId[projected.manifest.id];
         if (!incumbentAuthorityManifest && existing) {
           const generationReference = registrySnapshot.pluginOccurrenceIds[projected.manifest.id];
           if (generationReference) {
@@ -315,20 +335,21 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
             }
           }
         }
-        const incumbentAuthorityEvaluation = alreadyTrusted && incumbentAuthorityManifest
+        if (!incumbentAuthorityManifest && !existing) {
+          incumbentAuthorityManifest = params.readActivePluginManifest?.(projected.manifest.id) ?? undefined;
+        }
+        const incumbentAuthorityEvaluation = incumbentAuthorityManifest
           ? evaluatePluginAuthorityReview({
               previous: incumbentAuthorityManifest,
               candidate: projected.manifest,
-              selectedOptionalAccess: existing.install.optionalAccess ?? [],
-              development: true,
+              selectedOptionalAccess: existing?.install.optionalAccess ?? [],
             })
           : null;
         const authorityExpansion = incumbentAuthorityEvaluation?.authorityExpansion
           ?? listInitialPluginAuthorityExpansions(projected.manifest);
-        const requiresReview = !alreadyTrusted
-            || !incumbentAuthorityManifest
-            || incumbentAuthorityEvaluation?.requiresReview === true;
+        const requiresReview = incumbentAuthorityEvaluation?.requiresReview ?? true;
         const review = projectPluginInstallationReview({
+          daemonRights: params.readDaemonRights?.(),
           manifest: projected.manifest,
           source: {
             kind: 'path',
@@ -396,10 +417,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           catalogRecord,
           trust,
           updatePolicy: existing?.install.updatePolicy ?? 'allowed',
-          reviewReason: existing
+          reviewReason: incumbentAuthorityManifest
             ? 'authorityExpansion'
             : 'firstInstall',
-          ...(existing ? { currentVersion: existing.install.manifestVersion } : {}),
+          ...(incumbentAuthorityManifest ? { currentVersion: incumbentAuthorityManifest.version } : {}),
           authorityExpansion,
           requiresReview,
           review,
@@ -408,10 +429,16 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         return candidate;
       } catch (error) {
         await preparedRoot.cleanup();
+        const attributed = projectPluginAttributedCompatibilityFailure(error instanceof Error ? error : undefined);
+        if (attributed) throw new DaemonPluginChangePreparationError(attributed.code, attributed.message, { cause: error });
         throw error;
       }
     }
     if (developmentSourceRootPath) {
+      const attributed = projectPluginAttributedCompatibilityFailure(
+        developmentAuthoringSource && !developmentAuthoringSource.ok ? developmentAuthoringSource.diagnostics : undefined,
+      );
+      if (attributed) throw new DaemonPluginChangePreparationError(attributed.code, attributed.message);
       const diagnostics = developmentAuthoringSource && !developmentAuthoringSource.ok
         ? developmentAuthoringSource.diagnostics.map((entry) => entry.message).join('\n')
         : '';
@@ -588,6 +615,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
     }
     const source = await resolveLocalPathPluginSource({ locator: request.locator });
     if (!source.ok) {
+      const attributed = projectPluginAttributedCompatibilityFailure(source.diagnostics);
+      if (attributed) throw new DaemonPluginChangePreparationError(attributed.code, attributed.message);
       throw new Error(source.diagnostics.map((entry) => entry.message).join('\n') || 'Invalid plugin path source');
     }
     const resolved: ResolvedDaemonLocalPathSource = Object.freeze({
@@ -628,6 +657,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
     });
     if (!candidateManifest.ok) {
       await cleanup();
+      const attributed = projectPluginAttributedCompatibilityFailure(candidateManifest.diagnostics);
+      if (attributed) throw new DaemonPluginChangePreparationError(attributed.code, attributed.message);
       throw new Error('Prepared plugin candidate manifest is unavailable');
     }
     if (
@@ -653,6 +684,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
     let installReviewPrincipal: ReturnType<typeof derivePluginInstallReviewPrincipal> | undefined;
     try {
       review = projectPluginInstallationReview({
+          daemonRights: params.readDaemonRights?.(),
           manifest,
           source: {
             kind: 'path',

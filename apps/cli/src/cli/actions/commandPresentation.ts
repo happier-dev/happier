@@ -1,5 +1,6 @@
 import type { ActionId } from '@happier-dev/protocol';
-import type { SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type { CliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import type { WorkflowAuthoringActionId } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 
 import type { CompiledActionCliCommand } from './compiledCommands';
 
@@ -14,13 +15,7 @@ export type ActionCliPresentationContext = Readonly<{
   callerInput: Readonly<Record<string, unknown>>;
 }>; 
 
-export type ActionCliFailure = Readonly<{
-  errorCode: string;
-  errorMessage?: string;
-  candidates?: readonly string[];
-  details?: unknown;
-  goalControlFailure?: SessionGoalControlFailureV1;
-}>;
+export type ActionCliFailure = CliActionFailure;
 
 /**
  * Command-owned presentation over an already executed canonical result.
@@ -61,6 +56,18 @@ export type ActionCliPresentation = Readonly<{
   ) => string | null;
 }>;
 
+async function loadWorkflowAuthoringPresentation(): Promise<ActionCliPresentation> {
+  const { WorkflowDraftGetResultV1Schema } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+  return {
+    classifyResult: (payload) => {
+      const result = WorkflowDraftGetResultV1Schema.parse(payload);
+      if (result.status === 'refused') return { errorCode: result.reason, details: result };
+      if (result.status === 'unavailable') return { errorCode: result.status, details: result };
+      return null;
+    },
+  };
+}
+
 /**
  * One bounded CLI-local presentation map keyed by canonical Action ID. It holds
  * no paths, input fields, validation, authorization, routing or execution: an
@@ -70,6 +77,16 @@ export type ActionCliPresentation = Readonly<{
  * output module into a cold CLI start.
  */
 const PRESENTATION_LOADERS: Partial<Record<ActionId, () => Promise<ActionCliPresentation>>> = {
+  ...{
+    'workflow.authoring.conversation.bind': loadWorkflowAuthoringPresentation,
+    'workflow.authoring.draft.get': loadWorkflowAuthoringPresentation,
+    'workflow.authoring.draft.edit': loadWorkflowAuthoringPresentation,
+    'workflow.authoring.draft.undo': loadWorkflowAuthoringPresentation,
+    'workflow.authoring.draft.redo': loadWorkflowAuthoringPresentation,
+    'workflow.authoring.draft.save': loadWorkflowAuthoringPresentation,
+    'workflow.authoring.draft.discard': loadWorkflowAuthoringPresentation,
+    'workflow.run.review.draft.set': loadWorkflowAuthoringPresentation,
+  } satisfies Record<WorkflowAuthoringActionId, () => Promise<ActionCliPresentation>>,
   'plugins.install': async () => (await import('./pluginDevLoopPresentation')).PLUGIN_DEV_LOOP_CLI_PRESENTATION,
   'plugins.uninstall': async () => (await import('./pluginDevLoopPresentation')).PLUGIN_DEV_LOOP_CLI_PRESENTATION,
   'plugins.enable': async () => (await import('./pluginDevLoopPresentation')).PLUGIN_DEV_LOOP_CLI_PRESENTATION,

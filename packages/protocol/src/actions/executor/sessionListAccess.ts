@@ -12,6 +12,45 @@ import type { AgentStartContextV1 } from '../../account/settings/admitAgentStart
 import { isWorkflowSessionScopeTargetV1 } from '../../workflows/workflowSessionScopeV1.js';
 import { resolveActionWorkflowSessionScopeV1 } from './workflowSessionScope.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
+import { SessionInputSourceSessionV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
+import { DiscussionDetailsResultV1Schema, DiscussionReadResultV1Schema } from '../../discussions/actions.js';
+
+/** An addressed source read consumes current Discussion disclosure admission, never its anchor alone. */
+async function admitsAddressedDiscussionSourceRead(
+  actionId: ActionId,
+  input: Readonly<Record<string, unknown>>,
+  context: ActionExecutorContext,
+  discussionAction: ActionExecutorDeps['discussionAction'],
+): Promise<boolean> {
+  if (actionId !== 'session.transcript.get' || !discussionAction
+    || context.actionCaller?.kind !== 'session') return false;
+  const source = SessionInputSourceSessionV1Schema.safeParse(context.sessionInputSource);
+  if (!source.success || !source.data.sourceInputId || !source.data.discussionAddressing
+    || source.data.sourceSessionId !== context.defaultSessionId
+    || source.data.sourceSessionId !== context.actionCaller.sessionId
+    || source.data.discussionAddressing.participantSessionId !== source.data.sourceSessionId) return false;
+  const addressing = source.data.discussionAddressing;
+  const sameHome = (serverId: string) => areServerProfileIdentifiersEquivalent(serverId, context.serverId,
+    id => id === context.serverId || id === context.serverIdentityId ? context.serverIdentityId : null);
+  try {
+    const details = DiscussionDetailsResultV1Schema.safeParse(await discussionAction({ actionId: 'discussion.get',
+      input: { discussionId: addressing.discussionId }, context, ...(context.signal ? { signal: context.signal } : {}) }));
+    if (!details.success || !sameHome(details.data.serverId) || details.data.discussion.id !== addressing.discussionId) return false;
+    const anchor = details.data.discussion.anchor;
+    // The admitted ordinary Session grant covers its transcript, not only the
+    // quoted message. A Session-only navigation anchor still supplies no source authority.
+    if (anchor?.kind !== 'session' || anchor.sessionId !== input.sessionId || !anchor.messageId) return false;
+    // The exact question read rechecks grants, keys and the complete source →
+    // runtime audience at the existing server owner. A metadata link is not proof.
+    const read = DiscussionReadResultV1Schema.safeParse(await discussionAction({ actionId: 'discussion.read',
+      input: { discussionId: addressing.discussionId, messageId: addressing.messageId, throughSeq: addressing.throughSeq },
+      context, ...(context.signal ? { signal: context.signal } : {}) }));
+    return read.success && sameHome(read.data.serverId) && read.data.discussionId === addressing.discussionId
+      && !read.data.incomplete && read.data.messageSeq <= addressing.throughSeq && read.data.messages.length === 1
+      && read.data.messages[0]?.id === addressing.messageId && read.data.messages[0].seq <= addressing.throughSeq
+      && read.data.messages[0].content !== null;
+  } catch { return false; }
+}
 
 /** Content-free causes owned by the current-Session scope guard, never authority. */
 export const ActionCurrentSessionScopeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
@@ -81,10 +120,11 @@ export async function resolveActionCurrentSessionScopeFailure(
   input: unknown,
   context: ActionExecutorContext | undefined,
   contextualDefaults: ActionContextualDefaults | undefined,
-  deps: Pick<ActionExecutorDeps, 'resolveAgentStartContext' | 'sessionList' | 'workflowAction' | 'resolveSessionReference' | 'resolveServerProfileScopeId'>,
+  deps: Pick<ActionExecutorDeps, 'resolveAgentStartContext' | 'sessionList' | 'sessionRead' | 'workflowAction' | 'resolveSessionReference' | 'resolveServerProfileScopeId' | 'discussionAction'>,
   retainCallerContext?: (resolved: AgentStartContextV1) => void,
   /** Dispatch wrappers supply the resolved Action's current effect facts. */
   scopeSideEffectClass?: ActionSpec['sideEffectClass'],
+  workflowSessionScope?: Awaited<ReturnType<typeof resolveActionWorkflowSessionScopeV1>>,
 ): Promise<ActionExecuteFailure | null> {
   if (contextualDefaults?.sessionId !== 'current_session') return null;
   // Agent-originated cross-Session message delivery is authorized by the
@@ -119,14 +159,15 @@ export async function resolveActionCurrentSessionScopeFailure(
     // the verified author, including when Archive delegates an active Stop.
     if (ledLifecycleAction && context.actionCaller?.kind === 'session') {
       const resolved = await resolveActionAgentStartContextV1(deps, context, undefined, { purpose: 'session_scope' });
-      if (resolved?.caller.kind === 'session' && resolved.caller.sessionId === defaultSessionId) retainCallerContext?.(resolved);
+      if (resolved && !('ok' in resolved) && resolved.caller.kind === 'session' && resolved.caller.sessionId === defaultSessionId) retainCallerContext?.(resolved);
     }
     return null;
   }
   if (context.actionCaller?.kind === 'workflowRun') {
     // Accepted admission witnesses and the exact invocation frame own this
     // corpus. A typed field alone, including one in a sibling, grants nothing.
-    const scope = await resolveActionWorkflowSessionScopeV1(actionId, context, deps);
+    const scope = workflowSessionScope === undefined
+      ? await resolveActionWorkflowSessionScopeV1(actionId, context, deps) : workflowSessionScope;
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (!scope) return refuse('session_scope_unavailable');
     if (!isWorkflowSessionScopeTargetV1({ scope, sessionId: targetSessionId })) return refuse('action_scope_restricted');
@@ -158,15 +199,17 @@ export async function resolveActionCurrentSessionScopeFailure(
     return refuse('action_scope_restricted');
   }
   const resolved = await resolveActionAgentStartContextV1(deps, context, undefined, { purpose: 'session_scope' });
-  if (!resolved) return refuse('caller_context_unavailable');
+  if (!resolved || 'ok' in resolved) return refuse('caller_context_unavailable');
   if (resolved.caller.kind !== 'session' || resolved.caller.sessionId !== defaultSessionId) {
     return refuse('caller_identity_mismatch');
   }
+  if (await admitsAddressedDiscussionSourceRead(actionId, inputRecord, context, deps.discussionAction)) return null;
+  if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   // Retain identity facts only within the execution owner's current invocation.
-  // The Home membership observation below still runs at every effect fence.
+  // The Home membership observation below admits that invocation once.
   if (ledLifecycleAction) retainCallerContext?.(resolved);
   if (headlessResume) {
-    const rows = await readActionCallerLedSubtreeSessions(deps, context);
+    const rows = await readActionCallerLedSubtreeSessions(deps, context, undefined, [targetSessionId]);
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const row = rows?.get(targetSessionId);
     if (!rows) return refuse('subtree_observation_unavailable');
@@ -175,7 +218,7 @@ export async function resolveActionCurrentSessionScopeFailure(
   }
   // Observe membership through the same canonical reader used by start
   // admission, retaining failure separately from a successful empty subtree.
-  const ids = await readActionCallerLedSubtreeSessionIds(deps, context);
+  const ids = await readActionCallerLedSubtreeSessionIds(deps, context, undefined, [targetSessionId]);
   if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   if (!ids) return ledLifecycleAction
     ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',

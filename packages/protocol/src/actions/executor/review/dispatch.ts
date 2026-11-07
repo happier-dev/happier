@@ -1,13 +1,13 @@
 import { isActionFamilyId } from '../actionFamilies.js';
 import { ReviewCommentActionIdV1Schema, ReviewCommentListActionRequestV1Schema, ReviewCommentListResponseV1Schema, type ReviewCommentListResponseV1 } from '../../../reviews/comments/actions.js';
-import { resolveActionWorkflowSessionScopeV1 } from '../workflowSessionScope.js';
+import type { WorkflowSessionScopeV1 } from '../../../workflows/workflowSessionScopeV1.js';
 import { normalizeId } from '../inputReading.js';
-import { ReviewFindingsApplyInputV1Schema } from '../../../reviews/reviewApplyV1.js';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import type { ReviewCommentV1 } from '../../../reviews/comments/v1.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { ReviewCommentGetResponseV1Schema } from '../../../reviews/comments/actions.js';
 import { buildAcceptedReviewFindingsForVerifyV1, REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../../../reviews/reviewFindingsApplyInputV1.js';
-import { ReviewWalkthroughInputSchema, ReviewWalkthroughRequestSchema, ReviewExplainFindingsInputSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../../../reviews/reviewNarration.js';
+import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../../../reviews/reviewNarration.js';
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
@@ -29,8 +29,9 @@ export function reviewScopeForInput(input: unknown): 'paths' | undefined {
 
 export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'ctx' | 'parsed' | 'data'> & Readonly<{
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  workflowSessionScope: WorkflowSessionScopeV1 | null;
 }>): Promise<ActionExecuteResult | null> {
-  const { actionId, deps, ctx, parsed, data, executeHostChild } = inv;
+  const { actionId, deps, ctx, parsed, data, executeHostChild, workflowSessionScope } = inv;
 
       const reviewCommentActionId = isActionFamilyId(actionId, ReviewCommentActionIdV1Schema) ? actionId : null;
       if (reviewCommentActionId !== null || actionId === 'review.apply') {
@@ -46,9 +47,8 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
           )) {
             return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
           }
-          // Caller-supplied projections never supply authority. Reconstruct it
-          // from this host-derived invocation and authenticated accepted leaves.
-          const workflowScope = await resolveActionWorkflowSessionScopeV1(actionId, ctx, deps);
+          // Only the executor's admitted scope can replace a supplied principal projection.
+          const workflowScope = workflowSessionScope;
           ctx.signal?.throwIfAborted();
           const { workflowScope: _suppliedScope, ...principal } = reviewCommentPrincipal ?? {};
           reviewCommentPrincipal = { ...principal, actor: { kind: 'workflow', runId: ctx.actionCaller.runId },
@@ -91,7 +91,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         };
         if (actionId === 'review.apply') {
-          const apply = ReviewFindingsApplyInputV1Schema.parse(parsed.data);
+          const apply = parsed.data as AdmittedActionInputById[typeof actionId];
           // SessionTarget preparation owns selector resolution; leaves accept only its exact address.
           if (typeof apply.sessionId !== 'string') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const comments: ReviewCommentV1[] = [];
@@ -166,15 +166,14 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
 }
 
 export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'data' | 'deps'> & Readonly<{
+  workflowSessionScope: WorkflowSessionScopeV1 | null;
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
   startExecutionRunWithSelection: (sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0], input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1], opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2], context: ActionExecutorContext) => ReturnType<NonNullable<ActionExecutorDeps['executionRunStart']>>;
 }>): Promise<ActionExecuteResult | null> {
-  const { actionId, parsed, ctx, executeHostChild, data, deps, startExecutionRunWithSelection } = inv;
+  const { actionId, parsed, ctx, executeHostChild, data, deps, startExecutionRunWithSelection, workflowSessionScope } = inv;
 
       if (actionId === 'review.walkthrough' || actionId === 'review.explain_findings') {
-        const input = actionId === 'review.walkthrough'
-          ? ReviewWalkthroughInputSchema.parse(parsed.data)
-          : ReviewExplainFindingsInputSchema.parse(parsed.data);
+        const input = parsed.data as AdmittedActionInputById[typeof actionId];
         const detached = input.target?.kind === 'detached';
         const sessionId = detached ? null : resolveSessionIdFromInput(input, ctx);
         if (!detached && !sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -216,8 +215,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           detached ? ctx.executionRunWorkflowObservationSink : undefined,
           ctx,
         );
-        const workflowScope = ctx.actionCaller?.kind === 'workflowRun'
-          ? await resolveActionWorkflowSessionScopeV1(actionId, ctx, deps) : null;
+        const workflowScope = ctx.actionCaller?.kind === 'workflowRun' ? workflowSessionScope : null;
         ctx.signal?.throwIfAborted();
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
@@ -289,6 +287,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const {
           teamCredentialSessionBindingConsent: _teamCredentialSessionBindingConsent,
           secretReferenceOverlay: _secretReferenceOverlay,
+          approvalProfileId: _approvalProfileId,
           outputs: _outputs,
           narrator: _narrator,
           ...reviewIntentInput
@@ -369,6 +368,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                   ? { connectedServicesDefaultServiceIds: connectedSelection.defaultServiceIds }
                   : {}),
                 permissionMode,
+                ...(reviewInput.approvalProfileId !== undefined ? { approvalProfileId: reviewInput.approvalProfileId } : {}),
                 retentionPolicy: 'resumable',
                 runClass: continueSingleReview ? 'long_lived' : 'bounded',
                 // Reviews should stream sidechain progress (and tool traffic) into the parent session.

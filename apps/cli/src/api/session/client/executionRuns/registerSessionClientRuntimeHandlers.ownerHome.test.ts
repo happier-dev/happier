@@ -19,10 +19,13 @@ import { ApiMachineClient } from '@/api/apiMachine';
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
 import { RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { configuration } from '@/configuration';
 import * as persistence from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -35,8 +38,11 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { createRoleSourceReader } from '@/session/roles/roleSources';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readPluginRoleSources } from '@/plugins/projection/registry/roles';
+import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
-  setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+  readAccountRoleOverridesFromSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { registerSessionClientRuntimeHandlers } from './registerSessionClientRuntimeHandlers';
@@ -109,9 +115,7 @@ async function home(settingsVersion: number, rawSettings: Readonly<Record<string
     } else if (roleCatalog && request.method === 'GET' && request.url === '/v2/account/settings/history') {
       response.end(JSON.stringify({ snapshots: [] }));
     } else if (roleCatalog && request.method === 'GET' && request.url?.startsWith('/v1/artifacts?')) {
-      const params = new URL(request.url, 'http://fixture.local').searchParams;
-      const filtered = params.has('kind') || params.has('kinds');
-      response.end(JSON.stringify(filtered ? { items: [], hasUnclassified: false } : []));
+      response.end(JSON.stringify(artifactListResponse(request.url, [])));
     } else { response.statusCode = 404; response.end('{}'); }
   });
   const settingsRead = once(server, 'settings-read');
@@ -464,6 +468,100 @@ describe('Session RPC owner Home Settings custody', () => {
       expect(result).toMatchObject({ ok: false, errorCode: 'provider_authorization_changed',
         details: { executionRunStart: { runCreation: 'noRunCreated' } } });
     } finally { await registration.dispose(); }
+  });
+  it('admits a signed Workflow Role write through a native root Session prepared Account context', async () => {
+    const credentials = { token: accountToken('workflow-root-role-owner'), encryption: null } as const;
+    const owner = await home(11, { schemaVersion: 6, actionsSettingsV1: { v: 1, actions: {},
+      approvalWaivedSurfaces: { 'session.role.set': ['agent'] } } }, true);
+    await withTempDir('happier-workflow-root-role-', async directory => {
+      await runWithServerHttpBaseUrl(owner.url, async () => {
+        const sessionId = 'workflow-root-role-lead';
+        const machineId = 'workflow-root-role-machine';
+        const serverId = 'workflow-root-role-home';
+        const backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const;
+        const metadata = createTestMetadata({ path: directory, machineId, flavor: 'codex' });
+        const bootstrap = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking',
+          publication: 'invocation', honorAccountSettingsModeEnv: false });
+        const scopeKey = bootstrap.scopeKey;
+        if (!scopeKey) throw new Error('Missing prepared root Account scope');
+        const operation = createInvocationSavedSecretOperationContextV1({ credentials, snapshot: { ...bootstrap, scopeKey },
+          serverHttpBaseUrl: owner.url, isCurrent: async () => true });
+        const pluginRegistry = createResolvedContributionRegistry({});
+        const readRoleSources = createRoleSourceReader({ accountId: 'workflow-root-role-owner',
+          artifactStore: createCredentialedAccountArtifactStore(credentials),
+          readPluginRoles: () => readPluginRoleSources(pluginRegistry),
+          readRawAccountSettings: async () => operation.readSnapshot()?.rawSettings ?? {} });
+        const nativeSelection = { status: 'applied', backendTarget, modelId: 'gpt-6.1-terra', connectedServices: null } as const;
+        // Native Agent readback and Socket.IO are system boundaries; Account,
+        // Role preparation, receiving registration and Workflow admission stay real.
+        const controls = { readAppliedChildSelection: async () => nativeSelection };
+        const roleContext = createSessionRoleContext({ readMetadata: () => metadata,
+          readOrganization: async () => ({}), readRoleSources,
+          readOperationContext: () => operation,
+          readAccountRoleOverrides: () => {
+            const snapshot = operation.readSnapshot();
+            return snapshot ? readAccountRoleOverridesFromSnapshot(snapshot)
+              : { status: 'unavailable', reason: 'scope-retired' };
+          },
+          prepareAccountRoleOverrides: async signal => { await prepareActiveAccountRoleOverrides({ credentials,
+            scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+            operationContext: operation, signal }); },
+          readDefaultEngine: () => ({ agentTargetKey: buildBackendTargetKeyV2(backendTarget) }),
+          readAppliedChildSelection: controls.readAppliedChildSelection,
+        });
+        await roleContext.prepare();
+        expect(await roleContext.readAccountOverrides()).toMatchObject({ status: 'ready' });
+        expect(await roleContext.readAppliedChildSelection?.()).toMatchObject({ status: 'applied', modelId: 'gpt-6.1-terra' });
+        expect(operation.readSnapshot()).toMatchObject({ source: 'network', settingsVersion: 11,
+          scopeKey, settings: bootstrap.settings });
+        const settingsReads = owner.requests.filter(request => request.method === 'GET' && request.path === '/v2/account/settings').length;
+        expect(settingsReads).toBeGreaterThan(0);
+        const socket = createApiSessionSocketStub();
+        const parent = new ApiSessionClient(credentials.token, createPlainSessionFixture({ id: sessionId, metadata }), {
+          metadataAuthority: { kind: 'owner', credentials },
+          transport: { serverId, serverUrl: owner.url,
+            createSessionSocketTransport: () => ({ socket: socket as never, transport: createSocketTransportAdapter(socket as never) }) },
+        });
+        const runtimeSession = applyRunnerMcpSessionContext(parent, { getSessionRoleContext: () => roleContext,
+          getBackendTarget: () => backendTarget, readRoleSources });
+        parent.setSessionRuntimeControls(controls);
+        const rpc = new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain', logger: () => {} });
+        const mutations: RegisteredSessionStateFieldMutationV1[] = [];
+        const unexpectedWrite = async (): Promise<never> => { throw new Error('Unexpected transcript write'); };
+        const registration = registerSessionClientRuntimeHandlers({ rpcHandlerManager: rpc, sessionId,
+          token: credentials.token, serverId, serverUrl: owner.url, localMachineId: machineId,
+          readOwnerAccountCredentials: async () => credentials, session: runtimeSession,
+          metadataPath: directory, metadata, getSessionMetadata: () => metadata, sessionRuntimeControls: controls,
+          enqueueRegisteredSessionStateFieldMutation: async mutation => { mutations.push(mutation); },
+          enqueueSessionUserMessage: unexpectedWrite, enqueueUserTextMessageCommitted: unexpectedWrite,
+          enqueueAgentMessageCommitted: unexpectedWrite, enqueueVoiceAgentTranscriptTurnCommitted: unexpectedWrite,
+          sendAgentMessageEphemeral: () => { throw new Error('Unexpected ephemeral write'); },
+          getTranscriptQueryContext: () => ({ encryptionMode: 'plain' }),
+          persistVoiceAgentRunMetadataFromPublicRun: () => {}, socketEmitExecutionRunUpdated: () => {},
+        });
+        const input = { sessionId, roleId: 'builder' };
+        const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'workflow-root-role-write',
+          target: { kind: 'session', sessionId }, input });
+        // Home's signature/relay verification is the external authentication
+        // boundary, matching the signed Workflow packets delivered to a runner.
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-workflow-role',
+          binding: { accountId: 'workflow-root-role-owner', custodianAccountId: 'workflow-root-role-owner',
+            authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: serverId,
+            machineId, installationId: 'installed-root-runner', actionId: 'session.role.set',
+            requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            target: envelope.target, workflowActionOrigin: { runId: 'workflow-root-run', requestId: envelope.requestId,
+              sessionAuthority: { authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+                runDepth: 0, runOriginSessionId: sessionId, directory, workspaceWrites: 'allow' } } } });
+        try {
+          const result = await rpc.handleRequest({ method: `${sessionId}:session.role.set`, params: input,
+            callerAuthority: 'account_automation', callerInputAuthorization: authorization });
+          expect(owner.requests.filter(request => request.method === 'GET' && request.path === '/v2/account/settings')).toHaveLength(settingsReads);
+          expect(result).toEqual({ updated: true });
+          expect(mutations).toContainEqual(expect.objectContaining({ sessionId, fieldId: 'intent.role',
+            op: { kind: 'set', value: 'builder' } }));
+        } finally { await registration.dispose(); await parent.close(); }
+      });
+    });
   });
   it('sets a live Session role from its private owner without borrowing the focused Account catalog', async () => {
     const diagnostics = vi.spyOn(logger, 'infoFile');

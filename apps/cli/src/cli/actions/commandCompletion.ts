@@ -288,7 +288,7 @@ export function resolveCompiledActionCliCompletionCandidates(
     // the value of an Action field just as the shared input helper suppresses
     // every ordinary flag in that position.
     if (!inputWords.includes('--') && !fieldForValuePosition(exact, inputWords)) {
-      for (const flag of exact.transportMachineIdFlags) {
+      for (const flag of [...exact.transportMachineIdFlags, ...exact.transportProjectTargetFlags]) {
         if (flag.startsWith(context.prefix)) candidates.add(flag);
       }
       if (exact.acceptsServerId && ACTION_CLI_SERVER_ID_FLAG.startsWith(context.prefix)) {
@@ -327,6 +327,7 @@ export async function resolveCompiledActionCliCompletionCandidatesWithDynamicOpt
     cliOwnedFlags: {
       valueFlags: [
         ...command.transportMachineIdFlags,
+        ...command.transportProjectTargetFlags,
         ...(command.acceptsServerId ? [ACTION_CLI_SERVER_ID_FLAG] : []),
       ],
     },

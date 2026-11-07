@@ -7,6 +7,8 @@ import { actionCliEnvelopeKind } from './commandPresentationMetadata';
 export { renderActionCliHelpModel } from './helpModel';
 export type { ActionCliHelpRow, ActionCliHelpModel } from './helpModel';
 import { renderHelpPage } from '@happier-dev/cli-common/output';
+import { supportsFiniteActionOutcome } from './commandPresentationMetadata';
+import { ACTION_CLI_PROJECT_DIRECTORY_FLAG, ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS, ACTION_CLI_WORKSPACE_REF_ID_FLAG } from './executionTarget';
 
 import {
   listCompiledActionCliCommands,
@@ -37,6 +39,7 @@ function buildCliOptionRows(command: CompiledActionCliCommand): readonly ActionC
     ...(command.routesByTransportMachineId
       ? [{ label: `${command.transportMachineIdFlags.join(', ')} <machineId>`, description: 'Route this invocation to an exact machine' }]
       : []),
+    ...buildProjectTargetOptionRows(command.transportProjectTargetFlags),
     ...(command.acceptsServerId
       ? [{
           label: `${ACTION_CLI_SERVER_ID_FLAG} <serverId>`,
@@ -47,6 +50,15 @@ function buildCliOptionRows(command: CompiledActionCliCommand): readonly ActionC
     { label: ACTION_CLI_JSON_OUTPUT_FLAG, description: 'Stable JSON envelope on stdout' },
     { label: ACTION_CLI_HELP_FLAGS.join(', '), description: 'Show this help' },
   ].map((row) => Object.freeze(row)));
+}
+
+function buildProjectTargetOptionRows(flags: readonly string[]): readonly ActionCliHelpRow[] {
+  return [
+    ...(flags.includes(ACTION_CLI_PROJECT_DIRECTORY_FLAG)
+      ? [{ label: `${ACTION_CLI_PROJECT_DIRECTORY_FLAG} <path>`, description: 'Use this project directory on the selected machine' }] : []),
+    ...(flags.includes(ACTION_CLI_WORKSPACE_REF_ID_FLAG)
+      ? [{ label: `${ACTION_CLI_WORKSPACE_REF_ID_FLAG} <id>`, description: 'Bind the project to an exact workspace reference' }] : []),
+  ];
 }
 
 
@@ -82,7 +94,9 @@ export function buildActionCliInvokeHelpModel(options: ActionCliInvokeHelpOption
       { label: `${ACTION_CLI_REQUEST_ID_FLAG} <id>`, description: 'Request correlation identifier; do not reuse after a daemon restart to mean "the same request"' },
       { label: `${ACTION_CLI_SERVER_ID_FLAG} <serverId>`, description: 'Use credentials and endpoint for an exact saved Home' },
       { label: `${ACTION_CLI_MACHINE_ID_FLAG} <machineId>`, description: 'Route this invocation to an exact machine' },
+      ...buildProjectTargetOptionRows(ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS),
       { label: '--yes', description: 'Approve requested Action confirmations without prompting' },
+      ...(supportsFiniteActionOutcome(options.actionId) ? [{ label: '--wait', description: 'Require settlement: exits 0 success, 1 failed/cancelled, 2 unexpected, 3 approval held, 4 Machine offline, 5 uncertain. Never resubmits.' }] : []),
       { label: ACTION_CLI_JSON_OUTPUT_FLAG, description: 'Stable JSON envelope on stdout' },
       { label: ACTION_CLI_HELP_FLAGS.join(', '), description: 'Show this help' },
     ].map((row) => Object.freeze(row))),

@@ -1,6 +1,6 @@
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { prepareDaemonAgentIsolationIdentity, type PreparedDaemonAgentIsolationIdentity, type PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
 export type { PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
@@ -36,6 +36,7 @@ import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/re
 import { resolveConnectedServiceAuthForLaunch, type ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../connectedServices/resolveConnectedServiceAuthForLaunch';
 import {
     ConnectedServiceQualifiedPurposeAuthorityError,
+    ConnectedServiceSpawnNoEligibleMemberError,
     ConnectedServiceSpawnResumeUnreachableError,
     resolveConnectedServiceAuthForSpawn,
 } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -262,6 +263,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 signal: input.signal,
                 ...(agentLaunchTarget ? { agentLaunchTarget } : {}),
                 agentId: input.catalogAgentId,
+                modelId: options.modelSelection?.ref.modelId,
                 connectedServicesBindingsRaw: options.connectedServices,
                 materializationKey,
                 requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution
@@ -277,7 +279,6 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 ...(input.qualifiedConnectedAccountApi ? { qualifiedConnectedAccountApi: input.qualifiedConnectedAccountApi } : {}),
                 api: input.api,
                 accountUsageStore: input.providerAccountUsageStore ?? null,
-                quotaFreshnessMs: 5 * 60_000,
                 nowMs: () => Date.now(),
                 ...(authSessionId ? { sessionId: authSessionId } : {}),
                 predictiveSwitchGuard: input.predictiveSwitchGuard ?? null,
@@ -328,6 +329,15 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                     : {}),
             }, input.createConnectedServiceLaunchAuthGroupCoordinator ?? (async () => null));
         } catch (error) {
+            if (error instanceof ConnectedServiceSpawnNoEligibleMemberError) {
+                return { ok: false, result: {
+                    type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                    errorMessage: error.code,
+                    errorDetail: { kind: 'launch_error', code: error.code,
+                        message: 'No connected account in the selected pool is available.',
+                        connectedAccountPool: { serviceId: error.serviceId, excluded: error.excluded } },
+                } };
+            }
             if (error instanceof ConnectedServiceQualifiedPurposeAuthorityError) {
                 return {
                     ok: false,

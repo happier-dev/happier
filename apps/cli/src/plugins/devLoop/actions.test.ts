@@ -6,11 +6,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol';
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createDaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/developmentRoots';
+import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
+import { startPluginDevelopmentSourceObserver } from '@/plugins/authoring/sourceObserver';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import { executePluginDevLoopAction } from './actions';
 
@@ -64,6 +71,22 @@ describe('executePluginDevLoopAction', () => {
     daemonControl.status.mockReset();
     daemonControl.ensure.mockClear();
     daemonControl.development.mockReset();
+  });
+
+  it('carries the daemon busy reason through uninstall and the public approval result projection', async () => {
+    daemonControl.request.mockResolvedValue({ kind: 'busy', pluginId: 'acme.dev-loop' });
+    const result = await executePluginDevLoopAction({ actionId: 'plugins.uninstall', input: { pluginId: 'acme.dev-loop' } });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, actionId: 'plugins.uninstall',
+      actionArgs: { pluginId: 'acme.dev-loop' }, status: 'executed', summary: 'Remove plugin',
+      createdAtMs: 1, updatedAtMs: 3, createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home-1', serverIdentityId: 'home-identity', accountId: 'account-1', machineId: 'machine-1',
+        target: { kind: 'machine', machineId: 'machine-1' }, actionId: 'plugins.uninstall', requestId: 'uninstall-1' },
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+      execution: { executedAtMs: 3, ok: true, result },
+    });
+    expect(readApprovalExecutionFailure(request)).toMatchObject({ ok: false, errorCode: 'busy',
+      error: expect.stringContaining('acme.dev-loop') });
   });
 
   it('unregisters the exact development root through the daemon owner and reports failures', async () => {
@@ -648,6 +671,78 @@ describe('executePluginDevLoopAction', () => {
       }, {});
       expect(daemonControl.decide).not.toHaveBeenCalled();
     } finally {
+      await removeTempDir(sourceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it.each([
+    { invalidSettings: true, expectedCode: 'PLUGIN_SETTINGS_DEFAULT_INVALID' },
+    { invalidSettings: false, expectedCode: 'plugin_dev_manifest_invalid' },
+  ])('preserves the source refusal through native Submit ($expectedCode)', async ({ invalidSettings, expectedCode }) => {
+    const home = await createTempDir('happier-plugin-submit-diagnostic-home-');
+    const sourceRoot = await createTempDir('happier-plugin-submit-diagnostic-source-');
+    const authoredValue = 'private-authored-default';
+    const pluginId = 'acme.submit-diagnostic';
+    const manifest = createPluginManifestV2Fixture({
+      id: pluginId,
+      ...(invalidSettings ? {
+        contributes: {
+          settings: [{
+            id: 'preferences', title: 'Preferences', scope: 'daemon', target: { kind: 'plugin' },
+            fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: authoredValue }],
+          }],
+        },
+      } : { version: 'invalid-version' }),
+    });
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir: home,
+        runtimeLifecycle: { prepare: async () => { throw new Error('Invalid sources must not activate plugin code'); } },
+        runManagedPluginPnpm: async () => { throw new Error('Invalid sources must not launch dependency tooling'); },
+      }),
+    });
+    const owner = createDaemonPluginDevelopmentRootsOwner({
+      happyHomeDir: home,
+      submitObservation: async ({ request }) => service.requestPluginChange({
+        ...request, sourceRootPath: request.projectRoot,
+      }),
+      // Only OS watches, dependency processes and plugin execution are system
+      // boundaries; source admission, change service and Action remain real.
+      startCollectionObserver: async () => ({ stop() {} }),
+      startSourceObserver: async (projectRoot, onObservation) => startPluginDevelopmentSourceObserver({
+        projectRoot, onObservation,
+        startWatchingDirectory: () => ({ ready: Promise.resolve(), stop() {} }),
+      }),
+    });
+    try {
+      await mkdir(join(sourceRoot, '.happier-plugin'));
+      await writeFile(join(sourceRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(manifest));
+      await owner.initialize();
+
+      const result = await executePluginDevLoopAction({
+        actionId: 'plugins.dev.submit', input: { projectRoot: sourceRoot }, happyHomeDir: home,
+      }, { controlPluginDevelopment: request => owner.control(request) });
+
+      expect(result).toMatchObject({
+        ok: false, kind: 'plugins_dev_submit', diagnostics: [{ code: expectedCode }],
+      });
+      const serialized = JSON.stringify(result);
+      if (invalidSettings) {
+        expect(serialized).toContain(pluginId);
+        expect(serialized).toContain('preferences');
+        expect(serialized).toContain('enabled');
+      } else {
+        expect(serialized).not.toContain('PLUGIN_SETTINGS_');
+      }
+      expect(serialized).not.toContain(authoredValue);
+      expect(owner.readStatus().plugins).toEqual([
+        expect.objectContaining({ phase: 'unavailable', diagnostic: expect.objectContaining({ code: expectedCode }) }),
+      ]);
+      expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
+    } finally {
+      await owner.stop();
+      await service.shutdown();
       await removeTempDir(sourceRoot);
       await removeTempDir(home);
     }

@@ -1,9 +1,9 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
-import axios from 'axios'
+import axios from '@/api/client/credentialAxios';
 import { boundExpoPushMessage } from './boundExpoPushMessage'
 import { logger } from '@/ui/logger'
-import { Expo, type ExpoPushErrorTicket, type ExpoPushMessage } from 'expo-server-sdk'
+import { Expo, type ExpoPushErrorTicket, type ExpoPushMessage, type ExpoPushReceipt } from 'expo-server-sdk'
 import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
@@ -13,12 +13,14 @@ import {
     readPushFetchTokensTimeoutMs,
 } from './pushNotificationsConfig'
 import { collectExpoPushTokensMarkedUnregistered, getExpoErrorCode } from '@happier-dev/protocol/push/expoPushDelivery';
-import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolvePushNotificationAndroidChannelId, buildPluginNotificationCategoryId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { AccountNoticePushDataV1Schema, PluginSessionPushDataV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration'
 import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp'
 import { readAccountSessionDeliveryMutedScopes } from './sessionDeliveryMuteTransport';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { NotificationQuestionAnswerV1Schema } from '@happier-dev/protocol/push/notificationQuestionActions';
 
 export interface PushToken {
     id: string
@@ -70,10 +72,23 @@ function resolvePushRequestKindFromPushData(data: Record<string, unknown> | unde
 }
 
 function resolveCategoryIdFromPushData(data: Record<string, unknown> | undefined): string | undefined {
+    if (data?.topic === 'account_notice' || data?.topic === 'plugin_session') {
+        const parsed = data.topic === 'account_notice' ? AccountNoticePushDataV1Schema.safeParse(data) : PluginSessionPushDataV1Schema.safeParse(data);
+        const category = parsed.success ? parsed.data.pluginNotification : undefined;
+        return category ? buildPluginNotificationCategoryId(category.pluginId, category.categoryId) : undefined;
+    }
     if (data?.topic === 'guard_stop_warning') return PUSH_NOTIFICATION_CATEGORY_IDS.guardStopWarningV1
     const kind = resolvePushRequestKindFromPushData(data)
     if (kind === 'permission') return PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
-    if (kind === 'user_action') return PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1
+    if (kind === 'user_action') {
+        const question = NotificationQuestionAnswerV1Schema.safeParse(data?.questionAnswerV1);
+        if (question.success) {
+            if (question.data.kind === 'text') return PUSH_NOTIFICATION_CATEGORY_IDS.questionTextV1;
+            return [PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices1V1, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1,
+                PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices3V1][question.data.values.length - 1];
+        }
+        return PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1;
+    }
     return undefined
 }
 
@@ -172,7 +187,7 @@ export class PushNotificationClient {
                 })
                 this.didLogPushTokenFetchCooldown = true
             }
-            return []
+            throw new Error('Push token registration lookup unavailable during failure cooldown')
         }
         try {
             const response = await axios.get<{ tokens: PushToken[] }>(
@@ -275,11 +290,13 @@ export class PushNotificationClient {
      * Send push notification via Expo Push API with retry
      * @param messages - Array of push messages to send
      */
-    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<Readonly<{ invalidTokens: ReadonlyArray<string>; invalidCredentials: boolean }>> {
+    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<Readonly<{ acceptedCount: number; failedCount: number; invalidTokens: ReadonlyArray<string>; invalidCredentials: boolean }>> {
         const debugPush = isPushDebugEnabled()
         if (debugPush) logger.debug(`Sending ${messages.length} push notifications`)
         const invalidTokens = new Set<string>()
         let invalidCredentials = false
+        let acceptedCount = 0
+        const targetCount = messages.reduce((count, message) => count + (Array.isArray(message.to) ? message.to.length : 1), 0)
 
         // Filter out invalid push tokens
         const validMessages = messages.filter(message => {
@@ -291,7 +308,8 @@ export class PushNotificationClient {
 
         if (validMessages.length === 0) {
             if (debugPush) logger.debug('No valid Expo push tokens found')
-            return { invalidTokens: [], invalidCredentials: false }
+            if (targetCount > 0) logger.infoFile('[PUSH] Push service did not confirm acceptance for every recipient', { acceptedCount: 0, failedCount: targetCount })
+            return { acceptedCount: 0, failedCount: targetCount, invalidTokens: [], invalidCredentials: false }
         }
 
         // Create chunks to respect Expo's rate limits
@@ -318,7 +336,7 @@ export class PushNotificationClient {
             while (true) {
                 try {
                     const ticketChunk = await this.expo.sendPushNotificationsAsync(retryChunk)
-                    let receipts: Record<string, unknown> | undefined
+                    let receipts: Record<string, ExpoPushReceipt> | undefined
                     const receiptIds = ticketChunk
                         .map((ticket) => typeof (ticket as { id?: unknown })?.id === 'string' ? (ticket as { id: string }).id : null)
                         .filter((ticketId): ticketId is string => typeof ticketId === 'string' && ticketId.length > 0)
@@ -328,6 +346,14 @@ export class PushNotificationClient {
                             receipts = await this.expo.getPushNotificationReceiptsAsync(receiptIds)
                         } catch (error) {
                             logger.debug('[PUSH] Failed to fetch Expo push receipts:', serializeAxiosErrorForLog(error))
+                        }
+                    }
+
+                    // A successful request alone is not delivery evidence. Count
+                    // accepted tickets unless an available receipt rejects them.
+                    for (const ticket of ticketChunk) {
+                        if (ticket.status === 'ok' && receipts?.[ticket.id]?.status !== 'error') {
+                            acceptedCount += 1
                         }
                     }
 
@@ -401,7 +427,7 @@ export class PushNotificationClient {
                 } catch (error) {
                     const elapsed = Date.now() - startTime
                     if (elapsed >= timeout) {
-                        if (debugPush) logger.debug('[PUSH] Timeout reached after 5 minutes, giving up on chunk')
+                        logger.infoFile('[PUSH] Push send retries exhausted; service acceptance was not confirmed', { error: serializeAxiosErrorForLog(error) })
                         break
                     }
                     
@@ -419,8 +445,10 @@ export class PushNotificationClient {
             }
         }
 
-        if (debugPush && !invalidCredentials) logger.debug(`Push notifications sent successfully`)
-        return { invalidTokens: [...invalidTokens], invalidCredentials }
+        if (debugPush) logger.debug('[PUSH] Push notification acceptance result', { acceptedCount })
+        const failedCount = targetCount - acceptedCount
+        if (failedCount > 0) logger.infoFile('[PUSH] Push service did not confirm acceptance for every recipient', { acceptedCount, failedCount })
+        return { acceptedCount, failedCount, invalidTokens: [...invalidTokens], invalidCredentials }
     }
 
     /**
@@ -463,6 +491,9 @@ export class PushNotificationClient {
             }
 
             const badgeCount = await this.fetchAccountActivityBadgeCount()
+            const accountId = readAccountIdFromToken(this.token)
+            const { accountId: _untrustedAccountId, ...callerData } = data ?? {}
+            const scopedData = accountId ? { ...callerData, accountId } : callerData
 
             // Create messages for all tokens
             const messages: ExpoPushMessage[] = tokens.map((token, index) => {
@@ -475,7 +506,7 @@ export class PushNotificationClient {
                     to: token.token,
                     title,
                     body,
-                    data: withServerUrlInPushData({ baseUrl, data }),
+                    data: withServerUrlInPushData({ baseUrl, data: scopedData }),
                     priority: options?.priority ?? 'high',
                     categoryId,
                     channelId,
@@ -495,11 +526,10 @@ export class PushNotificationClient {
             if (debugPush) logger.debug(`[PUSH] Sending ${messages.length} push notifications...`)
             const sendResult = await this.sendPushNotifications(messages)
             await this.deletePushTokens(sendResult.invalidTokens)
-            if (sendResult.invalidCredentials) {
+            if (sendResult.invalidCredentials && sendResult.acceptedCount === 0) {
                 throw new Error('Expo push failed: InvalidCredentials. Check the app\'s FCM V1 or APNs credentials in Expo.')
             }
-            if (debugPush) logger.debug('[PUSH] Push notifications sent successfully')
-            return true
+            return sendResult.acceptedCount > 0
         } catch (error) {
             logger.debug('[PUSH] Error sending to all devices:', serializeAxiosErrorForLog(error))
             throw error

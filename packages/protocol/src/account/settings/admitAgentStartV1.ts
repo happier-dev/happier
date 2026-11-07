@@ -99,8 +99,8 @@ export type AgentStartRequestV1 =
     // through this arm without `selection`, at the Run's frozen depth.
     | Readonly<{ leaf: Extract<MaterializedWorkflowLeafV1, { kind: 'action' }>; selection: 'deferred' }>
   ))
-  | Readonly<{ kind: 'definition_write'; leaves: readonly MaterializedWorkflowLeafV1[] }>
-  | Readonly<{ kind: 'trigger_write'; scope: 'session' | 'workflow'; targetSessionId?: string; leaves: readonly MaterializedWorkflowLeafV1[] }>
+  | Readonly<{ kind: 'definition_write'; permissionCeiling: AgentPermissionIntentV1; leaves: readonly MaterializedWorkflowLeafV1[] }>
+  | Readonly<{ kind: 'trigger_write'; permissionCeiling: AgentPermissionIntentV1; scope: 'session' | 'workflow'; targetSessionId?: string; leaves: readonly MaterializedWorkflowLeafV1[] }>
   // Role writes consume check 1 only; keeping them here avoids a second subtree policy owner.
   | Readonly<{ kind: 'session_target'; targetSessionId: string }>;
 
@@ -337,6 +337,8 @@ export function admitAgentStartV1(
 
   if (request.kind === 'definition_write' || request.kind === 'trigger_write') {
     if (request.kind === 'trigger_write' && workDepth > context.workDepthLimit) return refuse({ code: 'work_depth_exceeded' });
+    const ceiling = checkSelection({ permissionMode: request.permissionCeiling }, undefined, undefined, [], undefined, undefined, false, false);
+    if (!ceiling.ok) return refuse({ code: 'definition_exceeds_authority', cause: ceiling.refusal });
     for (const leaf of request.leaves) {
       const admission = checkSelection(leaf.facts, leaf.roleId, undefined, [], leaf);
       if (!admission.ok) return refuse({ code: 'definition_exceeds_authority', blockId: leaf.blockId, cause: admission.refusal });

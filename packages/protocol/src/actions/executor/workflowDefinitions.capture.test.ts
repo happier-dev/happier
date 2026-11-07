@@ -21,11 +21,16 @@ const answer = message('answer', 2, 'An answer must not become an instruction', 
 const review = message('review', 3, 'A review result', 'reviewer', 'answer');
 
 function harness(messages = [question, answer, review], responseHome = discussion.serverId,
-  currentMessageSeq = (_readNumber: number) => Math.max(20, ...messages.map(message => message.seq))) {
+  currentMessageSeq = (_readNumber: number) => Math.max(20, ...messages.map(message => message.seq)),
+  featureEnabled = true) {
   const unused = (): never => { throw new Error('capture_must_not_write_or_run'); };
   const definitions = createWorkflowDefinitionActions({ artifactStore: { read: unused, list: unused,
     create: unused, update: unused, delete: unused }, encodeListCursor: unused, assertDefinitionWriteAllowed: unused });
-  const workflowAction = createWorkflowActionExecutor({ definitions, isWorkflowFeatureEnabled: () => true, runs: { execute: unused } });
+  let featureReads = 0;
+  let ingressReads = 0;
+  const workflowAction = createWorkflowActionExecutor({ definitions,
+    isWorkflowFeatureEnabled: () => { featureReads += 1; return featureEnabled; },
+    resolveIngressContext: async () => { ingressReads += 1; return undefined; }, runs: { execute: unused } });
   // Discussion HTTP and Artifact persistence are the only substituted boundaries.
   const reads: DiscussionReadInputV1[] = [];
   const discussionAction: NonNullable<ActionExecutorDeps['discussionAction']> = async ({ input }) => {
@@ -42,10 +47,23 @@ function harness(messages = [question, answer, review], responseHome = discussio
   };
   const executor = createActionExecutor({ workflowAction, discussionAction } as unknown as ActionExecutorDeps);
   return Object.assign((input: unknown, surface: 'ui' | 'mcp' | 'agent' = 'ui') => executor.execute('workflow.definition.capture', input,
-    { surface, serverId: 'home', runtimeAccountId: 'account', ...(surface === 'agent' ? { actionCaller: { kind: 'plugin', pluginId: 'example.patterns' } } : {}) }), { reads });
+    { surface, serverId: 'home', runtimeAccountId: 'account', ...(surface === 'agent' ? { actionCaller: { kind: 'plugin', pluginId: 'example.patterns' } } : {}) }),
+    { reads, costs: () => ({ featureReads, ingressReads }) });
 }
 
 describe('workflow.definition.capture through the public Action owner', () => {
+  it('admits capture at the family feature gate before source reads without a validation probe', async () => {
+    const disabled = harness([question, answer], discussion.serverId, () => 20, false);
+    expect(await disabled({ discussion, messageIds: ['question', 'answer'] }))
+      .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect(disabled.reads).toEqual([]);
+    expect(disabled.costs()).toEqual({ featureReads: 1, ingressReads: 0 });
+    const enabled = harness();
+    expect(await enabled({ discussion, messageIds: ['question', 'answer'] }))
+      .toMatchObject({ ok: true, result: { status: 'ready' } });
+    expect(enabled.reads).toHaveLength(2);
+    expect(enabled.costs()).toEqual({ featureReads: 1, ingressReads: 0 });
+  });
   it.each(['file', 'folder'] as const)('holds selected %s content for review instead of silently capturing text only', async kind => {
     const attachment = kind === 'folder'
       ? { kind, id: '7578de54-3f59-4d6d-8293-ff6e4682fd11', name: 'project', entries: [], directories: [] } as const
@@ -144,9 +162,32 @@ describe('workflow.definition.capture through the public Action owner', () => {
       message('review', 4, 'Review result', 'reviewer', 'answer')]);
     const value = await capture({ discussion, messageIds: ['question', 'answer', 'other', 'review'] });
     expect(value).toMatchObject({ ok: true, result: { definition: { blocks: [
-      { kind: 'parallel', branches: [expect.any(Object), expect.any(Object)] },
+      { kind: 'loop', repetition: { kind: 'items', execution: 'parallel' } },
       { kind: 'step', input: [{ kind: 'result', producer: { blockId: 'exchange_1' }, path: [0, 'results', 'step_1'] }] },
     ] } } });
+  });
+  it.each([true, false])('folds independent answerers into one typed participants input (per run: %s)', async perRun => {
+    const capture = harness([question, answer, message('other', 3, 'Other answer', 'other-answerer', 'question'),
+      message('review', 4, 'Review result', 'reviewer', 'answer')]);
+    const value = await capture({ discussion, messageIds: ['question', 'answer', 'other', 'review'], choices: [
+      { messageId: 'answer', role: 'step', perRun }, { messageId: 'other', role: 'step', perRun },
+    ] });
+    if (!value.ok) throw new Error(value.errorCode);
+    const draft = WorkflowDefinitionCaptureResultV1Schema.parse(value.result);
+    const participants = ['answerer', 'other-answerer'].map(sessionId => ({ kind: 'session', session: { serverId: 'home', sessionId } }));
+    expect(draft.definition?.inputs).toEqual([
+      { name: 'question', valueType: 'string', required: true },
+      { name: 'participants', valueType: 'json', multiple: true, required: perRun,
+        inputType: { hostType: 'agentParticipant' }, ...(!perRun ? { default: participants } : {}) },
+      { name: 'participant_3', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
+    ]);
+    expect(draft.inputs.participants).toEqual(participants);
+    expect(draft.steps.filter(step => ['answer', 'other'].includes(step.messageId)).map(step => step.participantInputName))
+      .toEqual(['participants', 'participants']);
+    expect(draft.definition?.blocks[0]).toMatchObject({ kind: 'loop', repetition: {
+      kind: 'items', items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes',
+    }, body: [{ id: 'step_1', execution: { participant: { kind: 'item', field: 'value' } } }] });
+    expect(validateWorkflowDefinition(draft.definition)).toMatchObject({ valid: true });
   });
   it('carries an exact answer dependency through a human review request instead of scheduling both agents independently', async () => {
     const capture = harness([question, answer, message('review-request', 3, 'Review this answer for missing evidence', undefined, 'answer'),

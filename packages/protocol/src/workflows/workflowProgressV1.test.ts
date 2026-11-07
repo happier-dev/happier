@@ -13,6 +13,7 @@ import {
   WorkflowConversationRefV1Schema,
   areWorkflowRetainedRuntimeSelectionsEqualV1,
   projectWorkflowRetainedRuntimeSelectionV1,
+  projectWorkflowLoopItemDisplayLabelV1,
   projectWorkflowBigIntV1,
   WorkflowFinalResultV1Schema,
   projectWorkflowFinalResultDeliverableTextV1,
@@ -33,6 +34,14 @@ import {
 } from './workflowProgressV1.js';
 
 describe('workflow progress v1', () => {
+  it('keeps executable participant identities out of generic item labels', () => {
+    expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'session', session: { serverId: 'home', sessionId: 'private-id' } })).toBeUndefined();
+    expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'model', launch: { title: 'External reviewer',
+      executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'external.agent', localId: 'reviewer' } } } })).toBe('External reviewer');
+    expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'issue', id: 1, displayName: 'Review the release' })).toBe('Review the release');
+    expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'file', id: 2, name: 'main.ts' })).toBe('main.ts');
+  });
   it('rejects caller-authored publication authority in a recovery replacement input', () => {
     expect(WorkflowAuthoredInputV1Schema.safeParse({ document: { text: 'Retry', references: [], attachments: [] }, input: [],
       discussionReplyTo: { discussion: { serverId: 'home', discussionId: 'other-discussion' }, messageId: 'other-question', throughSeq: 1 } }).success).toBe(false);
@@ -642,6 +651,11 @@ describe('workflow progress v1', () => {
       ...base,
       recovery: { conversation: 'same_conversation', input: { kind: 'original' } },
     }).recovery).toEqual({ conversation: 'same_conversation', input: { kind: 'original' } });
+    const retainedInput = { document: { text: 'retry', references: [], attachments: [] }, input: [], renderedText: 'Frozen original' };
+    expect(createStoredReadSchema(WorkflowProgressEnvelopeV1Schema).parse({
+      ...base,
+      recovery: { conversation: 'fresh_agent', input: { kind: 'replacement', value: { ...retainedInput, retiredProjection: true } } },
+    }).recovery?.input).toEqual({ kind: 'replacement', value: retainedInput });
     expect(WorkflowProgressEnvelopeV1Schema.safeParse({
       ...base,
       recovery: { conversation: 'fresh_agent', input: { kind: 'replacement', value: { document: { text: 'retry', references: [], attachments: [] }, input: [] } }, providerHandle: 'private' },

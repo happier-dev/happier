@@ -7,6 +7,7 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createSessionClientInteractionApi } from './sessionClientInteractionApi';
 import { createSessionClientMaterializationRuntime } from '../lifecycle/createSessionClientMaterializationRuntime';
+import { createSessionClientRecoveryRuntime } from '../lifecycle/createSessionClientRecoveryRuntime';
 import { encodeBase64, encrypt } from '../../../encryption';
 import { runPermissionModePromptLoop, type PermissionModePromptLoopTurnOperations } from '@/agent/runtime/runPermissionModePromptLoop';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
@@ -119,16 +120,15 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       onMetadataUpdated: vi.fn(),
       offMetadataUpdated: vi.fn(),
       getAgentStateVersion: () => 0,
+      getPendingClaimForegroundState: () => 'ready',
       getPendingWakeSeq: () => 0,
       getProviderInputBacklog: () => [],
       setProviderInputConsumer: vi.fn(),
       getProviderInputConsumerAttachedAtMs: () => null,
       setProviderInputConsumerAttachedAtMs: vi.fn(),
       wakePendingMaterialization: vi.fn(),
-      clearUserSocketDisconnectTimer: vi.fn(),
       kickUserSocketConnect: vi.fn(),
       catchUpSessionMessages: vi.fn(async () => {}),
-      scheduleNextStartupMessageCatchUpRetry: vi.fn(),
       getLastObservedMessageSeq: () => 0,
       getStartupMessageCatchUpExplicitAfterSeq: () => null,
       getStartedByDaemonProcess: () => true,
@@ -136,15 +136,11 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       getMetadataStartedFromDaemon: () => null,
       getStartupMessageCatchUpStarted: () => false,
       setStartupMessageCatchUpStarted: vi.fn(),
-      setStartupMessageCatchUpRetryIndex: vi.fn(),
-      setStartupMessageCatchUpInitialAfterSeq: vi.fn(),
       enqueueSessionUserMessage: vi.fn(),
       syncSessionSnapshotFromServer: vi.fn(),
       reconcileTurnStatusBeforePendingMaterialization: vi.fn(async () => true),
       maybeScheduleUserSocketDisconnect: vi.fn(),
       handleSessionScopedUpdate: vi.fn(),
-      clearStartupMessageCatchUpRetryTimer: vi.fn(),
-      clearCommittedLocalIdCleanupTimers: vi.fn(),
       clearPendingMaterializedState: vi.fn(),
       getPendingQueueMaterializedLocalIdsSize: () => 0,
       markPendingQueueMaterializedLocalId: vi.fn(),
@@ -162,6 +158,88 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       ...overrides,
     });
   }
+
+  it('projects editing-socket liveness into the Pending wake and retires it on disconnect without reads', async () => {
+    const socket = createSocketStub();
+    let currentSocket = socket;
+    const waiters = new Set<() => void>();
+    let wakeSequence = 0;
+    const api = createApi({
+      getSocket: () => currentSocket as never,
+      getPendingWakeSeq: () => wakeSequence,
+      onMetadataUpdated: handler => { waiters.add(handler); },
+      offMetadataUpdated: handler => { waiters.delete(handler); },
+      onPendingMessageEditHoldIdsChanged: () => {
+        wakeSequence++;
+        for (const handler of [...waiters]) handler();
+      },
+    });
+    api.installSessionSocketEventHandlers(socket as never);
+    expect(api.getPendingMessageEditHoldIds()).toBeNull();
+    socket.trigger('connect');
+    expect(socket.emit).toHaveBeenCalledWith('session-human-presence:visible-replace', {
+      v: 1, sessionIds: ['s1'], pendingMessageEdits: [],
+    }, expect.any(Function));
+    const snapshot = (ids: string[]) => ({ v: 1, sessionId: 's1', observedAt: 1, viewers: [], pendingMessageEditHoldIds: ids });
+    socket.trigger('session-human-presence:snapshot', { ...snapshot(['other-session']), sessionId: 's2' });
+    socket.trigger('session-human-presence:snapshot', { ...snapshot(['malformed']), viewers: 'invalid' });
+    expect(api.getPendingMessageEditHoldIds()).toBeNull();
+    socket.trigger('session-human-presence:snapshot', snapshot(['editing']));
+    expect(api.getPendingMessageEditHoldIds()).toEqual(['editing']);
+    const live = api.getPendingMessageEditHoldIds();
+    socket.trigger('session-human-presence:snapshot', snapshot(['editing']));
+    expect(api.getPendingMessageEditHoldIds()).toBe(live);
+    expect(wakeSequence).toBe(1);
+    const waiting = api.waitForMetadataUpdate();
+    socket.trigger('session-human-presence:snapshot', snapshot([]));
+    await expect(waiting).resolves.toBe(true);
+    expect(api.getPendingMessageEditHoldIds()).toEqual([]);
+    expect(wakeSequence).toBe(2);
+    socket.trigger('disconnect');
+    expect(api.getPendingMessageEditHoldIds()).toBeNull();
+    currentSocket = createSocketStub();
+    api.installSessionSocketEventHandlers(currentSocket as never);
+    socket.trigger('session-human-presence:snapshot', snapshot(['retired-device']));
+    expect(api.getPendingMessageEditHoldIds()).toBeNull();
+    currentSocket.trigger('session-human-presence:snapshot', snapshot([]));
+    expect(api.getPendingMessageEditHoldIds()).toEqual([]);
+    expect(axiosGetMock).not.toHaveBeenCalled();
+    expect(axiosPostMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['INVALID_REQUEST', 'UNSUPPORTED_VERSION', 'UNAVAILABLE'] as const)(
+    'settles refused edit observation only when the server establishes unsupported input (%s)', (errorCode) => {
+      const socket = createSocketStub();
+      const api = createApi({ getSocket: () => socket as never });
+      api.installSessionSocketEventHandlers(socket as never);
+      socket.trigger('connect');
+      const acknowledge = socket.emit.mock.calls.at(-1)?.[2];
+      if (typeof acknowledge !== 'function') throw new Error('Presence declaration did not expose its acknowledgement');
+      acknowledge({ v: 1, ok: false, errorCode });
+      expect(api.getPendingMessageEditHoldIds()).toEqual(errorCode === 'UNAVAILABLE' ? null : []);
+    },
+  );
+
+  it.each(['empty', 'transport', 'internal', 'forbidden'] as const)('preserves released Pending %s outcome at the public consumer', async (outcome) => {
+    const socket = createSocketStub();
+    const contract = { mode: 'released_server_v0_2_1' as const, runtimeActivity: 'legacy' as const,
+      pendingInput: 'released_server_v0_2_1' as const, publisherAuthority: 'indeterminate' as const,
+      sessionConnectionEpoch: 1, socket: socket as never };
+    const supervisor = { getState: () => ({ phase: 'online' }), reportProbeResult: vi.fn() };
+    const api = createApi({ getSocket: () => socket as never,
+      getSessionSyncPendingInputServerContractResult: () => contract,
+      getSessionConnectionSupervisor: () => supervisor as never,
+      getPendingQueueState: () => ({ known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 }),
+    });
+    if (outcome === 'transport') socketAckMock.mockRejectedValueOnce(new Error('socket disconnected'));
+    else socketAckMock.mockResolvedValueOnce(outcome === 'empty' ? { ok: true, didMaterialize: false }
+      : { ok: false, error: outcome });
+    const result = api.materializeNextPendingMessageSafely();
+    if (outcome === 'forbidden') await expect(result).rejects.toMatchObject({ code: 'forbidden', response: { status: 403 } });
+    else await expect(result).resolves.toEqual({ type: outcome === 'empty' ? 'no_pending' : 'retryable_transport' });
+    expect(socketAckMock).toHaveBeenCalledTimes(1);
+    expect(axiosGetMock).not.toHaveBeenCalled();
+  });
 
   it('reports planned server restart events to the connection supervisor', () => {
     const socket = createSocketStub();
@@ -415,7 +493,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(axiosPostMock).not.toHaveBeenCalled();
   });
 
-  it('requests one bounded frozen-claim rejoin after a current socket acknowledgement becomes ambiguous', async () => {
+  it('rejoins an ambiguous frozen claim at the canonical connection retry delay', async () => {
     const socket = createSocketStub();
     const contractResult = {
       mode: 'session_sync_v2_pending_input_v1' as const,
@@ -440,7 +518,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
 
     await expect(api.materializeNextPendingMessageSafely()).resolves.toEqual({
       type: 'retryable_transport',
-      retryAfterMs: 250,
+      retryAfterMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs,
     });
     expect(infoFileSpy).toHaveBeenCalledWith(
       '[pendingQueue] materialize request failed',
@@ -826,7 +904,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       expect(delivered).toEqual([{ ...payload, localId: 'pending-local', createdAt: 1_000 }]);
       expect(custody.has('pending-local')).toBe(true);
     } else {
-      expect(result).toEqual({ type: 'retryable_transport', retryAfterMs: 250 });
+      expect(result).toEqual({ type: 'retryable_transport', retryAfterMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMinMs });
       expect(delivered).toEqual([]);
       expect(projected).toEqual([]);
       expect(custody.size).toBe(0);
@@ -1114,9 +1192,12 @@ describe('createSessionClientInteractionApi diagnostics', () => {
   });
 
   it.each((['valid', 'revoked', 'muted', 'held', 'unavailable', 'changed-cutoff', 'missing-service',
-    'invalid-receipt', 'invalid-authority', 'settlement-unknown', 'permission-broadened', 'permission-narrowed'] as const)
+    'invalid-receipt', 'invalid-authority', 'settlement-unknown', 'permission-broadened', 'permission-narrowed',
+    'admitted-mute-changed', 'admitted-check-in-unavailable', 'unadmitted-check-in-unavailable'] as const)
     .flatMap(state => (['normal', 'steer'] as const).flatMap(delivery =>
-      (state === 'valid' ? ['plain', 'e2ee'] as const : ['plain'] as const).map(mode => ({ state, delivery, mode }))))) (
+      (state === 'valid' || state === 'permission-narrowed' || state === 'admitted-mute-changed'
+        || state === 'admitted-check-in-unavailable' || state === 'unadmitted-check-in-unavailable'
+        ? ['plain', 'e2ee'] as const : ['plain'] as const).map(mode => ({ state, delivery, mode }))))) (
     'rechecks the original queued Discussion input after checkpoint preparation ($state, $delivery, $mode)', async ({ state, delivery, mode }) => {
       const discussionAddressing = { discussionId: 'discussion', messageId: 'question', throughSeq: 3, participantSessionId: 's1' };
       const localId = 'original-discussion-input';
@@ -1128,6 +1209,8 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Answer the original question' }, meta: {
           happierProvenanceV1: { v: 1, kind: 'host', producer: 'sessionAction' },
           happierInputRequestV1: { v: 1, producer: 'sessionAction', caller: { kind: 'host' }, discussionAddressing,
+            ...(state === 'admitted-check-in-unavailable' || state === 'unadmitted-check-in-unavailable'
+              ? { sourceSession: { sourceSessionId: 'sender', sourceTurnId: 'turn', via: 'action' as const } } : {}),
             ...(delivery === 'steer' ? { actionRequestAttributionV1: { requestRef: 'origin-input', requester: null,
               persona: { serverId: 'home', sessionId: 's1' }, origin: { kind: 'discussion',
                 discussion: originatingDiscussion, messageId: 'origin-message' } } } : {}),
@@ -1142,8 +1225,10 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         inputAdmissionReceipt: requestedOriginal.inputAdmissionReceipt });
       // This is the actual target materialization producer: committed input has
       // immutable authority and deliberately no caller request metadata.
-      const settledPayload = { ...requestedOriginal.content.v, meta: withSessionInputAuthority(requestedOriginal.content.v.meta, authority) };
-      expect(settledPayload.meta).not.toHaveProperty('happierInputRequestV1');
+      const settledMeta: Record<string, unknown> = state === 'unadmitted-check-in-unavailable'
+        ? requestedOriginal.content.v.meta : withSessionInputAuthority(requestedOriginal.content.v.meta, authority);
+      const settledPayload = { ...requestedOriginal.content.v, meta: settledMeta };
+      if (state !== 'unadmitted-check-in-unavailable') expect(settledPayload.meta).not.toHaveProperty('happierInputRequestV1');
       if (state === 'invalid-authority') settledPayload.meta.happierInputAuthorityV1 = { ...authority,
         permission: { admittedPermissionCeiling: 'invalid' } };
       const ctx = { encryptionKey: new Uint8Array(32).fill(9), encryptionVariant: 'dataKey' as const };
@@ -1155,7 +1240,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       axiosGetMock.mockImplementation(async (url: string) => {
         if (!checkpointFinished) readBeforePreparationFinished = true;
         if (url.includes('/messages/by-local-id/')) return { status: state === 'unavailable' ? 503 : 200, data: { message: original } };
-        if (url.includes('/delivery-mutes')) return { status: 200, data: { scopes: state === 'muted'
+        if (url.includes('/delivery-mutes')) return { status: 200, data: { scopes: state === 'muted' || state === 'admitted-mute-changed'
           ? [{ kind: 'source', source: { kind: 'discussion', discussionId: 'discussion' } }] : [] } };
         throw new Error(`Unexpected transport URL: ${url}`);
       });
@@ -1169,9 +1254,10 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       const api = createApi({ getSocket: () => socket as never,
         getStoredContentCryptoContext: () => mode === 'e2ee' ? { mode, ctx } : { mode, ctx: null },
         getMetadata: () => createTestMetadata({ permissionMode: state === 'permission-narrowed' ? 'read-only' : 'default' }),
-        // Human-origin watch inputs have no sourceSession. The current Account
-        // preference must still reach the server's persisted watch admission.
+        // Only a new admission needs the current preference. Retained input
+        // already carries its immutable authority and admission receipt.
         readCurrentAutonomousCheckIn: async origin => {
+          if (state === 'admitted-check-in-unavailable' || state === 'unadmitted-check-in-unavailable') return null;
           const configuredDiscussion = delivery === 'steer' ? originatingDiscussion
             : { serverId: 'home', discussionId: discussionAddressing.discussionId };
           return { afterTurns: resolveAutonomousExchangeAfterTurnsV1(5,
@@ -1258,7 +1344,10 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       expect(checkpointFinished).toBe(true);
       expect(readBeforePreparationFinished).toBe(false);
       expect(nativeSteer).not.toHaveBeenCalled();
-      const admitted = state === 'valid' || state === 'permission-broadened';
+      // The original's immutable authority already admitted this bounded input.
+      // A later policy change applies to the next natural request.
+      const admitted = state === 'valid' || state === 'permission-broadened' || state === 'permission-narrowed'
+        || state === 'admitted-mute-changed' || state === 'admitted-check-in-unavailable';
       expect(nativeSend).toHaveBeenCalledTimes(admitted || state === 'revoked' ? 1 : 0);
       if (state === 'revoked') {
         expect(nativeSend).toHaveBeenCalledWith(expect.stringContaining('UNRELATED_ORDINARY_INPUT'), expect.anything());
@@ -1267,7 +1356,8 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         expect(onPromptFailure).not.toHaveBeenCalled();
         expect(observeProviderInputSettlement).not.toHaveBeenCalled();
       } else if (!admitted) {
-        const retryable = state === 'held' || state === 'unavailable' || state === 'missing-service' || state === 'settlement-unknown';
+        const retryable = state === 'held' || state === 'unavailable' || state === 'missing-service' || state === 'settlement-unknown'
+          || state === 'unadmitted-check-in-unavailable';
         expect(observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
           kind: 'rejected_before_effect', localId, retryable,
           reason: retryable ? 'provider_unavailable_before_acceptance' : 'provider_rejected_before_acceptance',
@@ -1276,18 +1366,16 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       }
       if (state === 'missing-service') expect(axiosGetMock).not.toHaveBeenCalled();
       else expect(axiosGetMock).toHaveBeenCalledWith(expect.stringContaining(`/messages/by-local-id/${localId}`), expect.any(Object));
+      if (admitted) expect(axiosGetMock.mock.calls.some(([url]) => String(url).includes('/delivery-mutes'))).toBe(false);
       if (admitted || state === 'revoked' || state === 'muted' || state === 'held' || state === 'settlement-unknown') {
         expect(socketAckMock).toHaveBeenCalledWith('session-pending-admission-settlement-v1',
           expect.objectContaining({ sessionId: 's1', localId,
             decision: expect.objectContaining({ validation: { reply: { mode: 'return', discussion: discussionAddressing,
-              ...(request.actionRequestAttributionV1 ? { actionRequestAttributionV1: request.actionRequestAttributionV1 } : {}) },
-              ...(state === 'muted' ? {} : { autonomousCheckIn: { afterTurns: 10 } }) } }) }));
-        if (state !== 'muted') expect(socketAckMock).toHaveBeenCalledWith('session-pending-admission-settlement-v1',
+              ...(request.actionRequestAttributionV1 ? { actionRequestAttributionV1: request.actionRequestAttributionV1 } : {}),
+              ...(request.sourceSession ? { sourceSession: request.sourceSession } : {}) },
+              ...(request.sourceSession ? { sourceSession: request.sourceSession } : {}) } }) }));
+        expect(socketAckMock).toHaveBeenCalledWith('session-pending-admission-settlement-v1',
           expect.objectContaining({ decision: expect.objectContaining({ kind: 'admit', finalContent: original.content }) }));
-      } else if (state === 'permission-narrowed') {
-        expect(socketAckMock).toHaveBeenCalledWith('session-pending-admission-settlement-v1', expect.objectContaining({
-          decision: expect.objectContaining({ kind: 'reject', code: 'session_input_permission_ceiling_rejected' }),
-        }));
       } else expect(socketAckMock).not.toHaveBeenCalled();
     });
 
@@ -1518,7 +1606,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(socketAckMock).toHaveBeenNthCalledWith(2, 'session-pending-admission-settlement-v1', expect.objectContaining({
       decision: expect.objectContaining({
         kind: 'admit',
-        validation: { reply: { mode: 'wait' } },
+        validation: { reply: { mode: 'wait', workflow: request.workflow } },
         finalContent: expect.objectContaining({
           t: 'plain',
           v: expect.objectContaining({
@@ -1780,31 +1868,45 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(calls).toEqual(['consumer-attached', 'pending-wake']);
   });
 
-  it('schedules the bounded startup transcript retries after initial catch-up succeeds', async () => {
+  it('catches up once when input attaches and schedules no timed rereads after success', async () => {
+    vi.useFakeTimers();
     let startupStarted = false;
-    const catchUpSessionMessages = vi.fn(async () => {});
-    const scheduleNextStartupMessageCatchUpRetry = vi.fn();
+    axiosGetMock.mockResolvedValue({ status: 200, data: { messages: [] } });
+    const recovery = createSessionClientRecoveryRuntime({
+      mode: 'plain', ctx: null, token: 'token-1', sessionId: 's1',
+      getClosed: () => false,
+      getSessionConnectionSupervisor: () => null,
+      getLastObservedMessageSeq: () => 0,
+      handleUpdate: () => {},
+      syncSessionSnapshotFromServer: async () => true,
+      applyPendingQueueState: () => {},
+    });
     const api = createApi({
-      catchUpSessionMessages,
-      scheduleNextStartupMessageCatchUpRetry,
+      catchUpSessionMessages: request => recovery.catchUpSessionMessages(request),
       getStartupMessageCatchUpStarted: () => startupStarted,
       setStartupMessageCatchUpStarted: (value) => {
         startupStarted = value;
       },
     });
+    try {
+      api.onUserMessage(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      api.onUserMessage(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      // Exercise any scheduled reread without treating unrelated log-file
+      // flushes or completed transport deadlines as Session recovery work.
+      await vi.runOnlyPendingTimersAsync();
 
-    api.onUserMessage(vi.fn());
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(catchUpSessionMessages).toHaveBeenCalledTimes(1);
-    expect(scheduleNextStartupMessageCatchUpRetry).toHaveBeenCalledTimes(1);
+      expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).pathname))
+        .toEqual(['/v1/sessions/s1/messages']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('marks startup catch-up as explicit when the attach payload provides an afterSeq cursor', async () => {
     let startupStarted = false;
     const catchUpSessionMessages = vi.fn(async () => {});
-    const setStartupMessageCatchUpInitialAfterSeq = vi.fn();
     const api = createApi({
       catchUpSessionMessages,
       getLastObservedMessageSeq: () => 99,
@@ -1813,12 +1915,10 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       setStartupMessageCatchUpStarted: (value) => {
         startupStarted = value;
       },
-      setStartupMessageCatchUpInitialAfterSeq,
     });
 
     api.onUserMessage(vi.fn());
 
-    expect(setStartupMessageCatchUpInitialAfterSeq).toHaveBeenCalledWith(36);
     expect(catchUpSessionMessages).toHaveBeenCalledWith({
       afterSeq: 36,
     });

@@ -1,16 +1,20 @@
-import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
-import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
-import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
-import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
+import nacl from 'tweetnacl';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
+import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 import type { ActionExecutorDeps, ApprovalRequestV1 } from '@happier-dev/protocol';
 import * as persistence from '@/persistence';
@@ -18,6 +22,7 @@ import * as persistence from '@/persistence';
 import { consumeDeferredCliApprovalResult, createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -28,6 +33,7 @@ import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inv
 import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -240,6 +246,62 @@ describe('createCliActionExecutorHarness', () => {
       await pending.catch(() => undefined);
     }
   });
+
+  it.each(['disabled', 'ask'] as const)('retains the host teardown restriction before controller dispatch (%s)', async restriction => {
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const settings = normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.teardown': restriction === 'disabled'
+      ? { enabled: false } : { approvalRequiredSurfaces: ['cli'] } } });
+    const account = accountSettingsParse({ actionsSettingsV1: { v: 1,
+      approvalWaivedSurfaces: { 'deployments.teardown': ['cli'] } } });
+    // HTTP is the boundary. Host policy must settle before reading the
+    // Environment or requesting a root under the weaker Account policy.
+    const requests = vi.spyOn(axios, 'request').mockRejectedValue(new Error('Unexpected controller dispatch'));
+    const posts = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected controller dispatch'));
+    const { executor } = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+      mode: 'plain', ctx: null, sessionId: 'host', serverId: 'home', serverHttpBaseUrl: 'https://host-policy.test',
+      actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => account } });
+    expect(await executor.execute('deployments.teardown', { serverId: 'home', environmentId: 'environment',
+      expectedRevision: 1, targetLinkId: 'target', expectedTargetLinkRevision: 1, requestKey: 'teardown', reason: 'manual' },
+    { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'host-teardown' }))
+      .toMatchObject({ ok: false, errorCode: restriction === 'disabled' ? 'action_disabled' : 'approval_context_unavailable' });
+    expect(requests).not.toHaveBeenCalled();
+    expect(posts).not.toHaveBeenCalled();
+  });
+  it.each([
+    { mode: 'allow', retainedRequire: false, held: false },
+    { mode: 'require', retainedRequire: false, held: true },
+    { mode: 'allow', retainedRequire: true, held: true },
+  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire)', async ({ mode, retainedRequire, held }) => {
+    let effects = 0;
+    let approval: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
+    const waived = { 'discussion.invite': ['agent'] };
+    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: waived,
+      approvalProfiles: [{ id: 'profile:current', name: 'Current', defaultMode: mode }] });
+    const { executor } = createCliActionExecutorHarness({ token: 'token', mode: 'plain', ctx: null,
+      sessionId: 'origin', serverId: 'home', serverHttpBaseUrl: 'https://workflow-home.example.invalid',
+      actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => null },
+    }, { ...createUnavailableActionTransportDeps(),
+      // Discussion HTTP and approval Artifact persistence are external boundaries.
+      discussionAction: async () => { effects++; return { discussionId: 'discussion', ownerAccountId: 'owner',
+        access: 'owner', grants: [], changed: true }; },
+      approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'review' }; },
+    });
+    const result = await executor.execute('discussion.invite', { discussionId: 'discussion', participant: { kind: 'model', participantSlotId: 'slot',
+      launch: { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/repo' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } }, {
+      surface: 'agent', authority: 'account_automation', runtimeAccountId: 'owner', serverId: 'home',
+      actionRequestId: 'invitation', defaultSessionId: 'origin', approvalProfileId: 'profile:current',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: waived,
+        actions: retainedRequire ? { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } : {} }),
+      actionCaller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+        authenticatedStarterV1: { requestRef: 'start', requester: { serverId: 'home', accountId: 'owner' } },
+        discussionModelReservation: { discussionId: 'discussion', participantSlotId: 'slot' } },
+    });
+    expect(result.ok ? true : result).toEqual(true);
+    expect(result).toMatchObject({ ok: true, result: held ? { kind: 'approval_request_created' } : { changed: true } });
+    expect(effects).toBe(held ? 0 : 1);
+    expect(approval?.actionId).toBe(held ? 'discussion.invite' : undefined);
+  });
   beforeEach(() => { wire.sockets.length = 0; wire.io.mockClear(); });
   afterEach(() => vi.restoreAllMocks());
   it.each(['update', 'reconnect'] as const)('delivers an independently persisted PDF rejection to the Agent MCP caller on %s', async wake => {
@@ -315,51 +377,183 @@ describe('createCliActionExecutorHarness', () => {
     expect(requiresApproval()).toBe(true);
   });
 
-  it('observes requester-private recorded approval execution without treating approval alone as guest completion', async () => {
+  it.each([{ explicitTarget: true, mode: 'plain' }, { explicitTarget: false, mode: 'plain' },
+    { explicitTarget: true, mode: 'e2ee' }] as const)('observes requester-private recorded approval execution without treating approval alone as guest completion ($mode, explicit target: $explicitTarget)', async ({ explicitTarget, mode }) => {
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(17) } };
+    const resource = await createResourceDataKey({ credentials, mode });
+    const encode = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, resource.dataKey));
+    let storedMode: 'plain' | 'e2ee' = mode;
+    let unreadableBody = false;
     const expectedOrigin = { actionId: 'session.spawn_new' as const, requestId: 'acquire-request', accountId: 'requester',
       serverIdentityId: 'srv_home', machineId: 'guest' };
     let request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
       createdBy: { surface: 'cli' }, requestedSurface: 'cli',
       executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
-        serverId: 'guest-home-profile', ...expectedOrigin, target: { kind: 'machine', machineId: 'guest' } },
+        serverId: 'guest-home-profile', ...expectedOrigin, ...(explicitTarget ? { target: { kind: 'machine', machineId: 'guest' } } : {}) },
       approval: { flow: 'deferred', result: 'none' }, actionId: 'session.spawn_new', actionArgs: {}, summary: 'Start guest Agent',
       decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
     });
     const result = { type: 'success', sessionId: 'real-child', disposition: 'created',
       executionTarget: { serverId: 'srv_home', machineId: 'guest' } };
+    const writes = vi.spyOn(axios, 'post').mockRejectedValue(new Error('observation_must_not_execute'));
     // Only the durable Artifact HTTP and Socket.IO transports are substituted;
     // Account mode/content parsing, subject matching and coordinator stay real.
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
       if (String(url).endsWith('/v1/account/encryption')) return { status: 200,
-        data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
+        data: AccountEncryptionModeResponseSchema.parse({ mode, updatedAt: 1 }) };
       expect(url).toBe('https://requester-home.example/v1/artifacts/child-approval');
-      return { status: 200, data: { id: 'child-approval', ownerAccountId: 'requester', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
-        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
-        body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      return { status: 200, data: { id: 'child-approval', ownerAccountId: 'requester', access: 'owner', encryptionMode: storedMode, publicAudience: 'none',
+        header: encode(buildApprovalRequestArtifactHeaderV1(request)),
+        body: unreadableBody ? 'unreadable-body' : encode({ body: JSON.stringify(request) }),
+        dataEncryptionKey: resource.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : resource.dataEncryptionKey,
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: request.updatedAtMs } };
     });
-    const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null }, sessionId: 'source',
-      serverId: 'requester-home', serverHttpBaseUrl: 'https://requester-home.example', mode: 'plain', ctx: null });
+    const harness = createCliActionExecutorHarness({ token, credentials, sessionId: 'source',
+      serverId: 'requester-home', serverHttpBaseUrl: 'https://requester-home.example', ...(mode === 'plain'
+        ? { mode: 'plain', ctx: null }
+        : { mode: 'e2ee', ctx: { encryptionKey: new Uint8Array(32).fill(17), encryptionVariant: 'legacy' } }) });
     await expect(runWithServerHttpBaseUrl('https://requester-home.example', () => harness.deps.approvalsGet!({ artifactId: 'child-approval', serverId: null })))
       .resolves.toMatchObject({ v: 2, status: 'approved', executionOriginV1: expectedOrigin });
     const abort = new AbortController();
     const pending = harness.observeRecordedApprovalExecution({ artifactId: 'child-approval', expectedOrigin,
-      signal: abort.signal, isCurrent: async () => true });
+      signal: abort.signal });
     try {
       const first = await Promise.race([pending.then(result => ({ settled: true, result })),
         new Promise<{ settled: false }>(resolve => setTimeout(() => resolve({ settled: false }), 20))]);
       expect(first, JSON.stringify(first)).toEqual({ settled: false });
+      // A receipt observer must leave the daemon's authenticated decision free
+      // to perform durable replay of the exact approved Action.
+      expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount('child-approval')).toBe(0);
       expect(wire.sockets.some(socket => socket.connected)).toBe(true);
       request = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: 3,
         execution: { executedAtMs: 3, ok: true, result } });
       for (const socket of wire.sockets) socket.wake();
       await expect(pending).resolves.toEqual({ ok: true, result });
+      expect(writes).not.toHaveBeenCalled();
       expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
+      for (const changed of [{ actionId: 'machines.setup.apply' }, { requestId: 'another-request' },
+        { serverIdentityId: 'another-home' }, { machineId: 'another-guest' }]) {
+        await expect(harness.observeRecordedApprovalExecution({ artifactId: 'child-approval',
+          expectedOrigin: { ...expectedOrigin, ...changed }, signal: abort.signal }))
+          .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      }
+      const readsBeforeWrongAccount = vi.mocked(axios.get).mock.calls.length;
       await expect(harness.observeRecordedApprovalExecution({ artifactId: 'child-approval',
-        expectedOrigin: { ...expectedOrigin, machineId: 'another-guest' }, signal: abort.signal, isCurrent: async () => true }))
+        expectedOrigin: { ...expectedOrigin, accountId: 'another-account' }, signal: abort.signal }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+      expect(vi.mocked(axios.get).mock.calls).toHaveLength(readsBeforeWrongAccount);
+      storedMode = mode === 'plain' ? 'e2ee' : 'plain';
+      await expect(harness.observeRecordedApprovalExecution({ artifactId: 'child-approval', expectedOrigin, signal: abort.signal }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+      storedMode = mode;
+      unreadableBody = true;
+      await expect(harness.observeRecordedApprovalExecution({ artifactId: 'child-approval', expectedOrigin, signal: abort.signal }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+      unreadableBody = false;
+      request = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+        ...request.executionOriginV1, sessionId: 'another-session', target: { kind: 'session', sessionId: 'another-session' },
+      } });
+      await expect(harness.observeRecordedApprovalExecution({ artifactId: 'child-approval', expectedOrigin, signal: abort.signal }))
         .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      abort.abort();
+      await expect(harness.observeRecordedApprovalExecution({ artifactId: 'child-approval', expectedOrigin, signal: abort.signal }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
+
+      // Home admits the borrowed requester once. Reading its already recorded
+      // approval result does not re-authorize the finite managed operation.
+      // Only Home's HTTP boundary is substituted; requester custody stays real.
+      let homeCustody = true;
+      const verifyUrl = 'https://requester-home.example/v1/actions/session.spawn_new/execution-authorization/verify';
+      writes.mockImplementation(async url => {
+        expect(url).toBe(verifyUrl);
+        return { status: 200, data: { ok: homeCustody } };
+      });
+      const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
+      const target = { kind: 'machine' as const, machineId: expectedOrigin.machineId };
+      const projection = await projectExternalActionRequesterHttpAuthorization({
+        authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'borrowed-requester-proof', binding: {
+          accountId: expectedOrigin.accountId, custodianAccountId: 'guest-custodian',
+          authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: expectedOrigin.serverIdentityId,
+          machineId: expectedOrigin.machineId, installationId: 'guest-installation', actionId: expectedOrigin.actionId,
+          requestId: expectedOrigin.requestId, requestEnvelopeDigest: 'd'.repeat(43), target, accountEncryptionMode: mode,
+        } }),
+        serverId: 'requester-home', serverIdentityId: expectedOrigin.serverIdentityId,
+        serverHttpBaseUrl: 'https://requester-home.example', target,
+        installationId: 'guest-installation', privateKey: keys.secretKey,
+      });
+      const custody = projection?.requesterHttpProjection;
+      if (!custody) throw new Error('Expected real requester HTTP custody');
+      request = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+        ...request.executionOriginV1, target,
+      } });
+      const managedAbort = new AbortController();
+      const managedRequest = { execution: { ok: true as const, result: {
+        kind: 'approval_request_created', artifactId: 'child-approval', actionId: expectedOrigin.actionId,
+      } }, expectedOrigin, signal: managedAbort.signal, isCurrent: custody.isCurrent,
+        observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution };
+      await expect(observeManagedChildApprovalExecution({ ...managedRequest, signal: undefined }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+      await expect(observeManagedChildApprovalExecution({ ...managedRequest, observeRecordedApprovalExecution: undefined }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+      await expect(observeManagedChildApprovalExecution(managedRequest)).resolves.toEqual({ ok: true, result });
+      homeCustody = false;
+      const writesBeforeReceiptRead = writes.mock.calls.length;
+      await expect(observeManagedChildApprovalExecution(managedRequest)).resolves.toEqual({ ok: true, result });
+      expect(writes).toHaveBeenCalledTimes(writesBeforeReceiptRead);
+      expect(writes.mock.calls.every(([url]) => url === verifyUrl)).toBe(true);
+    } finally {
+      abort.abort();
+      await pending.catch(() => undefined);
+    }
+  });
+  it('observes a requester-owned PAT approval through signed Artifact receipts without claiming its decision', async () => {
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
+    const artifactId = 'pat-setup-approval';
+    const expectedOrigin = { actionId: 'machines.setup.apply', requestId: 'setup-request',
+      accountId: 'requester', serverIdentityId: 'home', machineId: 'machine' };
+    let request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId: expectedOrigin.actionId,
+      actionArgs: {}, summary: 'Apply Machine setup', approval: { flow: 'deferred', result: 'required' },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+        serverId: 'home', ...expectedOrigin, target: { kind: 'machine', machineId: 'machine' } } });
+    const receipt = { operationId: 'setup-operation' };
+    const read = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(url).toBe(`https://home.example/v1/artifacts/${artifactId}`);
+      expect(config?.headers?.Authorization).toBeUndefined();
+      expect(config?.headers?.['x-happier-action-execution-authorization']).toBe('signed-pat-root');
+      return { status: 200, data: { id: artifactId, ownerAccountId: 'requester', access: 'owner',
+        encryptionMode: 'plain', publicAudience: 'none',
+        header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: request.updatedAtMs } };
+    });
+    const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+      sessionId: 'source', serverId: 'home', serverHttpBaseUrl: 'https://home.example', mode: 'plain', ctx: null });
+    const abort = new AbortController();
+    const pending = harness.observeRecordedApprovalExecution({ artifactId, expectedOrigin, signal: abort.signal,
+      accountEncryptionMode: 'plain', authorizationHeaders: async () => ({
+        'x-happier-action-execution-authorization': 'signed-pat-root',
+        [requesterAccountEncryptionMode]: 'plain',
+      }) });
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalled());
+      expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(0);
+      expect(wire.sockets.some(socket => socket.connected)).toBe(false);
+      request = ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs: 2,
+        decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' } });
+      getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({ artifactId, request });
+      const afterApproval = await Promise.race([pending.then(result => ({ settled: true, result })),
+        new Promise<{ settled: false }>(resolve => setTimeout(() => resolve({ settled: false }), 20))]);
+      expect(afterApproval).toEqual({ settled: false });
+      request = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: 3,
+        execution: { ok: true, executedAtMs: 3, result: receipt } });
+      getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({ artifactId, request });
+      await expect(pending).resolves.toEqual({ ok: true, result: receipt });
+      expect(read.mock.calls.length).toBeGreaterThan(1);
     } finally {
       abort.abort();
       await pending.catch(() => undefined);

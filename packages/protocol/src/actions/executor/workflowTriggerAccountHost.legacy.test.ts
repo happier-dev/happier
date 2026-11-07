@@ -58,10 +58,13 @@ function fixture(templateCiphertext: string, encryption = plain, targetType: Aut
   return { params, row: () => row, writes: () => writes, written: () => written };
 }
 
-it('marks an unrelated retained definition as indexed in the same recipe conversion write', async () => {
+it('leaves a listed predecessor row untouched and indexes it only in the Save conversion write', async () => {
   const f = fixture(AUTOMATION_TEMPLATE_V02_PLAIN);
   const host = createAccountWorkflowTriggerActions(f.params);
   await host.list({ scope: 'account_all' });
+  expect(f.writes()).toBe(0);
+  expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_PLAIN);
+  await host.update({ automationId: 'legacy-one', expectedRevision: 3, patch: { enabled: false } });
   expect(f.writes()).toBe(1);
   expect(f.written()?.executionRecipe).toHaveProperty('managedTarget', null);
 });
@@ -74,8 +77,7 @@ it('withdraws a census if Account encryption changes before final private disclo
   });
   await expect(host.list({ scope: 'account_all' })).rejects.toMatchObject({ code: 'content_unavailable' });
   expect(reads).toBe(2);
-  // A later authority change does not deny the already committed legacy conversion.
-  expect(f.writes()).toBe(1);
+  expect(f.writes()).toBe(0);
 });
 
 async function conversionApprovalFixture(surface: 'agent' | 'mcp' | 'cli' = 'mcp') {
@@ -213,8 +215,9 @@ describe('0.2 Automation Account trigger host', () => {
   });
   it('refuses a bare approval bypass or an agent with only present-user authority', async () => {
     const f = await conversionApprovalFixture('agent');
+    // The conversion owner still requires a person-consent proof (A13 follow-up), not the executor floor.
     expect(await f.executor.execute('workflow.trigger.update', f.input, { ...f.context, bypassApprovals: true }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      .toMatchObject({ ok: false });
     expect(await f.executor.execute('workflow.trigger.update', f.input, { ...f.context, authority: 'present_user', bypassApprovals: true }))
       .toMatchObject({ ok: false });
     await expect(f.host.update(f.input, { ...f.context, authority: 'present_user', bypassApprovals: true }))
@@ -225,7 +228,7 @@ describe('0.2 Automation Account trigger host', () => {
     const f = await conversionApprovalFixture(surface);
     f.waiveApproval();
     expect(await f.executor.execute('workflow.trigger.update', f.input, f.context))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      .toMatchObject({ ok: false });
     expect(f.writes()).toBe(0);
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
   });
@@ -343,9 +346,9 @@ describe('0.2 Automation Account trigger host', () => {
       confirmLegacyConversion: true, patch: { target: sets[0]!.target, project, enabled: false } }), caller);
     expect(f.written()?.assignments).toEqual([{ machineId: project.machineId, enabled: true, priority: 2 }]);
   });
-  it.each([{ scope: 'selected trigger', triggerId: 'schedule-one', setEnabled: true },
-    { scope: 'global disabled set', triggerId: undefined, setEnabled: false }])
-    ('confirms a $scope without enabling the reviewed disabled trigger', async ({ triggerId, setEnabled }) => {
+  it.each([{ scope: 'selected trigger', triggerId: 'schedule-one' },
+    { scope: 'global disabled set', triggerId: undefined }])
+    ('confirms a $scope without enabling the reviewed disabled trigger', async ({ triggerId }) => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
     f.row().enabled = false;
     f.row().triggers[0]!.enabled = false;
@@ -359,7 +362,7 @@ describe('0.2 Automation Account trigger host', () => {
     const set = sets[0]!;
     await host.update(WorkflowTriggerUpdateRequestV1Schema.parse({ automationId: 'legacy-one', triggerId, expectedRevision: 3,
       confirmLegacyConversion: true, patch: { target: set.target, project: set.project, enabled: false } }), caller);
-    expect(f.row()).toMatchObject({ enabled: setEnabled, triggers: [{ id: 'schedule-one', enabled: false }, { id: 'schedule-two', enabled: true }] });
+    expect(f.row()).toMatchObject({ enabled: false, triggers: [{ id: 'schedule-one', enabled: false }, { id: 'schedule-two', enabled: true }] });
   });
   it('keeps plural placement and priority when consent saves the reviewed workspace', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
@@ -378,9 +381,9 @@ describe('0.2 Automation Account trigger host', () => {
       confirmLegacyConversion: true, patch: { target: set.target, project: set.project, enabled: true } }), caller);
     expect(f.written()?.assignments).toEqual([{ machineId: 'machine-one', enabled: true, priority: 2 },
       { machineId: 'machine-two', enabled: false, priority: 7 }]);
-    expect(f.row()).toMatchObject({ enabled: true, triggers: [{ id: 'schedule-one', enabled: true }, { id: 'schedule-two', enabled: true }] });
+    expect(f.row()).toMatchObject({ enabled: true, triggers: [{ id: 'schedule-one', enabled: true }, { id: 'schedule-two', enabled: false }] });
   });
-  it('pauses a retained row even when its first read is an explicit review', async () => {
+  it('opens an explicit review without pausing or rewriting the retained row', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
     const host = createAccountWorkflowTriggerActions({ ...f.params,
       resolveRetainedSession: async (sessionId) => ({ sessionId, encryptionMode: 'e2ee' as const,
@@ -388,7 +391,8 @@ describe('0.2 Automation Account trigger host', () => {
     });
     const { sets } = await host.list(WorkflowTriggerListRequestV1Schema.parse({ automationId: 'legacy-one', review: true }),
       { authority: 'present_user', actionCaller: { kind: 'host' } });
-    expect(sets[0]).toMatchObject({ enabled: false, revision: 4 });
+    expect(sets[0]).toMatchObject({ enabled: true, revision: 3 });
+    expect(f.writes()).toBe(0);
     expect(f.written()?.executionRecipe).toBeUndefined();
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
   });
@@ -407,19 +411,23 @@ describe('0.2 Automation Account trigger host', () => {
     expect(f.writes()).toBe(0);
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
   });
-  it('converts predecessor rows once on read while keeping trigger identities and Channel association', async () => {
+  it('converts predecessor rows once on Save while lists preserve trigger identities and Channel association', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_PLAIN);
     const host = createAccountWorkflowTriggerActions({ ...f.params });
     const first = await host.list({ scope: 'account_inline' });
-    expect(first.sets[0]?.legacy).toBeUndefined();
-    expect(first.sets[0]).toMatchObject({ revision: 4, target: { kind: 'inline' } });
+    expect(first.sets[0]?.legacy).toMatchObject({ reason: 'created_in_0_2' });
+    expect(first.sets[0]).toMatchObject({ revision: 3, target: { kind: 'inline' } });
+    await host.list({ scope: 'account_inline' });
+    expect(f.writes()).toBe(0);
+    await host.update({ automationId: 'legacy-one', expectedRevision: 3, patch: { enabled: false } });
     expect(f.writes()).toBe(1);
     expect(f.written()?.triggers).toEqual([{ kind: 'existing', triggerId: 'schedule-one', expectedRevision: 2 }]);
-    await host.list({ scope: 'account_inline' });
+    expect((await host.list({ scope: 'account_inline' })).sets[0]?.legacy).toBeUndefined();
     expect(f.writes()).toBe(1);
   });
-  it('pauses retained ciphertext without opening it, then converts only after deliberate review and Save', async () => {
+  it.each([true, false])('preserves enabled=%s through retained-content review and explicit Save', async enabled => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
+    f.row().enabled = enabled;
     let keyReads = 0;
     const host = createAccountWorkflowTriggerActions({ ...f.params,
       resolveRetainedSession: async (sessionId) => { keyReads++; return { sessionId, encryptionMode: 'e2ee' as const,
@@ -428,24 +436,28 @@ describe('0.2 Automation Account trigger host', () => {
         executionSelection: { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }),
     });
     const listed = await host.list({ scope: 'account_inline' });
-    expect(listed.sets[0]).toMatchObject({ enabled: false, health: 'source_unavailable', legacy: { lockedReason: 'review_required' } });
+    expect(listed.sets[0]).toMatchObject({ enabled, revision: 3, health: 'source_unavailable', legacy: { lockedReason: 'review_required' } });
+    expect(f.writes()).toBe(0);
     expect(listed.sets[0]?.target).toBeUndefined();
     expect(keyReads).toBe(0);
     expect(f.written()?.executionRecipe).toBeUndefined();
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
-    await expect(host.update({ automationId: 'legacy-one', expectedRevision: 4, patch: { enabled: true } }))
+    await expect(host.update({ automationId: 'legacy-one', expectedRevision: 3, patch: { enabled: true } }))
       .rejects.toMatchObject({ code: 'legacy_conversion_unsupported', details: { reason: 'review_required' } });
     const caller = { authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
     const review = await host.list(WorkflowTriggerListRequestV1Schema.parse({ automationId: 'legacy-one', review: true }), caller);
     const set = review.sets[0]!;
-    expect(set).toMatchObject({ enabled: false, health: 'available', legacy: { lockedReason: 'review_required' } });
+    expect(set).toMatchObject({ enabled, health: 'available', legacy: { lockedReason: 'review_required' } });
+    expect(f.writes()).toBe(0);
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
-    const result = await host.update(WorkflowTriggerUpdateRequestV1Schema.parse({ automationId: 'legacy-one', expectedRevision: 4,
-      confirmLegacyConversion: true, patch: { target: set.target, project: set.project, enabled: true } }), caller);
+    const result = await host.update(WorkflowTriggerUpdateRequestV1Schema.parse({ automationId: 'legacy-one', triggerId: 'schedule-one', expectedRevision: 3,
+      confirmLegacyConversion: true, patch: { target: set.target, project: set.project, enabled } }), caller);
     expect(result.set.legacy).toBeUndefined();
+    expect(result.set.enabled).toBe(enabled);
     expect(f.row().executionRecipe).toMatchObject({ v: 2, workflow: { t: 'plain' } });
     expect(f.row().templateCiphertext).toBeUndefined();
     expect(keyReads).toBe(1);
+    expect(f.writes()).toBe(1);
   });
   it('reads retained E2EE Session content on a plain Account with explicit historical custody', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, plain, 'existingSession');
@@ -453,10 +465,10 @@ describe('0.2 Automation Account trigger host', () => {
       resolveRetainedSession: async (sessionId) => ({ sessionId, encryptionMode: 'e2ee' as const,
         material: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } }),
     });
-    expect((await host.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ enabled: false, health: 'source_unavailable',
+    expect((await host.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ enabled: true, health: 'source_unavailable',
       legacy: { editable: false, lockedReason: 'review_required' } });
     expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
-    expect(f.writes()).toBe(1);
+    expect(f.writes()).toBe(0);
   });
   it.each([AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, AUTOMATION_TEMPLATE_V02_ENCRYPTED])('lists locked encrypted legacy rows and permits deletion without their keys', async (templateCiphertext) => {
     const f = fixture(templateCiphertext, plain, templateCiphertext === AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED ? 'existingSession' : 'newSession');
@@ -503,8 +515,8 @@ describe('0.2 Automation Account trigger host', () => {
     target: { definition: { blocks: [{ document: { text: 'Review the release' } }] } },
     triggers: [{ nextRunAt: 2 }] });
     expect(result.sets[0]?.project).toBeUndefined();
-    expect(f.writes()).toBe(1);
-    expect(f.row().templateCiphertext).toBeUndefined();
+    expect(f.writes()).toBe(0);
+    expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_PLAIN);
     expect(f.row().assignments.map(({ machineId }) => machineId)).toEqual(machines);
   });
   it('reads encrypted placement content without advertising disabled assignments or changing its envelope', async () => {
@@ -514,10 +526,10 @@ describe('0.2 Automation Account trigger host', () => {
     expect(sets[0]).toMatchObject({ health: 'available', placements: [
       { machineId: 'machine-one', directory: '/repo' },
     ], target: { definition: { blocks: [{ document: { text: 'Review the release' } }] } } });
-    expect(f.row().templateCiphertext).toBeUndefined();
-    expect(f.row().executionRecipe).toMatchObject({ workflow: { t: 'encrypted' } });
+    expect(f.row().templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_ENCRYPTED);
+    expect(f.row().executionRecipe).toBeUndefined();
     expect(f.row().assignments).toHaveLength(2);
-    expect(f.writes()).toBe(1);
+    expect(f.writes()).toBe(0);
   });
   it('resolves the exact Session machine rather than selecting a multi-placement assignment', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, plain, 'existingSession');
@@ -533,7 +545,7 @@ describe('0.2 Automation Account trigger host', () => {
       conversation: { kind: 'existing_session', sessionId: 'session-old', machineId: 'actual-session-machine' },
     } } });
     expect(sets[0]?.project).toBeUndefined();
-    expect(f.writes()).toBe(1);
+    expect(f.writes()).toBe(0);
   });
   it('removes the legacy trigger without conversion, preserving assignments and omitting an execution rewrite', async () => {
     const f = fixture(AUTOMATION_TEMPLATE_V02_PLAIN);
@@ -565,8 +577,8 @@ describe('0.2 Automation Account trigger host', () => {
         project: { machineId: 'machine-one', directory: '/repo' }, target: { kind: 'inline', definition: {
           defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
           blocks: [{ document: { text: 'Review the release' } }] } }, triggers: [{ nextRunAt: 2, schedule: { everyMs: 60_000 } }] });
-      expect(f.row().templateCiphertext).toBeUndefined();
-      expect(f.writes()).toBe(1);
+      expect(f.row().templateCiphertext).toBe(bytes);
+      expect(f.writes()).toBe(0);
     });
   it.each([[AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, plain], [AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED, encrypted]] as const)
     ('retains the exact existing Session target', async (bytes, encryption) => {

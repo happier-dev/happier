@@ -5,6 +5,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 import { isPluginAuthorTransientWorkspaceConfig, PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS } from '@/plugins/authoring/developmentDependencyInputs';
 import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
+import { projectPluginAttributedCompatibilityFailure } from '@/plugins/manifest/diagnostics';
 import { resolvePluginAuthoringSource } from './sourceModule';
 
 export type PluginDevelopmentSourceRequest = Readonly<{
@@ -24,7 +25,7 @@ export type PluginDevelopmentSourceDiagnostic = Readonly<{
     | 'plugin_dev_package_invalid'
     | 'plugin_dev_observation_failed';
   message: string;
-}>;
+}> | NonNullable<ReturnType<typeof projectPluginAttributedCompatibilityFailure>>;
 
 export type PluginDevelopmentSourceObservation =
   | Readonly<{
@@ -238,10 +239,11 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
   if (!sourceResolution.ok) {
     return {
       ok: false,
-      diagnostics: sourceResolution.diagnostics.map((entry) => diagnostic(
-        'plugin_dev_manifest_invalid',
-        entry.message,
-      )),
+      diagnostics: sourceResolution.diagnostics.map((entry) =>
+        projectPluginAttributedCompatibilityFailure([entry]) ?? diagnostic(
+          'plugin_dev_manifest_invalid',
+          entry.message,
+        )),
     };
   }
 

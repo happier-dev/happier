@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/protocol';
 import { notificationSettingsFixture as accountSettingsParse, notificationCatalogFixture } from '@/notifications/activity/activityNotification.testkit';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 type MockExpoPushTicket = Readonly<{
   status: string;
@@ -24,7 +25,7 @@ type MockExpoPushTicket = Readonly<{
 }>;
 
 const sendPushNotificationsAsyncSpy = vi.fn(async (_chunk: any[]): Promise<MockExpoPushTicket[]> =>
-  _chunk.map((): MockExpoPushTicket => ({ status: 'ok' })),
+  _chunk.map((_, index): MockExpoPushTicket => ({ status: 'ok', id: `receipt-${index}` })),
 );
 const getPushNotificationReceiptsAsyncSpy = vi.fn(async (_ids: string[]) => ({}));
 
@@ -84,6 +85,59 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
   });
   afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
+  it('reports partial push acceptance without inventing complete success', async () => {
+    sendPushNotificationsAsyncSpy.mockResolvedValueOnce([{ status: 'ok', id: 'accepted' }, { status: 'error', details: { error: 'MessageTooBig' } }]);
+    expect(await new PushNotificationClient('t').sendPushNotifications([
+      { to: 'ExponentPushToken[a]', body: 'Test' }, { to: 'ExponentPushToken[b]', body: 'Test' },
+    ])).toMatchObject({ acceptedCount: 1, failedCount: 1 });
+    expect(logger.infoFile).toHaveBeenCalledWith('[PUSH] Push service did not confirm acceptance for every recipient', { acceptedCount: 1, failedCount: 1 });
+  });
+
+  it('binds outgoing request metadata to the authenticated Account rather than caller data', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [{ id: 'phone', token: 'ExponentPushToken[a]' }] } });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-a' })).toString('base64url')}.signature`;
+    await new PushNotificationClient(token).sendToAllDevicesAsync('Question', 'Your input is needed', { kind: 'user_action', accountId: 'spoofed' });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0][0][0].data).toMatchObject({ accountId: 'account-a' });
+  });
+
+  it.each([
+    [{ kind: 'choices', questionKey: 'pick', values: ['a'] }, 'happier.questionChoices1.v1'],
+    [{ kind: 'choices', questionKey: 'pick', values: ['a', 'b'] }, 'happier.questionChoices2.v1'],
+    [{ kind: 'choices', questionKey: 'pick', values: ['a', 'b', 'c'] }, 'happier.questionChoices3.v1'],
+    [{ kind: 'text', questionKey: 'reply', allowEmpty: false }, 'happier.questionText.v1'],
+  ])('selects the native question category at the remote Expo boundary: %s', async (questionAnswerV1, categoryId) => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [{ id: 'phone', token: 'ExponentPushToken[a]' }] } });
+    await new PushNotificationClient('t').sendToAllDevicesAsync('Question', 'Your input is needed', {
+      kind: 'user_action', sessionId: 'session', requestId: 'request', turnId: 'turn-a', questionAnswerV1,
+    });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0][0][0]).toMatchObject({ categoryId, data: { questionAnswerV1, turnId: 'turn-a' } });
+  });
+
+  it('qualifies an external plugin category without borrowing permission actions', async () => {
+    vi.mocked(axios.get)
+      .mockResolvedValueOnce({ data: { tokens: [{ id: 'device', token: 'ExponentPushToken[plugin]' }] } })
+      .mockResolvedValueOnce({ data: { badgeCount: 0 } });
+    const sender = new PushNotificationClient('account-token', 'https://home.example.test');
+    await sender.sendToAllDevicesAsync('Review', '', { v: 1, topic: 'plugin_session', accountId: 'owner',
+      sessionId: 'session-bound', serverId: 'srv_home', serverUrl: 'https://home.example.test',
+      pluginNotification: { pluginId: 'acme.tasks', categoryId: 'review', occurrenceId: 'current', clientRequestId: 'send-one' } });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      categoryId: 'happier.pluginNotification.v1/acme.tasks/review',
+    });
+  });
+
+  it('keeps the public Home address separate from its private HTTP transport', async () => {
+    vi.mocked(axios.get)
+      .mockResolvedValueOnce({ data: { tokens: [{ id: 'device', token: 'ExponentPushToken[bound-home]' }] } })
+      .mockResolvedValueOnce({ data: { badgeCount: 0 } });
+    const sender = new PushNotificationClient('account-token', 'http://127.0.0.1:43123', 'srv_home', 'https://home.example.test');
+    await sender.sendToAllDevicesAsync('Review', 'Open review', { topic: 'account_notice' });
+    expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe('http://127.0.0.1:43123/v1/push-tokens');
+    expect(sendPushNotificationsAsyncSpy.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({ categoryId: undefined, data: { topic: 'account_notice', serverUrl: 'https://home.example.test' } }),
+    ]);
+  });
+
   it('delivers a guard warning with its actionable category and content-free occurrence identity', async () => {
     vi.mocked(axios.get)
       .mockResolvedValueOnce({ data: { tokens: [{ id: 'device', token: 'ExponentPushToken[guard]' }] } })
@@ -99,7 +153,7 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     ]);
   });
 
-  it('reports no delivery without push tokens and permits the same Notify me request after device registration', async () => {
+  it('reports no delivery with an unbound sender or no tokens and permits the same Notify me request after repair', async () => {
     vi.mocked(axios.get).mockResolvedValueOnce({ data: { tokens: [] } });
     const sender = new PushNotificationClient('account-token', 'https://owner-home.example.test');
     const settings = accountSettingsParse({});
@@ -113,6 +167,9 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
       nowMs: () => 50_000,
     };
 
+    expect(await dispatchActivityNotificationAsync({ ...params, expoPushSender: null }))
+      .toEqual({ attemptedChannels: 1, deliveredChannels: 0 });
+    expect(axios.get).not.toHaveBeenCalled();
     expect(await dispatchActivityNotificationAsync(params)).toEqual({ attemptedChannels: 1, deliveredChannels: 0 });
     expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
 
@@ -152,10 +209,77 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['ticket', 'receipt', 'retry_exhaustion', 'transport_exhaustion'] as const)(
+    'does not deliver or dedupe Notify me after zero accepted deliveries (%s)', async (failure) => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(axios.get).mockImplementation(async (url) => ({ data: String(url).includes('/push-tokens')
+          ? { tokens: [{ id: 'device', token: 'ExponentPushToken[retry]' }] }
+          : { badgeCount: 0 } }));
+        if (failure === 'transport_exhaustion') {
+          sendPushNotificationsAsyncSpy.mockRejectedValue(new Error('Expo unavailable'));
+        } else if (failure === 'retry_exhaustion') {
+          sendPushNotificationsAsyncSpy.mockResolvedValue([{ status: 'error', details: { error: 'MessageRateExceeded' } }]);
+        } else {
+          sendPushNotificationsAsyncSpy.mockResolvedValueOnce(failure === 'ticket'
+            ? [{ status: 'error', details: { error: 'DeviceNotRegistered' } }]
+            : [{ status: 'ok', id: 'rejected-receipt' }]);
+          if (failure === 'receipt') getPushNotificationReceiptsAsyncSpy.mockResolvedValueOnce({
+            'rejected-receipt': { status: 'error', details: { error: 'DeviceNotRegistered' } },
+          });
+        }
+        const settings = accountSettingsParse({});
+        const params = { settings, ...notificationCatalogFixture(settings),
+          expoPushSender: new PushNotificationClient('account-token', 'https://owner-home.example.test'),
+          pluginNotifications: null, channels: ['builtin:expo_push'],
+          event: { topic: 'notify_me' as const, message: 'Digest ready', actionRequestId: `zero-accepted-${failure}` },
+          nowMs: () => 50_000 };
+        const rejected = dispatchActivityNotificationAsync(params);
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(await rejected).toEqual({ attemptedChannels: 1, deliveredChannels: 0 });
+        const failedAttempts = sendPushNotificationsAsyncSpy.mock.calls.length;
+        if (failure === 'ticket' || failure === 'receipt') {
+          expect(failedAttempts).toBe(1);
+          expect(vi.mocked(axios.delete)).toHaveBeenCalledTimes(1);
+        }
+
+        sendPushNotificationsAsyncSpy.mockResolvedValue([{ status: 'ok', id: 'accepted-retry' }]);
+        expect(await dispatchActivityNotificationAsync(params)).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+        expect(await dispatchActivityNotificationAsync(params)).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+        expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(failedAttempts + 1);
+      } finally {
+        sendPushNotificationsAsyncSpy.mockReset().mockImplementation(async (chunk) =>
+          chunk.map((_, index) => ({ status: 'ok', id: `receipt-${index}` })));
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['DeviceNotRegistered', 'InvalidCredentials'])('counts mixed accepted and %s tickets as a successful Notify me delivery', async (error) => {
+    vi.mocked(axios.get).mockImplementation(async (url) => ({ data: String(url).includes('/push-tokens')
+      ? { tokens: [{ id: 'dead', token: 'ExponentPushToken[dead]' }, { id: 'live', token: 'ExponentPushToken[live]' }] }
+      : { badgeCount: 0 } }));
+    sendPushNotificationsAsyncSpy.mockResolvedValueOnce([
+      { status: 'error', details: { error } }, { status: 'ok', id: 'accepted-mixed' },
+    ]);
+    const settings = accountSettingsParse({});
+    const params = { settings, ...notificationCatalogFixture(settings),
+      expoPushSender: new PushNotificationClient('account-token', 'https://owner-home.example.test'),
+      pluginNotifications: null, channels: ['builtin:expo_push'],
+      event: { topic: 'notify_me' as const, message: 'Digest ready', actionRequestId: `mixed-accepted-${error}` },
+      nowMs: () => 50_000 };
+    expect(await dispatchActivityNotificationAsync(params)).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+    expect(await dispatchActivityNotificationAsync(params)).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['ready', 'ready_without_settings', 'permission', 'user_action'] as const)('honors current owner Follow suppression for rich %s notifications', async (kind) => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'push-fixture-account' })).toString('base64url')}.signature`;
     let notificationLevel: 'none' | null = 'none';
+    let includeFinished = false;
     let sessionReadFails = false;
     vi.mocked(axios.get).mockImplementation(async (url) => {
+      if (String(url).endsWith('/v2/account/session-delivery-mutes')) return { status: 200, data: { scopes: [] } };
       if (String(url).includes('/v2/sessions/') && sessionReadFails) throw new Error('Session Home unavailable');
       if (String(url).includes('/v2/sessions/')) return { status: 200, data: { session: {
         ...createSessionNotificationContextFixture('s_1'),
@@ -163,15 +287,16 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
           latestFailureSeq: null,
           readState: { state: 'not_started' }, relevance: { relevant: true, reasons: ['owned_by_me'] },
           attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
-          follow: { follows: false, notificationLevel },
-          notification: { level: notificationLevel ?? 'important', source: notificationLevel ? 'preference' : 'owner' },
+          follow: { follows: false, notificationLevel, ...(includeFinished ? { policy: { preset: 'everything' } } : {}) },
+          notification: { level: includeFinished ? 'all_messages' : notificationLevel ?? 'important',
+            source: includeFinished || notificationLevel ? 'preference' : 'owner' },
         },
       } } };
       return { status: 200, data: { tokens: [{ id: '1', token: 'ExponentPushToken[a]' }] } };
     });
-    const pushSender = new PushNotificationClient('account-token', 'https://owner-home.example.test');
+    const pushSender = new PushNotificationClient(token, 'https://owner-home.example.test');
     const settings = accountSettingsParse({});
-    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'push-fixture-account', settings,
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey({ token, encryption: null }), settings,
       settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       notificationChannelCatalog: notificationCatalogFixture(settings).notificationChannelCatalog });
     const send = async () => {
@@ -190,17 +315,36 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
     notificationLevel = null;
     await send();
+    if (kind === 'ready' || kind === 'ready_without_settings') {
+      // C1 Important keeps finished events quiet; Everything selects their push.
+      expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+      includeFinished = true;
+      await send();
+    }
     expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
     if (kind === 'ready' || kind === 'ready_without_settings') {
       expect(sendPushNotificationsAsyncSpy.mock.calls[0][0][0].data.activityEventLocalId).toBe('ready-1');
     }
     expect(axios.get).toHaveBeenCalledWith(
       'https://owner-home.example.test/v2/sessions/s_1?accessProjectionVersion=1',
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer account-token' }) }),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: `Bearer ${token}` }) }),
     );
     sessionReadFails = true;
     await expect(send()).resolves.toBeUndefined();
     expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the entire inline question mapping before bounding an oversized native message', async () => {
+    await new PushNotificationClient('t').sendPushNotifications([{
+      to: 'ExponentPushToken[a]', body: 'Which branch?\n1. Main\n2. ' + 'Long label'.repeat(600),
+      categoryId: 'happier.questionChoices2.v1',
+      data: { sessionId: 'session-1', requestId: 'question-1', turnId: 'turn-1',
+        questionAnswerV1: { kind: 'choices', questionKey: 'branch', values: ['main', 'release'] } },
+    }]);
+    const message = sendPushNotificationsAsyncSpy.mock.calls[0][0][0];
+    expect(message.categoryId).toBe(PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1);
+    expect(message.data).toEqual({ sessionId: 'session-1', requestId: 'question-1', turnId: 'turn-1' });
+    expect(Buffer.byteLength(JSON.stringify(message), 'utf8')).toBeLessThanOrEqual(4096);
   });
 
   it('bounds the serialized outbound message while preserving Unicode and routing data', async () => {

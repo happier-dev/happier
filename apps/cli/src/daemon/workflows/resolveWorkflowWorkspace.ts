@@ -220,20 +220,25 @@ export async function prepareWorkflowAcceptedWorkspaceTarget(input: Readonly<{
   const inspected = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
     candidatePath: normalizedTarget.directory,
   });
+  let checkoutRootPath = inspected?.inspection.rootPath ?? normalizedTarget.directory;
   if (input.projectTarget.workspaceRefId) {
     const workspaceRef = input.resolveWorkspaceRef?.(input.projectTarget.workspaceRefId) ?? null;
     if (!workspaceRef
       || (input.currentServerId !== undefined && workspaceRef.serverId !== input.currentServerId)
       || workspaceRef.machineId !== input.projectTarget.machineId
-      || !inspected
-      || getPathRemainderWithinBase(workspaceRef.rootPath, inspected.inspection.rootPath) !== '') {
+      || (inspected
+        ? getPathRemainderWithinBase(workspaceRef.rootPath, inspected.inspection.rootPath) !== ''
+        : getPathRemainderWithinBase(normalizedTarget.directory, workspaceRef.rootPath) === null)) {
       return { ok: false, code: 'workspace_conflict' };
     }
+    // Plain accepted folders have no SCM inspection; their Account ref owns
+    // the root, including when the selected working directory is nested.
+    checkoutRootPath = inspected?.inspection.rootPath ?? workspaceRef.rootPath;
   }
   const project: WorkflowWorkspaceDescriptor = {
     machineId: input.projectTarget.machineId,
     directory: normalizedTarget.directory,
-    checkoutRootPath: inspected?.inspection.rootPath ?? normalizedTarget.directory,
+    checkoutRootPath,
     ...(input.projectTarget.workspaceRefId ? { workspaceRefId: input.projectTarget.workspaceRefId } : {}),
   };
   if (!workflowUsesOriginalCommittedRevision(input.definition)) {

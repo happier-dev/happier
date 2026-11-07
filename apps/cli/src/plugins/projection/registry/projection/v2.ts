@@ -1,4 +1,3 @@
-import { backupDestinationsProjectionFamily } from '../backupDestinations';
 import { z } from 'zod/mini';
 import type {
     PluginContributionIntrospectionProjectionV1,
@@ -11,6 +10,9 @@ import type {
 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readMountedActionContributions } from './mountedActions';
+import { projectPluginContributionSource } from './sourceMetadata';
 import { isDynamicPluginResourceContributionV2, PluginAgentCapabilitiesV2Schema, PluginResourceKindV2Schema, PluginDynamicResourceScopeV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginActionDeclaredExecutionV2Schema, PluginActionScopeV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { getPluginMachineExecutionOriginRef, PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -52,13 +54,19 @@ import { workflowsProjectionFamily } from '../workflows';
 import { inputTypesProjectionFamily } from '../inputTypes';
 import { botTemplatesProjectionFamily } from '../botTemplates';
 import { atmospherePicturesProjectionFamily } from '../atmospherePictures';
-import { storeKindsProjectionFamily } from '../storeKinds';
 import { registrySourcesProjectionFamily } from '../registrySources';
+import { backupDestinationsProjectionFamily } from '../backupDestinations';
+import { deploymentTargetsProjectionFamily } from '../deploymentTargets';
+import { healthCheckKindsProjectionFamily } from '../healthCheckKinds';
+import { storeKindsProjectionFamily } from '../storeKinds';
+import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } from '../machineRecipes';
 import { languageServersProjectionFamily } from '../languageServers';
 import { skillsProjectionFamily } from '../skills';
 import { machineProvisionersProjectionFamily } from '../machineProvisioners';
+import { accessProvidersProjectionFamily } from '../accessProviders';
 import { dragSourcesProjectionFamily, dropTargetsProjectionFamily } from '../entityDragDrop';
 import { workItemsProjectionFamily } from '../workItems';
+import { notificationCategoriesProjectionFamily } from '../notificationCategories';
 import {
     composerAttachmentsProjectionFamily,
     composerControlsProjectionFamily,
@@ -345,8 +353,9 @@ function collectPluginContributionMetadata(
     for (const action of registry.actions) {
         upsert(action);
     }
-
-
+    for (const category of registry.notifications ?? []) {
+        upsert(category);
+    }
     for (const resource of registry.resources) {
         upsert(resource);
     }
@@ -438,6 +447,10 @@ function collectPluginContributionMetadata(
     }
     for (const skill of registry.skills ?? []) {
         upsert(skill);
+    }
+    for (const recipe of registry.machineRecipes ?? []) {
+        const declaration = registry.pluginDeclarations?.find(candidate => candidate.pluginId === recipe.pluginId);
+        upsert({ ...recipe, sourceSpec: declaration?.sourceSpec });
     }
 
     return metadata;
@@ -602,24 +615,7 @@ function buildInstalledPackagesById(params: Readonly<{
             continue;
         }
         const metadata = metadataByPluginId.get(pluginId);
-        const sourceKind = (() => {
-            const kind = metadata?.sourceKind ?? readOptionalString(metadata?.sourceSpec?.kind);
-            if (kind === 'bundled') {
-                return 'bundled';
-            }
-            // These are legacy placeholders in the packetized model and should not appear in
-            // new production data. Preserve them only as unknown so UI doesn't imply a real
-            // installed package provenance.
-            if (kind === 'package' || kind === 'marketplace') {
-                return 'unknown';
-            }
-            return kind ?? 'unknown';
-        })();
-        const locator = sourceKind === 'bundled'
-            ? pluginId
-            : readOptionalString(metadata?.sourceSpec?.locator)
-                ?? readOptionalString(metadata?.manifestPath)
-                ?? pluginId;
+        const source = projectPluginContributionSource({ ...metadata, pluginId });
         const brand = brandAssetsByPluginId[pluginId];
         const immutableGenerationId = readOptionalString(
             params.registry.immutableGenerationIdsByPluginId?.[pluginId],
@@ -630,10 +626,7 @@ function buildInstalledPackagesById(params: Readonly<{
             displayName: metadata?.displayName ?? pluginId,
             version: readOptionalString(metadata?.sourceSpec?.resolvedVersion),
             enabled: true,
-            source: {
-                kind: sourceKind,
-                locator,
-            },
+            source,
             ...(immutableGenerationId ? { immutableGenerationId } : {}),
             ...(occurrenceId ? { occurrenceId } : {}),
             ...readOccurrenceFacts(pluginId, occurrenceId),
@@ -799,16 +792,15 @@ function buildActionsById(
     return actionsById;
 }
 
-
-
-
-
 export function buildResourcesById(
     registry: ResolvedContributionRegistry,
     purposeScopes: ReturnType<typeof deriveRegistryConnectedAccountPurposeAuthorizations>,
     pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>,
 ): PluginProjectionV2['resourcesById'] {
     const resourcesById: PluginProjectionV2['resourcesById'] = {};
+    const compiledAccountResources = new Set(registry.pluginDeclarations?.flatMap(plugin =>
+        plugin.compiledAccountManifest?.contributes.resources.flatMap(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account'
+            ? [qualifiedProjectionKey(plugin.pluginId, resource.id)] : []) ?? []));
     for (const resource of registry.resources) {
         if (!resource.pluginId) {
             continue;
@@ -835,6 +827,10 @@ export function buildResourcesById(
             resourceKind: resourceKind.data,
             ...(!dynamic && resource.definition.path ? { path: resource.definition.path } : {}),
             scope: dynamic ? PluginDynamicResourceScopeV1Schema.parse(resource.definition.scope) : 'global',
+            ...(resource.definition.execution ? { execution: resource.definition.execution } : {}),
+            ...(resource.definition.execution?.target === 'account'
+                ? { accountRuntimeDeclared: compiledAccountResources.has(key) } : {}),
+            ...(resource.definition.sessionInbox ? { sessionInbox: resource.definition.sessionInbox } : {}),
             connectedAccountPurposes: purposeScopes.find(scope => scope.consumer.pluginId === resource.pluginId
                 && scope.consumer.localId === resource.definition.id)?.authorizedPurposes.map(scope => ({
                     purpose: scope.purpose.purpose, serviceRefs: [...scope.serviceRefs],
@@ -887,6 +883,68 @@ function buildSettingsById(
     return settingsById;
 }
 
+/** Exact mounted Action facts use the same projection and policy owners as full discovery. */
+export function buildPluginMountedActionsProjectionV2(params: Pick<
+    Parameters<typeof buildPluginProjectionV2>[0],
+    'registry' | 'generation' | 'pluginExecutionOriginsByPluginId' | 'resolveActionPresentUserGatePolicy'
+    | 'pluginFinalPolicyCurrentRuntimesById' | 'introspectionRuntimeSnapshot' | 'requestedLocale' | 'pluginUiHostRuntime'
+> & Readonly<{ actions: readonly PluginContributionIdentityV1[]; callerPluginIds?: readonly string[] }>): PluginProjectionV2 {
+    const actions = readMountedActionContributions(params.registry, params.actions, params.callerPluginIds ?? []);
+    const pluginIds = new Set([...params.actions.map(action => action.pluginId), ...(params.callerPluginIds ?? [])]);
+    const uiTranslationsV2 = params.registry.uiTranslationsV2?.filter(contribution => pluginIds.has(contribution.pluginId));
+    const translationResourceKeys = new Set(uiTranslationsV2?.flatMap(contribution => 'resourceId' in contribution.definition
+        ? [qualifiedProjectionKey(contribution.pluginId, contribution.definition.resourceId)] : []));
+    // Carry admitted declarations. The canonical UI family sees only selected
+    // Actions and translations, so unrelated UI and executable owners stay cold.
+    const registry: ResolvedContributionRegistry = {
+        actions, agents: [], voiceProviders: [], uiTranslationsV2,
+        resources: [...translationResourceKeys].flatMap(key => {
+            const resource = params.registry.resourcesById?.get(key);
+            return resource ? [resource] : [];
+        }),
+        activationTargets: params.registry.activationTargets.filter(target => pluginIds.has(target.pluginId)),
+        occurrenceIdsByPluginId: params.registry.occurrenceIdsByPluginId,
+        immutableGenerationIdsByPluginId: params.registry.immutableGenerationIdsByPluginId,
+        connectedAccountDescriptorsById: new Map(), catalogEntriesById: {},
+        agentDefinitionsById: new Map(), providersByContributionKey: new Map(), pluginDiagnosticsByPluginId: {},
+    };
+    const purposeScopes = deriveRegistryConnectedAccountPurposeAuthorizations(registry);
+    const pluginUi = buildPluginProjectionFamilyV2({ registry, generation: params.generation,
+        requestedLocale: params.requestedLocale,
+        pluginUiHostRuntime: params.pluginUiHostRuntime,
+        pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId }, pluginUiProjectionFamily);
+    return {
+        ...createEmptyPluginProjectionV2(params.generation),
+        ...(Object.keys(pluginUi.entriesById).length > 0 ? { familiesById: { pluginUi } } : {}),
+        resourcesById: buildResourcesById(registry, purposeScopes, params.pluginExecutionOriginsByPluginId),
+        installedPackagesById: buildInstalledPackagesById({ registry, installedPackages: [], pluginDiagnosticsByPluginId: {},
+            pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId,
+            pluginFinalPolicyCurrentRuntimesById: params.pluginFinalPolicyCurrentRuntimesById }),
+        actionsById: buildActionsById(registry, purposeScopes,
+            params.pluginExecutionOriginsByPluginId, params.resolveActionPresentUserGatePolicy,
+            params.pluginFinalPolicyCurrentRuntimesById, params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId),
+    };
+}
+
+export function buildPluginWorkflowMaterializationProjectionV2(params: Pick<
+    Parameters<typeof buildPluginProjectionV2>[0],
+    'registry' | 'generation' | 'pluginExecutionOriginsByPluginId' | 'resolveActionPresentUserGatePolicy'
+    | 'pluginFinalPolicyCurrentRuntimesById' | 'introspectionRuntimeSnapshot'
+>): PluginProjectionV2 {
+    return {
+        ...createEmptyPluginProjectionV2(params.generation),
+        agentsById: buildAgentsById(params.registry, params.generation),
+        actionsById: buildActionsById(
+            params.registry,
+            deriveRegistryConnectedAccountPurposeAuthorizations(params.registry),
+            params.pluginExecutionOriginsByPluginId,
+            params.resolveActionPresentUserGatePolicy,
+            params.pluginFinalPolicyCurrentRuntimesById,
+            params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId,
+        ),
+    };
+}
+
 /**
  * The lifecycle families a client reads from the describe: composer reference
  * discovery needs per-contribution binding and activation evidence that no
@@ -917,8 +975,6 @@ function createEmptyPluginProjectionV2(generation: number): PluginProjectionV2 {
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {},
@@ -1004,6 +1060,10 @@ export function buildPluginConnectedAccountAdmissionProjectionV2(params: Readonl
                 familyContext,
                 machineProvisionersProjectionFamily,
             ),
+            accessProviders: buildPluginProjectionFamilyV2(
+                familyContext,
+                accessProvidersProjectionFamily,
+            ),
         }),
     };
 }
@@ -1068,12 +1128,18 @@ export function buildPluginProjectionV2(params: Readonly<{
         atmospherePicturesProjectionFamily,
         registrySourcesProjectionFamily,
         backupDestinationsProjectionFamily,
+        deploymentTargetsProjectionFamily,
+        healthCheckKindsProjectionFamily,
         storeKindsProjectionFamily,
+        machineRecipesProjectionFamily,
+        machineSetupPresetsProjectionFamily,
         languageServersProjectionFamily,
         skillsProjectionFamily,
         machineProvisionersProjectionFamily,
+        accessProvidersProjectionFamily,
         dragSourcesProjectionFamily,
         workItemsProjectionFamily,
+        notificationCategoriesProjectionFamily,
         dropTargetsProjectionFamily,
         voiceProviderProjectionFamily,
         accountCollectionsProjectionFamily,
@@ -1085,6 +1151,7 @@ export function buildPluginProjectionV2(params: Readonly<{
     const familiesById = buildPluginProjectionFamiliesByIdV2({
         registry: params.registry,
         generation: params.generation,
+        readPluginBrandAsset: pluginId => params.brandAssetsByPluginId?.[pluginId],
         pluginDiagnosticsByPluginId,
         ...(params.pluginExecutionOriginsByPluginId
             ? { pluginExecutionOriginsByPluginId: params.pluginExecutionOriginsByPluginId }
@@ -1181,8 +1248,6 @@ export function buildPluginProjectionV2(params: Readonly<{
             params.pluginFinalPolicyCurrentRuntimesById,
             params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId,
         ),
-
-
         resourcesById: buildResourcesById(params.registry, purposeScopes, params.pluginExecutionOriginsByPluginId),
         settingsById: buildSettingsById(params.registry, diagnostics, installedPackages),
         familiesById,

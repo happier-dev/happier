@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { accountSettingsParse, normalizeActionsSettingsV1, RoleActionOutputSchemasV1, readSessionRoleIdV1, createRoleSourceReaderV1, SessionRolesV1Schema } from '@happier-dev/protocol';
+import { accountSettingsParse, FeaturesResponseSchema, normalizeActionsSettingsV1, RoleActionOutputSchemasV1, readSessionRoleIdV1, createRoleSourceReaderV1, SessionRolesV1Schema } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ACCOUNT_SECURITY_PATH_V1 } from '@happier-dev/protocol/auth/accountSecurity';
+import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import Fastify from 'fastify';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema, PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 
@@ -19,20 +24,18 @@ import { buildWorkflowActionContext, createWorkflowAcceptedAuthorizationCurrentn
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveCliAgentStartContextV1 } from './resolveCliAgentStartContextV1';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { createCliActionExecutor } from './createCliActionExecutor';
+import type { SessionActionRpcTransport } from './createCliActionDeps';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionNotificationContextFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { registerSessionClientRuntimeHandlers } from '@/api/session/client/executionRuns/registerSessionClientRuntimeHandlers';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { readEmptyPlainArtifactListFixture, registerAccountHomeHttp, registerPlainArtifactRoutes } from './widgetApproval.testkit';
 
 const axiosGet = vi.hoisted(() => vi.fn());
 const axiosPost = vi.hoisted(() => vi.fn());
@@ -50,6 +53,174 @@ afterEach(() => {
 });
 
 describe('credentialed Action policy binding before settings bootstrap', () => {
+  it('does not probe Home identity for an Account read that creates no approval origin', async () => {
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
+    const base = 'https://account-read-demand.example.invalid';
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-read-owner' })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' as const };
+    const paths: string[] = [];
+    axiosGet.mockImplementation(async (url: string, options: { headers: Record<string, string> }) => {
+      expect(new URL(url).origin).toBe(base);
+      expect(options.headers.Authorization).toBe(`Bearer ${credentials.token}`);
+      const path = new URL(url).pathname;
+      paths.push(path);
+      if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({
+        v: 1, encryptionMode: 'plain', nativeEmail: null,
+        password: { status: 'not_enrolled', revision: null },
+      }) };
+      if (path === '/v2/account/settings') return { status: 200, data: AccountSettingsV2GetResponseSchema.parse({
+        version: 1, content: { t: 'plain', v: {} },
+      }) };
+      throw new Error(`Unexpected Account read HTTP ${path}`);
+    });
+    const features = vi.fn(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_account-read-home' } } })),
+      { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', features);
+    try {
+      const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-read-profile',
+        serverApiUrl: base, pluginActionExecutionOwner: 'current_process' });
+      expect(await executor.execute('account.security.get', {}, { surface: 'cli', actionCaller: { kind: 'host' } }))
+        .toMatchObject({ ok: true, result: { encryptionMode: 'plain' } });
+      expect(features).not.toHaveBeenCalled();
+      expect(paths.sort()).toEqual([ACCOUNT_SECURITY_PATH_V1, '/v2/account/settings'].sort());
+      expect(axiosPost).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('does not retry another Action Home lookup after a deferred Account read on the same factory', async () => {
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
+    const base = 'https://account-read-sibling.example.invalid';
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-read-sibling' })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' as const };
+    axiosGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({
+        v: 1, encryptionMode: 'plain', nativeEmail: null,
+        password: { status: 'not_enrolled', revision: null },
+      }) };
+      if (path === '/v2/account/settings') return { status: 200, data: AccountSettingsV2GetResponseSchema.parse({
+        version: 1, content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
+          actions: { 'account.profile.get': { approvalRequiredSurfaces: ['cli'] } } } } },
+      }) };
+      throw new Error(`Unexpected sibling Action HTTP ${path}`);
+    });
+    const features = vi.fn(async () => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', features);
+    try {
+      const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-sibling-profile',
+        serverApiUrl: base, pluginActionExecutionOwner: 'current_process' });
+      const context = { surface: 'cli' as const, actionCaller: { kind: 'host' as const } };
+      expect(await executor.execute('account.security.get', {}, context)).toMatchObject({ ok: true });
+      expect(features).not.toHaveBeenCalled();
+      // Without a request identity the unchanged strict builder refuses the
+      // proposal. Its failed eager lookup must not become a second probe.
+      expect(await executor.execute('account.profile.get', {}, context))
+        .toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+      expect(features).toHaveBeenCalledTimes(1);
+      expect(axiosPost).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it.each(['ready', 'cancelled', 'cancelled-bound', 'unavailable', 'eager-unavailable'] as const)('resolves authenticated Home identity at the Account read approval demand (%s)', async state => {
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
+    const base = 'https://account-approval-demand.example.invalid';
+    const accountId = `account-approval-owner-${state}`;
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' as const };
+    const app = Fastify();
+    const controller = new AbortController();
+    const stages: string[] = [];
+    const fetchPaths: string[] = [];
+    const actionId = state === 'eager-unavailable' ? 'account.profile.get' : 'account.security.get';
+    let securityReads = 0;
+    let createdId: string | undefined;
+    const settings = accountSettingsParse({ actionsSettingsV1: { v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } } });
+    const featuresSnapshot = registerAccountHomeHttp(app, { accountId,
+      serverId: 'srv_account-approval-home', settings });
+    const artifacts = registerPlainArtifactRoutes(app, accountId);
+    app.get(ACCOUNT_SECURITY_PATH_V1, async () => {
+      securityReads += 1;
+      return AccountSecurityGetResponseV1Schema.parse({ v: 1,
+        encryptionMode: 'plain', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+    });
+    app.addHook('onRequest', async request => {
+      expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+      if (request.url === '/v2/account/settings') stages.push('settings');
+    });
+    app.addHook('onResponse', async request => {
+      if (request.method === 'POST' && request.url === '/v1/artifacts') {
+        const body = request.body as { id: string };
+        createdId = body.id;
+        stages.push('artifact');
+      }
+    });
+    const restore = installAxiosFastifyAdapter({ app, origin: base });
+    const originalAxios = (await vi.importActual<typeof import('axios')>('axios')).default;
+    axiosGet.mockImplementation(originalAxios.get);
+    axiosPost.mockImplementation(originalAxios.post);
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const requestUrl = new URL(url);
+      expect(requestUrl.origin).toBe(base);
+      fetchPaths.push(requestUrl.pathname);
+      if (requestUrl.pathname === '/v1/features') {
+        // The Artifact reader independently consults public feature support;
+        // it is not authenticated Home-identity authority.
+        expect(new Headers(init.headers).get('Authorization')).toBeNull();
+        return new Response(JSON.stringify(FeaturesResponseSchema.parse({ features: {} })),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      expect(url).toBe(`${base}/v1/features/authenticated`);
+      expect(init.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
+      stages.push('features');
+      if (state.startsWith('cancelled')) controller.abort();
+      if (state.endsWith('unavailable')) return new Response('{}', { status: 503 });
+      return new Response(JSON.stringify(featuresSnapshot), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    try {
+      const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-approval-profile',
+        serverApiUrl: base, pluginActionExecutionOwner: 'current_process' });
+      const invocation = state === 'cancelled-bound' ? executor.bindInvocation(controller.signal) : executor;
+      const result = await invocation.execute(actionId, {}, {
+        surface: 'cli', actionCaller: { kind: 'host' }, actionRequestId: `account-read-${state}`,
+        ...(state === 'cancelled-bound' ? {} : { signal: controller.signal }),
+      });
+      expect(securityReads).toBe(0); // Settings admit the request; disclosure waits for approval.
+      expect(fetchPaths.filter(path => path === '/v1/features/authenticated')).toHaveLength(1);
+      expect(fetchPaths.every(path => path === '/v1/features/authenticated' || path === '/v1/features')).toBe(true);
+      if (state.startsWith('cancelled')) {
+        expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+        expect(createdId).toBeUndefined();
+        expect(stages).toEqual(['settings', 'features']);
+      } else {
+        expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
+        expect(stages, JSON.stringify(result)).toEqual(state === 'eager-unavailable'
+          ? ['features', 'settings', 'artifact'] : ['settings', 'features', 'artifact']);
+        const row = createdId ? artifacts.read(createdId) : undefined;
+        expect(row).toBeDefined();
+        const content = decodePlainArtifactStoredContent(row!.body);
+        if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') {
+          throw new Error('Expected the canonical plain Artifact body envelope');
+        }
+        const request = ApprovalRequestV2Schema.parse(JSON.parse(content.body));
+        expect(request.executionOriginV1).toMatchObject({ serverId: 'account-approval-profile',
+          accountId, actionId, requestId: `account-read-${state}` });
+        if (state === 'ready') expect(request.executionOriginV1.serverIdentityId).toBe('srv_account-approval-home');
+        // The unchanged strict builder permits the host's profile-bound origin
+        // without cryptographic Home identity, on eager and deferred paths alike.
+        else expect(request.executionOriginV1).not.toHaveProperty('serverIdentityId');
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      restore();
+      await app.close();
+    }
+  });
+
   it.each(['api', 'plugin'] as const)('admits a genuine Workflow Run role write through the credentialed cli-global composition (%s source)', async sourceKind => {
     resetInMemoryAccountSettingsContextForTests();
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
@@ -81,13 +252,14 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, metadata: null,
       starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings, roles: {},
       runCaller: { runId: 'workflow-run', runDepth: 4, runOriginSessionId: origin } });
-    if (!agentStartContext) throw new Error('Expected host-produced originless caller');
+    if (!agentStartContext || 'ok' in agentStartContext) throw new Error('Expected host-produced originless caller');
     let metadata = createTestMetadata();
-    let childMetadata = createTestMetadata();
+    const childMetadata = createTestMetadata();
     let authorityCurrent = true;
     let revokeOnDelivery = false;
     let revokeDuringSigning = false;
     let misbindDelivery = false;
+    let reportCopyDeliveries = 0;
     const isAcceptedAuthorizationCurrent = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'workflow-role-owner',
       // The token registry is the external credential store; its canonical
       // accepted-authority evaluator remains real at the assigned Run executor.
@@ -116,7 +288,7 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
         return { status: 200, data: { mode: 'plain', version: 1,
           settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       }
-      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v1/artifacts') return readEmptyPlainArtifactListFixture(url, 'workflow-role-owner');
       if (path === '/v1/account/profile') return { status: 200, data: { id: 'workflow-role-owner' } };
       if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 404, data: {} };
       if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: rawSettings } } };
@@ -131,9 +303,10 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
     });
     axiosPost.mockImplementation(async (url: string, body: unknown) => {
       const path = new URL(url).pathname;
+      if (path === '/v2/sessions/read-batch') return { status: 200, data: createSessionReadBatchResponseFixture({ request: body, sessions: [row(), row(child)] }) };
       if (path === '/v2/sessions/query') {
         const query = SessionListQueryV1Schema.parse(body);
-        return { status: 200, data: SessionListQueryResponseV1Schema.parse({ sessions:
+        return { status: 200, data: createCompactSessionListQueryResponseFixture({ sessions:
           query.storage === 'active' && query.underSessionId === origin ? [row(child)] : [],
           nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }) };
       }
@@ -154,28 +327,27 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
       throw new Error(`Unexpected Workflow Role HTTP write ${path}`);
     });
-    const receiver = createCliActionExecutor({ credentials, token: credentials.token, sessionId: origin,
-      serverId: 'workflow-home-profile', serverHttpBaseUrl: base, serverIdentityId: homeId,
-      mode: 'plain', ctx: null, actionsSettingsProvider: provider, pluginActionExecutionOwner: 'current_process',
-      getCurrentSessionMetadata: () => metadata, readRoleSources: createRoleSourceReaderV1({}),
-      stageSessionStateMutation: async mutation => {
-        mutations.push(mutation.fieldId);
-        metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation);
-      } });
+    const sessionActionRpcTransport: SessionActionRpcTransport = async request => {
+      expect(request.executionAuthorization?.binding.workflowActionOrigin?.runId).toBe('workflow-run');
+      if (request.method === 'session.roles.apply_to_reports' || request.sessionId === child) reportCopyDeliveries++;
+      // Home's assignment admission and the authenticated relay are real boundaries.
+      if (revokeOnDelivery) return { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' };
+      if (request.sessionId === child) throw new Error('Unsupported Workflow copy reached a recipient');
+      return await rpc.handleRequest({ method: `${misbindDelivery ? 'wrong-session' : request.sessionId}:${request.method}`, params: request.input,
+        callerAuthority: 'account_automation', callerInputAuthorization: request.executionAuthorization });
+    };
     const rpc = new RpcHandlerManager({ scopePrefix: origin, encryptionMode: 'plain', logger: () => {} });
-    registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: receiver,
-      actionIds: ['session.role.set', 'session.notes.set'] });
-    const childRpc = new RpcHandlerManager({ scopePrefix: child, encryptionMode: 'plain', logger: () => {} });
     const unexpectedTranscriptWrite = async (): Promise<never> => { throw new Error('Unexpected transcript write'); };
-    // Use the actual Session receiving registration, including its credentialed
-    // Role factory and configuration currentness/relation bindings.
-    const childRegistration = registerSessionClientRuntimeHandlers({ rpcHandlerManager: childRpc, sessionId: child,
+    // Use the real runner registration for supported Role/Notes mutations;
+    // authenticated Home/Session transports are the boundaries.
+    const originRegistration = registerSessionClientRuntimeHandlers({ rpcHandlerManager: rpc, sessionId: origin,
       token: credentials.token, serverId: 'workflow-home-profile', serverUrl: base,
-      readOwnerAccountCredentials: async () => credentials, actionsSettingsProvider: provider,
-      metadataPath: childMetadata.path, metadata: childMetadata, getSessionMetadata: () => childMetadata,
+      readOwnerAccountCredentials: async () => credentials,
+      metadataPath: metadata.path, metadata, getSessionMetadata: () => metadata,
       readRoleSources: createRoleSourceReaderV1({}),
       enqueueRegisteredSessionStateFieldMutation: async mutation => {
-        childMetadata = applyRegisteredSessionStateFieldMutationToMetadata(childMetadata, mutation);
+        mutations.push(mutation.fieldId);
+        metadata = applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation);
       },
       enqueueSessionUserMessage: unexpectedTranscriptWrite, enqueueUserTextMessageCommitted: unexpectedTranscriptWrite,
       enqueueAgentMessageCommitted: unexpectedTranscriptWrite, enqueueVoiceAgentTranscriptTurnCommitted: unexpectedTranscriptWrite,
@@ -183,22 +355,14 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       getTranscriptQueryContext: () => ({ encryptionMode: 'plain' }),
       persistVoiceAgentRunMetadataFromPublicRun: () => {}, socketEmitExecutionRunUpdated: () => {},
     });
-    onTestFinished(() => childRegistration.dispose());
+    onTestFinished(() => originRegistration.dispose());
     // HTTP and the authenticated RPC relay are genuine system boundaries; both
     // credentialed composition and receiving Role/admission/outbox owners stay real.
     const executor = createCliActionExecutorFromCredentials({ credentials,
       serverId: 'workflow-home-profile', serverApiUrl: base, serverIdentityId: homeId,
       externalActionMachineInstallationId: 'installed', externalActionMachineRequestPrivateKey: signing.secretKey,
       actionsSettingsProvider: provider, workflowAcceptedAuthorizationCurrentness: isAcceptedAuthorizationCurrent,
-      sessionActionRpcTransport: async request => {
-        expect(request.executionAuthorization?.binding.workflowActionOrigin?.runId).toBe('workflow-run');
-        // Home's assignment recheck is the transport boundary (its real SQLite
-        // route suite separately exercises removal before forwarding).
-        if (revokeOnDelivery) return { ok: false, errorCode: 'run_access_denied', error: 'run_access_denied' };
-        const manager = request.sessionId === child ? childRpc : rpc;
-        return await manager.handleRequest({ method: `${misbindDelivery ? 'wrong-session' : request.sessionId}:${request.method}`, params: request.input,
-          callerAuthority: 'account_automation', callerInputAuthorization: request.executionAuthorization });
-      },
+      sessionActionRpcTransport,
       pluginActionExecutionOwner: 'current_process', readCredentials: async () => credentials });
     const context = { ...buildWorkflowActionContext({ runId: 'workflow-run',
       authorization: { principal: sourceKind === 'plugin'
@@ -215,11 +379,11 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       .toEqual({ ok: true, result: { updated: true } });
     expect(SessionRolesV1Schema.parse(metadata.work?.sessionRolesV1).notes).toBe('Run brief');
     expect(mutations).toEqual(['intent.role', 'intent.sessionRoles']);
-    const copied = await executor.execute('session.roles.apply_to_reports', { sessionId: origin }, context);
-    expect(copied).toEqual({ ok: true, result: { updatedSessionIds: [child] } });
-    if (!copied.ok) throw new Error('Expected admitted Workflow configuration copy');
-    expect(RoleActionOutputSchemasV1['session.roles.apply_to_reports'].parse(copied.result)).toEqual(copied.result);
-    expect(SessionRolesV1Schema.parse(childMetadata.work?.sessionRolesV1)).toMatchObject({ notes: 'Run brief', inheritedFrom: origin });
+    const beforeCopy = structuredClone(childMetadata);
+    expect(await executor.execute('session.roles.apply_to_reports', { sessionId: origin }, context))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(reportCopyDeliveries).toBe(0);
+    expect(childMetadata).toEqual(beforeCopy);
     expect(await executor.execute('session.role.set', { sessionId: origin, roleId: 'builder' }, { ...context, workspaceWrites: 'deny' }))
       .toMatchObject({ ok: false, errorCode: 'role_policy_denied' });
     const noOrigin = { ...agentStartContext, caller: { kind: 'originless' as const, runId: 'workflow-run', runDepth: 4 } };
@@ -237,32 +401,33 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
     expect(SessionRolesV1Schema.parse(metadata.work?.sessionRolesV1).notes).toBe('Run brief');
     revokeOnDelivery = false;
     if (sourceKind === 'plugin') {
-      // This is a distinct installed receiver, with its own real controller
-      // and committed filesystem source. It cannot replace sender custody.
-      const receiverRuntime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [pluginFixture], controller: pluginReloadController,
-        coldStart: true });
-      onTestFinished(() => receiverRuntime.dispose());
-      expect(readAuthoritativePluginSlotOccurrence(pluginId)?.sourceCustody).toBeTruthy();
+      if (context.actionCaller?.kind !== 'workflowRun') throw new Error('Expected admitted Workflow caller');
+      const authorization = context.actionCaller.authorization;
       const replacementRuntime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [pluginFixture], coldStart: true });
       onTestFinished(() => replacementRuntime.dispose());
       expect(readAuthoritativePluginSlotOccurrence(pluginId, { controller: replacementRuntime.controller })?.sourceCustody)
         .not.toEqual(acceptedCustody);
       const originalController = senderController;
       senderController = replacementRuntime.controller;
+      // A changed source refuses the next admission, not work already admitted
+      // under this Run's retained signed Session authority.
+      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(false);
       expect(await executor.execute('session.notes.set', { sessionId: origin, notes: 'Replaced source' }, context))
-        .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+        .toEqual({ ok: true, result: { updated: true } });
       senderController = undefined;
+      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(false);
       expect(await executor.execute('session.roles.apply_to_reports', { sessionId: origin }, context))
-        .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+        .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
       senderController = originalController;
       revokeDuringSigning = true;
       expect(await executor.execute('session.notes.set', { sessionId: origin, notes: 'Revoked during signing' }, context))
-        .toMatchObject({ ok: false, errorCode: 'run_access_denied' });
-      expect(SessionRolesV1Schema.parse(metadata.work?.sessionRolesV1).notes).toBe('Run brief');
-      expect(SessionRolesV1Schema.parse(childMetadata.work?.sessionRolesV1).notes).toBe('Run brief');
+        .toEqual({ ok: true, result: { updated: true } });
+      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(false);
+      expect(SessionRolesV1Schema.parse(metadata.work?.sessionRolesV1).notes).toBe('Revoked during signing');
+      expect(reportCopyDeliveries).toBe(0);
+      expect(childMetadata).toEqual(beforeCopy);
     }
     await rpc.waitForIdle();
-    await childRpc.waitForIdle();
   });
 
   it('hydrates Role admission into the admitted requester snapshot rather than the ambient Account', async () => {
@@ -287,7 +452,7 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
         PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1, content: { t: 'plain', v:
           key === 'role-overrides' ? { key, value: { v: 1, overrides: { scout: { roleId: 'scout',
             instructionsOverride: 'Use the requester override.' } } } } : emptyPromptLibraryRecordV1(key) } })) } };
-      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v1/artifacts') return readEmptyPlainArtifactListFixture(url, 'requester-role-owner');
       if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
       if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
       throw new Error(`Unexpected requester Role HTTP read ${path}`);
@@ -344,7 +509,7 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
         PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1, content: { t: 'plain', v:
           key === 'role-overrides' ? { key, value: { v: 1, overrides: { scout: { roleId: 'scout',
             instructionsOverride: 'Use the Account override.' } } } } : emptyPromptLibraryRecordV1(key) } })) } };
-      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v1/artifacts') return readEmptyPlainArtifactListFixture(url, `cold-role-${method}`);
       if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
       if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
       throw new Error(`Unexpected cold Role HTTP read ${path}`);

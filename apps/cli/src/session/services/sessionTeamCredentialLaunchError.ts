@@ -1,7 +1,7 @@
 import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { ConnectedServiceUxDiagnosticCodeV1Schema, type ConnectedServiceUxDiagnosticCodeV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { readSessionPreparationFailureCode, type SessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionPreparationFailureCode, type SessionPreparationFailureCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type TeamCredentialLaunchFailureCode = ProviderBrokerAdmissionFailureCodeV1 | ProviderErrorCodeV1
@@ -40,12 +40,16 @@ export function readTeamCredentialLaunchFailureCode(value: unknown): TeamCredent
 
 export class SessionTeamCredentialLaunchUnavailableError extends Error {
   readonly details?: Readonly<{ v: 1; source: 'team_credential' }>;
+  readonly failureCause: NonNullable<SessionRuntimeIssueV1['failureCause']>;
 
   // Binding/open guards without a lower-level reason retain the established selection code.
   // Launch and catalog decisions always supply their exact code and phase.
   constructor(readonly code: TeamCredentialLaunchFailureCode = 'team_credential_provider_selection_not_current',
     readonly phase: TeamCredentialLaunchFailurePhase = 'binding') {
     super(code);
+    // The runner may fail before its webhook. Its existing stderr cause record
+    // must retain this closed refusal independently of the process exit code.
+    this.failureCause = { code, phase: 'authentication', failureReason: 'unknown' };
     if (ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success) {
       this.details = { v: 1, source: 'team_credential' };
     }

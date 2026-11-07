@@ -6,6 +6,7 @@ import { listActionCliCommandDeclarations } from '@happier-dev/protocol/actions/
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ActionCliCommandBinding, ActionId, ActionInputFieldHint, ActionInputHints, ActionInputPredicate, ActionSpec, JsonSchemaObject } from '@happier-dev/protocol';
 import { actionCliCommandPattern, findActionCliCommandPattern } from './commandPatterns';
+import { ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS, isWorkflowActionCliCommand } from './executionTarget';
 export { actionCliCommandPattern } from './commandPatterns';
 import {
   ACTION_CLI_COMPILER_OWNED_FLAGS,
@@ -34,12 +35,14 @@ export type CompiledActionCliCommand = Readonly<{
   /**
    * Whether `--machine-id` is the CLI's physical routing flag for this command.
    *
-   * It is not when the Action declares a semantic `machineId` field: one
-   * spelling cannot mean both "route this invocation there" and "this is the
-   * Action's input", so the declaration decides, not a runtime precedence rule.
+   * Workflow queries reserve the transport spelling and project a semantic
+   * Machine filter separately. Otherwise an Action's own `machineId` field
+   * owns the spelling; no invocation gives one spelling both meanings.
    */
   routesByTransportMachineId: boolean;
   transportMachineIdFlags: readonly string[];
+  /** Workflow project selectors route execution and never enter Action input. */
+  transportProjectTargetFlags: readonly string[];
   /** This command preserves the established command-local exact-Home selector. */
   acceptsServerId: boolean;
   /** This command may not borrow the device's ambient active Home. */
@@ -137,10 +140,12 @@ function readUnrepresentableSchemaReason(error: unknown): string | null {
 function compileDeclaredActionCliCommand(
   { spec, binding }: ReturnType<typeof listActionCliCommandDeclarations>[number],
 ): CompiledActionCliCommand {
+  const acceptsServerId = spec.cli?.acceptsServerId === true || isWorkflowActionCliCommand(spec.id);
   const { fields, callerSchema } = compileActionCliFields(spec, {
     reservedFlags: [
-      ...(spec.cli?.acceptsServerId === true ? [ACTION_CLI_SERVER_ID_FLAG] : []),
+      ...(acceptsServerId ? [ACTION_CLI_SERVER_ID_FLAG] : []),
       ...(spec.cli?.transportMachineIdAliases ?? []),
+      ...(isWorkflowActionCliCommand(spec.id) ? [ACTION_CLI_MACHINE_ID_FLAG, ...ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS] : []),
     ],
   });
   const fieldsByPath = new Map(fields.map((field) => [field.path, field]));
@@ -168,18 +173,21 @@ function compileDeclaredActionCliCommand(
       `Action CLI variadic positional ${variadicPositional.path} for ${spec.id} must be a string list.`,
     );
   }
-  const routesByTransportMachineId = !fieldsByPath.has(TRANSPORT_MACHINE_ID_FIELD);
+  const routesByTransportMachineId = isWorkflowActionCliCommand(spec.id) || !fieldsByPath.has(TRANSPORT_MACHINE_ID_FIELD);
   if (!routesByTransportMachineId && spec.cli?.transportMachineIdAliases?.length) {
     throw new Error(`Action ${spec.id} has semantic machineId input and cannot declare Machine transport aliases.`);
   }
   const transportMachineIdFlags = Object.freeze(routesByTransportMachineId
     ? [ACTION_CLI_MACHINE_ID_FLAG, ...(spec.cli?.transportMachineIdAliases ?? [])]
     : []);
+  const transportProjectTargetFlags = routesByTransportMachineId && isWorkflowActionCliCommand(spec.id)
+    ? ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS : [];
   const collision = validateActionCliFlagCollisions(
     { fields, positionals },
     { reservedFlags: [
       ...transportMachineIdFlags,
-      ...(spec.cli?.acceptsServerId === true ? [ACTION_CLI_SERVER_ID_FLAG] : []),
+      ...transportProjectTargetFlags,
+      ...(acceptsServerId ? [ACTION_CLI_SERVER_ID_FLAG] : []),
     ] },
   );
   if (!collision.ok) {
@@ -203,7 +211,8 @@ function compileDeclaredActionCliCommand(
     binding,
     routesByTransportMachineId,
     transportMachineIdFlags,
-    acceptsServerId: spec.cli?.acceptsServerId === true,
+    transportProjectTargetFlags,
+    acceptsServerId,
     requiresServerId: spec.cli?.requiresServerId === true,
     requestTimeout: spec.cli?.requestTimeout,
   });

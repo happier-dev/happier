@@ -329,6 +329,34 @@ describe('resolveWorkflowWorkspace', () => {
     expect(inspectLocation).toHaveBeenCalledWith({ candidatePath: '/repo/packages/app' });
   });
 
+  it('prepares an accepted plain directory for a first Wait-only Run without a Session or repository', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workflow-plain-start-'));
+    try {
+      const directory = join(root, 'nested');
+      await mkdir(directory);
+      const scm = createGitWorkflowWorkspaceTestDependencies();
+      const prepare = (selectedDirectory: string) => prepareWorkflowAcceptedWorkspaceTarget({
+        projectTarget: { machineId: 'machine-1', directory: selectedDirectory, workspaceRefId: 'workspace-1' },
+        definition: { version: 1, inputs: [], defaults: {}, blocks: [
+          { kind: 'wait', id: 'review', document: { text: 'Wait', references: [], attachments: [] } },
+        ] },
+        currentServerId: 'server-1',
+        resolveWorkspaceRef: () => ({ id: 'workspace-1', serverId: 'server-1', machineId: 'machine-1',
+          rootPath: root, createdAtMs: 1 }),
+        inspectLocation: scm.inspectLocation,
+      });
+      for (const selectedDirectory of [root, directory]) {
+        await expect(prepare(selectedDirectory)).resolves.toEqual({ ok: true, workspaceTarget: { project: {
+          machineId: 'machine-1', directory: selectedDirectory, checkoutRootPath: root, workspaceRefId: 'workspace-1',
+        } } });
+      }
+      await expect(prepare(tmpdir())).resolves.toEqual({ ok: false, code: 'workspace_conflict' });
+      await expect(prepare(join(root, 'missing'))).resolves.toEqual({ ok: false, code: 'workspace_unavailable' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('requires a committed revision only when the accepted workflow forks from original', async () => {
     const prepare = (definition: Parameters<typeof prepareWorkflowAcceptedWorkspaceTarget>[0]['definition']) => (
       prepareWorkflowAcceptedWorkspaceTarget({

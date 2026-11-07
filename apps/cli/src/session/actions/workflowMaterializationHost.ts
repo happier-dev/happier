@@ -27,7 +27,8 @@ import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/ac
 
 type Materialization = Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>;
 type RoleSelection = NonNullable<Materialization['roleSelection']>;
-type MachineTarget = Readonly<{ machineId: string; directory: string; signal?: AbortSignal; roleSelection?: RoleSelection }>;
+type MachineTarget = Readonly<{ machineId: string; directory: string; signal?: AbortSignal;
+  roleSelection?: RoleSelection | (() => Promise<RoleSelection>) }>;
 
 /** Origin selection is a contextual fallback; Role and explicit engine overrides remain Protocol-owned. */
 export function projectWorkflowConversationRoleSelection(origin: WorkflowSessionConversation, machineId: string): RoleSelection {
@@ -72,7 +73,8 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
     const observeMachine = async () => {
       try {
         const roster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await call(
-          RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, { machineId: target.machineId },
+          RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+          { machineId: target.machineId, selection: 'workflowMaterialization' },
         ));
         const agents = buildMachineAgentInventoryDescriptors(roster.projection);
         const request = buildMachineAgentsDetectRequest({ agents });
@@ -108,7 +110,6 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
       }
       return observation;
     };
-    const roleSelection = { ...target.roleSelection };
     let catalogObservation: Promise<AcpCatalogSnapshotV1 | undefined> | undefined;
     const readDefinitionIds = async (required = false) => {
       catalogObservation ??= deps.readAcpCatalog
@@ -120,25 +121,30 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
       const { requireReadyAcpCatalog } = await import("@/agent/acp/catalog/configured/resolveBackend");
       return !required && catalog?.status !== 'ready' ? [] : requireReadyAcpCatalog(catalog).record.definitions.map((definition) => definition.id);
     };
-    if (roleSelection.defaultEngine) {
-      // Contextual second-opinion selection can choose another Agent family.
-      // Observe that inventory before roles; availability is still decided by
-      // the materializer only after its policy admission.
-      const machine = await readMachine();
-      const definitionIds = machine && Object.values(machine.roster.projection.agentsById)
-        .some((agent) => agent.identity && listAgentExecutionTargetsV1(agent.identity).length === 0)
-        ? await readDefinitionIds() : [];
-      roleSelection.availableAgentTargetKeys = machine ? Object.entries(machine.roster.projection.agentsById).flatMap(([agentId, agent]) => {
-        const item = machine.inventory.items.find((candidate) => candidate.agentId === agentId);
-        return agent.identity ? listAgentExecutionTargetsV1(agent.identity, definitionIds).flatMap((executionTarget) => {
-          const key = buildBackendTargetKeyV2(executionTarget);
-          const available = executionTarget.definitionId === undefined
-            ? item?.installed && item.platform.supported && item.dependencies.every((dependency) => dependency.installed)
-            : object(machine.detachedBackends?.[key])?.available === true;
-          return available ? [key] : [];
+    const readAmbientRoleSelection = async (): Promise<RoleSelection> => {
+      const roleSelection = { ...(typeof target.roleSelection === 'function'
+        ? await target.roleSelection() : target.roleSelection) };
+      if (roleSelection.defaultEngine) {
+        // Contextual second-opinion selection can choose another Agent family.
+        // Observe that inventory before roles; availability is still decided by
+        // the materializer only after its policy admission.
+        const machine = await readMachine();
+        const definitionIds = machine && Object.values(machine.roster.projection.agentsById)
+          .some((agent) => agent.identity && listAgentExecutionTargetsV1(agent.identity).length === 0)
+          ? await readDefinitionIds() : [];
+        roleSelection.availableAgentTargetKeys = machine ? Object.entries(machine.roster.projection.agentsById).flatMap(([agentId, agent]) => {
+          const item = machine.inventory.items.find((candidate) => candidate.agentId === agentId);
+          return agent.identity ? listAgentExecutionTargetsV1(agent.identity, definitionIds).flatMap((executionTarget) => {
+            const key = buildBackendTargetKeyV2(executionTarget);
+            const available = executionTarget.definitionId === undefined
+              ? item?.installed && item.platform.supported && item.dependencies.every((dependency) => dependency.installed)
+              : object(machine.detachedBackends?.[key])?.available === true;
+            return available ? [key] : [];
+          }) : [];
         }) : [];
-      }) : [];
-    }
+      }
+      return roleSelection;
+    };
     const observeActionContract: NonNullable<Materialization['effects']['readActionContract']> = async (actionId) => {
       const machine = await readMachine();
       if (!machine) return null;
@@ -156,7 +162,8 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
         });
         target.signal?.throwIfAborted();
         const schemas = DaemonPluginActionSchemasReadResponseSchema.safeParse(response);
-        return schemas.success && schemas.data.ok ? freezeWorkflowActionContractV1(schemas.data) : null;
+        return schemas.success && schemas.data.ok ? freezeWorkflowActionContractV1({ ...schemas.data,
+          inputHints: contributed.inputHints }) : null;
       } catch {
         target.signal?.throwIfAborted();
         return null;
@@ -175,13 +182,14 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
       return contract;
     };
     return {
-      roleSelection,
+      roleSelection: typeof target.roleSelection === 'function' ? undefined : target.roleSelection,
       effects: {
         readRoleSelection: async (roleId) => {
+          if (roleId === undefined) return readAmbientRoleSelection();
           target.signal?.throwIfAborted();
           const selected = await deps.readRoleSelection(roleId, target.signal);
           target.signal?.throwIfAborted();
-          return { ...selected, ...roleSelection };
+          return selected;
         },
         readWorkflowDefinition: (ref) => deps.readWorkflowDefinition(ref, target.signal),
         readLaunchProfile: (profileId) => deps.readLaunchProfile(profileId, target.signal),

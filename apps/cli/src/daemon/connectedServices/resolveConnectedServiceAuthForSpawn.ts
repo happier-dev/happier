@@ -1,14 +1,16 @@
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
 import type { AccountSettings, ConnectedAccountServiceKey, ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionV1, ConnectedServiceId, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountServiceRef, QualifiedConnectedAccountPurposeBindingV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialReconnectCauseV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ApiClient } from '@/api/api';
-import { createSpawnBindingAccountApi, type ConnectedServiceQualifiedAuthGroupApi } from './spawnBindingAccountApi';
-import type { ConnectedServiceCredentialReconnectCauseV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { StoredCredentials } from '@/persistence';
+import { createSpawnBindingAccountApi, type ConnectedServiceQualifiedAuthGroupApi } from './spawnBindingAccountApi';
 import type { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
+
 type PrepareSpawnGroupCandidate = Parameters<typeof createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator>[0]['prepareCandidateForSwitch'];
 type PreparedSpawnProfile = Extract<QualifiedConnectedAccountSpawnPreflightResult, { status: 'ready' }>['profile'];
 
@@ -23,7 +25,7 @@ import {
   materializeConnectedServicesForSpawn,
 } from './materialize/materializeConnectedServicesForSpawn';
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
-import { observeConnectedServiceMaterializationPhase } from './materialize/materializationPhase';
+import { observeConnectedServiceMaterializationPhase, observeCurrentConnectedServiceMaterializationPhase } from './materialize/materializationPhase';
 import { verifySpawnResumeReachability } from './verifySpawnResumeReachability';
 import type {
   ConnectedServiceResolvedSelection,
@@ -33,7 +35,7 @@ import type {
   ConnectedServiceMaterializedStateObservationBinding,
 } from './materialization/materializer';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './accountGroups/selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
-import { selectConnectedServiceAuthGroupCandidate, resolveConnectedServiceAuthGroupModelEligibilityBlocker } from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { selectConnectedServiceAuthGroupCandidate, resolveConnectedServiceAuthGroupModelEligibilityBlocker, projectConnectedServiceAuthGroupQuotaSnapshot } from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES } from './runs/materializeContract';
 import {
   buildQualifiedConnectedAccountAuthGroupSwitchState,
@@ -44,8 +46,12 @@ import {
 } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import type {
   ConnectedServiceAuthGroupMemberRuntimeStateOverride,
+  ConnectedServiceAuthGroupSwitchResult,
   ConnectedServiceAuthGroupSwitchState,
 } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+type ConnectedServiceAuthGroupMemberExclusions = Extract<
+  ConnectedServiceAuthGroupSwitchResult, { status: 'no_eligible_member' }
+>['excluded'];
 type ConnectedServiceAuthGroupMemberRuntimeState =
   ConnectedServiceAuthGroupSwitchState['memberStatesByProfileId'] extends ReadonlyMap<string, infer T>
     ? T
@@ -90,10 +96,13 @@ type ConnectedServiceProfileProjection = Readonly<{
 
 type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
   switchBeforeTurn(params: Readonly<{
+    modelId?: string;
+    signal?: AbortSignal;
     sessionId?: string;
     serviceId: ConnectedAccountServiceKey;
     groupId: string;
     reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'plan';
+    allowCurrentProfileRetry?: boolean;
     observedProfileId?: string | null;
     providerLimitId?: string | null;
     memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
@@ -103,6 +112,8 @@ type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
     activeProfileId?: string | null;
     generation?: number;
     credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+    excluded?: ConnectedServiceAuthGroupMemberExclusions;
+    retryAtMs?: number;
   }>>;
   switchAfterClassifiedFailure?(params: Readonly<{
     sessionId?: string;
@@ -122,15 +133,10 @@ type ConnectedServiceSpawnCredentialRefreshErrorKind =
   | 'reconnect_required'
   | 'transient_refresh_failed';
 
-type ConnectedServiceSpawnCredentialRefreshService = Readonly<{
-  refreshConnectedServiceCredentialForSpawnPreflight(params: Readonly<{
-    serviceId: ConnectedServiceId;
-    profileId: string;
-  }>): Promise<ConnectedServiceCredentialRefreshResult>;
-  refreshQualifiedConnectedAccountCredentialForSpawnPreflight?(params: Readonly<{
-    profile: QualifiedConnectedAccountProfileV4;
-  }>): Promise<QualifiedConnectedAccountSpawnPreflightResult>;
-}>;
+type ConnectedServiceSpawnCredentialRefreshService = Pick<
+  import('./refresh/ConnectedServiceRefreshCoordinator').ConnectedServiceRefreshCoordinator,
+  'refreshQualifiedConnectedAccountCredentialForSpawnPreflight'
+>;
 
 type ConnectedServicePredictiveSwitchGuard = (
   input: ConnectedServicePredictiveSwitchGuardInput,
@@ -205,6 +211,7 @@ export class ConnectedServiceRequestAuthCredentialRevisionRequiredError extends 
 }
 
 export class ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError extends Error {
+  readonly code: `connected_service_auth_group_switch_unavailable_${ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError['reason']}`;
   readonly kind = 'switch_coordinator_unavailable' as const;
   readonly serviceId: ConnectedAccountServiceKey;
   readonly groupId: string;
@@ -221,6 +228,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError extends 
   }>) {
     super(`Connected service auth group switch coordinator unavailable (${params.serviceId}/${params.groupId})`);
     this.name = 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError';
+    this.code = `connected_service_auth_group_switch_unavailable_${params.reason}`;
     this.serviceId = params.serviceId;
     this.groupId = params.groupId;
     this.activeProfileId = params.activeProfileId;
@@ -309,6 +317,7 @@ function readConnectedServiceSpawnSwitchAuthority(
 }
 
 export class ConnectedServiceSpawnAuthGroupAuthorityError extends Error {
+  readonly code: `connected_service_auth_group_authority_${ConnectedServiceSpawnAuthGroupAuthorityError['kind']}`;
   readonly kind: 'resolution_unavailable' | 'resolution_failed' | 'group_missing' | 'active_profile_missing';
   readonly serviceId: ConnectedAccountServiceKey;
   readonly groupId: string;
@@ -321,6 +330,7 @@ export class ConnectedServiceSpawnAuthGroupAuthorityError extends Error {
   }>) {
     super(`Connected service auth group authority ${params.kind} (${params.serviceId}/${params.groupId})`);
     this.name = 'ConnectedServiceSpawnAuthGroupAuthorityError';
+    this.code = `connected_service_auth_group_authority_${params.kind}`;
     this.kind = params.kind;
     this.serviceId = params.serviceId;
     this.groupId = params.groupId;
@@ -337,6 +347,16 @@ export class ConnectedServiceSpawnModelUnavailableError extends Error {
   constructor(readonly modelId: string) {
     super(`No enabled pool member can serve model '${modelId}'`);
     this.name = 'ConnectedServiceSpawnModelUnavailableError';
+  }
+}
+
+export class ConnectedServiceSpawnNoEligibleMemberError extends Error {
+  readonly code = CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.noEligibleMember;
+  constructor(readonly excluded: ConnectedServiceAuthGroupMemberExclusions, readonly serviceId: ConnectedAccountServiceKey) {
+    super(`Connected-service account group has no eligible member${excluded.length > 0
+      ? ` (${excluded.map(member => `${member.profileId}:${member.reason}`).join(', ')})`
+      : ''}`);
+    this.name = 'ConnectedServiceSpawnNoEligibleMemberError';
   }
 }
 
@@ -403,12 +423,18 @@ function resolveActiveGroupProfileIssueReason(
   const activeState = state.activeProfileId
     ? memberStatesByProfileId.get(state.activeProfileId) ?? null
     : null;
-  const activeRemaining = activeState?.quotaSnapshot?.effectiveRemainingPercent;
+  const activeSnapshot = activeState?.quotaSnapshot;
+  const freshSnapshot = activeSnapshot && isConnectedServiceQuotaObservationFresh({
+    observedAtMs: activeSnapshot.capturedAtMs,
+    nowMs,
+    maxAgeMs: activeSnapshot.staleAfterMs,
+  }) ? activeSnapshot : null;
+  const activeRemaining = freshSnapshot?.effectiveRemainingPercent;
   const activeAuthInvalid =
     typeof activeState?.authInvalidUntilMs === 'number'
     && activeState.authInvalidUntilMs > nowMs;
   const activeExhausted =
-    activeState?.quotaSnapshot?.exhausted === true
+    freshSnapshot?.exhausted === true
     || (typeof activeRemaining === 'number' && Number.isFinite(activeRemaining) && activeRemaining <= 0)
     || (typeof activeState?.quotaExhaustedUntilMs === 'number' && activeState.quotaExhaustedUntilMs > nowMs)
     || (typeof activeState?.rateLimitedUntilMs === 'number' && activeState.rateLimitedUntilMs > nowMs);
@@ -416,13 +442,13 @@ function resolveActiveGroupProfileIssueReason(
 }
 
 function buildSpawnSwitchState(params: Readonly<{
+  modelId?: string;
   group: QualifiedConnectedAccountGroupV4;
   state: ConnectedServiceSpawnQualifiedGroupState;
   serviceId: ConnectedAccountServiceKey;
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
 }>): ConnectedServiceSpawnQualifiedGroupState {
-  if (!params.accountUsageStore) return params.state;
-  const usageState = buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
+  const usageState = params.accountUsageStore ? buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
     group: {
       serviceId: params.serviceId,
       groupId: params.group.ref.groupId,
@@ -438,10 +464,20 @@ function buildSpawnSwitchState(params: Readonly<{
       })),
     },
     accountUsageStore: params.accountUsageStore,
-  })?.state;
-  return usageState
+  })?.state : null;
+  const resolved = usageState
     ? { ...params.state, memberStatesByProfileId: usageState.memberStatesByProfileId }
     : params.state;
+  if (!params.modelId) return resolved;
+  return {
+    ...resolved,
+    memberStatesByProfileId: new Map([...resolved.memberStatesByProfileId].map(([profileId, state]) => [profileId, {
+      ...state,
+      quotaSnapshot: projectConnectedServiceAuthGroupQuotaSnapshot(
+        state.quotaSnapshot ?? null, resolved.policy, params.modelId,
+      ),
+    }])),
+  };
 }
 
 async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
@@ -453,7 +489,6 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   groupId: string;
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
   profileStatusByProfileId: ReadonlyMap<string, ConnectedServiceProfileProjection> | null;
-  quotaFreshnessMs: number;
   nowMs: number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
@@ -461,6 +496,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   prepareCandidateForSwitch?: PrepareSpawnGroupCandidate;
 }>): Promise<ConnectedServiceSpawnQualifiedGroupState> {
   const state = buildSpawnSwitchState({
+    ...(params.modelId ? { modelId: params.modelId } : {}),
     group: params.group,
     state: params.state,
     serviceId: params.serviceId,
@@ -474,7 +510,8 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
       activeProfileId: state.activeProfileId, policy: state.policy, members: state.members,
       lastSwitchReason: state.lastSwitchReason, lastSwitchAt: state.lastSwitchAt,
       memberStatesByProfileId: state.memberStatesByProfileId, nowMs: params.nowMs,
-      quotaFreshnessMs: params.quotaFreshnessMs, allowCurrentProfileRetry: true, providerLimitId: params.modelId,
+      allowCurrentProfileRetry: true, providerLimitId: params.modelId,
+      modelId: params.modelId,
     });
     if (candidates.reason === 'no_eligible_members') throw new ConnectedServiceSpawnModelUnavailableError(params.modelId);
     if (!state.policy.autoSwitch || candidates.reason === 'manual_strategy') {
@@ -520,7 +557,6 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     memberStatesByProfileId,
     policy: state.policy,
     nowMs: params.nowMs,
-    quotaFreshnessMs: params.quotaFreshnessMs,
     allowCurrentProfileRetry: true,
   }).length > 0;
   const activeRemaining = memberStatesByProfileId.get(currentActiveProfileId)?.quotaSnapshot?.effectiveRemainingPercent;
@@ -531,39 +567,40 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   if (!needsPreTurnProbe && !activeBelowSoftThreshold && activeIssueReason === 'soft_threshold') return state;
 
   if (params.authGroupSwitchCoordinator) {
-    try {
-      const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
-        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-        serviceId: params.serviceId,
-        groupId: params.groupId,
-        reason: activeIssueReason,
-        prepareCandidateForSwitch: params.prepareCandidateForSwitch,
-        observedProfileId: state.activeProfileId,
-        ...(params.modelId ? { providerLimitId: params.modelId } : {}),
-        ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
-      });
-      const selectedState = await resolveGroupAfterSpawnSwitchResult({
-        group: state,
-        serviceId: params.serviceId,
-        groupId: params.groupId,
-        result: switched,
-      }) ?? state;
-      if (modelBlocked && resolveConnectedServiceAuthGroupModelEligibilityBlocker({
-        state: state.memberStatesByProfileId.get(selectedState.activeProfileId ?? ''), modelId: params.modelId, nowMs: params.nowMs,
-      })) {
-        if (switched.status === 'no_eligible_member' && params.modelId) throw new ConnectedServiceSpawnModelUnavailableError(params.modelId);
-        throw new ConnectedServiceSpawnAuthGroupAuthorityError({ kind: 'resolution_unavailable', serviceId: params.serviceId, groupId: params.groupId });
-      }
-      return selectedState;
-    } catch (error) {
-      if (
-        activeIssueReason === 'soft_threshold'
-        && error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError
-      ) {
-        return state;
-      }
-      throw error;
+    const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
+      ...(params.modelId ? { modelId: params.modelId } : {}),
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+      reason: activeIssueReason,
+      prepareCandidateForSwitch: params.prepareCandidateForSwitch,
+      // A new process can share the active member; this is not a switch-away.
+      allowCurrentProfileRetry: true,
+      observedProfileId: state.activeProfileId,
+      ...(params.modelId ? { providerLimitId: params.modelId } : {}),
+      ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
+    });
+    if (switched.status === 'quota_proof_unavailable') {
+      throw new ConnectedServiceAuthGroupQuotaProbeIncompleteError({ status: 'incomplete',
+        requestedProfileCount: state.members.length, completedProfileCount: 0, reason: 'probe_unavailable',
+        ...(switched.retryAtMs === undefined ? {} : { retryAtMs: switched.retryAtMs }) });
     }
+    const selectedState = await resolveGroupAfterSpawnSwitchResult({
+      group: state,
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+      result: switched,
+    }) ?? state;
+    if (modelBlocked && resolveConnectedServiceAuthGroupModelEligibilityBlocker({
+      state: state.memberStatesByProfileId.get(selectedState.activeProfileId ?? ''), modelId: params.modelId, nowMs: params.nowMs,
+    })) {
+      if (switched.status === 'no_eligible_member' && params.modelId) throw new ConnectedServiceSpawnModelUnavailableError(params.modelId);
+      throw new ConnectedServiceSpawnAuthGroupAuthorityError({ kind: 'resolution_unavailable', serviceId: params.serviceId, groupId: params.groupId });
+    }
+    if (switched.status === 'no_eligible_member') {
+      throw new ConnectedServiceSpawnNoEligibleMemberError(switched.excluded ?? [], params.serviceId);
+    }
+    return selectedState;
   }
 
   const selectedProfileId = state.members.find((member) => member.profileId !== state.activeProfileId)?.profileId ?? null;
@@ -585,7 +622,6 @@ async function resolveCredentialBindings(params: Readonly<{
   selections: ReadonlyArray<ConnectedServiceBindingSelection>;
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
   qualifiedConnectedAccountApi?: ConnectedServiceQualifiedAuthGroupApi;
-  quotaFreshnessMs: number;
   nowMs: number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
@@ -694,8 +730,8 @@ async function resolveCredentialBindings(params: Readonly<{
     );
 
     const preparedCandidates = new Map<string, PreparedSpawnProfile>();
-    const refresh = params.credentialRefreshService?.refreshQualifiedConnectedAccountCredentialForSpawnPreflight;
-    const selectedGroup = await maybeSelectGroupActiveProfileForSpawn({
+    const credentialRefreshService = params.credentialRefreshService;
+    const selectedGroup = await observeCurrentConnectedServiceMaterializationPhase('group_selection', () => maybeSelectGroupActiveProfileForSpawn({
       agentId: params.agentId,
       ...(params.modelId ? { modelId: params.modelId } : {}),
       group,
@@ -704,23 +740,22 @@ async function resolveCredentialBindings(params: Readonly<{
       groupId: selection.groupId,
       accountUsageStore: params.accountUsageStore,
       profileStatusByProfileId,
-      quotaFreshnessMs: params.quotaFreshnessMs,
       nowMs: params.nowMs,
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
       predictiveSwitchGuard: params.predictiveSwitchGuard ?? null,
-      ...(refresh ? { prepareCandidateForSwitch: (async (candidate) => {
+      ...(credentialRefreshService ? { prepareCandidateForSwitch: (async (candidate) => {
         candidate.signal?.throwIfAborted();
         const profile = listedAccounts.accounts.find(profile => profile.ref.accountId === candidate.profileId)
           ?? await readQualifiedSpawnProfile({ serviceId: selection.serviceId, profileId: candidate.profileId, api: qualifiedAccountApi });
-        const result = await refresh.call(params.credentialRefreshService, { profile });
+        const result = await credentialRefreshService.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile });
         if (result.status !== 'ready') return { status: 'ineligible' as const, memberState: {
           credentialHealthStatus: result.status === 'reconnect_required' ? 'needs_reauth' as const : 'refresh_failed_retryable' as const,
         } };
         preparedCandidates.set(candidate.profileId, result.profile);
         return { status: 'ready' as const };
       }) satisfies NonNullable<PrepareSpawnGroupCandidate> } : {}),
-    });
+    }));
     const activeProfileId = readProfileId(selectedGroup.activeProfileId);
     if (!activeProfileId) {
       throw new ConnectedServiceSpawnAuthGroupAuthorityError({
@@ -1202,7 +1237,6 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   allowGroupBindingProfileFallback?: boolean;
   accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
   qualifiedConnectedAccountApi?: ConnectedServiceQualifiedAuthGroupApi;
-  quotaFreshnessMs?: number;
   nowMs?: () => number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
@@ -1264,9 +1298,11 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   const selections = parseConnectedServiceBindingSelections(admittedBindings);
   if (selections.length === 0) return null;
   // Declared purposes authorize selection before any Account credential lookup.
+  const qualifiedPurposeBindingSnapshot = admittedBindings
+    ? params.resolveQualifiedPurposeBindingSnapshot?.(admittedBindings) ?? null : null;
   assertQualifiedPurposeAuthorityForSelections({
     selections,
-    snapshot: admittedBindings ? params.resolveQualifiedPurposeBindingSnapshot?.(admittedBindings) ?? null : null,
+    snapshot: qualifiedPurposeBindingSnapshot,
   });
   const nowMs = (params.nowMs ?? (() => Date.now()))();
   const resolvedBindings = await observeConnectedServiceMaterializationPhase(params, 'credential_binding_resolution', () => resolveCredentialBindings({
@@ -1279,7 +1315,6 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     ...(params.qualifiedConnectedAccountApi
       ? { qualifiedConnectedAccountApi: params.qualifiedConnectedAccountApi }
       : {}),
-    quotaFreshnessMs: params.quotaFreshnessMs ?? 5 * 60_000,
     nowMs,
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
     authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
@@ -1321,12 +1356,8 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         let current = profile;
         const credentialRefreshService = params.credentialRefreshService;
         if (credentialRefreshService && !preparedProfile) {
-          const refresh = credentialRefreshService.refreshQualifiedConnectedAccountCredentialForSpawnPreflight;
-          if (!refresh) throw new ConnectedServiceSpawnCredentialRefreshError({
-            kind: 'transient_refresh_failed', serviceId: binding.serviceId, profileId: binding.profileId,
-          });
           const result = await observeConnectedServiceMaterializationPhase(phaseContext, 'credential_refresh',
-            () => refresh.call(credentialRefreshService, { profile }));
+            () => credentialRefreshService.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile }));
           if (result.status !== 'ready') {
             throw new ConnectedServiceSpawnCredentialRefreshError({
               kind: result.status === 'reconnect_required' ? 'reconnect_required' : 'transient_refresh_failed',
@@ -1369,14 +1400,6 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     const connectedServicesBindings = buildCanonicalConnectedServicesBindingsForSpawn({
       selections,
       groupSelections,
-    });
-    const qualifiedPurposeBindingSnapshot =
-      params.resolveQualifiedPurposeBindingSnapshot?.(
-        connectedServicesBindings,
-      ) ?? null;
-    assertQualifiedPurposeAuthorityForSelections({
-      selections,
-      snapshot: qualifiedPurposeBindingSnapshot,
     });
     const requestAuthPurposeBindings = resolveQualifiedRequestAuthPurposeBindingsFromSnapshot(
       qualifiedPurposeBindingSnapshot,

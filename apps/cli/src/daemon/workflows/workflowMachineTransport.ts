@@ -35,11 +35,9 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
       || stamp.machineId !== input.transport.machineId || stamp.installationId !== expected.installationId
       || !await input.isCurrent()) return null;
     requester ??= readRequesterHomeWithinActionLifetime(async () => {
-      const homeServerIdentityId = await input.boundary.getObservedServerIdentityId();
-      if (!homeServerIdentityId) return null;
       const { prepareRequesterSessionBootstrap } = await import('../sessionEncryption/requesterSessionCredentials');
       return await prepareRequesterSessionBootstrap({
-      credentials: input.credentials, attribution: expected, homeServerIdentityId, boundary: input.boundary,
+      credentials: input.credentials, attribution: expected, boundary: input.boundary,
       verifyMachineAdmissionCurrent: input.isCurrent,
       ...(input.signal ? { signal: input.signal } : {}),
       });

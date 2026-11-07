@@ -1,13 +1,102 @@
-import { createWorkflowTriggerActions } from './workflowTriggerActions.js';
-import { AutomationDefinitionListRequestSchema, type AutomationDefinitionListItem } from '../../automations/automationApiV3.js';
-import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { describe, expect, it } from 'vitest';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { createWorkflowDefinitionActions } from './workflowDefinitions.js';
-import { WorkflowDefinitionListResultV1Schema } from '../../workflows/actionsV1.js';
+import { WorkflowDefinitionListRequestV1Schema, WorkflowDefinitionListResultV1Schema } from '../../workflows/actionsV1.js';
 import { listArtifactHeadersV1 } from '../../artifacts/artifactListSelectionV1.js';
+import { createWorkflowTriggerActions } from './workflowTriggerActions.js';
+import { AutomationDefinitionListRequestSchema, type AutomationDefinitionListItem } from '../../automations/automationApiV3.js';
+import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 
 describe('workflow definition library summary read', () => {
+  it('lists saved workflows from their headers, reading no bodies, and still opens a full definition through get', async () => {
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [
+      { kind: 'wait', id: 'review', document: { text: 'Review the change', references: [], attachments: [] } },
+      { kind: 'wait', id: 'ship', document: { text: 'Ship it', references: [], attachments: [] } },
+    ] });
+    const body = JSON.stringify({ kind: 'workflow-definition.v1', definition });
+    const ids = Array.from({ length: 5 }, (_, index) => `5555555${index}-5555-4555-8555-555555555555`);
+    const rows = ids.map((artifactId, index) => ({ artifactId, headerVersion: 1, bodyVersion: 1, updatedAt: index,
+      ownerAccountId: 'owner', access: 'owner' as const,
+      header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 },
+        metadata: { title: artifactId }, previewSteps: ['Review the change', 'Ship it'] } }));
+    let bodiesListed = 0;
+    let bodyBytes = 0;
+    const reads: string[] = [];
+    const unused = (): never => { throw new Error('unexpected_operation'); };
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      // The persisted page is the boundary: a body request is counted and its bytes served.
+      list: async options => {
+        if (options.includeBody) { bodiesListed += rows.length; bodyBytes += rows.length * body.length; }
+        return { items: options.includeBody ? rows.map(row => ({ ...row, body })) : rows };
+      },
+      read: async artifactId => {
+        reads.push(artifactId);
+        bodyBytes += body.length;
+        const row = rows.find(entry => entry.artifactId === artifactId)!;
+        return { artifactId, header: row.header, body, ownerAccountId: 'owner', access: 'owner' as const, revision: { headerVersion: 1, bodyVersion: 1 } };
+      },
+      create: unused, update: unused, delete: unused,
+    }, encodeListCursor: row => row.artifactId, readWorkflowTriggerSummaries: async () => new Map() });
+    const page = WorkflowDefinitionListResultV1Schema.parse(await owner.list({}));
+    expect(page.definitions.map(row => row.contentStatus === 'available' ? row.stepCount : null)).toEqual([2, 2, 2, 2, 2]);
+    expect({ bodiesListed, reads: reads.length, bodyBytes }).toEqual({ bodiesListed: 0, reads: 0, bodyBytes: 0 });
+    // An agent (or the editor) still reads one full definition through the get Action.
+    const opened = await owner.get({ definitionId: ids[0]! });
+    expect(opened.definition.blocks).toHaveLength(2);
+    expect(reads).toEqual([ids[0]]);
+  });
+  it('preserves the admitted Team audience on available and unreadable library rows', async () => {
+    const definitionId = '11111111-1111-4111-8111-111111111111';
+    const unused = (): never => { throw new Error('unexpected_operation'); };
+    let bodyVersion = 1;
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      list: async () => ({ items: [{ artifactId: definitionId, headerVersion: 1, bodyVersion, updatedAt: 1,
+        ownerAccountId: 'owner', access: 'edit' as const, sharedTeamIds: ['team-a', 'team-b'],
+        header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Release review' },
+          previewSteps: ['Review'] },
+      }] }), read: unused, create: unused, update: unused, delete: unused,
+    }, encodeListCursor: row => row.artifactId });
+    expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({})).definitions[0])
+      .toMatchObject({ contentStatus: 'available', stepCount: 1, sharedTeamIds: ['team-a', 'team-b'] });
+    bodyVersion = 2;
+    expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({})).definitions[0])
+      .toMatchObject({ contentStatus: 'unavailable', contentUnavailableReason: 'revision_mismatch', sharedTeamIds: ['team-a', 'team-b'] });
+  });
+  it.each([{ workflow: '11111111-1111-4111-8111-111111111111' }, { cursor: 'saved-page' }, { limit: 1 }])(
+    'rejects ambiguous exact saved selection beside %j', otherSelection => {
+      expect(WorkflowDefinitionListRequestV1Schema.safeParse({ definitionId: 'retained-saved-definition', ...otherSelection }).success).toBe(false);
+    });
+  it.each([
+    { workflow: '11111111-1111-4111-8111-111111111111' },
+    { definitionId: '11111111-1111-4111-8111-111111111111' },
+    { definitionId: 'retained-saved-definition' },
+  ])('projects exact saved selection %j without reading its inventory or plugin catalog', async selector => {
+    const definitionId = selector.workflow ?? selector.definitionId;
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [
+      { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
+    ] });
+    let reads = 0;
+    let present = true;
+    const unused = (): never => { throw new Error('unexpected_inventory_or_plugin_read'); };
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      read: async artifactId => {
+        expect(artifactId).toBe(definitionId);
+        reads++;
+        return present ? { artifactId, ownerAccountId: 'account', access: 'owner', updatedAt: 2, sharedTeamIds: ['team-a'],
+          revision: { headerVersion: 2, bodyVersion: 2 },
+          header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 2, bodyVersion: 2 }, metadata: { title: 'Changed' } },
+          body: JSON.stringify({ kind: 'workflow-definition.v1', definition }) } : null;
+      }, list: unused, create: unused, update: unused, delete: unused,
+    }, encodeListCursor: unused, readPluginWorkflows: unused });
+    const input = WorkflowDefinitionListRequestV1Schema.parse(selector);
+    const result = WorkflowDefinitionListResultV1Schema.parse(await owner.list(input));
+    expect(result.definitions).toMatchObject([{ definitionId, metadata: { title: 'Changed' }, updatedAt: 2, sharedTeamIds: ['team-a'], contentStatus: 'available', stepCount: 1 }]);
+    expect(result.nextCursor).toBeUndefined();
+    expect(reads).toBe(1);
+    present = false;
+    expect((await owner.list(input)).definitions).toEqual([]);
+    expect(reads).toBe(2);
+  });
   it.each(['refused', 'unbound', 'cancelled'] as const)('keeps summary failure distinct from cancellation (%s)', async failure => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [
       { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
@@ -25,10 +114,10 @@ describe('workflow definition library summary read', () => {
     const owner = createWorkflowDefinitionActions({ artifactStore: {
       list: async () => ({ items: [{ artifactId: definitionId, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
         ownerAccountId: 'account', access: 'owner' as const,
-        header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } },
+        header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' }, previewSteps: ['Review'] },
         body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
       }] }), read: unused, create: unused, update: unused, delete: unused,
-    }, encodeListCursor: row => row.artifactId,
+    }, encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unused,
       ...(failure === 'unbound' ? {} : { readWorkflowTriggerSummaries: ids => triggers.readWorkflowSummaries(ids) }) });
     if (failure === 'cancelled') {
       await expect(owner.list({})).rejects.toMatchObject({ code: 'cancelled' });
@@ -49,13 +138,13 @@ describe('workflow definition library summary read', () => {
     const artifacts = ['malformed-workflow-id', ...ids].map(artifactId => ({ artifactId, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
       ownerAccountId: 'account', access: 'owner' as const,
       header: { kind: 'workflow-definition.v1', definitionId: artifactId,
-        revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } },
+        revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' }, previewSteps: ['Review'] },
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
     }));
     const row = (id: string, workflowDefinitionId: string): AutomationDefinitionListItem => ({
       id, workflowDefinitionId, scopeSessionId: null, name: 'Triggers', description: null,
       enabled: true, targetType: null, existingSessionId: null, templateVersion: 1,
-      createdAt: 1, updatedAt: 1, assignments: [], triggers: [],
+      lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [],
     });
     const unrelated = Array.from({ length: 2500 }, (_, index) => row(`unrelated-${index}`, 'builtin:unrelated'));
     const schedule = AutomationTriggerDetailSchema.parse({ kind: 'schedule', id: '33333333-3333-4333-8333-333333333333',
@@ -86,14 +175,14 @@ describe('workflow definition library summary read', () => {
     }, openContext: unused, sealContext: unused, newId: unused, resolveWorkflow: unused });
     const owner = createWorkflowDefinitionActions({ artifactStore: {
       list: async () => ({ items: artifacts }), read: unused, create: unused, update: unused, delete: unused,
-    }, encodeListCursor: value => value.artifactId,
+    }, encodeListCursor: value => value.artifactId, assertDefinitionWriteAllowed: unused,
       readWorkflowTriggerSummaries: (...args) => triggers.readWorkflowSummaries(...args) });
     expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({ limit: 2 })).definitions)
       .toMatchObject([{ definitionId: 'malformed-workflow-id', nextRunAt: null },
         { definitionId: ids[0], nextRunAt: 100 }]);
     expect({ pages, unrelatedRows, unreturnedRows }).toEqual({ pages: 1, unrelatedRows: 0, unreturnedRows: 0 });
   });
-  it('opens only Workflow bodies when the Account contains unrelated Artifacts', async () => {
+  it('reads no bodies when the Account contains unrelated Artifacts', async () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {}, blocks: [
       { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
     ] });
@@ -101,7 +190,7 @@ describe('workflow definition library summary read', () => {
     const rows = Array.from({ length: 2001 }, (_, index) => ({
       artifactId: index === 2000 ? workflowId : `unrelated-${index}`,
       header: index === 2000 ? { kind: 'workflow-definition.v1', definitionId: workflowId,
-        revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } } : { kind: 'role.v1' },
+        revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' }, previewSteps: ['Review'] } : { kind: 'role.v1' },
       headerVersion: 1, bodyVersion: 1, createdAt: 3000 - index, updatedAt: 3000 - index,
       ownerAccountId: 'account', access: 'owner' as const,
     }));
@@ -132,7 +221,7 @@ describe('workflow definition library summary read', () => {
     expect(WorkflowDefinitionListResultV1Schema.parse(result).definitions).toMatchObject([
       { definitionId: workflowId, contentStatus: 'available', stepCount: 1 },
     ]);
-    expect(bodiesRead).toBe(1);
+    expect(bodiesRead).toBe(0);
   });
 
   it.each(['denied', 'list_failed', 'artifact_account_mode_mismatch'])('keeps %s request-wide', async code => {
@@ -143,7 +232,7 @@ describe('workflow definition library summary read', () => {
     }, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
     await expect(owner.list({})).rejects.toBe(error);
   });
-  it('isolates missing and malformed bodies while retaining identity, paging and scheduler facts', async () => {
+  it('opens a legacy header\'s body, isolating missing and malformed bodies while retaining identity, paging and scheduler facts', async () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'work', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
@@ -156,7 +245,12 @@ describe('workflow definition library summary read', () => {
     }));
     const owner = createWorkflowDefinitionActions({ artifactStore: {
       list: async ({ cursor }) => ({ items: cursor ? rows.slice(Number(cursor)) : rows }),
-      read: async () => { throw new Error('no_per_record_read'); }, create: async () => {},
+      // Headers written before `previewSteps` carry no step labels; only those rows open their body.
+      read: async artifactId => {
+        const row = rows.find(item => item.artifactId === artifactId)!;
+        return { artifactId, header: row.header, body: 'body' in row ? row.body ?? null : null, ownerAccountId: 'account', access: 'owner' as const,
+          revision: { headerVersion: 1, bodyVersion: 1 } };
+      }, create: async () => {},
       update: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }), delete: async () => ({ ok: true }),
     }, encodeListCursor: row => String(rows.findIndex(item => item.artifactId === row.artifactId) + 1),
     assertDefinitionWriteAllowed: () => {}, readWorkflowTriggerSummaries: async () => new Map() });
@@ -184,7 +278,8 @@ describe('workflow definition library summary read', () => {
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), bodyVersion: 1 };
     const owner = createWorkflowDefinitionActions({ artifactStore: {
       list: async () => ({ items: [row] }),
-      read: async () => { throw new Error('library_summary_must_use_batched_opened_content'); },
+      read: async () => ({ artifactId: definitionId, header: row.header, body: row.body, ownerAccountId: 'account', access: 'owner' as const,
+        revision: { headerVersion: 1, bodyVersion: 1 } }),
       create: async () => {}, update: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }), delete: async () => ({ ok: true }),
     }, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {},
     readWorkflowTriggerSummaries: async () => new Map([[definitionId, { triggers: [], nextRunAt: 1_900_000_000_000 }]]) });

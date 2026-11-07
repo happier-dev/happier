@@ -4,7 +4,7 @@ import type { TeamCredentialDeliveryPolicyV1, TeamCredentialResourceSummaryV1, T
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
-import { isExternalProviderSpawnAuthorization, resolveProviderSpawnAuthorization, type ResolveProviderSpawnAuthorizationInput } from '@/providers/spawn/resolve';
+import { resolveProviderSpawnAuthorization, type ResolveProviderSpawnAuthorizationInput } from '@/providers/spawn/resolve';
 import { projectProviderBindingAuthorizationTicketReference } from '@/providers/spawn/ticket';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import {
@@ -120,7 +120,7 @@ export async function prepareTeamCredentialNativeProviderSource(
       registry, dnsEvidenceByEndpointUrl });
     if (!authorized.ok) return authorized;
     const { authorization } = authorized;
-    if (!isExternalProviderSpawnAuthorization(authorization) || authorization.credentialReference.kind !== 'apiKey') {
+    if (authorization.deployment.kind !== 'external' || authorization.credentialReference.kind !== 'apiKey') {
       return fail('provider_credential_transport_unavailable');
     }
     const transport = authorization.binding.runtimeCredentialTransport;

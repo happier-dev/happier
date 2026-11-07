@@ -1,8 +1,7 @@
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { bindDiscussionDraftReply } from './bindDiscussionDraftReply';
-import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import axios, { type Method } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type Method } from 'axios';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod/mini';
 import { ApprovalRequestOriginV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildDiscussionAttachmentBindingsV1 } from '@happier-dev/protocol/discussions/api';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -19,9 +18,11 @@ import { DiscussionAddressingV1Schema } from '@happier-dev/protocol/discussions/
 import { DiscussionInitialParticipantsV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { DiscussionAccessRecipientCensusResponseV1Schema, DiscussionRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/discussions/access';
 import { runResourceRecipientKeyPreparationV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
-import type { ActionExecutorContext, ActionExecutorDeps, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, FeatureDecision, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
+import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { getRandomBytes } from '@/api/encryption';
 import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError, type ResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
@@ -51,6 +52,22 @@ import { DISCUSSION_UPLOAD_CONTENT_TYPE_V1, DISCUSSION_UPLOAD_PATH_V1 } from '@h
 import { createDiscussionAttachmentFileReader, prepareDiscussionAttachmentUpload, type DiscussionAttachmentSourceReader } from './discussionAttachmentUpload';
 import type { DiscussionAttachmentSourceV1 } from '@happier-dev/protocol/discussions/attachments';
 import type { DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { bindDiscussionDraftReply } from './bindDiscussionDraftReply';
+
+const diagnosticRequestId = z.uuid();
+type DiscussionReadStage = 'summary' | 'messages' | 'request';
+type DiscussionUnavailableDiagnostic =
+  | Readonly<{ stage: 'feature'; blockerCode: FeatureDecision['blockerCode'];
+      probeStatus: CliServerFeaturesSnapshot['status'] | 'missing';
+      probeReason?: Extract<CliServerFeaturesSnapshot, { status: 'error' }>['reason']; httpStatus?: number }>
+  | Readonly<{ stage: DiscussionReadStage } & ({ transport: 'timeout' | 'request_failed' } | { httpStatus: number })>;
+
+function reportUnavailable(actionId: string, context: ActionExecutorContext, details: DiscussionUnavailableDiagnostic) {
+  const requestId = diagnosticRequestId.safeParse(context.actionRequestId);
+  logger.warnLocalFile('[Discussion] Action unavailable', { actionId,
+    ...(requestId.success ? { actionRequestId: requestId.data } : {}), code: 'discussions_unavailable', ...details });
+}
 
 function failure(code: string) {
   return { ok: false as const, errorCode: code, error: code };
@@ -154,7 +171,10 @@ export function createDiscussionActionDeps(options: Readonly<{
   function createTransport({ actionId, context, signal }: Pick<Parameters<NonNullable<ActionExecutorDeps['discussionAction']>>[0], 'actionId' | 'context' | 'signal'>) {
     const root = SignedRootActionIdSchema.safeParse(context.externalActionExecutionAuthorization?.binding.actionId);
     // Roster preparation remains signed under its admitted containing operation.
-    const effectActionId = actionId === 'discussion.participants.list' && root.success
+    const sourceRead = root.success && root.data === 'session.transcript.get'
+      && (actionId === 'discussion.get' || actionId === 'discussion.read')
+      && hasProtectedDiscussionActionContextV1(context);
+    const effectActionId = sourceRead ? root.data : actionId === 'discussion.participants.list' && root.success
       && (isSessionTargetPreparationAction(root.data) || root.data === 'discussion.post' || root.data === 'discussion.reply')
       ? root.data : actionId;
     const authorizationFor = (method: string, path: string, body?: unknown) => resolveExternalActionServerRequestHeaders({
@@ -163,7 +183,8 @@ export function createDiscussionActionDeps(options: Readonly<{
       ...(options.externalActionMachineRequestPrivateKey ? { privateKey: options.externalActionMachineRequestPrivateKey } : {}),
       ...(options.externalActionMachineInstallationId ? { installationId: options.externalActionMachineInstallationId } : {}),
     });
-    async function rawRequest(method: string, path: string, body?: unknown, binary?: Readonly<{ body: AsyncIterable<Uint8Array>; contentType: string }>) {
+    async function rawRequest(method: string, path: string, body?: unknown, binary?: Readonly<{ body: AsyncIterable<Uint8Array>; contentType: string }>,
+      stage: DiscussionReadStage = 'request') {
       if (signal?.aborted) throw new DiscussionRequestError('cancelled');
       const authorization = authorizationFor(method, path, body);
       if (!authorization.ok) throw new DiscussionRequestError('not_authenticated');
@@ -174,26 +195,30 @@ export function createDiscussionActionDeps(options: Readonly<{
             'Content-Type': binary?.contentType ?? 'application/json' },
           timeout: configuration.sessionControlHttpTimeoutMs, validateStatus: () => true, signal,
         });
-      } catch {
-        throw new DiscussionRequestError(method === 'GET'
-          ? signal?.aborted ? 'cancelled' : 'discussions_unavailable' : 'outcome_unknown');
+      } catch (error) {
+        const code = method === 'GET' ? signal?.aborted ? 'cancelled' : 'discussions_unavailable' : 'outcome_unknown';
+        if (code === 'discussions_unavailable') reportUnavailable(actionId, context, { stage,
+          transport: classifyServerEndpointError(error).kind === 'timeout' ? 'timeout' : 'request_failed' });
+        throw new DiscussionRequestError(code);
       }
     }
     async function request(bound: ReturnType<typeof bindDiscussionActionHttpRequestV1>, body = bound.body,
-      binary?: Readonly<{ body: AsyncIterable<Uint8Array>; contentType: string }>): Promise<unknown> {
-      const response = await rawRequest(bound.method, bound.path, body, binary);
+      binary?: Readonly<{ body: AsyncIterable<Uint8Array>; contentType: string }>, stage: DiscussionReadStage = 'request'): Promise<unknown> {
+      const response = await rawRequest(bound.method, bound.path, body, binary, stage);
       if (response.status !== 200) {
         if (response.status === 403 && response.data && typeof response.data === 'object'
           && 'error' in response.data && response.data.error === 'present_user_required') throw new DiscussionRequestError('present_user_required');
         const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
         const error = DiscussionErrorResponseV1Schema.safeParse(response.data);
-        throw new DiscussionRequestError(rollback?.code ?? (error.success ? error.data.error
-          : bound.method === 'GET' ? 'discussions_unavailable' : 'outcome_unknown'));
+        const code = rollback?.code ?? (error.success ? error.data.error
+          : bound.method === 'GET' ? 'discussions_unavailable' : 'outcome_unknown');
+        if (code === 'discussions_unavailable') reportUnavailable(actionId, context, { stage, httpStatus: response.status });
+        throw new DiscussionRequestError(code);
       }
       return response.data;
     }
     async function getSummary(discussionId: string) {
-      const value = DiscussionDetailsResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1('discussion.get', { discussionId })));
+      const value = DiscussionDetailsResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1('discussion.get', { discussionId }), undefined, undefined, 'summary'));
       if (value.discussion.id !== discussionId) throw new DiscussionRequestError('discussion_content_unavailable');
       return value.discussion;
     }
@@ -227,16 +252,26 @@ export function createDiscussionActionDeps(options: Readonly<{
     const omittedLocalId = (purpose: Parameters<typeof deriveApprovedDiscussionMutationLocalId>[0]['purpose']) =>
       context.approvedActionReplay && context.actionRequestId
         ? deriveApprovedDiscussionMutationLocalId({ requestId: context.actionRequestId, purpose }) : randomUUID();
-    if (agentOrigin && !(isPost && options.postWorkflowMessage && workflowReturn) && (isPost || actionId === 'discussion.create')
-      && (!admittedSessionId || (context.defaultSessionId !== undefined && context.defaultSessionId !== admittedSessionId)
-        || (context.approvalOrigin !== undefined && (!origin.success || origin.data.sessionId !== admittedSessionId))
-        || !options.postAgentMessage)) return failure('discussion_post_denied');
+    if (agentOrigin && !(isPost && options.postWorkflowMessage && workflowReturn) && (isPost || actionId === 'discussion.create')) {
+      if (!admittedSessionId) return failure('discussion_action_session_missing');
+      if (context.defaultSessionId !== undefined && context.defaultSessionId !== admittedSessionId) {
+        return failure('discussion_action_session_mismatch');
+      }
+      if (context.approvalOrigin !== undefined) {
+        if (!origin.success) return failure('discussion_action_approval_origin_invalid');
+        if (origin.data.sessionId !== admittedSessionId) return failure('discussion_action_approval_session_mismatch');
+      }
+      if (!options.postAgentMessage) return failure('discussion_action_session_publisher_missing');
+    }
 
-    async function projectSummary(input: unknown) {
+    async function projectSummary(input: unknown, openedKey?: ResourceDataKey | null) {
       const { titleContent, firstMessage, ...row } = DiscussionSummaryV1Schema.parse(input);
       let key: ResourceDataKey | null = null;
       let crypto: SessionStoredContentCryptoContext | null = null;
-      try { key = await openKey({ ...row, titleContent }); crypto = cryptoContext(key); } catch { /* Locked resources remain visible without disclosure. */ }
+      try {
+        key = openedKey === undefined ? await openKey({ ...row, titleContent }) : openedKey;
+        crypto = key === null ? null : cryptoContext(key);
+      } catch { /* Locked resources remain visible without disclosure. */ }
       const first = firstMessage === undefined ? {} : { firstMessage: firstMessage === null || key === null
         ? null : projectMessage(key, row.id, firstMessage) };
       const title = DiscussionTitleV1StoredSchema.safeParse(openPayload(crypto, titleContent));
@@ -309,21 +344,29 @@ export function createDiscussionActionDeps(options: Readonly<{
 
     try {
       let decision: Awaited<ReturnType<typeof resolveCliFeatureDecisionForServer>>['decision'];
+      let serverSnapshot: CliServerFeaturesSnapshot | undefined;
       if (options.resolveServerFeaturesSnapshot) {
-        let serverSnapshot: CliServerFeaturesSnapshot | undefined;
         try { serverSnapshot = await options.resolveServerFeaturesSnapshot(); } catch { serverSnapshot = undefined; }
         decision = resolveCliFeatureDecision({ featureId: 'sessions.conversations', env: process.env,
           ...(serverSnapshot ? { serverSnapshot } : {}) });
       } else {
-        decision = (await resolveCliFeatureDecisionForServer({
+        const resolved = await resolveCliFeatureDecisionForServer({
           featureId: 'sessions.conversations', env: process.env, serverUrl,
           ...(context.externalActionCredential ? { resolveAuthorizationHeaders: (request: Readonly<{ method: 'GET'; path: string }>) => {
             const authorization = authorizationFor(request.method, request.path);
             return authorization.ok ? authorization.headers : null;
           } } : {}),
-        })).decision;
+        });
+        decision = resolved.decision;
+        serverSnapshot = resolved.serverSnapshot;
       }
-      if (decision.state !== 'enabled') return failure('unsupported_action');
+      if (decision.state !== 'enabled') {
+        if (decision.state === 'unknown') reportUnavailable(actionId, context, { stage: 'feature',
+          blockerCode: decision.blockerCode, probeStatus: serverSnapshot?.status ?? 'missing',
+          ...(serverSnapshot?.status === 'error' ? { probeReason: serverSnapshot.reason,
+            ...(serverSnapshot.httpStatus === undefined ? {} : { httpStatus: serverSnapshot.httpStatus }) } : {}) });
+        return failure(decision.state === 'unknown' ? 'discussions_unavailable' : 'unsupported_action');
+      }
       if (actionId === 'discussion.candidates.list') {
         const accountId = context.externalActionExecutionAuthorization?.binding.accountId ?? readAccountIdFromToken(options.credentials.token);
         if (!accountId) return failure('not_authenticated');
@@ -343,13 +386,21 @@ export function createDiscussionActionDeps(options: Readonly<{
 
       if (actionId === 'discussion.list') {
         const value = DiscussionListResponseV1Schema.parse(await request(bound));
-        const discussions = await Promise.all(value.discussions.map(projectSummary));
+        const discussions = await Promise.all(value.discussions.map(row => projectSummary(row)));
         return DiscussionListResultV1Schema.parse({ ...envelope, discussions, nextCursor: value.nextCursor,
           incomplete: discussions.some(row => row.title === null || row.latestMessage?.content === null) });
       }
       if (actionId === 'discussion.get') {
         const value = DiscussionDetailsResponseV1Schema.parse(await request(bound));
-        return DiscussionDetailsResultV1Schema.parse({ ...envelope, discussion: await projectSummary(value.discussion) });
+        const key = await openKey(value.discussion).catch(() => null);
+        const discussion = await projectSummary(value.discussion, key);
+        if (key?.mode === 'e2ee' && value.discussion.recipientKeyPreparationRequired === true) {
+          // Home projects demand from the current audience, bindings and envelopes.
+          // Keep a readable result when maintenance is unavailable; a later
+          // demanded open retries through the same fenced owner.
+          try { await prepareRecipients(value.discussion, key); } catch { /* retry on a later open */ }
+        }
+        return DiscussionDetailsResultV1Schema.parse({ ...envelope, discussion });
       }
       if (actionId === 'discussion.create') {
         const args = DiscussionCreateInputV1Schema.parse(parsed.data);
@@ -357,7 +408,7 @@ export function createDiscussionActionDeps(options: Readonly<{
         const creationLocalId = args.creationLocalId ?? omittedLocalId('creation');
         const localId = args.firstMessage.localId ?? omittedLocalId('first_message');
         const currentness = await fetchAccountEncryptionCurrentness({
-          token: options.credentials.token, serverBaseUrl: serverUrl, allowCredentialRecovery: false, signal,
+          credentials: options.credentials, token: options.credentials.token, serverBaseUrl: serverUrl, allowCredentialRecovery: false, signal,
           request: () => rawRequest('GET', '/v1/account/encryption/currentness'),
         });
         const existing = (args.creationLocalId || context.approvedActionReplay) && currentness.mode === 'e2ee' ? await recoverCreation(creationLocalId) : null;
@@ -402,7 +453,8 @@ export function createDiscussionActionDeps(options: Readonly<{
         let value;
         if (agentOrigin) {
           if (readDiscussionAttachmentReferencesV1(firstMessage.content).length && !args.attachmentSources) return failure('discussion_attachment_source_unavailable');
-          if (!options.postAgentMessage || !admittedSessionId) return failure('discussion_post_denied');
+          if (!options.postAgentMessage) return failure('discussion_action_session_publisher_missing');
+          if (!admittedSessionId) return failure('discussion_action_session_missing');
           const toolCallId = origin.success ? origin.data.toolCallId : context.actionRequestId;
           let response;
           try {
@@ -429,7 +481,7 @@ export function createDiscussionActionDeps(options: Readonly<{
         const boundedArgs = narrowRead(args);
         const cutoff = boundedArgs.throughSeq;
         const key = await openKey(await getSummary(args.discussionId));
-        const value = DiscussionMessagesResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1('discussion.read', boundedArgs)));
+        const value = DiscussionMessagesResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1('discussion.read', boundedArgs), undefined, undefined, 'messages'));
         if (cutoff !== undefined && (value.messageSeq > cutoff || value.messages.some(message => message.seq > cutoff))) {
           return failure('discussion_content_unavailable');
         }
@@ -504,7 +556,8 @@ export function createDiscussionActionDeps(options: Readonly<{
           value = response.value;
         } else if (agentOrigin) {
           if (readDiscussionAttachmentReferencesV1(args.content).length && !args.attachmentSources) return failure('discussion_attachment_source_unavailable');
-          if (!options.postAgentMessage || !admittedSessionId) return failure('discussion_post_denied');
+          if (!options.postAgentMessage) return failure('discussion_action_session_publisher_missing');
+          if (!admittedSessionId) return failure('discussion_action_session_missing');
           const toolCallId = origin.success ? origin.data.toolCallId : context.actionRequestId;
           let response;
           try {

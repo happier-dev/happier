@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { workflowDefinitionPreviewStepsV1 } from '../../workflows/workflowStepLabel.js';
+import { describe, expect, it, vi } from 'vitest';
 
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { ArtifactBlobReferenceV1Schema, type ArtifactRevisionProvenanceV1 } from '../../artifacts/artifactBinaryV1.js';
@@ -7,12 +8,13 @@ import { prepareArtifactHeaderForBodyV1 } from '../../artifacts/artifactHeaderRe
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
-import { WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListResultV1Schema } from '../../workflows/actionsV1.js';
+import { WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListResultV1Schema, WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1 } from '../../workflows/actionsV1.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
 import { resolveInputOptions } from '../../inputs/inputOptions.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
 import type { ActionExecutorDeps } from './types.js';
 import { createWorkflowTriggerActions } from './workflowTriggerActions.js';
+import { workflowDefinitionAgentCaller } from '../../workflows/workflowDefinition.testkit.js';
 
 const definitionId = '11111111-1111-4111-8111-111111111111';
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
@@ -29,6 +31,76 @@ function readEmptyTriggerSummaries() {
 }
 
 describe('shared workflow definition create', () => {
+  it.each(['saved', 'plugin'] as const)('sizes each %s Workflow row once instead of reserializing growing page prefixes', async (kind) => {
+    for (const count of [16, 64]) {
+      const titles = Array.from({ length: count }, (_, index) => `FIN row measurement ${index} 🌱`);
+      const markers = new Set(titles.map(title => JSON.stringify(title)));
+      const rows = titles.map((title, index) => {
+        const id = `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`;
+        return { artifactId: id, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
+          ownerAccountId: 'account', access: 'owner' as const,
+          header: { kind: 'workflow-definition.v1', definitionId: id,
+            revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title }, previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) },
+          body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
+        };
+      });
+      const plugins = titles.map((title, index) => ({ workflow: `plugin:com.acme.workflows/review-${index}`,
+        pluginId: 'com.acme.workflows', version: '1.2.3', title, definition }));
+      const unused = (): never => { throw new Error('unexpected_artifact_operation'); };
+      const owner = createWorkflowDefinitionActions({ artifactStore: {
+        list: async () => ({ items: rows }), read: unused, create: unused, update: unused, delete: unused,
+      }, encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unused,
+      readPluginWorkflows: () => plugins, readWorkflowTriggerSummaries: readEmptyTriggerSummaries });
+      // UTF-8 encoding is the platform boundary used by the real page sizer.
+      // Count title visits, rather than calls for constant framing or field names.
+      let encodedRows = 0;
+      const encode = TextEncoder.prototype.encode;
+      const counter = vi.spyOn(TextEncoder.prototype, 'encode').mockImplementation(function (this: TextEncoder, input) {
+        if (typeof input === 'string' && markers.has(input)) encodedRows += 1;
+        return encode.call(this, input);
+      });
+      try {
+        const page = await owner.list(kind === 'saved' ? {} : { cursor: `${WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1}0` });
+        const actual = kind === 'saved' ? page.definitions.map(row => row.metadata?.title) : page.pluginWorkflows?.map(row => row.title);
+        expect(actual).toEqual(titles);
+        expect(encodedRows).toBe(count);
+      } finally { counter.mockRestore(); }
+    }
+  });
+  it('selects one plugin through the strict Action without opening thousands of saved definitions', async () => {
+    const plugin = { workflow: 'plugin:external.recipe/review', pluginId: 'external.recipe', version: '1.2.3',
+      title: 'External review', definition };
+    let listedBodies = 0;
+    const unused = (): never => { throw new Error('unexpected_artifact_operation'); };
+    const definitions = createWorkflowDefinitionActions({ artifactStore: {
+      list: async ({ limit }) => {
+        const count = Math.min(limit ?? 2000, 2000);
+        listedBodies += count;
+        return { items: Array.from({ length: count }, (_, index) => ({
+          artifactId: `saved-${index}`, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
+          ownerAccountId: 'account', access: 'owner' as const,
+          header: { kind: 'workflow-definition.v1', definitionId: `saved-${index}`,
+            revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved' } },
+          body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
+        })) };
+      }, read: unused, create: unused, update: unused, delete: unused,
+    }, encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unused,
+    readPluginWorkflows: () => [plugin], readWorkflowTriggerSummaries: readEmptyTriggerSummaries });
+    const execute = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions,
+      runs: { execute: unused } });
+    const selected = await execute({ actionId: 'workflow.definition.list', input: { workflow: plugin.workflow }, context: { surface: 'ui' } });
+    expect(selected).toEqual({ definitions: [], pluginWorkflows: [plugin] });
+    expect(WorkflowDefinitionListResultV1Schema.parse(selected)).toEqual(selected);
+    expect(listedBodies).toBe(0);
+    expect(await execute({ actionId: 'workflow.definition.list', input: { workflow: 'plugin:external.recipe/missing' },
+      context: { surface: 'ui' } })).toEqual({ definitions: [], pluginWorkflows: [] });
+    expect(listedBodies).toBe(0);
+    // Deliberately omit the selection at the same seam: this must take the
+    // collection path, proving the zero-body assertion detects missing wiring.
+    await execute({ actionId: 'workflow.definition.list', input: { limit: 1 }, context: { surface: 'ui' } });
+    expect(listedBodies).toBeGreaterThan(0);
+  });
+
   it('refuses a non-UUID create identity before Artifact access rather than reporting a storage outage', async () => {
     const unused = (): never => { throw new Error('unexpected_artifact_access'); };
     const definitions = createWorkflowDefinitionActions({ artifactStore: {
@@ -60,7 +132,7 @@ describe('shared workflow definition create', () => {
     const rows = [definitionId, neighborId].map(artifactId => ({
       artifactId, headerVersion: 1, bodyVersion: 1, updatedAt: 1, ownerAccountId: 'owner', access: 'owner' as const,
       header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision: { headerVersion: 1, bodyVersion: 1 },
-        metadata: { title: artifactId === definitionId ? 7 : 'Readable neighbor' } },
+        metadata: { title: artifactId === definitionId ? 7 : 'Readable neighbor' }, previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) },
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
     }));
     const unused = (): never => { throw new Error('unexpected_operation'); };
@@ -123,6 +195,34 @@ describe('shared workflow definition create', () => {
     expect(result).toMatchObject({ definitionId, definition, access });
     expect(WorkflowDefinitionGetResultV1Schema.parse(result)).toEqual(result);
   });
+  it('resumes saved rows omitted by the response boundary and rejects a single oversized header', async () => {
+    const rows = [0, 1].map(index => {
+      const id = `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`;
+      return { artifactId: id, headerVersion: 1, bodyVersion: 1, updatedAt: 1,
+        ownerAccountId: 'account', access: 'owner' as const,
+        header: { kind: 'workflow-definition.v1', definitionId: id,
+          revision: { headerVersion: 1, bodyVersion: 1 },
+          metadata: { title: '🌱'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 8) }, previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) },
+        body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
+      };
+    });
+    const unused = (): never => { throw new Error('unexpected_artifact_operation'); };
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      list: async ({ cursor }) => ({ items: cursor ? rows.slice(rows.findIndex(row => row.artifactId === cursor) + 1) : rows }),
+      read: unused, create: unused, update: unused, delete: unused,
+    }, encodeListCursor: row => row.artifactId, assertDefinitionWriteAllowed: unused,
+    readWorkflowTriggerSummaries: readEmptyTriggerSummaries });
+    const first = await owner.list({});
+    expect(first.definitions.map(row => row.definitionId)).toEqual([rows[0]!.artifactId]);
+    expect(first.nextCursor).toBe(rows[0]!.artifactId);
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(first)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const last = await owner.list({ cursor: first.nextCursor });
+    expect(last.definitions.map(row => row.definitionId)).toEqual([rows[1]!.artifactId]);
+    expect(last.nextCursor).toBeUndefined();
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(last)).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    rows[0]!.header.metadata.title += rows[0]!.header.metadata.title;
+    await expect(owner.list({})).rejects.toMatchObject({ code: 'content_unavailable' });
+  });
   it('pages plugin definitions within the existing Action response boundary without hiding saved workflows', async () => {
     const plugins = [0, 1].map((index) => ({ workflow: `plugin:com.acme.workflows/review-${index}`,
       pluginId: 'com.acme.workflows', version: '1.2.3', title: `Review ${index}`,
@@ -131,7 +231,7 @@ describe('shared workflow definition create', () => {
     }));
     const saved = { artifactId: definitionId, headerVersion: 1, updatedAt: 1, ownerAccountId: 'account', access: 'owner' as const,
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), bodyVersion: 1,
-      header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved' } } };
+      header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved' }, previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) } };
     const owner = createWorkflowDefinitionActions({ artifactStore: {
       list: async ({ cursor }) => { expect(cursor).toBeUndefined(); return { items: [saved] }; },
       read: async () => { throw new Error('list_must_not_read_per_row'); }, create: async () => {},
@@ -176,7 +276,7 @@ describe('shared workflow definition create', () => {
     expect(result).toEqual({ definitions: [], pluginWorkflows: [plugin] });
     expect(WorkflowDefinitionListResultV1Schema.parse(result)).toEqual(result);
   });
-  it.each(['direct plugin', 'saved child'] as const)('returns Account rows before resolving a nested %s destination', async (source) => {
+  it.each(['direct plugin', 'saved child'] as const)('returns Account rows without resolving a nested %s destination', async (source) => {
     const childId = '22222222-2222-4222-8222-222222222222';
     const neighborId = '33333333-3333-4333-8333-333333333333';
     const pluginRef = 'plugin:com.acme.workflows/review';
@@ -193,7 +293,8 @@ describe('shared workflow definition create', () => {
     const revision = { headerVersion: 1, bodyVersion: 1 };
     const row = (artifactId: string, value: typeof definition) => ({
       artifactId, headerVersion: 1, bodyVersion: 1, updatedAt: 1, ownerAccountId: 'owner', access: 'owner' as const,
-      header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision, metadata: { title: artifactId } },
+      header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision, metadata: { title: artifactId },
+        previewSteps: workflowDefinitionPreviewStepsV1(value.blocks) },
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition: value }),
     });
     const rows = [row(definitionId, parent), row(childId, child), row(neighborId, definition)];
@@ -215,15 +316,15 @@ describe('shared workflow definition create', () => {
     } });
     const accountPage = WorkflowDefinitionListResultV1Schema.parse(await owner.list({}));
     expect(accountPage.definitions.map(saved => saved.definitionId)).toEqual([definitionId, neighborId]);
-    expect(accountPage.definitions[0]).toMatchObject({ contentStatus: 'available', destinations: {
-      targetSessionIds: source === 'saved child' ? ['parent-session', 'child-session'] : ['parent-session'],
-      unresolvedWorkflowRefs: [pluginRef],
-    } });
+    // The library page is summaries: it never resolves nested destinations, so an offline plugin cannot hold it.
+    expect(accountPage.definitions[0]).toMatchObject({ contentStatus: 'available', stepCount: 1 });
+    expect(accountPage.definitions[0]).not.toHaveProperty('destinations');
     expect(accountPage.definitions[1]).toMatchObject({ contentStatus: 'available' });
     expect(accountPage.pluginWorkflows).toBeUndefined();
     expect(accountPage.nextCursor).toBeDefined();
     await expect(owner.list({ cursor: accountPage.nextCursor })).rejects.toThrow('remote_plugin_catalog_offline');
-    await expect(owner.get({ definitionId })).rejects.toThrow('remote_plugin_catalog_offline');
+    expect(WorkflowDefinitionGetResultV1Schema.parse(await owner.get({ definitionId })).destinations.unresolvedWorkflowRefs)
+      .toEqual([pluginRef]);
     pluginOffline = false;
     expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({ cursor: accountPage.nextCursor })))
       .toEqual({ definitions: [], pluginWorkflows: [plugin] });
@@ -231,6 +332,52 @@ describe('shared workflow definition create', () => {
     expect(opened.destinations.targetSessionIds).toEqual(source === 'saved child'
       ? ['parent-session', 'child-session', 'plugin-session'] : ['parent-session', 'plugin-session']);
     expect(opened.destinations.unresolvedWorkflowRefs).toEqual([]);
+  });
+  it('creates, rejoins, updates and edits while plugin destinations are offline', async () => {
+    const pluginRef = 'plugin:com.acme.workflows/review';
+    const nested = WorkflowDefinitionV1Schema.parse({ ...definition,
+      blocks: [{ kind: 'workflow', id: 'nested', workflowRef: pluginRef, input: {} }] });
+    let stored: Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>> = null;
+    let writes = 0;
+    let catalogReads = 0;
+    let abortDiscovery = false;
+    const controller = new AbortController();
+    const store: WorkflowDefinitionArtifactOperations = {
+      read: async () => stored, list: async () => ({ items: [] }), delete: async () => ({ ok: true }),
+      create: async input => { stored = { ...input, revision: { headerVersion: 1, bodyVersion: 1 }, ownerAccountId: 'owner', access: 'owner' }; },
+      update: async input => {
+        writes += 1;
+        const revision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
+        stored = { ...input, revision, ownerAccountId: 'owner', access: 'owner' };
+        return { ok: true, revision };
+      },
+    };
+    const owner = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => '',
+      readPluginWorkflows: async () => {
+        catalogReads += 1;
+        if (abortDiscovery) { controller.abort(); controller.signal.throwIfAborted(); }
+        throw new Error('remote_plugin_catalog_offline');
+      } });
+    const input = { definitionId, metadata: { title: 'Nested' }, definition: nested };
+    const created = WorkflowDefinitionGetResultV1Schema.parse(await owner.create(input, undefined, { surface: 'ui' }));
+    expect(created.destinations.unresolvedWorkflowRefs).toEqual([pluginRef]);
+    expect(await owner.create(input, undefined, { surface: 'ui' })).toEqual(created);
+    const updated = WorkflowDefinitionGetResultV1Schema.parse(await owner.update({ ...input,
+      metadata: { title: 'Renamed' }, expectedRevision: created.revision }, undefined, { surface: 'ui' }));
+    expect(updated.destinations.unresolvedWorkflowRefs).toEqual([pluginRef]);
+    expect(writes).toBe(1);
+    const edited = await owner.edit({ definitionId, expectedRevision: updated.revision,
+      ops: [{ kind: 'rename', name: 'Edited' }] }, undefined, { surface: 'ui' });
+    expect(edited.metadata.title).toBe('Edited');
+    expect(writes).toBe(2);
+    await owner.edit({ definitionId, expectedRevision: edited.revision,
+      ops: [{ kind: 'rename', name: 'Edited' }] }, undefined, { surface: 'ui' });
+    expect(writes).toBe(2);
+    expect(catalogReads).toBe(0);
+    expect(WorkflowDefinitionGetResultV1Schema.parse(await owner.get({ definitionId })).metadata.title).toBe('Edited');
+    expect(catalogReads).toBe(1);
+    abortDiscovery = true;
+    await expect(owner.get({ definitionId, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
   });
   it.each(['edit', 'admin'] as const)('refuses deletion by a %s grantee before removing personal triggers', async (access) => {
     const writes: string[] = [];
@@ -248,6 +395,28 @@ describe('shared workflow definition create', () => {
     await expect(actions.delete({ definitionId })).rejects.toMatchObject({ code: 'artifact_access_forbidden' });
     expect(writes).toEqual([]);
   });
+  it.each(['stale_revision', 'wrong_identity', 'other_kind'] as const)('allows only Workflow owner deletion of a damaged header (%s)', async damage => {
+    const writes: string[] = [];
+    const revision = { headerVersion: 2, bodyVersion: 2 };
+    const store: WorkflowDefinitionArtifactOperations = {
+      read: async () => ({ artifactId: definitionId, access: 'owner', ownerAccountId: 'owner', revision,
+        header: { kind: damage === 'other_kind' ? 'doc.v1' : 'workflow-definition.v1',
+          definitionId: damage === 'wrong_identity' ? '22222222-2222-4222-8222-222222222222' : definitionId,
+          revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Damaged' } }, body: null }),
+      list: async () => ({ items: [] }), create: async () => {},
+      update: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }),
+      delete: async () => { writes.push('artifact'); return { ok: true }; },
+    };
+    const owner = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => '',
+      removeWorkflowTriggers: async () => { writes.push('triggers'); } });
+    if (damage === 'other_kind') {
+      await expect(owner.delete({ definitionId })).rejects.toMatchObject({ code: 'content_unavailable' });
+      expect(writes).toEqual([]);
+    } else {
+      expect(await owner.delete({ definitionId })).toEqual({ deleted: true, definitionId });
+      expect(writes).toEqual(['triggers', 'artifact']);
+    }
+  });
   it('stamps create and update from the host caller, preserving the actor on a same-id rejoin', async () => {
     let artifact: Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>> = null;
     const store: WorkflowDefinitionArtifactOperations = {
@@ -261,33 +430,36 @@ describe('shared workflow definition create', () => {
       list: async () => ({ items: [] }),
       delete: async () => ({ ok: true }),
     };
-    const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
+    const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor',
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
     const captureProvenance = { discussion: { serverId: 'home', discussionId: 'source-discussion' }, messages: [{
       source: { kind: 'discussion' as const, discussion: { serverId: 'home', discussionId: 'source-discussion' }, messageId: 'question' },
       authorAccountId: 'source-author',
     }] };
     const input = { definitionId, definition, metadata: { title: 'Review', captureProvenance } };
-    const created = await actions.create(input, undefined, { surface: 'ui_button', runtimeAccountId: 'account-person' });
+    const person = { surface: 'ui' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-person' };
+    const created = await actions.create(input, undefined, person);
     expect(created).toMatchObject({ savedBy: { kind: 'person', accountId: 'account-person' } });
     expect((await store.read(definitionId))?.provenance).toEqual({ savedBy: { kind: 'person', accountId: 'account-person' } });
     expect((await store.read(definitionId))?.header).toMatchObject({ previewSteps: ['Review'] });
     expect((await store.read(definitionId))?.header).not.toHaveProperty('savedBy');
-    await expect(actions.create(input, undefined, { surface: 'agent', runtimeAccountId: 'account-agent' }))
+    await expect(actions.create(input, undefined, { ...workflowDefinitionAgentCaller(definition), runtimeAccountId: 'account-agent' }))
       .resolves.toMatchObject({ savedBy: { kind: 'person', accountId: 'account-person' } });
     const revised = { ...definition, blocks: [{ kind: 'step' as const, id: 'review',
       document: { text: 'Revised review', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } }] };
     await expect(actions.update({ ...input, definition: revised, expectedRevision: created.revision }, undefined,
-      { surface: 'agent', runtimeAccountId: 'account-agent', defaultSessionId: 'session-agent' }))
+      { ...workflowDefinitionAgentCaller(definition), runtimeAccountId: 'account-agent' }))
       .resolves.toMatchObject({ savedBy: { kind: 'agent', accountId: 'account-agent', sessionId: 'session-agent' } });
     expect((await store.read(definitionId))?.provenance).toEqual({ savedBy: { kind: 'agent', accountId: 'account-agent', sessionId: 'session-agent' } });
     expect((await store.read(definitionId))?.header).toMatchObject({ previewSteps: ['Revised review'] });
     expect((await store.read(definitionId))?.header).not.toHaveProperty('savedBy');
     await expect(actions.update({ ...input, expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, undefined,
-      { surface: 'agent', runtimeAccountId: 'account-agent' }))
+      { ...workflowDefinitionAgentCaller(definition), defaultSessionId: undefined, runtimeAccountId: 'account-agent' }))
       .resolves.toMatchObject({ savedBy: { kind: 'agent', accountId: 'account-agent' } });
     await actions.edit({ definitionId, expectedRevision: { headerVersion: 3, bodyVersion: 3 },
       ops: [{ kind: 'rename', name: 'Reviewed' }] }, undefined,
-    { surface: 'ui_button', runtimeAccountId: 'account-person' });
+    person);
     await expect(actions.get({ definitionId }))
       .resolves.toMatchObject({ metadata: { title: 'Reviewed', captureProvenance }, savedBy: { kind: 'person', accountId: 'account-person' } });
     expect((await actions.get({ definitionId })).definition).not.toHaveProperty('captureProvenance');
@@ -302,7 +474,7 @@ describe('shared workflow definition create', () => {
   ] satisfies ReadonlyArray<{ access: 'owner' | 'view'; provenance: ArtifactRevisionProvenanceV1 | undefined }>)
   ('uses only opened private provenance for $access get and list attribution', async ({ access, provenance }) => {
     const revision = { headerVersion: 1, bodyVersion: 1 };
-    const header = { kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Shared' } };
+    const header = { kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Shared' }, previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) };
     const row = { artifactId: definitionId, header, ownerAccountId: 'owner', access,
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), bodyVersion: 1,
       headerVersion: 1, updatedAt: 1, ...(provenance ? { provenance } : {}) };
@@ -344,7 +516,8 @@ describe('shared workflow definition create', () => {
     { name: 'unknown stored display fields beside an invalid revision', patch: { revision: { headerVersion: 'two', bodyVersion: 2 }, metadata: { title: 'Shared', extra: true } }, metadata: { title: 'Shared' } },
   ])('isolates an unsupported header ($name) as unavailable in get and list without losing a valid neighbor', async ({ patch, metadata }) => {
     const revision = { headerVersion: 2, bodyVersion: 2 };
-    const header = { kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Shared' } };
+    const header = { kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Shared' },
+      previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) };
     const row = { artifactId: definitionId, header: { ...header, ...patch },
       ownerAccountId: 'owner', access: 'view' as const, body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
       headerVersion: 2, bodyVersion: 2, updatedAt: 1 };
@@ -366,7 +539,7 @@ describe('shared workflow definition create', () => {
     expect(failure).toMatchObject({ ok: false, errorCode: 'content_unavailable', details: { reason: 'invalid_header' } });
   });
 
-  it('opens and lists unknown stored fields, then drops them on the next canonical write', async () => {
+  it('opens unknown stored fields without rewriting an equal Save, then canonicalizes a real edit', async () => {
     const authored = WorkflowDefinitionV1Schema.parse({ ...definition,
       roles: [{ roleId: 'reviewer', name: 'Reviewer', instructions: 'Review carefully', runsAs: { kind: 'session' } }],
       inputs: [{ name: 'repository', valueType: 'string', required: false,
@@ -385,10 +558,12 @@ describe('shared workflow definition create', () => {
     } });
     const row = () => ({ artifactId: definitionId, header, body, headerVersion: revision.headerVersion,
       bodyVersion: revision.bodyVersion, updatedAt: 1, ownerAccountId: 'owner', access: 'owner' as const });
+    let writes = 0;
     const store: WorkflowDefinitionArtifactOperations = {
       read: async () => ({ ...row(), revision }), list: async () => ({ items: [row()] }),
       create: async () => {}, delete: async () => ({ ok: true }),
       update: async input => {
+        writes += 1;
         header = input.header; body = input.body;
         revision = { headerVersion: revision.headerVersion + 1, bodyVersion: revision.bodyVersion + 1 };
         return { ok: true, revision };
@@ -404,24 +579,30 @@ describe('shared workflow definition create', () => {
     expect(listed).toMatchObject({ definitionId, contentStatus: 'available', stepCount: 1 });
     expect(listed).not.toHaveProperty('savedBy');
     expect(listed).not.toHaveProperty('clientMetadata');
-    await actions.update({ definitionId, expectedRevision: revision, metadata: opened.metadata, definition: opened.definition });
+    await actions.update({ definitionId, expectedRevision: revision, metadata: opened.metadata, definition: opened.definition }, undefined, { surface: 'ui' });
+    expect(writes).toBe(0);
+    expect(revision).toEqual({ headerVersion: 2, bodyVersion: 2 });
+    await actions.update({ definitionId, expectedRevision: revision, metadata: { title: 'Changed' }, definition: opened.definition }, undefined, { surface: 'ui' });
+    expect(writes).toBe(1);
     expect(header).toEqual({ kind: 'workflow-definition.v1', definitionId, revision,
-      metadata: { title: 'Shared' }, previewSteps: ['Review'] });
+      metadata: { title: 'Changed' }, previewSteps: ['Review'] });
     expect(JSON.parse(body)).toEqual({ kind: 'workflow-definition.v1', definition: authored });
   });
 
   it('lists grant-reachable workflows with their owner/access and filters other opened kinds', async () => {
     const row = { artifactId: definitionId, headerVersion: 1, updatedAt: 1, ownerAccountId: 'other-owner', access: 'edit' as const,
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), bodyVersion: 1,
-      header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared' } } };
+      header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared' }, previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) } };
     const store: WorkflowDefinitionArtifactOperations = {
       read: async () => { throw new Error('list_must_not_read_per_row'); }, list: async () => ({ items: [row, { ...row, artifactId: 'role', header: { kind: 'role.v1' } }] }),
       create: async () => undefined, update: async () => ({ ok: false, errorCode: 'not_found', error: 'not_found' }), delete: async () => ({ ok: true }),
     };
     const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {},
       readWorkflowTriggerSummaries: async () => new Map() });
-    await expect(actions.list({})).resolves.toMatchObject({ definitions: [{ ...row.header, ownerAccountId: 'other-owner', access: 'edit', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
-      destinations: { targetSessionIds: [], usesOriginSession: false } }] });
+    const listed = await actions.list({});
+    expect(listed).toMatchObject({ definitions: [{ ...row.header, ownerAccountId: 'other-owner', access: 'edit', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null }] });
+    // A library row is a summary; its destinations are read when the definition is opened.
+    expect(listed.definitions[0]).not.toHaveProperty('destinations');
   });
   it.each(['existing', 'conflict', 'response_loss'] as const)('rejoins same semantic content after %s', async (scenario) => {
     let saved = scenario === 'existing';
@@ -436,7 +617,7 @@ describe('shared workflow definition create', () => {
       delete: async () => ({ ok: true }),
     };
     const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
-    await expect(actions.create({ definitionId, definition, metadata: { description: 'Same document', title: 'Review' } }))
+    await expect(actions.create({ definitionId, definition, metadata: { description: 'Same document', title: 'Review' } }, undefined, { surface: 'ui' }))
       .resolves.toMatchObject({ definitionId, metadata: { title: 'Review', description: 'Same document' } });
   });
 
@@ -452,7 +633,7 @@ describe('shared workflow definition create', () => {
       delete: async () => ({ ok: true }),
     };
     const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
-    await expect(actions.create({ definitionId, definition, metadata: { title: 'Review' } }))
+    await expect(actions.create({ definitionId, definition, metadata: { title: 'Review' } }, undefined, { surface: 'ui' }))
       .rejects.toMatchObject({ code: 'currentness_conflict' });
   });
 
@@ -466,7 +647,7 @@ describe('shared workflow definition create', () => {
       delete: async () => ({ ok: true }),
     };
     const actions = createWorkflowDefinitionActions({ artifactStore: store, encodeListCursor: () => 'cursor', assertDefinitionWriteAllowed: () => {} });
-    await expect(actions.create({ definitionId, definition, metadata: { title: 'Review' } })).rejects.toBe(failure);
+    await expect(actions.create({ definitionId, definition, metadata: { title: 'Review' } }, undefined, { surface: 'ui' })).rejects.toBe(failure);
   });
 
   it.each(['semantically invalid definition', 'blob reference'])('rejects a stored %s before returning private Workflow content', async (kind) => {

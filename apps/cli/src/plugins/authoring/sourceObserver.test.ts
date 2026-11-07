@@ -8,6 +8,7 @@ import {
   inspectPluginDevelopmentSource,
   startPluginDevelopmentSourceObserver,
   type PluginDevelopmentSourceObservationDelivery,
+  type PluginDevelopmentSourceObservation,
   type StartWatchingPluginDirectory,
 } from './sourceObserver';
 
@@ -77,6 +78,56 @@ describe('plugin development source observation', () => {
       expect(observation.declaredDependencies).toEqual({ '@happier-dev/plugin-sdk': '0.1.0' });
       expect((globalThis as { __pluginObserverExecuted?: boolean }).__pluginObserverExecuted).toBeUndefined();
     } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves attributed Settings refusal on a watched descriptor refresh', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-settings-refresh-'));
+    const callbacks = new Map<string, () => void>();
+    let resolveRefresh!: (observation: PluginDevelopmentSourceObservation) => void;
+    const refreshed = new Promise<PluginDevelopmentSourceObservation>(resolve => { resolveRefresh = resolve; });
+    let handle: Awaited<ReturnType<typeof startPluginDevelopmentSourceObserver>> | undefined;
+    const authoredValue = 'private-refresh-default';
+    try {
+      await writeProject(projectRoot);
+      // Keep this a descriptor source rather than selecting conventional code.
+      await rename(join(projectRoot, 'src', 'index.ts'), join(projectRoot, 'src', 'plugin.ts'));
+      const manifestPath = join(projectRoot, '.happier-plugin', 'plugin.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+      manifest.entrypoints = { daemon: './dist/index.js', development: './src/plugin.ts' };
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const observations: PluginDevelopmentSourceObservation[] = [];
+      handle = await startPluginDevelopmentSourceObserver({
+        projectRoot,
+        startWatchingDirectory: (directoryPath, onChange) => {
+          callbacks.set(directoryPath, () => onChange(manifestPath));
+          return { ready: Promise.resolve(), stop() {} };
+        },
+        onObservation(observation) {
+          observations.push(observation);
+          if (!observation.ok) resolveRefresh(observation);
+          return observation.ok ? 'adopted' : 'retained';
+        },
+      });
+      expect(observations).toMatchObject([{ ok: true }]);
+      manifest.contributes = {
+        settings: [{ id: 'preferences', title: 'Preferences', scope: 'daemon', target: { kind: 'plugin' },
+          fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: authoredValue }] }],
+      };
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      const notify = callbacks.get(join(await realpath(projectRoot), '.happier-plugin'));
+      expect(notify).toBeTypeOf('function');
+      notify!();
+
+      const observation = await refreshed;
+      expect(observation).toMatchObject({ ok: false, diagnostics: [{
+        code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
+        message: expect.stringMatching(/acme\.observer.*preferences.*enabled/u),
+      }] });
+      expect(JSON.stringify(observation)).not.toContain(authoredValue);
+    } finally {
+      handle?.stop();
       await rm(projectRoot, { recursive: true, force: true });
     }
   });

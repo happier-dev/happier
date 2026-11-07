@@ -1,6 +1,6 @@
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { randomBytes } from 'node:crypto';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { listAutomationDefinitionDetails, updateAutomationDefinition } from '@/api/automations';
@@ -35,15 +35,14 @@ import type { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/
 import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import type { LiveWorkItemV1, LiveWorkListenerV1, LiveWorkProducerV1 } from '../lifecycle/managedActivity';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
+import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { configuration } from '@/configuration';
-import { acquireWorkflowRequesterCredentials, listWorkflowRequesterCredentialScopes, observeWorkflowRequesterCredentialCustody, reconcileWorkflowRequesterCredentialScope, retireWorkflowRequesterCredentials, settleWorkflowRequesterCredentialRetirement } from '../workflows/requesterCustody';
+import { acquireWorkflowRequesterCredentials, createWorkflowRequesterCustody, listWorkflowRequesterCredentialScopes, observeWorkflowRequesterCredentialCustody, reconcileWorkflowRequesterCredentialScope, retireWorkflowRequesterCredentials, settleWorkflowRequesterCredentialRetirement } from '../workflows/requesterCustody';
 
 type AutomationMachineAdmissionTransport = NonNullable<
   Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
 >;
 
-const ASSIGNMENT_RECONCILIATION_DELAY_MS = 45_000;
-const ASSIGNMENT_RECONCILIATION_JITTER_MS = 15_000;
 export type AutomationWorkerHandle = Readonly<{
   liveWorkProducer: LiveWorkProducerV1;
   stop: () => void;
@@ -104,6 +103,7 @@ export function startAutomationWorker(params: {
 }): AutomationWorkerHandle {
   const env = params.env ?? process.env;
   const workerDecision = getAutomationWorkerFeatureDecision(env);
+  const assignments = createAutomationAssignmentCache();
   if (workerDecision.state !== 'enabled') {
     logAutomationInfo('Automation worker disabled', {
       machineId: params.machineId,
@@ -131,8 +131,6 @@ export function startAutomationWorker(params: {
   const attribution = params.requesterWorkAttributionV1
     ? Object.freeze(RequesterWorkAttributionV1Schema.parse(params.requesterWorkAttributionV1)) : { kind: 'unknown' as const };
   const claimClient = createAutomationClaimClient({ token: params.token });
-  const assignments = createAutomationAssignmentCache();
-
   const requesterWakes = new Map<string, { scopeId: string; runId?: string; nextClaimAt: number }>();
 
   let stopped = false;
@@ -151,18 +149,19 @@ export function startAutomationWorker(params: {
   // These values govern only the one claim request loop. A per-Run executor
   // failure is already reflected in that Run's server-owned lifecycle and
   // must not race another claim's retry state.
-  let claimConsecutiveFailures = 0;
+  let claimReadFailed = false;
   let claimRetryAfter = 0;
-  let noWorkCooldownUntil = 0;
-  let noWorkCooldownScope: 'workflow' | undefined;
   let pendingQueuedWake = false;
-  let nextAssignmentReconciliationAt = 0;
-  let latestAssignmentRefreshRequest = 0;
+  let assignmentReadFailed = false;
+  let assignmentRetryAfter = 0;
+  const directRunClaimDeadlines = new Map<string, number>();
+  let assignmentReadInFlight: Promise<void> | null = null;
+  let assignmentReadCancellation: AbortController | null = null;
+  let assignmentRefreshPending = false;
 
-  let claimTimer: NodeJS.Timeout | null = null;
+  let claimTimer: (() => void) | null = null;
   let claimTimerAt = 0;
   let claimInFlight: Promise<void> | null = null;
-  let refreshSoonTimer: NodeJS.Timeout | null = null;
   // One map owns capacity and cancellation. Workflow claims open their private
   // accepted graph before reserving a slot; existing-Session writes reserve none.
   const activeExecutions = new Map<string, {
@@ -182,13 +181,13 @@ export function startAutomationWorker(params: {
   const liveWorkProducer: LiveWorkProducerV1 = {
     read: async () => {
       // A claim is an observation until Home returns material custody. Join
-      // its completion so an empty periodic poll cannot reset aggregate idle,
+      // its completion so an empty claim observation cannot reset aggregate idle,
       // and a drain cannot prove absence while a claim may still acquire work.
       if (claimInFlight) await claimInFlight;
       const items: LiveWorkItemV1[] = [];
       // An unreadable claim may have acquired a Run. The existing retry owner
       // clears this marker only after a valid authoritative claim response.
-      let coverage: 'complete' | 'unknown' = claimRetryAfter > 0 ? 'unknown' : 'complete';
+      let coverage: 'complete' | 'unknown' = claimReadFailed || assignmentReadFailed ? 'unknown' : 'complete';
       for (const active of activeExecutions.values()) {
         if (active.materialWorkReleased) continue;
         if (active.coordinatorWork) {
@@ -230,18 +229,16 @@ export function startAutomationWorker(params: {
   const sourceObservers = createAutomationRunLifecycleObservers({
     executor: actionExecutor,
     report: (occurrence, signal) => claimClient.reportRunLifecycle(params.machineId, occurrence, signal),
-    onError: (error, source) => logAutomationWarn('Run notification source observation failed; retained source remains armed', error,
-      { machineId: source.machineId, runId: source.runId }),
+    onError: (error, source) => {
+      requestAssignmentRecovery(error);
+      logAutomationWarn('Run notification source observation failed; assignment recovery scheduled', error,
+        { machineId: source.machineId, runId: source.runId });
+    },
   });
-
-  const nullClaimBackoffMs = Math.min(
-    60_000,
-    Math.max(5_000, Math.floor(scheduler.leaseDurationMs / 2)),
-  );
 
   function clearClaimTimer() {
     if (claimTimer) {
-      clearTimeout(claimTimer);
+      claimTimer();
       claimTimer = null;
       claimTimerAt = 0;
     }
@@ -262,11 +259,11 @@ export function startAutomationWorker(params: {
     }
     clearClaimTimer();
     claimTimerAt = at;
-    claimTimer = setTimeout(() => {
+    claimTimer = armDeadlineTimer(at, () => {
       claimTimer = null;
       claimTimerAt = 0;
       void runTick(reason, forceCapacityRefill);
-    }, Math.max(0, at - Date.now()));
+    });
   }
 
   function scheduleClaimSoon(reason: string) {
@@ -274,12 +271,6 @@ export function startAutomationWorker(params: {
   }
 
   function scheduleCapacityRefill(reason: string) {
-    // A Workflow-only null claim says nothing about ordinary queued work. When
-    // an ordinary slot opens, refill it through the incumbent claim loop.
-    if (hasExecutionCapacity() && noWorkCooldownScope === 'workflow') {
-      noWorkCooldownUntil = 0;
-      noWorkCooldownScope = undefined;
-    }
     // Yield through the existing claim timer. A synchronous mock or a very
     // fast terminal executor must not create an unbounded microtask chain
     // that starves cancellation, assignment refreshes, or the next timer.
@@ -289,34 +280,37 @@ export function startAutomationWorker(params: {
   function scheduleAssignmentsRefreshSoon(reason: string) {
     if (stopped) return;
     if (paused) return;
-    if (refreshSoonTimer) return;
-    refreshSoonTimer = setTimeout(() => {
-      refreshSoonTimer = null;
-      void refreshAssignments().catch((error) => {
+    void refreshAssignments(reason, 'changed').catch((error) => {
         logAutomationWarn('Failed to refresh automation assignments (scheduled)', error, {
           machineId: params.machineId,
           reason,
         });
-      });
-    }, 250);
+    });
   }
 
-  function getNextAssignedRunAtMs(): number | null {
+  function getNextClaimAtMs(futureOnly = false): number | null {
     const rows = assignments.getAll();
     let next: number | null = null;
     for (const row of rows) {
       const candidate = row.nextClaimAt;
       if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
+      if (futureOnly && candidate <= Date.now()) continue;
       if (next === null || candidate < next) {
         next = candidate;
       }
     }
+    for (const [runId, candidate] of directRunClaimDeadlines) {
+      // A live executor owns its current lease. Retain the snapshot so a
+      // failed dispatch's lease remains scheduled after execution releases it.
+      if (activeExecutions.has(runId)) continue;
+      if (futureOnly && candidate <= Date.now()) continue;
+      if (next === null || candidate < next) next = candidate;
+    }
+    for (const wake of requesterWakes.values()) {
+      if (futureOnly && wake.nextClaimAt <= Date.now()) continue;
+      if (next === null || wake.nextClaimAt < next) next = wake.nextClaimAt;
+    }
     return next;
-  }
-
-  function scheduleNextAssignmentReconciliation(): void {
-    const jitterMs = Math.floor(Math.random() * (ASSIGNMENT_RECONCILIATION_JITTER_MS + 1));
-    nextAssignmentReconciliationAt = Date.now() + ASSIGNMENT_RECONCILIATION_DELAY_MS + jitterMs;
   }
 
   function hasExecutionCapacity(): boolean {
@@ -348,18 +342,16 @@ export function startAutomationWorker(params: {
     }
   }
 
-  function rescheduleClaim(reason: string, force = false) {
+  function rescheduleClaim(reason: string, force = false, futureOnly = false) {
     if (stopped) return;
-    const rows = assignments.getAll();
     const now = Date.now();
-    const blockedUntil = Math.max(claimRetryAfter, noWorkCooldownUntil);
+    const blockedUntil = Math.max(claimRetryAfter, assignmentRetryAfter);
     const claimBlocked = blockedUntil > now;
-    const nextRunAt = rows.length === 0 ? null : getNextAssignedRunAtMs();
+    const nextRunAt = getNextClaimAtMs(futureOnly || claimReadFailed || assignmentReadFailed);
     const candidates = [
-      nextAssignmentReconciliationAt > 0 ? nextAssignmentReconciliationAt : null,
-      claimBlocked ? blockedUntil : null,
-      // A previously due assignment is not a reason to bypass a claim retry/no-work
-      // cooldown. The reconciliation deadline above remains independently eligible.
+      assignmentRetryAfter > now ? assignmentRetryAfter : null,
+      claimRetryAfter > now || claimBlocked ? blockedUntil : null,
+      // A due assignment cannot bypass an authoritative server Retry-After.
       claimBlocked ? null : nextRunAt,
     ].filter((candidate): candidate is number => candidate !== null);
     if (candidates.length === 0) {
@@ -369,9 +361,18 @@ export function startAutomationWorker(params: {
     scheduleClaimAt(Math.min(...candidates), `${reason}:scheduled`, force);
   }
 
+  function requestAssignmentRecovery(error: unknown) {
+    assignmentReadFailed = true;
+    const retryAfterMs = nextAutomationRetryDelayMs({ error });
+    if (retryAfterMs !== null) assignmentRetryAfter = Math.max(assignmentRetryAfter, Date.now() + retryAfterMs);
+    publishActivity('observation');
+    if (!claimInFlight) rescheduleClaim('assignment-recovery', true);
+  }
+
   const stopWorker = (reason: 'manual') => {
     if (stopped) return;
     stopped = true;
+    cancelAssignmentRead();
     managedTargetBackfillCancellation.abort();
     unsubscribeAdmission?.();
     sourceObservers.clear();
@@ -380,10 +381,6 @@ export function startAutomationWorker(params: {
       active.controller.abort();
     }
     clearClaimTimer();
-    if (refreshSoonTimer) {
-      clearTimeout(refreshSoonTimer);
-      refreshSoonTimer = null;
-    }
     logAutomationInfo('Automation worker stopped', {
       machineId: params.machineId,
       reason,
@@ -421,110 +418,122 @@ export function startAutomationWorker(params: {
     });
   };
 
-  const refreshAssignments = async () => {
-    if (stopped) return;
-    if (paused) return;
-    const request = ++latestAssignmentRefreshRequest;
-    try {
-      const response = await claimClient.fetchAssignments(params.machineId);
-      // Refreshes can overlap across startup, reconnect, resume, socket hints, and
-      // reconciliation. Only the newest request may replace the canonical cache or
-      // its wake timer; otherwise a late older snapshot can erase newer work.
-      if (request !== latestAssignmentRefreshRequest) return;
-      const previousMaxActiveRunsPerMachine = maxActiveRunsPerMachine;
-      // The current server is the execution-capacity settings authority.
-      maxActiveRunsPerMachine = response.settings.maxActiveRunsPerMachine;
-      wakeCapacityWaiters();
-      assignments.replace(response.assignments);
-      sourceObservers.replace(response.runLifecycleSources ?? []);
-      scheduleNextAssignmentReconciliation();
-      logAutomationInfo('Assignments refreshed', {
-        machineId: params.machineId,
-        count: response.assignments.length,
-      });
-      if (pendingQueuedWake) {
-        scheduleClaimSoon('queued-wake-after-assignments-refresh');
-        return;
-      }
-      if (
-        maxActiveRunsPerMachine > previousMaxActiveRunsPerMachine
-        && response.assignments.length > 0
-      ) {
-        scheduleCapacityRefill('assignment-settings-capacity-increased');
-        return;
-      }
-      rescheduleClaim('assignments-refreshed', true);
-    } catch (error) {
-      if (request !== latestAssignmentRefreshRequest) return;
-      logAutomationWarn('Failed to refresh automation assignments', error, {
-        machineId: params.machineId,
-      });
+  function cancelAssignmentRead() {
+    assignmentReadCancellation?.abort();
+    assignmentReadCancellation = null;
+    assignmentReadInFlight = null;
+    assignmentRefreshPending = false;
+  }
+
+  const refreshAssignments = async (wakeReason: string, demand: 'join' | 'changed' | 'supersede' = 'join') => {
+    if (stopped || paused) return;
+    if (assignmentRetryAfter > Date.now()) {
+      rescheduleClaim('assignment-read-retry-after');
+      return;
     }
+    if (demand === 'supersede') cancelAssignmentRead();
+    if (assignmentReadInFlight) {
+      if (demand === 'changed') assignmentRefreshPending = true;
+    } else {
+      const cancellation = new AbortController();
+      assignmentReadCancellation = cancellation;
+      assignmentReadInFlight = (async () => {
+        const previousMaxActiveRunsPerMachine = maxActiveRunsPerMachine;
+        try {
+          do {
+            assignmentRefreshPending = false;
+            const response = await claimClient.fetchAssignments(params.machineId, cancellation.signal);
+            if (cancellation.signal.aborted || stopped || paused) return;
+            maxActiveRunsPerMachine = response.settings.maxActiveRunsPerMachine;
+            wakeCapacityWaiters();
+            assignments.replace(response.assignments);
+            directRunClaimDeadlines.clear();
+            // Omission never installs a fallback poll for an older server.
+            for (const deadline of response.directRunClaimDeadlines ?? []) {
+              directRunClaimDeadlines.set(deadline.runId, deadline.nextClaimAt);
+            }
+            sourceObservers.replace(response.runLifecycleSources ?? []);
+            const recoveredAssignmentRead = assignmentReadFailed;
+            assignmentReadFailed = false;
+            assignmentRetryAfter = 0;
+            if (recoveredAssignmentRead) publishActivity('observation');
+            logAutomationInfo('Assignments refreshed', {
+              machineId: params.machineId, count: response.assignments.length, wakeReason,
+            });
+          } while (assignmentRefreshPending);
+          // The active claim loop consumes this snapshot and owns its next wake.
+          if (claimInFlight) return;
+          if (pendingQueuedWake) {
+            scheduleClaimSoon('queued-wake-after-assignments-refresh');
+          } else if (maxActiveRunsPerMachine > previousMaxActiveRunsPerMachine && assignments.getAll().length > 0) {
+            scheduleCapacityRefill('assignment-settings-capacity-increased');
+          } else {
+            rescheduleClaim('assignments-refreshed', true);
+          }
+        } catch (error) {
+          if (cancellation.signal.aborted) return;
+          requestAssignmentRecovery(error);
+          logAutomationWarn('Failed to refresh automation assignments', error, { machineId: params.machineId });
+        } finally {
+          if (assignmentReadCancellation === cancellation) {
+            assignmentReadInFlight = null;
+            assignmentReadCancellation = null;
+            assignmentRefreshPending = false;
+          }
+        }
+      })();
+    }
+    // Existing waiters follow a superseding read, never its stale predecessor.
+    while (assignmentReadInFlight) await assignmentReadInFlight;
   };
 
-  const runTick = async (_reason: string, forceCapacityRefill = false) => {
+  const runTick = async (reason: string, forceCapacityRefill = false, assignmentRefreshPrepared = false) => {
     if (stopped) return;
     if (paused) return;
     if (claimInFlight) return;
 
-    let reconciledAssignments = false;
-    if (nextAssignmentReconciliationAt > 0 && Date.now() >= nextAssignmentReconciliationAt) {
-      // Keep a bounded retry scheduled if the authoritative read fails. A successful
-      // read immediately replaces this deadline with a fresh reconciliation window.
-      scheduleNextAssignmentReconciliation();
-      await refreshAssignments();
-      if (stopped || paused) return;
-      reconciledAssignments = true;
-    }
-
-    if (!reconciledAssignments && assignments.getAll().length === 0 && pendingQueuedWake) {
-      // A queued-run hint can arrive before the assignment cache catches up.
-      // Refresh that cache, then let the server's claim owner decide whether a
-      // direct or Automation-origin Run is ready for this machine.
-      await refreshAssignments();
-      if (stopped || paused) return;
-    }
-
-    if (!reconciledAssignments && !forceCapacityRefill && !pendingQueuedWake) {
-      const nextRunAt = getNextAssignedRunAtMs();
-      if (nextRunAt !== null && nextRunAt > Date.now()) {
-        rescheduleClaim('next-run-not-due');
-        return;
-      }
-    }
-
-    if (Date.now() < claimRetryAfter) {
-      rescheduleClaim('retry-after');
-      return;
-    }
-    if (Date.now() < noWorkCooldownUntil) {
-      rescheduleClaim('no-work-cooldown');
-      return;
-    }
-
-    // Assignment preparation may have yielded to another queued wake. Take
-    // the incumbent claim slot only after rechecking that asynchronous gap.
-    if (claimInFlight) return;
     let claimedRunStarted = false;
+    let emptyClaim = false;
     let requester: Awaited<ReturnType<typeof acquireWorkflowRequesterCredentials>> = null;
     let executionOwnsRequester = false;
     const requesterWake = [...requesterWakes.values()].find(wake => wake.nextClaimAt <= Date.now());
     let releaseClaim = () => {};
+    // Preparation belongs to the same single-flight operation as dispatch.
+    claimInFlight = new Promise<void>(resolve => { releaseClaim = resolve; });
     try {
-      claimInFlight = new Promise<void>(resolve => { releaseClaim = resolve; });
       publishActivity('observation');
-      pendingQueuedWake = false;
-      // The Account owner performs same-id predecessor conversion (or an
-      // encrypted-source pause) before dispatch. Already admitted Run snapshots
-      // remain immutable; subsequent occurrences consume the current recipe.
-      if (assignments.getAll().some((assignment) => assignment.executionRecipeVersion !== 2)) {
-        const migrated = await actionExecutor.execute('workflow.trigger.list', { scope: 'account_all' },
-          { surface: 'cli', authority: 'account_automation' });
-        if (!migrated.ok) throw Object.assign(new Error(migrated.errorCode), { code: migrated.errorCode });
-        await refreshAssignments();
+      if (assignmentRetryAfter > Date.now()) {
+        rescheduleClaim('assignment-retry-after');
+        return;
       }
+      if (!requesterWake && (assignmentReadFailed
+        || (!assignmentRefreshPrepared && assignments.getAll().length === 0 && pendingQueuedWake))) {
+        // Reconnect/resync refreshes once; an early queued hint can also precede
+        // its assignment snapshot. The server remains the durable work authority.
+        await refreshAssignments(reason);
+        if (stopped || paused || assignmentReadFailed) return;
+      }
+
+      if (!requesterWake && !forceCapacityRefill && !pendingQueuedWake && !claimReadFailed) {
+        const nextRunAt = getNextClaimAtMs();
+        if (nextRunAt === null || nextRunAt > Date.now()) {
+          rescheduleClaim('next-run-not-due');
+          return;
+        }
+      }
+
+      if (Date.now() < claimRetryAfter) {
+        rescheduleClaim('retry-after');
+        return;
+      }
+      pendingQueuedWake = false;
       if (stopped || paused || params.admissionDrain?.isQuiescing()) {
         pendingQueuedWake = true;
+        return;
+      }
+      if (requesterWake && (!params.requesterWorkAttributionV1 || !params.requesterHomeServerIdentityId)) {
+        requesterWakes.delete(requesterWake.scopeId);
+        if (requesterWake.runId) await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: requesterWake.runId });
         return;
       }
       if (requesterWake && params.requesterWorkAttributionV1) {
@@ -539,35 +548,30 @@ export function startAutomationWorker(params: {
           return;
         }
       }
-      const scope = 'workflow';
       const selectedCredentials = requester?.credentials ?? params.credentials;
       const selectedClaimClient = requester ? createAutomationClaimClient({ token: selectedCredentials.token }) : claimClient;
       const claimResult = await selectedClaimClient.claimRun({
         machineId: params.machineId,
         leaseDurationMs: scheduler.leaseDurationMs,
-        scope,
+        scope: requester ? 'workflow' : 'execution',
       });
 
       // A completed claim is authoritative progress for this loop, regardless
       // of whether the server had a Run ready for this machine.
-      claimConsecutiveFailures = 0;
+      claimReadFailed = false;
       claimRetryAfter = 0;
 
       const claimed = toClaimableRunPayload(claimResult);
       if (!claimed) {
+        emptyClaim = !requesterWake;
         if (requesterWake) {
           requesterWakes.delete(requesterWake.scopeId);
           return;
         }
-        const nextRunAt = getNextAssignedRunAtMs();
-        if (nextRunAt !== null && (forceCapacityRefill || nextRunAt <= Date.now())) {
-          // Another machine likely claimed (or our clock is ahead). Back off to avoid a thundering herd.
-          noWorkCooldownUntil = Date.now() + nullClaimBackoffMs;
-          noWorkCooldownScope = scope;
-          scheduleAssignmentsRefreshSoon('no-work-due-refresh');
-        } else {
-          noWorkCooldownUntil = 0;
-        }
+        // The request consumed its due wake. Refresh the server's next fact
+        // once; only a future deadline or a new push may reopen an empty claim.
+        const nextRunAt = getNextClaimAtMs();
+        if (nextRunAt !== null && nextRunAt <= Date.now()) await refreshAssignments('no-work-due-refresh');
         return;
       }
 
@@ -592,6 +596,8 @@ export function startAutomationWorker(params: {
       const executionCredentials = requester?.credentials ?? selectedCredentials;
       const executionClaimClient = requester ? createAutomationClaimClient({ token: executionCredentials.token }) : selectedClaimClient;
 
+      // The acquired executor now owns this lease. Its old wake fact is consumed.
+      directRunClaimDeadlines.delete(claimed.run.id);
       const executionController = new AbortController();
       activeExecutions.set(claimed.run.id, {
         runId: claimed.run.id,
@@ -606,12 +612,20 @@ export function startAutomationWorker(params: {
       executionOwnsRequester = true;
       const admittedRequester = requester;
       const releaseClaimedScope = admittedRequester?.release;
+      const selectedActionExecutor = requester ? createCliActionExecutorFromCredentials({ credentials: executionCredentials,
+        readCredentials: async () => executionCredentials, machineId: params.machineId,
+        workflowRequesterCustody: createWorkflowRequesterCustody({ credentials: executionCredentials,
+          attribution: requester.attribution, happyHomeDir: configuration.happyHomeDir,
+          serverHttpBaseUrl: resolveServerHttpBaseUrl(), homeServerIdentityId: params.requesterHomeServerIdentityId }),
+        isAutomationRunCurrent: caller => activeExecutions.get(caller.runId)?.automationId === caller.automationId,
+        ...(params.machineAdmissionTransport ? { machineAdmissionTransport: params.machineAdmissionTransport } : {}) }) : actionExecutor;
 
       void (async () => {
         try {
           await executeClaimedRun({
             machineId: params.machineId,
             claimClient: executionClaimClient,
+            actionExecutor: selectedActionExecutor,
             acquireMachineStartCapacity: (signal) => acquireMachineStartCapacity(claimed.run.id, executionController, signal),
             registerReviewHoldRefresh: (refresh) => {
               const active = activeExecutions.get(claimed.run.id);
@@ -652,11 +666,13 @@ export function startAutomationWorker(params: {
           const active = activeExecutions.get(claimed.run.id);
           if (active?.controller === executionController) {
             active.materialWorkReleased = true;
+            active.consumesStartCapacity = false;
+            wakeCapacityWaiters();
             publishActivity();
           }
 
           // Pull a fresh assignments snapshot so we have an updated nextRunAt after the run transitions/enqueue.
-          await refreshAssignments().catch((error) => {
+          await refreshAssignments('run-settled').catch((error) => {
             logAutomationWarn('Failed to refresh automation assignments after run', error, {
               machineId: params.machineId,
               runId: claimed.run.id,
@@ -700,29 +716,21 @@ export function startAutomationWorker(params: {
           await releaseClaimedScope?.();
           if (!stopped && !paused) {
             // This is the same bounded map's capacity continuation. The
-            // server still chooses the next durable Run, and a null claim
-            // installs the normal no-work cooldown before another refill.
+            // server still chooses the next durable Run. A null claim backs
+            // off only while an assignment remains due.
             scheduleCapacityRefill('run-settled-capacity-available');
           }
         }
       })();
     } catch (error) {
       const errorClass = classifyAutomationWorkerError(error);
-      if (errorClass === 'transient') {
-        claimConsecutiveFailures += 1;
-      } else {
-        claimConsecutiveFailures = 0;
-      }
-      const backoffMs = nextAutomationRetryDelayMs({
-        failureCount: claimConsecutiveFailures,
-        error,
-      });
-      claimRetryAfter = Date.now() + backoffMs;
+      claimReadFailed = true;
+      const retryAfterMs = nextAutomationRetryDelayMs({ error });
+      claimRetryAfter = retryAfterMs === null ? 0 : Date.now() + retryAfterMs;
       logAutomationWarn('Automation worker tick failed', error, {
         machineId: params.machineId,
         errorClass,
-        consecutiveFailures: claimConsecutiveFailures,
-        backoffMs,
+        retryAfterMs,
         assignmentCount: assignments.getAll().length,
       });
     } finally {
@@ -739,10 +747,16 @@ export function startAutomationWorker(params: {
         return;
       }
       if (pendingQueuedWake) {
-        scheduleClaimSoon('queued-wake-pending');
+        if (Math.max(claimRetryAfter, assignmentRetryAfter) > Date.now()) {
+          rescheduleClaim('queued-wake-blocked');
+        } else if (claimReadFailed || assignmentReadFailed) {
+          rescheduleClaim('queued-wake-recovery');
+        } else {
+          scheduleClaimSoon('queued-wake-pending');
+        }
         return;
       }
-      rescheduleClaim('tick-complete');
+      rescheduleClaim('tick-complete', false, emptyClaim);
     }
   };
 
@@ -771,8 +785,9 @@ export function startAutomationWorker(params: {
     pendingQueuedWake = true;
     // A prior empty read is superseded by a real recovery edge. Server retry
     // deadlines and claim fencing remain authoritative.
-    await refreshAssignments();
-    await runTick('work-catch-up');
+    await refreshAssignments('work-catch-up', 'supersede');
+    if (assignmentReadFailed || assignmentRetryAfter > Date.now()) return;
+    await runTick('work-catch-up', false, true);
   };
 
   // This retained-row migration belongs to this admitted startup, never to
@@ -813,12 +828,10 @@ export function startAutomationWorker(params: {
       { machineId: params.machineId });
   });
 
-  // Seed the first bounded reconciliation before the initial read so a transient
-  // startup failure cannot leave an empty cache without another authoritative read.
-  scheduleNextAssignmentReconciliation();
-  rescheduleClaim('worker-start');
+  // A failed authoritative read arms recovery through the incumbent claim timer;
+  // a successful empty snapshot stays idle until push or connection catch-up.
   observeRequesterCustody();
-  void (params.requesterWorkAttributionV1 ? catchUp() : refreshAssignments()).catch((error) => {
+  void (params.requesterWorkAttributionV1 ? catchUp() : refreshAssignments('worker-start')).catch((error) => {
     logAutomationWarn('Failed to refresh automation assignments on worker start', error, {
       machineId: params.machineId,
     });
@@ -833,28 +846,25 @@ export function startAutomationWorker(params: {
   return {
     liveWorkProducer,
     stop: () => stopWorker('manual'),
-    catchUp,
     refreshAssignments: async () => {
-      await refreshAssignments();
+      await refreshAssignments('manual-refresh');
     },
+    catchUp,
     pause: () => {
       if (stopped || paused) return;
       paused = true;
+      cancelAssignmentRead();
       sourceObservers.clear();
       requesterCustodyObservation?.dispose();
       requesterCustodyObservation = undefined;
       clearClaimTimer();
-      if (refreshSoonTimer) {
-        clearTimeout(refreshSoonTimer);
-        refreshSoonTimer = null;
-      }
     },
     resume: () => {
       if (stopped || !paused) return;
       paused = false;
       observeRequesterCustody();
       wakeCapacityWaiters();
-      void refreshAssignments();
+      void refreshAssignments('resumed', 'supersede');
       rescheduleClaim('resumed');
     },
     handleServerUpdate: (update: Update) => {
@@ -908,6 +918,7 @@ export function startAutomationWorker(params: {
           const scopeId = scope.id;
           requesterWakes.set(scopeId, { scopeId, runId: body.runId, nextClaimAt: Date.now() });
         }
+        if (assignmentReadInFlight) assignmentRefreshPending = true;
         pendingQueuedWake = true;
         scheduleClaimSoon('socket-run-queued');
       }

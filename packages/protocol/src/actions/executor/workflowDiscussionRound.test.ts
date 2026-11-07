@@ -2,11 +2,39 @@ import { describe, expect, it } from 'vitest';
 import { createWorkflowDiscussionRoundFixture as fixture } from '../../../testkit/workflowDiscussionRound.js';
 import { WorkflowDiscussionRoundProjectResultV1Schema } from '../../workflows/workflowDiscussionRoundV1.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
+import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const participantCount = process.env.HAPPIER_WORKFLOW_SCALE_MEASUREMENT === '1' ? 500 : 24;
 
 describe('Discussion round projection demand', () => {
+  it('carries one host-admitted Workflow Session scope through review dispatch and refreshes it for the next Action', async () => {
+    const f = await fixture('projector-in-if', 2, 'review');
+    let sessionReads = 0;
+    const scopes: unknown[] = [];
+    const executor = createActionExecutor({ ...f.deps,
+      resolveSessionReference: async () => { sessionReads += 1; return { kind: 'unique', address: f.address }; },
+      // Review transport is the boundary; accepted-frame reads and admission stay real.
+      reviewCommentAction: async args => {
+        scopes.push(args.reviewCommentPrincipal?.workflowScope);
+        return { items: [], cursor: null };
+      },
+    } as unknown as ActionExecutorDeps);
+    const context = f.context(f.rounds[2]!.complete);
+    for (let request = 0; request < 2; request += 1) {
+      expect(await executor.execute('reviews.comments.list', { sessionId: f.address.sessionId }, context))
+        .toMatchObject({ ok: true, result: { items: [] } });
+      expect(sessionReads).toBe(request + 1);
+      expect(scopes.at(-1)).toMatchObject({ actionRequestId: context.actionRequestId, sessions: [f.address] });
+    }
+    expect(await executor.execute('reviews.comments.list', { sessionId: 'unrelated-session' }, context))
+      .toMatchObject({ ok: false });
+    expect(scopes).toHaveLength(2);
+    f.miswire();
+    expect(await executor.execute('reviews.comments.list', { sessionId: f.address.sessionId }, context))
+      .toMatchObject({ ok: false });
+    expect(scopes).toHaveLength(2);
+  });
   it('keeps an original-parent failed descendant retryable', async () => {
     const f = await fixture('projector-in-if');
     await expect(f.retry(f.rounds[2]!.complete)).resolves.toEqual(expect.any(String));
@@ -269,6 +297,7 @@ describe('Discussion round projection demand', () => {
     const result = await f.executor.execute('workflow.discussion.round.project', { collections: ['speakers'], phase: 'prepare',
       rosterInput: 'participants', previousProjectionBlockId: 'outcomes' }, f.context(f.rounds[2]!.prepare));
     expect(result, JSON.stringify({ result, cost: f.cost })).toMatchObject({ ok: true, result: { hasNext: true, nextParticipants: expect.any(Array), throughSeq: 2 } });
+    console.info('PERF-FIN-RT prepare cost', JSON.stringify(f.cost));
     expect(f.cost.historyPages).toBe(0);
     expect(f.cost.envelopes).toBeLessThan(12);
   });
@@ -281,6 +310,7 @@ describe('Discussion round projection demand', () => {
     if (!result.ok) throw new Error('Projection unavailable');
     const projected = WorkflowDiscussionRoundProjectResultV1Schema.parse(result.result);
     expect(projected.outcomeReferences).toHaveLength(participantCount);
+    console.info('PERF-FIN-RT complete cost', JSON.stringify(f.cost));
     expect(f.cost.historyPages).toBe(0);
     expect(f.cost.envelopes).toBeLessThan(2 * participantCount + 10);
     expect(f.cost.requests).toBeLessThan(20);

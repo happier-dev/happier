@@ -6,13 +6,12 @@ import { qualifyPluginEventIdV1 } from '@happier-dev/protocol/plugins/events/v1'
 
 import { buildPluginContributionIntrospectionQualifiedId } from '@/plugins/projection/introspection/project';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-import { resolveBuiltInContributions } from './resolveBuiltInContributions';
+import { readResolvedActionContribution } from './actions';
 import type {
     ResolvedActionContribution,
     ResolvedAccountCollectionContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
-
     ResolvedConnectedAccountDescriptorContribution,
     ResolvedContributionInputs,
     ResolvedContributionRegistry,
@@ -39,7 +38,6 @@ import type {
     ResolvedTranscriptActivityContribution,
     ResolvedStructuredMessageContribution,
     ResolvedSystemToolContribution,
-
     ResolvedComposerReferenceContribution,
     ResolvedSearchProviderContribution,
     ResolvedComposerAttachmentContribution,
@@ -55,7 +53,6 @@ import type {
     ResolvedTargetedPluginContributionDeclaration,
 } from './types';
 import { resolveAdmittedTargetedContributions } from './targetedContributions';
-import { resolveLocalSettingsDeclarations } from '@/plugins/settings/localSettingsContributions';
 import { isPluginAdmissionExclusion } from './normalize/admission';
 import {
     isExecutableManagedDependency,
@@ -164,6 +161,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const uiSettingsPagesV2: readonly ResolvedUiSettingsPageV2Contribution[] = Object.freeze([
         ...(inputs.uiSettingsPagesV2 ?? []),
     ]);
+    const uiListExtensionsV1 = freezeQualifiedContributions(inputs.uiListExtensionsV1 ?? []);
     const uiRenderersV2 = Object.freeze([...(inputs.uiRenderersV2 ?? [])]);
     assertUniquePluginUiBindings('destination', [...uiViewsV2, ...uiSettingsPagesV2]);
     assertUniquePluginUiBindings('renderer', uiRenderersV2);
@@ -198,8 +196,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const agentDefinitionsById = new Map<string, ResolvedAgentContribution>();
     const standaloneCatalogEntries = Object.freeze([...(inputs.catalogEntries ?? [])]);
     const actions = Object.freeze([...(inputs.actions ?? [])].sort(compareActionContributes));
-
-
     const resources = Object.freeze([...(inputs.resources ?? [])].sort(compareResourceContributes));
     const promptAssets = Object.freeze([...(inputs.promptAssets ?? [])].sort(comparePromptAssetContributes));
     const structuredMessages = Object.freeze([...(inputs.structuredMessages ?? [])].sort(compareStructuredMessageContributes));
@@ -247,12 +243,21 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
     const botTemplates = freezeQualifiedContributions(inputs.botTemplates ?? []);
     const registrySources = freezeQualifiedContributions(inputs.registrySources ?? []);
+    const backupDestinations = freezeQualifiedContributions(inputs.backupDestinations ?? []);
+    const deploymentTargets = freezeQualifiedContributions(inputs.deploymentTargets ?? []);
+    const healthCheckKinds = freezeQualifiedContributions(inputs.healthCheckKinds ?? []);
     const storeKinds = freezeQualifiedContributions(inputs.storeKinds ?? []);
+    const machineRecipes = freezeQualifiedContributions(inputs.machineRecipes ?? []);
+    const machineSetupPresets = freezeQualifiedContributions(inputs.machineSetupPresets ?? []);
     const languageServers = freezeQualifiedContributions(inputs.languageServers ?? []);
     const skills = freezeQualifiedContributions(inputs.skills ?? []);
     const dragSources = freezeQualifiedContributions(inputs.dragSources ?? []);
     const workItems = freezeQualifiedContributions(inputs.workItems ?? []);
     const machineProvisioners = freezeQualifiedContributions(inputs.machineProvisioners ?? []);
+    const accessProviders = freezeQualifiedContributions(inputs.accessProviders ?? []);
+    const accessProvidersByContributionKey = new Map(accessProviders.map((entry) => [
+        resolveQualifiedContributionRegistryKey(entry), entry,
+    ] as const));
     const machineProvisionersByContributionKey = new Map(machineProvisioners.map((entry) => [
         resolveQualifiedContributionRegistryKey(entry), entry,
     ] as const));
@@ -291,8 +296,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     }
     const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
     const actionsById = new Map<string, ResolvedActionContribution>();
-
-
     const resourcesById = new Map<string, ResolvedResourceContribution>();
     const promptAssetsById = new Map<string, ResolvedPromptAssetContribution>();
     const structuredMessagesById = new Map<string, ResolvedStructuredMessageContribution>();
@@ -342,10 +345,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         }
         actionsById.set(key, action);
     }
-
-
-
-
 
     for (const resource of resources) {
         const key = resolveContributionRegistryKey(resource);
@@ -402,7 +401,9 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         browserActionsById.set(id, action);
     }
 
-    resolveLocalSettingsDeclarations({ settings });
+    // Manifest ingestion owns declaration shape. Settings consumers validate
+    // field schemas/defaults at their own boundary, where a bad contribution
+    // can be reported without preventing unrelated catalog families from loading.
     for (const setting of settings) {
         const key = resolveContributionRegistryKey(setting);
         if (settingsById.has(key)) {
@@ -479,21 +480,13 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         }
         connectedAccountDescriptorsById.set(key, descriptor);
     }
-    const backupDestinations = freezeQualifiedContributions(inputs.backupDestinations ?? []);
-    const deploymentTargets = freezeQualifiedContributions(inputs.deploymentTargets ?? []);
-    const healthCheckKinds = freezeQualifiedContributions(inputs.healthCheckKinds ?? []);
-    const machineRecipes = freezeQualifiedContributions(inputs.machineRecipes ?? []);
-    const machineSetupPresets = freezeQualifiedContributions(inputs.machineSetupPresets ?? []);
-    const accessProviders = freezeQualifiedContributions(inputs.accessProviders ?? []);
-    const accessProvidersByContributionKey = new Map(accessProviders.map((entry) => [
-        resolveQualifiedContributionRegistryKey(entry), entry,
-    ] as const));
     return Object.freeze({
         introspectionContributions,
         uiViewsV2,
         openableContentViewers,
         uiSettingsGroupsV2,
         uiSettingsPagesV2,
+        uiListExtensionsV1,
         uiRenderersV2,
         uiTranslationsV2,
         composerReferences,
@@ -504,8 +497,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         agents: inputAgents,
         providers,
         actions,
-
-
         resources,
         promptAssets,
         structuredMessages,
@@ -535,11 +526,18 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         inputTypes,
         atmospherePictures,
         registrySources,
+        backupDestinations,
+        deploymentTargets,
+        healthCheckKinds,
         storeKinds,
+        machineRecipes,
+        machineSetupPresets,
         languageServers,
         skills,
         machineProvisioners,
         machineProvisionersByContributionKey: Object.freeze(machineProvisionersByContributionKey),
+        accessProviders,
+        accessProvidersByContributionKey: Object.freeze(accessProvidersByContributionKey),
         dragSources,
         workItems,
         dropTargets,
@@ -558,8 +556,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         immutableGenerationIdsByPluginId,
         occurrenceIdsByPluginId,
         actionsById: Object.freeze(actionsById),
-
-
         resourcesById: Object.freeze(resourcesById),
         promptAssetsById: Object.freeze(promptAssetsById),
         structuredMessagesById: Object.freeze(structuredMessagesById),
@@ -582,14 +578,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         agentDefinitionsById,
         providersByContributionKey: Object.freeze(providersByContributionKey),
         pluginDiagnosticsByPluginId,
-
-        backupDestinations,
-        deploymentTargets,
-        healthCheckKinds,
-        machineRecipes,
-        machineSetupPresets,
-        accessProviders,
-        accessProvidersByContributionKey: Object.freeze(accessProvidersByContributionKey),
     });
 }
 
@@ -633,7 +621,7 @@ function resolveCurrentAutomationEventAction(params: Readonly<{
         localId: actionRef.localId,
     });
     const id = buildQualifiedPluginContributionKey(identity);
-    const action = params.actionsById.get(id);
+    const action = readResolvedActionContribution(params, identity);
     const actionOccurrenceId = action?.pluginId
         ? params.occurrenceIdsByPluginId[action.pluginId] ?? null
         : null;
@@ -712,6 +700,11 @@ function deriveAutomationEligibleEvents(params: Readonly<{
                 occurrenceId,
                 title: eventTitle,
                 description: readEventPresentationText(event.definition.description),
+                ...(typeof event.definition.title === 'object' || typeof event.definition.description === 'object'
+                    ? { localizedPresentation: Object.freeze({
+                        title: event.definition.title,
+                        ...(event.definition.description === undefined ? {} : { description: event.definition.description }),
+                    }) } : {}),
                 ...(event.definition.payloadSchema === undefined
                     ? {}
                     : { payloadSchema: event.definition.payloadSchema }),
@@ -1011,8 +1004,6 @@ export function createMergedContributionRegistry(
         providers: Object.freeze([...(builtIn.providers ?? []), ...(plugin.providers ?? [])]),
         catalogEntries: Object.freeze([...(builtIn.catalogEntries ?? []), ...(plugin.catalogEntries ?? [])]),
         actions: Object.freeze([...(builtIn.actions ?? []), ...(plugin.actions ?? [])]),
-
-
         resources: Object.freeze([...(builtIn.resources ?? []), ...(plugin.resources ?? [])]),
         promptAssets: Object.freeze([...(builtIn.promptAssets ?? []), ...(plugin.promptAssets ?? [])]),
         uiViewsV2: Object.freeze([...(builtIn.uiViewsV2 ?? []), ...(plugin.uiViewsV2 ?? [])]),
@@ -1028,6 +1019,7 @@ export function createMergedContributionRegistry(
             ...(builtIn.uiSettingsPagesV2 ?? []),
             ...(plugin.uiSettingsPagesV2 ?? []),
         ]),
+        uiListExtensionsV1: Object.freeze([...(builtIn.uiListExtensionsV1 ?? []), ...(plugin.uiListExtensionsV1 ?? [])]),
         uiRenderersV2: Object.freeze([...(builtIn.uiRenderersV2 ?? []), ...(plugin.uiRenderersV2 ?? [])]),
         uiTranslationsV2: Object.freeze([...(builtIn.uiTranslationsV2 ?? []), ...(plugin.uiTranslationsV2 ?? [])]),
         composerReferences: Object.freeze([
@@ -1079,10 +1071,16 @@ export function createMergedContributionRegistry(
         inputTypes: Object.freeze([...(builtIn.inputTypes ?? []), ...(plugin.inputTypes ?? [])]),
         atmospherePictures: Object.freeze([...(builtIn.atmospherePictures ?? []), ...(plugin.atmospherePictures ?? [])]),
         registrySources: Object.freeze([...(builtIn.registrySources ?? []), ...(plugin.registrySources ?? [])]),
+        backupDestinations: Object.freeze([...(builtIn.backupDestinations ?? []), ...(plugin.backupDestinations ?? [])]),
+        deploymentTargets: Object.freeze([...(builtIn.deploymentTargets ?? []), ...(plugin.deploymentTargets ?? [])]),
+        healthCheckKinds: Object.freeze([...(builtIn.healthCheckKinds ?? []), ...(plugin.healthCheckKinds ?? [])]),
         storeKinds: Object.freeze([...(builtIn.storeKinds ?? []), ...(plugin.storeKinds ?? [])]),
+        machineRecipes: Object.freeze([...(builtIn.machineRecipes ?? []), ...(plugin.machineRecipes ?? [])]),
+        machineSetupPresets: Object.freeze([...(builtIn.machineSetupPresets ?? []), ...(plugin.machineSetupPresets ?? [])]),
         languageServers: Object.freeze([...(builtIn.languageServers ?? []), ...(plugin.languageServers ?? [])]),
         skills: Object.freeze([...(builtIn.skills ?? []), ...(plugin.skills ?? [])]),
         machineProvisioners: Object.freeze([...(builtIn.machineProvisioners ?? []), ...(plugin.machineProvisioners ?? [])]),
+        accessProviders: Object.freeze([...(builtIn.accessProviders ?? []), ...(plugin.accessProviders ?? [])]),
         dragSources: Object.freeze([...(builtIn.dragSources ?? []), ...(plugin.dragSources ?? [])]),
         workItems: Object.freeze([...(builtIn.workItems ?? []), ...(plugin.workItems ?? [])]),
         dropTargets: Object.freeze([...(builtIn.dropTargets ?? []), ...(plugin.dropTargets ?? [])]),
@@ -1142,10 +1140,6 @@ function compareActionContributes(left: ResolvedActionContribution, right: Resol
     }
     return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
 }
-
-
-
-
 
 function compareResourceContributes(left: ResolvedResourceContribution, right: ResolvedResourceContribution): number {
     if (left.definition.id !== right.definition.id) {
@@ -1371,5 +1365,3 @@ function compareExecutionRunProfileContributes(
 ): number {
     return left.definition.id.localeCompare(right.definition.id);
 }
-
-export { getResolvedContributionRegistry, getBuiltInCatalogEntries } from './builtIn/snapshot';

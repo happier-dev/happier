@@ -26,17 +26,8 @@ import { DiscussionInviteInputV1Schema } from '@happier-dev/protocol/discussions
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowAcceptedStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { WorkflowDiscussionPublicationUnavailable } from './workflowDiscussionPublication';
-
-const RECOVERABLE_INVOCATION_LIFECYCLES = [
-  'pending',
-  'waiting_for_capacity',
-  'admitting',
-  'running',
-  'waiting_for_approval',
-  'needs_attention',
-  'cancel_requested',
-  'outcome_uncertain',
-] as const;
+import { hasRetainedWorkflowActionOperation, LOST_ACTION_OPERATION_CODE } from './actionOperationObservation';
+import { WORKFLOW_RECOVERABLE_INVOCATION_LIFECYCLES_V1 as RECOVERABLE_INVOCATION_LIFECYCLES } from '@happier-dev/protocol/workflows';
 
 const TERMINAL_RUN_STATES = new Set([
   'succeeded', 'failed', 'cancelled', 'expired', 'dispatch_failed', 'skipped',
@@ -69,6 +60,7 @@ type RecoveryCandidate = Readonly<{ run: WorkflowRunSummaryV1; parentAttempt: nu
 type RecoveredInvocationPublisher = (input: Readonly<{
   run: WorkflowRunSummaryV1; accepted: WorkflowAcceptedSnapshotV1;
   invocation: WorkflowCoordinatorInvocation; encryption: WorkflowRunEncryptionV1; signal?: AbortSignal;
+  retryFailedPublications?: boolean;
 }>) => Promise<void>;
 
 export type WorkflowInvocationRecoveryObservation = (
@@ -92,6 +84,7 @@ type ReconciledInvocationTransition = Readonly<{
 type ReconciledInvocationCustody = Readonly<{
   invocationTransitions: readonly ReconciledInvocationTransition[];
   cancellationRequested: boolean;
+  publicationFailed: boolean;
 }>;
 
 function parseRunPage(value: unknown): Readonly<{ candidates: readonly RecoveryCandidate[]; nextCursor?: string }> {
@@ -117,9 +110,10 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
   requireActiveCustody?: boolean;
   onReviewEntered?: (entry: Readonly<{ runId: string }>) => Promise<void>;
   onInvocationSettled?: RecoveredInvocationPublisher;
+  retryFailedPublications?: boolean;
 } & (
   | Readonly<{ parentAttempt: number; expectedRevision?: never }>
-  | Readonly<{ expectedRevision: number; parentAttempt?: never }>
+  | Readonly<{ expectedRevision: number; parentAttempt?: number }>
 )>) {
   const readInvocation = async (recordId: string) => {
     const detailBody = record(await params.storage.execute({
@@ -195,18 +189,24 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const loaded = await loadProjectionStore(true);
     if (!loaded) throw new Error('workflow_invocation_content_unavailable');
     const terminal = await loaded.store.listByLifecycle({ runId: params.run.id, lifecycles: ['completed', 'failed', 'cancelled'] });
+    let terminalFailure: WorkflowDiscussionPublicationUnavailable | undefined;
     for (const invocation of terminal) {
       if (invocation.blockKind !== 'step' && invocation.blockKind !== 'action') continue;
       params.signal?.throwIfAborted();
       try {
         if (!params.onInvocationSettled) throw new WorkflowDiscussionPublicationUnavailable('workflow_discussion_publisher_unavailable');
         await params.onInvocationSettled({ run: loaded.run, accepted: loaded.accepted, invocation,
-          encryption: params.encryption, ...(params.signal ? { signal: params.signal } : {}) });
+          encryption: params.encryption, ...(params.retryFailedPublications ? { retryFailedPublications: true } : {}),
+          ...(params.signal ? { signal: params.signal } : {}) });
       } catch (error) {
         params.signal?.throwIfAborted();
         // A thrown append may have committed. Classify only at this recovery
         // boundary so another Run can recover without changing live execution.
         if (!(error instanceof WorkflowDiscussionPublicationUnavailable)) throw new WorkflowDiscussionPublicationUnavailable();
+        if (error.terminal && loaded.run.state === 'interrupted') {
+          terminalFailure ??= error;
+          continue;
+        }
         if (!error.terminal
           || !TERMINAL_RUN_STATES.has(loaded.run.state) && loaded.store.rootIndex?.lifecycle !== 'cancelled') throw error;
         // Terminal refusal ends only publication custody, never the accepted
@@ -216,6 +216,21 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
         });
       }
     }
+    return terminalFailure;
+  };
+  const failRootPublication = async (failure: WorkflowDiscussionPublicationUnavailable): Promise<ReconciledInvocationTransition | undefined> => {
+    const loaded = await loadProjectionStore(true);
+    const rootId = loaded?.store.rootIndex?.id;
+    if (!loaded || !rootId || loaded.run.state !== 'interrupted') return;
+    // Review holds are intentionally absent from the native recovery index.
+    if ((await loaded.store.listByLifecycle({ runId: params.run.id, lifecycles: ['waiting_for_review'] })).length > 0) return;
+    const root = await loaded.store.readByLogicalInvocation(rootId);
+    if (!root || root.lifecycle !== 'needs_attention' && !(root.lifecycle === 'failed' && root.reason === failure.code)) return;
+    const settled = root.lifecycle === 'failed' ? root : await loaded.store.commitFact({ key: root.key,
+      lifecycle: 'failed', reason: failure.code,
+      reasonMessage: 'The accepted result is saved, but its Discussion return was refused. The native execution result is unchanged.' });
+    return { id: settled.recordId, expectedLifecycle: 'failed', lifecycle: 'failed',
+      ...(settled.contentRevision ? { expectedContentRevision: settled.contentRevision } : {}) };
   };
   const resolveFrozenLeaf = async (invocation: NonNullable<Awaited<ReturnType<typeof readInvocation>>>) => {
     const accepted = await readAcceptedSnapshot();
@@ -329,6 +344,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const observation = observed.kind === 'stopped'
       ? { kind: 'cancelled' as const, code: observed.code }
       : observed.kind === 'completed' ? await adaptCompletion(invocation, observed) : observed;
+    const lostActionOperation = observation.kind === 'outcome_uncertain'
+      && observation.code === LOST_ACTION_OPERATION_CODE && hasRetainedWorkflowActionOperation(progress);
     const setupConsent = observation.kind === 'unresolved' && observation.setupConsentOutput
       && progress.execution?.kind === 'action' && !TERMINAL_RUN_STATES.has(params.run.state)
       && currentLifecycle !== 'cancel_requested' && currentLifecycle !== 'outcome_uncertain'
@@ -337,11 +354,13 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
       throw Object.assign(new Error('workflow_outcome_unresolved'), { code: 'workflow_outcome_unresolved' });
     }
     if (observation.kind === 'unresolved' && !setupConsent
-      || (params.expectedRevision !== undefined && observation.kind === 'outcome_uncertain')) return null;
-    if (currentLifecycle === 'outcome_uncertain' && observation.kind === 'outcome_uncertain') {
+      || (params.expectedRevision !== undefined && observation.kind === 'outcome_uncertain'
+        && !lostActionOperation)) return null;
+    if (currentLifecycle === 'outcome_uncertain' && observation.kind === 'outcome_uncertain'
+      && (!lostActionOperation || progress.reason?.code === LOST_ACTION_OPERATION_CODE)) {
       // Another leaf may have kept custody pending after this fact was committed.
-      // Re-observing definitive uncertainty resolves this pass without rewriting
-      // the same fact or requiring a success/cancellation that cannot be known.
+      // Only the first exact loss refines the reason; later passes cannot
+      // rewrite it or require a success/cancellation that cannot be known.
       return { id: exactIndex.id, expectedLifecycle: currentLifecycle, lifecycle: currentLifecycle,
         expectedContentRevision: exactIndex.contentRevision };
     }
@@ -369,6 +388,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
           ...((observation.kind === 'failed' || observation.kind === 'needs_attention') && observation.runtimeIssueV1 ? { runtimeIssueV1: observation.runtimeIssueV1 } : {}),
           ...((observation.kind === 'failed' || observation.kind === 'needs_attention') && observation.message !== undefined ? { reasonMessage: observation.message } : {}) } : {}),
       }, { previousLifecycle: currentLifecycle, lifecycle, observedAtMs: Date.now() }),
+      // Loss replaces the active reason code, not its retained diagnostic context.
+      ...(lostActionOperation ? { reason: { ...progress.reason, code: LOST_ACTION_OPERATION_CODE } } : {}),
       ...(observation.kind === 'completed' && (reviewRequired || generation) && !progress.review?.resultSource
         ? { review: { ...progress.review, resultSource: { kind: 'execution_input' as const } } } : {}),
       ...(stoppedWithUncertainEffects ? { uncertainPriorEffects: { activity: 'stopped' as const } } : {}),
@@ -411,7 +432,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     return { id: exactIndex.id, expectedLifecycle: lifecycle, lifecycle,
       ...(fresh?.index.lifecycle === lifecycle ? { expectedContentRevision: fresh.index.contentRevision } : {}) };
   };
-  return { readInvocation, readAcceptedSnapshot, resolveFrozenLeaf, commitFact, commitObservation, resolveFrozenActionContract, refreshRootStepProgress, publishSettledInvocations };
+  return { readInvocation, readAcceptedSnapshot, resolveFrozenLeaf, commitFact, commitObservation, resolveFrozenActionContract, refreshRootStepProgress, publishSettledInvocations, failRootPublication };
 }
 
 export type WorkflowDiscussionModelReservationReplay = Readonly<{
@@ -460,6 +481,8 @@ export async function isWorkflowDiscussionModelReservationCurrent(params: Workfl
     parentAttempt: 0, encryption: resolved.encryption, storage: params.storage, requireActiveCustody: true, ...options });
   const accepted = await reader.readAcceptedSnapshot();
   if (!accepted || accepted.machineId !== run.data.machineId || !sameStrictJsonValue(accepted.authorization, caller.authorization)
+    || !accepted.origin?.actionRequestAttributionV1
+      && !sameStrictJsonValue(accepted.origin?.authenticatedStarterV1 ?? null, caller.authenticatedStarterV1 ?? null)
     || accepted.origin?.discussion?.discussion.discussionId !== marker.discussionId
     || accepted.origin.actionPolicy?.surface !== marker.policySurface) return false;
   const invocation = await reader.readInvocation(invocationId);
@@ -507,8 +530,11 @@ async function recoverInvocationCustody(params: Readonly<{
   let allResolved = true;
   let cancellationRequested = false;
   const { parentAttempt, ...writerParams } = params;
-  const { readInvocation, commitObservation, commitFact, resolveFrozenActionContract, refreshRootStepProgress, publishSettledInvocations } = createWorkflowInvocationRecoveryFactWriter({
-    ...writerParams, ...(params.run.state === 'interrupted' ? { expectedRevision: params.run.revision } : { parentAttempt }),
+  const { readInvocation, commitObservation, commitFact, resolveFrozenActionContract, refreshRootStepProgress, publishSettledInvocations, failRootPublication } = createWorkflowInvocationRecoveryFactWriter({
+    ...writerParams, parentAttempt, ...(params.run.state === 'interrupted' ? { expectedRevision: params.run.revision } : {}),
+    // A new daemon must also retry a prior daemon's retained transient failure.
+    // Ordinary equal control hints still cannot re-fire failed publications.
+    retryFailedPublications: params.trigger !== 'control',
   });
   let cursor: string | undefined;
   do {
@@ -558,6 +584,20 @@ async function recoverInvocationCustody(params: Readonly<{
         continue;
       }
       if (progress.blockKind !== 'step' && progress.blockKind !== 'action') {
+        // An interrupted root is an orchestration hold, not native input custody.
+        // A proven publication refusal may settle it only after every child resolves.
+        if (params.run.state === 'interrupted' && progress.blockKind === 'root' && currentLifecycle === 'needs_attention') continue;
+        if (TERMINAL_RUN_STATES.has(params.run.state)
+          && currentLifecycle !== 'cancel_requested' && currentLifecycle !== 'outcome_uncertain') {
+          // A terminal interpreter cannot resume this structural frame. Its
+          // native children retain their exact approval/execution outcomes; only
+          // leaf observation and publication can still own outstanding effects.
+          const lifecycle = params.run.state === 'cancelled' ? 'cancelled' : 'failed';
+          if (await commitFact(exactIndex, lifecycle, storedContentEnvelope)) {
+            reconciled.push({ id: exactIndex.id, expectedLifecycle: lifecycle, lifecycle });
+          } else allResolved = false;
+          continue;
+        }
         if (currentLifecycle === 'cancel_requested') {
           const transition = await commitObservation(invocation, { kind: 'cancelled' });
           if (!transition) {
@@ -608,7 +648,13 @@ async function recoverInvocationCustody(params: Readonly<{
   if (!params.signal?.aborted) await refreshRootStepProgress();
   // Native completion may arrive after Stop has ended the parent. Publish its
   // committed leaf before retiring custody; a lost ACK reuses this same pass.
-  if (!params.signal?.aborted) await publishSettledInvocations();
+  const publicationFailure = !params.signal?.aborted ? await publishSettledInvocations() : undefined;
+  let publicationFailed = false;
+  if (allResolved && publicationFailure) {
+    const transition = await failRootPublication(publicationFailure);
+    if (transition) { reconciled.push(transition); publicationFailed = true; }
+    else allResolved = false;
+  }
   if (allResolved && !params.signal?.aborted && !cancellationRequested && !TERMINAL_RUN_STATES.has(params.run.state)) {
     // An earlier pass may have settled the cancelled root before its child
     // reached terminal. That durable root fact is no longer in the active index.
@@ -626,7 +672,7 @@ async function recoverInvocationCustody(params: Readonly<{
     }
   }
   return allResolved && !params.signal?.aborted
-    ? { invocationTransitions: reconciled, cancellationRequested }
+    ? { invocationTransitions: reconciled, cancellationRequested, publicationFailed }
     : null;
 }
 
@@ -637,6 +683,7 @@ async function settleRecoveredRun(params: Readonly<{
   storage: Storage;
   invocationTransitions: readonly ReconciledInvocationTransition[];
   cancellationRequested: boolean;
+  publicationFailed: boolean;
   signal?: AbortSignal;
 }>): Promise<void> {
   const readTransitions = async () => {
@@ -656,7 +703,8 @@ async function settleRecoveredRun(params: Readonly<{
   ));
   const current = body ? WorkflowRunSummaryV1Schema.safeParse(body.run) : null;
   if (!current?.success || current.data.workflowCustodyState === 'settled') return;
-  if ((!TERMINAL_RUN_STATES.has(current.data.state) && !params.cancellationRequested)
+  if ((!TERMINAL_RUN_STATES.has(current.data.state) && !params.cancellationRequested
+      && !(params.publicationFailed && current.data.state === 'interrupted'))
     || typeof body?.checkpointEnvelope !== 'string'
     || !parseWorkflowStoredContentEnvelopeV1(body.checkpointEnvelope)) return;
   try {
@@ -668,7 +716,7 @@ async function settleRecoveredRun(params: Readonly<{
       parentAttempt: params.parentAttempt,
       accountCurrentness: params.encryption.witness,
       expectedRevision: current.data.revision,
-      state: params.cancellationRequested ? 'cancelled' : current.data.state,
+      state: params.cancellationRequested ? 'cancelled' : params.publicationFailed && current.data.state === 'interrupted' ? 'failed' : current.data.state,
       checkpointEnvelope: body.checkpointEnvelope,
       custodyState: 'settled',
       invocationTransitions,
@@ -692,7 +740,7 @@ async function settleRecoveredRun(params: Readonly<{
         parentAttempt: params.parentAttempt,
         accountCurrentness: params.encryption.witness,
         expectedRevision: rejoined.data.revision,
-        state: params.cancellationRequested ? 'cancelled' : rejoined.data.state,
+        state: params.cancellationRequested ? 'cancelled' : params.publicationFailed && rejoined.data.state === 'interrupted' ? 'failed' : rejoined.data.state,
         checkpointEnvelope: rejoinBody.checkpointEnvelope,
         custodyState: 'settled',
         invocationTransitions,
@@ -718,9 +766,9 @@ export function createWorkflowRunRecoveryReader(params: Readonly<{
   reconcileInvocation: Parameters<typeof recoverInvocationCustody>[0]['reconcileInvocation'];
   onReviewEntered?: (entry: Readonly<{ runId: string }>) => Promise<void>;
   onInvocationSettled?: RecoveredInvocationPublisher;
-}>): (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal) => Promise<void> {
+}>): (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void> {
   let inFlight: Promise<void> | null = null;
-  let requestedRecovery: Readonly<{ trigger: WorkflowRecoveryTrigger; signal?: AbortSignal }> | null = null;
+  const requestedRecovery = new Map<string | undefined, Readonly<{ trigger: WorkflowRecoveryTrigger; signal?: AbortSignal }>>();
   const completionWaits = new Set<string>();
   const onReviewEntered = params.onReviewEntered ?? createWorkflowRunReviewEntryNotificationHandler();
   const recoverCandidate = async (
@@ -777,7 +825,7 @@ export function createWorkflowRunRecoveryReader(params: Readonly<{
       },
     });
     if (reconciledCustody
-      && (TERMINAL_RUN_STATES.has(run.state) || reconciledCustody.cancellationRequested)) {
+      && (TERMINAL_RUN_STATES.has(run.state) || reconciledCustody.cancellationRequested || reconciledCustody.publicationFailed)) {
       await settleRecoveredRun({
         runId: run.id,
         parentAttempt: candidate.parentAttempt,
@@ -785,16 +833,18 @@ export function createWorkflowRunRecoveryReader(params: Readonly<{
         storage: params.storage,
         invocationTransitions: reconciledCustody.invocationTransitions,
         cancellationRequested: reconciledCustody.cancellationRequested,
+        publicationFailed: reconciledCustody.publicationFailed,
         ...(signal ? { signal } : {}),
       });
     }
   };
-  const recoverIndexedCandidates = async (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal) => {
+  const recoverIndexedCandidates = async (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => {
     const accountEncryption = await params.resolveAccountEncryption(signal);
     let cursor: string | undefined;
     do {
       const page = parseRunPage(await params.storage.execute({
         operation: 'recovery.list',
+        ...(workflowRunId ? { runId: workflowRunId } : {}),
         pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
         ...(cursor ? { cursor } : {}),
       }, signal ? { signal } : {}));
@@ -804,6 +854,7 @@ export function createWorkflowRunRecoveryReader(params: Readonly<{
         catch (error) {
           signal?.throwIfAborted();
           if (!(error instanceof WorkflowDiscussionPublicationUnavailable)) throw error;
+          if (error.pending) continue;
           logger.warn('[workflowRecovery] Discussion publication unavailable; Run custody remains pending', {
             runId: candidate.run.id, errorCode: error.code,
           });
@@ -812,19 +863,19 @@ export function createWorkflowRunRecoveryReader(params: Readonly<{
       cursor = page.nextCursor;
     } while (cursor && !signal?.aborted);
   };
-  return async (trigger, signal) => {
+  return async (trigger, signal, workflowRunId) => {
     if (signal?.aborted) return;
-    requestedRecovery = { trigger, ...(signal ? { signal } : {}) };
+    requestedRecovery.set(workflowRunId, { trigger, ...(signal ? { signal } : {}) });
     if (inFlight) return await inFlight;
     const operation = (async () => {
       try {
-        // A release/control notification can arrive after the current pass
-        // captured its index page. Coalesce notifications, not the last wake:
-        // reread the index once more before releasing this recovery owner.
-        while (requestedRecovery) {
-          const request = requestedRecovery;
-          requestedRecovery = null;
-          await recoverIndexedCandidates(request.trigger, request.signal);
+        // Keep distinct Run hints, including arrivals after a page was read.
+        // Broad lifecycle recovery has its own demand and never replaces them.
+        while (requestedRecovery.size) {
+          const [runId, request] = requestedRecovery.entries().next().value!;
+          requestedRecovery.delete(runId);
+          if (request.signal?.aborted) continue;
+          await recoverIndexedCandidates(request.trigger, request.signal, runId);
         }
       } finally {
         inFlight = null;

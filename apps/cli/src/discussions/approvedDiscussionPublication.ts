@@ -1,8 +1,8 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { StoredApprovalRequestSchema, admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { requiresPresentUserDecisionForActionInputV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import type { DiscussionAgentPublisherRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionDetailsResponseV1Schema, buildDiscussionAttachmentBindingsV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionCreateInputV1Schema, DiscussionPostInputV1Schema, DiscussionDetailsResultV1Schema } from '@happier-dev/protocol/discussions/actions';
@@ -42,6 +42,10 @@ import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/fea
 export type ApprovedDiscussionSourceActionExecute = (actionId: ActionId, input: unknown,
   context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 
+function publicationRefusal(errorCode: string): import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure {
+  return { ok: false, errorCode, error: errorCode };
+}
+
 async function readExecutingDiscussionApproval(params: Readonly<{
   artifactId: string; credentials: StoredCredentials; serverId: string; serverUrl: string;
 }>) {
@@ -54,6 +58,10 @@ async function readExecutingDiscussionApproval(params: Readonly<{
   if (parsed.data.execution !== undefined) return publicationRefusal('discussion_replay_approval_already_executed');
   return { ok: true as const, approval: parsed.data };
 }
+
+export type ApprovedWorkflowDiscussionPublicationResult =
+  | Readonly<{ ok: true; value: DiscussionWorkflowPostPublicationV1 }>
+  | import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure;
 
 /** Same approved Artifact and accepted-result owner, without inventing Session custody. */
 export async function readApprovedWorkflowDiscussionPublication(params: Readonly<{
@@ -177,7 +185,7 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
     // The Artifact is Account-writable data. The replay owner requires actual
     // present-person ingress for human-mandated Actions; the effect port must
     // retain that same requirement rather than trusting its stored decision.
-    if (requiresPresentUserDecisionForActionInputV1(getActionSpec(approval.actionId), approval.actionArgs)
+    if (requiresPresentUserExecutionAuthorityForActionInputV1(getActionSpec(approval.actionId), approval.actionArgs)
       && params.callerAuthority !== 'present_user') return null;
     const origin = approval.executionOriginV1;
     if (origin.discussionReplyReturn && 'kind' in origin.discussionReplyReturn) return null;
@@ -275,7 +283,7 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       const body = params.request.request;
       if ((input.data.creationLocalId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'creation' })) !== body.creationLocalId
         || (input.data.firstMessage.localId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'first_message' })) !== body.firstMessage.localId) return null;
-      const currentness = await fetchAccountEncryptionCurrentness({ token: params.credentials.token,
+      const currentness = await fetchAccountEncryptionCurrentness({ credentials: params.credentials, token: params.credentials.token,
         serverBaseUrl: params.serverUrl, allowCredentialRecovery: false, signal: params.signal });
       const key = await openResourceDataKey({ credentials: params.credentials, mode: currentness.mode,
         dataEncryptionKey: body.dataEncryptionKey ?? null });
@@ -311,15 +319,7 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
     }
     let draftReview: DiscussionDraftReviewV1 | undefined;
     if (!('operation' in params.request)) {
-      const bound = bindDiscussionActionHttpRequestV1('discussion.participants.list', { discussionId: params.request.discussionId });
-      const response = await axios.get(params.serverUrl.replace(/\/+$/, '') + bound.path,
-        { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.credentials.token}` }, validateStatus: () => true, signal: params.signal });
-      if (response.status !== 200) return null;
-      const roster = DiscussionParticipantsListResponseV1Schema.parse(response.data);
-      const participant = roster.participants.find(row => row.participant.kind === 'session'
-        ? row.participant.sessionId === params.sessionId : 'sessionId' in row && row.sessionId === params.sessionId);
-      if (!participant || participant.answerPolicy === 'reads_only') return null;
-      if (participant.answerPolicy === 'drafts_for_approval' || params.callerAuthority === 'present_user') {
+      if (approval.discussionDraftReview || params.callerAuthority === 'present_user') {
         // The stored decision label alone is editable Account data. The exact
         // original executor must also receive authenticated human ingress.
         // Preserve its actual reviewer even if participant policy changed
@@ -343,11 +343,3 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       toolCallId: approval.origin?.toolCallId ?? origin.requestId };
   });
 }
-
-function publicationRefusal(errorCode: string): import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure {
-  return { ok: false, errorCode, error: errorCode };
-}
-
-export type ApprovedWorkflowDiscussionPublicationResult =
-  | Readonly<{ ok: true; value: DiscussionWorkflowPostPublicationV1 }>
-  | import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure;

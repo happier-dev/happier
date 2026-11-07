@@ -1,6 +1,4 @@
-import { createDaemonHostResourceRead } from './daemonHostResourceRead';
 import { join } from 'node:path';
-import { openDaemonActionReadWatch } from './actionReadWatch';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { DaemonPluginUiCaptureSourceReadRequestSchema, DaemonPluginUiCaptureSourceReadResponseSchema } from '@happier-dev/protocol/daemon/pluginCaptureSources';
@@ -8,8 +6,15 @@ import type { MachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/s
 import { registerPluginCaptureSource } from '@/daemon/peer/mediation/stream/pluginCaptureSource';
 import { DaemonPluginStoredImageReadRequestSchema, DaemonPluginStoredImageReadResponseSchema } from '@happier-dev/protocol/daemon/pluginStoredImage';
 
-import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { ApiMachineClient } from '@/api/apiMachine';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { projectMachineRecipeReadTarget } from '@/machines/setup/machineRecipeActionDeps';
+import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
+import { createDaemonHostResourceRead } from './daemonHostResourceRead';
+import { openDaemonActionReadWatch } from './actionReadWatch';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { configuration } from '@/configuration';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { resolveCliFeatureDecision, type CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
@@ -20,6 +25,7 @@ import { PluginSkillLibraryContentV1Schema } from '@happier-dev/protocol/prompts
 import { pluginSkillIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { skillsProjectionFamily } from '@/plugins/projection/registry/skills';
+import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema, DaemonPluginUiTargetedSurfaceMountV1Schema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginComposerReferenceSearchRequestSchema, DaemonPluginComposerReferenceSearchResponseSchema, DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema, PluginUiResourceBindingCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import type { DaemonPluginSettingsSnapshot, FeatureDecision, DaemonHostedWebFrameCapabilityV1, DaemonReactNativeHostRuntimeIdentityV1, ActionOperationDeclarationV1, DaemonContributionRegistryProjectionDescribeRequest, DaemonContributionRegistryProjectionDescribeResponse, DaemonPluginUiTargetedContributionsReadRequest, DaemonPluginUiTargetedContributionsReadResponse, PluginSettingFieldV2, DaemonPluginUiArtifactBytesReadResponse, DaemonPluginUiTargetedSurfaceMountV1, DaemonPluginStructuredMessageActionInvocationV1, MessageActionReferenceV1, MessageActionResolutionV1, PluginMachineExecutionOriginV1, PluginProjectionBrandAssetV2, PluginProjectionV2 } from '@happier-dev/protocol';
@@ -38,18 +44,21 @@ import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
 import { computePluginUiArtifactSha256DigestV1, isPluginUiHermesBytecodeArtifactV1, verifyPluginUiArtifactFileSetIntegrityV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { PluginUiSurfaceBindingV1Schema, selectPluginUiRendererChainMemberV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
 import { projectPluginUiTargetedContributionIdentityV1, projectPluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import { shareDaemonPluginUiTargetedContributionsReadResponse, type DaemonPluginUiTargetedContributionsSharedReadResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiArtifactDigestV1, PluginUiArtifactsManifestEntryV2, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { DaemonPluginSettingsWatchRequestSchema, DaemonPluginSettingsWatchResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { DaemonPluginSettingsWatchResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonContributionRegistryProjectionDescribeUnchangedResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { buildDaemonProjectionSections, buildDeferredDaemonProjectionSections, omitKnownDaemonProjectionSectionBodies, DAEMON_PROJECTION_SECTION_STALE_CODE,
-    type DaemonContributionRegistryProjectionSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildDeferredDaemonProjectionSections, DAEMON_PROJECTION_SECTION_STALE_CODE,
+    type DaemonProjectionSectionSha256 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginTargetedSourceDeclarationV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginUiResourceDeclarationsByPluginIdV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    createResolvedContributionRegistry,
+    resolveMergedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { pluginSourceCustodyEqual } from '@/plugins/runtime/sourceAuthority';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type {
@@ -65,6 +74,8 @@ import {
     buildResourcesById,
     buildPluginConnectedAccountAdmissionProjectionV2,
     buildPluginSettingsProjectionV2,
+    buildPluginWorkflowMaterializationProjectionV2,
+    buildPluginMountedActionsProjectionV2,
     buildPluginProjectionV2,
 } from '@/plugins/projection/registry/projection/v2';
 import {
@@ -129,6 +140,8 @@ import {
 } from './daemonPluginCollectionCandidatePreparation';
 
 export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
+    /** Same receiving Machine's synchronous, already-opened metadata fact. */
+    readMachineMetadataSnapshot?: (machineId: string) => ReturnType<ApiMachineClient['getMachineMetadataSnapshot']> | undefined;
     /** Same receiving Machine Action resolver used by the native service front door. */
     resolveHostActionExecutor?: Parameters<typeof createDaemonHostResourceRead>[0]['resolveActionExecutor'];
     readHostResourceAccountId?: () => string | null;
@@ -173,21 +186,8 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
     resolveServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
     processEnv?: NodeJS.ProcessEnv;
     reactNativeHostRuntime?: ReactNativeHostRuntimeReadinessIdentity;
-    observePluginExecution?: (request: Readonly<{
-        actionId: string;
-        title: string;
-        operation: ActionOperationDeclarationV1;
-        input: unknown;
-        requestId?: string;
-        sessionId?: string;
-        rpcContext?: RpcHandlerContext;
-        execute: (context: Readonly<{
-            signal: AbortSignal;
-            operationProgress: Readonly<{ update(progress: Readonly<{
-                label?: string; phase?: string; current?: number; total?: number;
-            }>): void }>;
-        }>) => Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
-    }>) => Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
+    observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
+    createFileDownloadPublisher?: (context: RpcHandlerContext) => NonNullable<ActionExecutorContext['prepareFileDownload']>;
     /** Current daemon-owned Connected Account purpose runtime for form choices. */
     resolveConnectedAccountPurposeBindingRuntime?: () => Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
@@ -226,7 +226,6 @@ function projectStructuredMessageActionFailure(result: Readonly<{
 type ProjectionBuild = Readonly<{
     inputKey: string;
     response: DaemonContributionRegistryProjectionDescribeResponse;
-    readSections?: () => DaemonContributionRegistryProjectionSectionsResponse;
     readDeferredSections?: () => ReturnType<typeof buildDeferredDaemonProjectionSections>;
 }>;
 
@@ -234,6 +233,8 @@ type ProjectionBuild = Readonly<{
  * One complete build per handler/output context and selection. Manifest reads
  * replace changed inputs; section pages finish the last advertised build.
  */
+/** Section content addresses hash on Node's native SHA-256; protocol owns the encoding. */
+const nodeSha256: DaemonProjectionSectionSha256 = bytes => createHash('sha256').update(bytes).digest();
 const defaultProjectionBuildScope = {};
 const projectionBuildsByScope = new WeakMap<object, Readonly<{
     complete: Map<string, ProjectionBuild>;
@@ -349,6 +350,7 @@ async function resolveHostedWebFeatureDecision(
 }
 
 type ProjectionOutputContext = Readonly<{
+    eventObservationBindings?: boolean;
     selection?: ProjectionClientContext['selection'];
     pluginUiHostRuntime?: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     requestedLocale?: string;
@@ -360,6 +362,7 @@ function createProjectionOutputContext(input: ProjectionOutputContext) {
     const reactNative = input.pluginUiHostRuntime?.reactNativeBundles;
     return {
         selection: input.selection ?? 'full',
+        eventObservationBindings: full && input.eventObservationBindings === true,
         // Artifact admission consumes physical-frame availability and the Host
         // UI API, rather than the app release/channel or adapter's name.
         pluginUiHostRuntime: full ? {
@@ -372,46 +375,29 @@ function createProjectionOutputContext(input: ProjectionOutputContext) {
     };
 }
 
-function createProjectionCacheKeyParts(input: Readonly<{
+function createProjectionCacheKeyParts(input: ProjectionOutputContext & Readonly<{
     generation: number;
     registryCacheToken: string;
-    selection?: ProjectionClientContext['selection'];
-    pluginUiHostRuntime?: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     brandAssetsByPluginId: Readonly<Record<string, PluginProjectionBrandAssetV2>>;
     pluginExecutionOriginsByPluginId: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
     pluginFinalPolicyCurrentRuntimesById?: ReadonlyMap<string, PluginFinalPolicyCurrentRuntime>;
     targetActivationFacts?: ProjectionLease['targetActivationFacts'];
     pluginDiagnosticsByPluginId?: ProjectionLease['pluginDiagnosticsByPluginId'];
-    /**
-     * The projected translation bundles depend on it, so two clients with
-     * different display locales must not share one cached body.
-     */
-    requestedLocale?: string;
 }>): Readonly<Record<string, string>> {
     const full = input.selection === undefined;
     const admission = input.selection === 'connectedAccountAdmission';
-    const hostedWeb = input.pluginUiHostRuntime?.hostedWeb;
-    const reactNative = input.pluginUiHostRuntime?.reactNativeBundles;
+    const execution = full || admission || input.selection === 'workflowMaterialization';
     const parts = {
         generation: input.generation,
         registryCacheToken: input.registryCacheToken,
-        selection: input.selection ?? 'full',
-        // Artifact admission consumes the Host UI API and physical-frame
-        // availability, not app release/channel or the frame adapter's name.
-        pluginUiHostRuntime: full ? {
-            hostedWebEnabled: hostedWeb?.featureEnabled === true,
-            hostedWebFrameAvailable: hostedWeb?.featureEnabled === true && hostedWeb.frameCapability !== undefined,
-            reactNativeBundlesEnabled: reactNative?.featureEnabled === true,
-            hostUiApiVersion: reactNative?.hostRuntime?.hostUiApiVersion ?? null,
-        } : null,
+        ...createProjectionOutputContext(input),
         brandAssetsByPluginId: full || admission ? input.brandAssetsByPluginId : null,
-        pluginExecutionOriginsByPluginId: full || admission ? input.pluginExecutionOriginsByPluginId : null,
-        pluginFinalPolicyCurrentRuntimes: (full || admission) && input.pluginFinalPolicyCurrentRuntimesById
+        pluginExecutionOriginsByPluginId: execution ? input.pluginExecutionOriginsByPluginId : null,
+        pluginFinalPolicyCurrentRuntimes: execution && input.pluginFinalPolicyCurrentRuntimesById
             ? [...input.pluginFinalPolicyCurrentRuntimesById.entries()].sort(([left], [right]) => left.localeCompare(right))
             : [],
-        targetActivationFacts: full || admission ? input.targetActivationFacts ?? null : null,
-        pluginDiagnosticsByPluginId: full || admission ? input.pluginDiagnosticsByPluginId ?? null : null,
-        requestedLocale: full ? input.requestedLocale ?? null : null,
+        targetActivationFacts: execution ? input.targetActivationFacts ?? null : null,
+        pluginDiagnosticsByPluginId: execution ? input.pluginDiagnosticsByPluginId ?? null : null,
     };
     return Object.fromEntries(Object.entries(parts).map(([name, value]) => [name, JSON.stringify(value)]));
 }
@@ -724,6 +710,7 @@ async function resolvePluginExecutionOriginsForProjection(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     registry: ResolvedContributionRegistry,
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null,
+    selectedPluginIds?: ReadonlySet<string>,
 ): Promise<Readonly<Record<string, PluginMachineExecutionOriginV1>>> {
     let context: Readonly<{ serverIdentityId: string; machineId: string }> | null = null;
     try {
@@ -737,7 +724,7 @@ async function resolvePluginExecutionOriginsForProjection(
 
     // Availability qualifies source eligibility; the admitted runtime custody
     // supplies source identity. Actual install-registry ids retain precedence.
-    const materializationIdsByPluginId = {
+    const materializationIdsByPluginId = selectedPluginIds ? {} : {
         ...Object.fromEntries((runtimeRegistry?.readReleaseLessMaterializations?.() ?? [])
             .filter((materialization) => materialization.enabled
                 && materialization.trustState === 'trusted'
@@ -746,7 +733,7 @@ async function resolvePluginExecutionOriginsForProjection(
         ...(registry.materializationIdsByPluginId ?? {}),
     };
     const originsByPluginId: Record<string, PluginMachineExecutionOriginV1> = {};
-    for (const pluginId of Object.keys(materializationIdsByPluginId)) {
+    for (const pluginId of selectedPluginIds ?? Object.keys(materializationIdsByPluginId)) {
         const origin = resolvePluginMachineExecutionOrigin({
             pluginId,
             context,
@@ -1296,8 +1283,9 @@ async function acquireProjectionContributionRegistryLease(
 }
 
 type ProjectionClientContext = Readonly<{
+    eventObservationBindings?: boolean;
     sectionRead?: Exclude<DaemonContributionRegistryProjectionDescribeRequest, { selection: string }>['sectionRead'];
-    selection?: 'agents' | 'settings' | 'connectedAccountAdmission';
+    selection?: Exclude<DaemonContributionRegistryProjectionDescribeRequest['selection'], 'skills' | 'mountedActions'>;
     locale?: string;
     reactNativeHostRuntimeIdentity?: DaemonReactNativeHostRuntimeIdentityV1;
     hostedWebFrameCapability?: DaemonHostedWebFrameCapabilityV1;
@@ -1345,6 +1333,7 @@ async function withProjectionBuild<T>(
         signal?.throwIfAborted();
         const full = context.selection === undefined;
         const admission = context.selection === 'connectedAccountAdmission';
+        const execution = full || admission || context.selection === 'workflowMaterialization';
         const resolvedPluginUiHostRuntime = full ? await resolveProjectionHostRuntime(opts, {
             ...(context.reactNativeHostRuntimeIdentity
                 ? { reactNativeHostRuntimeIdentity: context.reactNativeHostRuntimeIdentity }
@@ -1365,19 +1354,21 @@ async function withProjectionBuild<T>(
             selection: context.selection,
             pluginUiHostRuntime: resolvedPluginUiHostRuntime,
             requestedLocale: context.locale,
+            eventObservationBindings: context.eventObservationBindings,
         }));
         // A page finishes the immutable revision already advertised to this
         // output context. Its plugin-wide facts belong to that build, rather
         // than being read and serialized again for every body page.
         const complete = lease.runtimeRegistry ? projectionBuildsByKey.get(contextKey) : undefined;
         if (context.sectionRead && complete) return await consume(complete, lease);
-        const pluginExecutionOriginsByPluginId = full || admission ? await resolvePluginExecutionOriginsForProjection(
+        const pluginExecutionOriginsByPluginId = execution ? await resolvePluginExecutionOriginsForProjection(
             opts,
             lease.registry,
             lease.runtimeRegistry,
         ) : {};
         const baseInputs: ProjectionBuildInputs = {
             generation,
+            eventObservationBindings: full && context.eventObservationBindings === true,
             ...(context.selection ? { selection: context.selection } : {}),
             ...(resolvedPluginUiHostRuntime ? { resolvedPluginUiHostRuntime } : {}),
             brandAssetsByPluginId: {},
@@ -1399,6 +1390,7 @@ async function withProjectionBuild<T>(
                 pluginFinalPolicyCurrentRuntimesById: lease.runtimeRegistry?.pluginFinalPolicyCurrentRuntimesById,
             };
             const parts = createProjectionCacheKeyParts({ generation, registryCacheToken: lease.cacheToken,
+                eventObservationBindings: currentInputs.eventObservationBindings,
                 selection: context.selection, pluginUiHostRuntime: resolvedPluginUiHostRuntime,
                 brandAssetsByPluginId: currentInputs.brandAssetsByPluginId,
                 pluginExecutionOriginsByPluginId: currentInputs.pluginExecutionOriginsByPluginId,
@@ -1425,7 +1417,7 @@ async function withProjectionBuild<T>(
             const installedPackages = full || admission
                 ? await resolveInstalledPackagesForProjection(opts, lease.runtimeRegistry) : [];
             const prepared = capture({ ...baseInputs, installedPackages,
-                pluginExecutionOriginsByPluginId: full || admission
+                pluginExecutionOriginsByPluginId: execution
                     ? await resolvePluginExecutionOriginsForProjection(opts, lease.registry, lease.runtimeRegistry) : {},
             });
             const cachedAfterPreparation = readCached(prepared.inputKey);
@@ -1440,11 +1432,9 @@ async function withProjectionBuild<T>(
             const response = full ? Object.freeze({ ...content,
                 projectionDigest: createHash('sha256').update(JSON.stringify(content)).digest('hex'),
             }) : content;
-            let sections: DaemonContributionRegistryProjectionSectionsResponse | undefined;
             let deferredSections: ReturnType<typeof buildDeferredDaemonProjectionSections> | undefined;
             const build = Object.freeze({ inputKey: prepared.inputKey, response,
-                ...(full ? { readDeferredSections: () => deferredSections ??= buildDeferredDaemonProjectionSections(response) } : {}),
-                ...(full ? { readSections: () => sections ??= buildDaemonProjectionSections(response) } : {}) });
+                ...(full ? { readDeferredSections: () => deferredSections ??= buildDeferredDaemonProjectionSections(response, { sha256: nodeSha256 }) } : {}) });
             if (lease.runtimeRegistry) {
                 projectionBuildsByKey.set(contextKey, build);
             }
@@ -1467,6 +1457,7 @@ async function withProjectionBuild<T>(
 
 type ProjectionBuildInputs = Readonly<{
     generation: number;
+    eventObservationBindings?: boolean;
     selection?: ProjectionClientContext['selection'];
     resolvedPluginUiHostRuntime?: ReturnType<typeof resolvePluginUiProjectionHostRuntime>;
     installedPackages: readonly PluginCatalogEntry[];
@@ -1511,9 +1502,18 @@ function buildSelectedProjection(
         projection: buildPluginSettingsProjectionV2({ registry: lease.registry, generation: inputs.generation }) };
     if (inputs.selection === 'agents') return { protocolVersion: 1, projection: {
         v: 2, generation: inputs.generation, agentsById: buildAgentsById(lease.registry, inputs.generation),
-        installedPackagesById: {}, actionsById: {},   resourcesById: {},
+        installedPackagesById: {}, actionsById: {}, resourcesById: {},
         settingsById: {}, familiesById: {}, diagnostics: [],
     } };
+    if (inputs.selection === 'workflowMaterialization') return { protocolVersion: 1,
+        projection: buildPluginWorkflowMaterializationProjectionV2({
+            registry: lease.registry, generation: inputs.generation,
+            pluginExecutionOriginsByPluginId: inputs.pluginExecutionOriginsByPluginId,
+            resolveActionPresentUserGatePolicy: lease.runtimeRegistry?.resolveActionPresentUserGatePolicy,
+            pluginFinalPolicyCurrentRuntimesById: inputs.pluginFinalPolicyCurrentRuntimesById,
+            introspectionRuntimeSnapshot: projectActivationIntrospectionRuntimeSnapshot(lease, inputs.generation),
+        }),
+    };
     if (inputs.selection === 'connectedAccountAdmission') return { protocolVersion: 1,
         projection: buildPluginConnectedAccountAdmissionProjectionV2({
             registry: lease.registry, generation: inputs.generation, installedPackages: inputs.installedPackages,
@@ -1539,6 +1539,7 @@ function buildProjection(
     const {
         generation,
         resolvedPluginUiHostRuntime,
+        eventObservationBindings,
         brandAssetsByPluginId,
         pluginExecutionOriginsByPluginId,
         pluginFinalPolicyCurrentRuntimesById,
@@ -1656,15 +1657,32 @@ function buildProjection(
             }),
         })
         : undefined;
+    const observerSources = new Map((lease.runtimeRegistry?.readReleaseLessMaterializations?.() ?? [])
+        .map(materialization => [materialization.pluginId, materialization] as const));
     const automationEligibleEvents = (lease.registry.automationEligibleEvents ?? []).map((entry) => {
         const pluginId = entry.event.identity.pluginId;
         const sourceCustody = lease.runtimeRegistry?.readPluginSourceCustody?.(
             pluginId,
         );
+        const executionOrigin = pluginExecutionOriginsByPluginId[pluginId];
+        // This runtime's release-less declaration has no Machine/Home coordinates;
+        // the same lease's execution origin supplies them. The Account census is
+        // descriptive and never supplies observer proof.
+        const reportedSource = observerSources.get(pluginId);
+        const materializationRef = executionOrigin && 'materializationRef' in executionOrigin
+            ? executionOrigin.materializationRef
+            : executionOrigin && 'sourceRef' in executionOrigin && reportedSource?.enabled
+                && reportedSource.trustState === 'trusted' ? {
+                    machineId: executionOrigin.sourceRef.machineId, pluginId, materializationId: reportedSource.materializationId,
+                } : null;
+        const observationBinding = eventObservationBindings && executionOrigin && materializationRef
+            && lease.runtimeRegistry?.readPluginOccurrenceId?.(pluginId) === entry.event.occurrenceId
+            ? { executionOrigin, materializationRef } : null;
         const currentEntry = sourceCustody
             ? Object.freeze({
                 ...entry,
                 event: Object.freeze({ ...entry.event, sourceCustody }),
+                ...(observationBinding ? { observationBinding } : {}),
             })
             : null;
         if (!currentEntry) return null;
@@ -1691,10 +1709,88 @@ async function describeProjection(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     request: DaemonContributionRegistryProjectionDescribeRequest,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
 ): Promise<DaemonContributionRegistryProjectionDescribeResponse | DaemonContributionRegistryProjectionDescribeUnchangedResponse
-    | DaemonContributionRegistryProjectionSectionsResponse
     | ReturnType<typeof buildDeferredDaemonProjectionSections>['manifest']
     | NonNullable<ReturnType<ReturnType<typeof buildDeferredDaemonProjectionSections>['read']>>> {
+    if (request.selection === 'mountedActions') {
+        const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+        const lease = await acquireProjectionContributionRegistryLease(opts, generation, true);
+        try {
+            signal?.throwIfAborted();
+            const assertCallersCurrent = () => {
+                signal?.throwIfAborted();
+                for (const caller of request.callers) {
+                    const sourceCustody = lease.runtimeRegistry?.readPluginSourceCustody?.(caller.pluginId);
+                    if (lease.runtimeRegistry?.readPluginOccurrenceId?.(caller.pluginId) !== caller.occurrenceId
+                        || !sourceCustody || !pluginSourceCustodyEqual(sourceCustody, caller.sourceCustody)) {
+                        throw new PluginError({ code: 'plugin_occurrence_stale', message: 'Mounted caller is no longer current' });
+                    }
+                }
+            };
+            assertCallersCurrent();
+            const pluginIds = new Set([...request.callers.map(caller => caller.pluginId), ...request.actions.map(action => action.pluginId)]);
+            const selectedLease = { ...lease, registry: { ...lease.registry,
+                activationTargets: lease.registry.activationTargets.filter(target => pluginIds.has(target.pluginId)),
+                introspectionContributions: lease.registry.introspectionContributions?.filter(candidate => pluginIds.has(candidate.pluginId)),
+            }, targetActivationFacts: lease.targetActivationFacts?.filter(fact => pluginIds.has(fact.pluginId)) ?? null };
+            const pluginExecutionOriginsByPluginId = await resolvePluginExecutionOriginsForProjection(opts, lease.registry, lease.runtimeRegistry, pluginIds);
+            // Only portable Action compatibility is projected here; renderer
+            // feature decisions and physical hosted frames are not mounted demand.
+            const pluginUiHostRuntime = resolvePluginUiProjectionHostRuntime({
+                hostAppVersion: configuration.currentCliVersion,
+                reactNativeHostRuntime: request.reactNativeHostRuntimeIdentity
+                    ? toReactNativeHostRuntimeReadinessIdentity(request.reactNativeHostRuntimeIdentity)
+                    : opts?.reactNativeHostRuntime,
+            });
+            assertCallersCurrent();
+            return { protocolVersion: 1, projection: buildPluginMountedActionsProjectionV2({
+                registry: lease.registry, generation, actions: request.actions,
+                requestedLocale: request.locale,
+                callerPluginIds: request.callers.map(caller => caller.pluginId),
+                pluginExecutionOriginsByPluginId,
+                pluginUiHostRuntime,
+                resolveActionPresentUserGatePolicy: lease.runtimeRegistry?.resolveActionPresentUserGatePolicy,
+                pluginFinalPolicyCurrentRuntimesById: lease.runtimeRegistry?.pluginFinalPolicyCurrentRuntimesById,
+                introspectionRuntimeSnapshot: projectActivationIntrospectionRuntimeSnapshot(selectedLease, generation),
+            }) };
+        } finally { await lease.release(); }
+    }
+    if (request.selection === 'machineRecipes') {
+        const assertLocal = async () => {
+            signal?.throwIfAborted();
+            if (context?.machineAdmission && context.machineAdmission.machineId !== request.machineId) {
+                throw new RpcError('Machine admission is no longer current', RPC_ERROR_CODES.FORBIDDEN);
+            }
+            signal?.throwIfAborted();
+        };
+        await assertLocal();
+        const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+        await assertLocal();
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        let response: DaemonContributionRegistryProjectionDescribeResponse;
+        try {
+            await assertLocal();
+            const registry = lease.registry.contributes;
+            // Presence is the availability witness: a supported empty family
+            // must not be confused with an older/unavailable family producer.
+            const family = registry.machineRecipes === undefined ? undefined
+                : buildPluginProjectionFamilyV2({ registry, generation,
+                    readPluginBrandAsset: pluginId => lease.registry.getPluginBrandAsset?.(pluginId),
+                    ...(request.recipeRefs !== undefined ? { machineRecipeRefs: request.recipeRefs } : {}),
+                }, machineRecipesProjectionFamily);
+            const target = projectMachineRecipeReadTarget(opts?.readMachineMetadataSnapshot?.(request.machineId));
+            response = { protocolVersion: 1, ...(target ? { machineRecipeTarget: target } : {}), projection: {
+                v: 2, generation,
+                familiesById: family ? { machineRecipes: family } : {},
+                installedPackagesById: {}, agentsById: {}, actionsById: {},
+                resourcesById: {}, settingsById: {}, diagnostics: [],
+            } };
+        } finally { await lease.release(); }
+        // Disposal may await; retain local cancellation and exact-target binding.
+        await assertLocal();
+        return response;
+    }
     if (request.selection === 'skills') {
         const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
         const lease = await acquireProjectionContributionRegistryLease(opts, generation, true);
@@ -1718,8 +1814,6 @@ async function describeProjection(
                     agentsById: {},
                     installedPackagesById: {},
                     actionsById: {},
-
-
                     resourcesById: {},
                     settingsById: {},
                     diagnostics: [],
@@ -1734,25 +1828,23 @@ async function describeProjection(
         locale: request.locale ?? null,
     });
     signal?.throwIfAborted();
-    return await withProjectionBuild(opts, request, request.selection === 'connectedAccountAdmission', (build) => {
+    return await withProjectionBuild(opts, { ...request, eventObservationBindings: request.selection === undefined
+        && request.supportedEventObservationBindingVersions?.includes(1) === true },
+        request.selection === 'connectedAccountAdmission' || request.selection === 'workflowMaterialization', (build) => {
         signal?.throwIfAborted();
         if (request.selection === undefined && request.deferredSections === true && build.readDeferredSections) {
             if (request.sectionRead) {
-                const body = build.readDeferredSections().read(request.sectionRead.digest, request.sectionRead.offset, request.sectionRead.includeDigests, request.sectionFrameVersion);
+                const body = build.readDeferredSections().read(request.sectionRead.digest, request.sectionRead.offset, request.sectionRead.includeDigests);
                 if (!body) throw new RpcError('Projection section is no longer available', DAEMON_PROJECTION_SECTION_STALE_CODE);
                 return body;
             }
             if (request.knownProjectionDigest !== build.response.projectionDigest) {
-                const manifest = build.readDeferredSections().manifest;
-                return request.supportedSectionFrameVersions?.includes(2) ? { ...manifest, sectionFrameVersion: 2 as const } : manifest;
+                return build.readDeferredSections().manifest;
             }
         }
         if (request.selection === undefined && request.knownProjectionDigest !== undefined
             && request.knownProjectionDigest === build.response.projectionDigest) {
             return { protocolVersion: 1, unchanged: true, projectionDigest: request.knownProjectionDigest } satisfies DaemonContributionRegistryProjectionDescribeUnchangedResponse;
-        }
-        if (request.selection === undefined && request.knownSectionDigests !== undefined && build.readSections) {
-            return omitKnownDaemonProjectionSectionBodies(build.readSections(), request.knownSectionDigests);
         }
         return build.response;
     }, signal);
@@ -1766,7 +1858,7 @@ async function describeProjection(
 async function readTargetedContributions(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
     request: DaemonPluginUiTargetedContributionsReadRequest,
-): Promise<DaemonPluginUiTargetedContributionsReadResponse> {
+): Promise<Exclude<DaemonPluginUiTargetedContributionsReadResponse, { status: 'current' }> | DaemonPluginUiTargetedContributionsSharedReadResponse> {
     const lease = await acquireProjectionRuntimeRegistryLease(opts);
     try {
         const runtimeRegistry = lease.registry;
@@ -1779,7 +1871,10 @@ async function readTargetedContributions(
             for (const declaration of declarations) {
                 const contributions = declaration.manifest.contributes.targetedPluginContributions
                     .filter((entry) => entry.target.pluginId === request.pluginId);
-                if (contributions.length === 0) continue;
+                // The mounted Account target needs the execution target's
+                // current custody as well as the provider declarations. It
+                // need not contribute to its own point to supply that fact.
+                if (contributions.length === 0 && declaration.pluginId !== request.pluginId) continue;
                 const occurrenceId = runtimeRegistry.readPluginOccurrenceId(declaration.pluginId);
                 if (!occurrenceId) continue;
                 const sourceCustody = runtimeRegistry.readPluginSourceCustody(declaration.pluginId);
@@ -1791,7 +1886,12 @@ async function readTargetedContributions(
                 // Select their references here; the receiver validates the wire.
                 sourceDeclarations.push({
                     manifest: { id: declaration.pluginId, contributes: {
-                        actions: declaration.manifest.contributes.actions.filter((entry) => actionIds.has(entry.id)),
+                        // An Account Action can delegate to its own native
+                        // helper without that helper being a targeted operation.
+                        // This is declaration projection; the Machine receiver
+                        // still owns executable admission and handler lookup.
+                        actions: declaration.manifest.contributes.actions.filter((entry) => actionIds.has(entry.id)
+                            || (declaration.pluginId === request.pluginId && entry.execution.target === 'daemon')),
                         pluginContributionPoints: [],
                         targetedPluginContributions: contributions,
                         ui: { renderers: declaration.manifest.contributes.ui.renderers.filter((entry) => rendererIds.has(entry.id)) },
@@ -1854,7 +1954,7 @@ async function readTargetedContributions(
                 }
             }
             if (renderers.length === 0) {
-                return { status: 'current', targetedContributions, targetedSurfaceMounts: [], resourceDeclarationsByPluginId };
+                return shareDaemonPluginUiTargetedContributionsReadResponse({ status: 'current', targetedContributions, targetedSurfaceMounts: [], resourceDeclarationsByPluginId });
             }
             const pluginUiHostRuntime = await resolveProjectionHostRuntime(opts, request);
             const modelsByRendererKey = typeof runtimeRegistry.generation === 'number'
@@ -1884,7 +1984,7 @@ async function readTargetedContributions(
                 pluginUiHostRuntime,
                 pluginExecutionOriginsByPluginId,
             }, pluginUiProjectionFamily);
-            return {
+            return shareDaemonPluginUiTargetedContributionsReadResponse({
                 status: 'current',
                 targetedContributions,
                 resourceDeclarationsByPluginId,
@@ -1897,7 +1997,7 @@ async function readTargetedContributions(
                     modelsByRendererKey,
                     pluginExecutionOriginsByPluginId,
                 })],
-            };
+            });
         } catch (error) {
             if (error instanceof PluginError) {
                 logger.warn('[PLUGIN RUNTIME] Targeted contributions are unavailable for a mounted target', {
@@ -2209,6 +2309,42 @@ function readPluginUiResourceWatchFailure(error: unknown): Readonly<{
     return { ok: false, code, reason };
 }
 
+/** One verified Artifact reader for prepared transfers and host-local consumers. */
+export async function readDaemonPluginUiArtifactBytes(
+    raw: unknown,
+    opts?: DaemonContributionRegistryProjectionRegistrationOptions,
+): Promise<DaemonPluginUiArtifactBytesReadResponse> {
+    const request = DaemonPluginUiArtifactBytesReadRequestSchema.safeParse(raw);
+    if (!request.success) {
+        return artifactBytesError('invalid_request', ['plugin_ui_artifact_bytes_request_invalid']);
+    }
+
+    const lease = await acquireProjectionRuntimeRegistryLease(opts);
+    try {
+        if (request.data.artifactFamily === 'reactNative') {
+            const owner = [
+                ...collectResolvedGeneratedReactNativeArtifactOwners(lease.registry.contributes),
+                ...collectResolvedGeneratedReactNativeClientContributionArtifactOwners(lease.registry.contributes),
+            ]
+                .filter(candidate => findGeneratedReactNativeArtifactGraph({ owner: candidate, identity: request.data.cacheIdentity }) !== null)
+                .sort((left, right) => left.pluginId.localeCompare(right.pluginId) || left.contributionId.localeCompare(right.contributionId))[0] ?? null;
+            if (!owner) {
+                return artifactBytesError('artifact_not_found', ['generated_react_native_artifact_owner_not_found']);
+            }
+            return await readGeneratedReactNativeArtifactBytesByCacheIdentity({
+                registry: lease.registry.contributes, owner, identity: request.data.cacheIdentity,
+                ...(opts?.readArtifactFile ? { readArtifactFile: opts.readArtifactFile } : {}),
+            });
+        }
+        return await readHostedWebArtifactBytesByCacheIdentity({
+            registry: lease.registry.contributes, identity: request.data.cacheIdentity,
+            ...(opts?.readArtifactFile ? { readArtifactFile: opts.readArtifactFile } : {}),
+        });
+    } finally {
+        await lease.release();
+    }
+}
+
 export function registerDaemonContributionRegistryProjectionHandler(
     rpc: RpcHandlerRegistrar,
     opts?: DaemonContributionRegistryProjectionRegistrationOptions,
@@ -2238,7 +2374,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
     rpc.registerHandler(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async (raw: unknown, context?: RpcHandlerContext) => {
         // Parse input for forward compatibility and to avoid accepting accidental session-scoped payloads.
         const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(raw);
-        return await describeProjection(opts, request, context?.signal);
+        return await describeProjection(opts, request, context?.signal, context);
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ, async (raw: unknown) => {
         const request = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(raw);
@@ -2911,7 +3047,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 },
                 registry: lease.registry,
                 ...(opts?.resolveAccountPluginExecutionSelection ? {
-                    resolveAccountExecutionSelection: (pluginId: string) => opts.resolveAccountPluginExecutionSelection!(pluginId, lease.registry, context?.signal),
+                    resolveAccountExecutionSelection: (pluginId: string) => opts.resolveAccountPluginExecutionSelection!(pluginId, context?.signal),
                 } : {}),
                 resolveCurrentPluginMaterializationRef:
                     lease.resolveCurrentPluginMaterializationRef,
@@ -3027,14 +3163,6 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     });
                 }
             }
-            const trackedOperation = resolvedAction?.definition.execution?.target === 'daemon'
-                ? resolvedAction.definition.operation
-                : undefined;
-            let preparedTrackedInvocation: Readonly<{
-                run(operationProgress?: Readonly<{ update(progress: Readonly<{
-                    label?: string; phase?: string; current?: number; total?: number;
-                }>): void }>): Promise<unknown>;
-            }> | null = null;
             const attempt = await traceStage('contributed.execute', () => executeContributedAction({
                 runtimeRegistry: lease.registry,
                 ...(readObservation ? { readObservation } : {}),
@@ -3044,12 +3172,23 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 expectedContributorOccurrenceId: request.data.expectedContributorOccurrenceId,
                 approvalContext: {
                     ...context?.localActionContext,
+                    ...buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
+                        ...(defaultSessionId ? { defaultSessionId } : {}) }),
+                    ...(context && opts?.createFileDownloadPublisher ? { prepareFileDownload: opts.createFileDownloadPublisher(context) } : {}),
                     authority: context?.callerAuthority ?? context?.localActionContext?.authority ?? 'account_automation',
                     ...(context?.localActionContext?.actionRequestId ?? context?.transportRequestId
                         ? { actionRequestId: context?.localActionContext?.actionRequestId ?? context?.transportRequestId } : {}),
                 },
-                requestCurrentIntent: createPresentUserCurrentIntent(request.data.presentUserIntent, opts?.requestCurrentIntent),
+                // A finite native Account caller cannot publish a live-only child
+                // approval to its caller while this RPC is awaiting that decision.
+                requestCurrentIntent: createPresentUserCurrentIntent(request.data.presentUserIntent,
+                    invocationSurface === 'cli' && invocation?.kind === 'clientPluginAction'
+                        && mountedCaller.status === 'available' && mountedCaller.approvalInputCustody === 'live_only'
+                        ? undefined : opts?.requestCurrentIntent),
                 context: {
+                    ...(opts?.observePluginExecution ? { observePluginExecution: opts.observePluginExecution } : {}),
+                    ...(context ? { operationRpcContext: context } : {}),
+                    ...(request.data.requestId ? { operationRequestId: request.data.requestId } : {}),
                     // Keep the physical origin for confirmation. Only an admitted
                     // client/Account Action grants nested plugin-surface semantics;
                     // an ordinary mounted UI press does not.
@@ -3073,18 +3212,11 @@ export function registerDaemonContributionRegistryProjectionHandler(
                         : {}),
                     ...(defaultSessionId ? { defaultSessionId } : {}),
                     ...(messageAction ? { messageAction } : {}),
-                    ...(context?.signal && !(trackedOperation && opts?.observePluginExecution)
+                    ...(context?.signal
                         ? { signal: context.signal }
                         : {}),
                     ...(context?.localActionContext?.operationProgress
                         ? { operationProgress: context.localActionContext.operationProgress }
-                        : {}),
-                    ...(trackedOperation && opts?.observePluginExecution
-                        ? {
-                            capturePreparedInvocation: (invocation) => {
-                                preparedTrackedInvocation = invocation;
-                            },
-                        }
                         : {}),
                 },
             }));
@@ -3096,40 +3228,6 @@ export function registerDaemonContributionRegistryProjectionHandler(
             }
             if (attempt.result.ok && attempt.result.deferredApprovalArtifactId !== undefined) {
                 return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result: attempt.result.result });
-            }
-            if (trackedOperation && opts?.observePluginExecution) {
-                if (!attempt.result.ok || !preparedTrackedInvocation || !resolvedAction) {
-                    return attempt.result.ok
-                        ? DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: false, code: 'plugin_action_unavailable' })
-                        : projectStructuredMessageActionFailure(attempt.result);
-                }
-                const rawTitle = resolvedAction.definition.title;
-                const title = typeof rawTitle === 'string'
-                    ? rawTitle
-                    : (rawTitle as Readonly<{ fallback: string }>).fallback;
-                const observed = await opts.observePluginExecution({
-                    actionId: request.data.qualifiedActionId,
-                    title,
-                    operation: trackedOperation,
-                    input: request.data.input,
-                    ...(context ? { rpcContext: context } : {}),
-                    ...(request.data.requestId ? { requestId: request.data.requestId } : {}),
-                    ...(request.data.sessionId ? { sessionId: request.data.sessionId } : {}),
-                    execute: async ({ operationProgress }) => {
-                        const rawResult = await preparedTrackedInvocation!.run(operationProgress);
-                        const result = rawResult && typeof rawResult === 'object' && !Array.isArray(rawResult)
-                            ? rawResult as Record<string, unknown>
-                            : {};
-                        if (result.ok === true) return { ok: true, result: result.result };
-                        const errorCode = typeof result.errorCode === 'string'
-                            ? result.errorCode
-                            : 'plugin_action_execution_failed';
-                        return { ok: false, errorCode, error: typeof result.error === 'string' ? result.error : errorCode };
-                    },
-                });
-                return observed.ok
-                    ? DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result: observed.result })
-                    : projectStructuredMessageActionFailure(observed);
             }
             if (attempt.result.ok) {
                 return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
@@ -3240,6 +3338,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
             const options = await runtime.listActionFormConnectedAccountOptions({
                 purpose: authorization.purpose,
                 serviceRefs: authorization.serviceRefs,
+                ...(authorization.nativeServicePath ? { nativeServicePath: authorization.nativeServicePath } : {}),
                 signal: context?.signal ?? new AbortController().signal,
             });
             const currentAuthorization = resolveRegistryConnectedAccountActionFormPurposeAuthorization({
@@ -3253,6 +3352,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 || currentAuthorization.action.pluginId !== authorization.action.pluginId
                 || currentAuthorization.action.localId !== authorization.action.localId
                 || currentAuthorization.purpose.purpose !== authorization.purpose.purpose
+                || currentAuthorization.nativeServicePath !== authorization.nativeServicePath
                 || !sameConnectedAccountServiceRefs(
                     currentAuthorization.serviceRefs,
                     authorization.serviceRefs,
@@ -3283,48 +3383,6 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     ? error.code
                     : 'plugin_action_form_connected_account_options_unavailable',
             });
-        } finally {
-            await lease.release();
-        }
-    });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ, async (raw: unknown) => {
-        const request = DaemonPluginUiArtifactBytesReadRequestSchema.safeParse(raw);
-        if (!request.success) {
-            return artifactBytesError('invalid_request', ['plugin_ui_artifact_bytes_request_invalid']);
-        }
-
-        const lease = await acquireProjectionRuntimeRegistryLease(opts);
-        try {
-            if (request.data.artifactFamily === 'reactNative') {
-                const owner = [
-                    ...collectResolvedGeneratedReactNativeArtifactOwners(lease.registry.contributes),
-                    ...collectResolvedGeneratedReactNativeClientContributionArtifactOwners(lease.registry.contributes),
-                ]
-                    .filter((candidate) => findGeneratedReactNativeArtifactGraph({
-                        owner: candidate,
-                        identity: request.data.cacheIdentity,
-                    }) !== null)
-                    .sort((left, right) => (
-                        left.pluginId.localeCompare(right.pluginId)
-                        || left.contributionId.localeCompare(right.contributionId)
-                    ))[0] ?? null;
-                if (!owner) {
-                    return artifactBytesError('artifact_not_found', ['generated_react_native_artifact_owner_not_found']);
-                }
-                return await readGeneratedReactNativeArtifactBytesByCacheIdentity({
-                    registry: lease.registry.contributes,
-                    owner,
-                    identity: request.data.cacheIdentity,
-                    ...(opts?.readArtifactFile ? { readArtifactFile: opts.readArtifactFile } : {}),
-                });
-            }
-
-            const response = await readHostedWebArtifactBytesByCacheIdentity({
-                registry: lease.registry.contributes,
-                identity: request.data.cacheIdentity,
-                ...(opts?.readArtifactFile ? { readArtifactFile: opts.readArtifactFile } : {}),
-            });
-            return response;
         } finally {
             await lease.release();
         }

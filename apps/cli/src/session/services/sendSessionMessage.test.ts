@@ -18,6 +18,45 @@ import {
 } from '@happier-dev/protocol';
 
 describe('sendSessionMessage', () => {
+    it('carries a protected Workflow binding through Machine admission without a Discussion destination', async () => {
+        const { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } = await import('@/testkit/backends/sessionFixtures');
+        const { runWithServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
+        const { deriveWorkflowSessionInputLocalIdV2 } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+        const { SessionPendingEnqueueByMachineRequestV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1');
+        const { sendSessionMessage } = await import('./sendSessionMessage');
+        const sessionId = 'c111111111111111111111111';
+        const serverUrl = 'https://workflow-admission.test';
+        const workflow = { purpose: 'invocation', runId: 'workflow-run', invocationRecordId: 'workflow-invocation' } as const;
+        const localId = deriveWorkflowSessionInputLocalIdV2(workflow);
+        const session = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain', metadataLayoutVersion: 1,
+            metadata: JSON.stringify({ v: 1 }), share: null,
+            ownerMetadata: { t: 'plain', v: { v: 1, workspace: { path: '/repo', machineId: 'machine-session' } } } });
+        // Home HTTP and the authenticated Machine transport are the system boundaries.
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (String(url) === `${serverUrl}/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+            if (String(url).endsWith('/messages/reply-capability')) return { status: 200, data: { v: 1, protocolVersions: [1] } };
+            throw new Error('Unexpected Home read');
+        });
+        let admittedReply: unknown;
+        let admittedTiming: unknown;
+        const result = await runWithServerHttpBaseUrl(serverUrl, () => sendSessionMessage({
+            credentials: { token: 'token', encryption: null }, idOrPrefix: sessionId,
+            message: 'Workflow step', localId, wait: false, timeoutMs: 10_000,
+            inputAdmission: { request: { v: 2, producer: 'workflow', caller: { kind: 'host' },
+                workflow, permission: {}, replyIntent: { mode: 'wait' } },
+                provenance: { v: 2, kind: 'workflow_invocation', runId: workflow.runId, invocationRecordId: workflow.invocationRecordId } },
+            machineAdmissionTransport: async request => {
+                admittedTiming = Reflect.get(request, 'usageTimingV1');
+                admittedReply = SessionPendingEnqueueByMachineRequestV1Schema.parse(request).reply;
+                return { status: 'accepted', localId };
+            },
+        }));
+        expect(result).toMatchObject({ ok: true, admissionResult: { status: 'accepted', localId } });
+        expect(admittedReply).toEqual({ mode: 'wait', workflow });
+        expect(admittedTiming).toEqual({ v: 1, minMs: null, maxMs: null });
+    });
+
     it('keeps a slow Pending acknowledgement within the caller admission budget', async () => {
         vi.doUnmock('@/api/session/pendingQueueV2Transport');
         const { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } = await import('@/testkit/backends/sessionFixtures');

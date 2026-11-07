@@ -7,9 +7,11 @@ import { resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/a
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { executeSessionMcpAction, hasSessionMcpContext } from '@/cli/commands/toolsSessionMcp';
 import {
   normalizeActionExecuteResult,
+  normalizeCliActionThrownError,
+  projectCliActionFailure,
   unwrapCliActionSuccessPayload,
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
@@ -32,6 +34,7 @@ import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 
 import type { CompiledActionCliCommand } from './compiledCommands';
 import { renderActionCliCommandHelp } from './commandHelp';
+import { isWorkflowActionCliCommand, readActionCliExecutionTarget } from './executionTarget';
 import {
   actionCliEnvelopeKind,
   loadActionCliPresentation,
@@ -169,9 +172,7 @@ export function stripTransportTokens(
   command: CompiledActionCliCommand,
   tokens: readonly string[],
 ): readonly string[] {
-  const transportValueFlags: readonly string[] = command.routesByTransportMachineId
-    ? [...command.transportMachineIdFlags, ...(command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : [])]
-    : command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : [];
+  const transportValueFlags = commandTransportValueFlags(command);
   const kept: string[] = [];
   let positionalOnly = false;
   for (let index = 0; index < tokens.length; index += 1) {
@@ -189,6 +190,13 @@ export function stripTransportTokens(
   return kept;
 }
 
+function commandTransportValueFlags(command: CompiledActionCliCommand): readonly string[] {
+  return [
+    ...(command.routesByTransportMachineId ? [...command.transportMachineIdFlags, ...command.transportProjectTargetFlags] : []),
+    ...(command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : []),
+  ];
+}
+
 async function reportFailure(params: Readonly<{
   json: boolean;
   kind: string;
@@ -204,12 +212,8 @@ async function reportFailure(params: Readonly<{
         ok: false,
         kind: params.kind,
         error: {
-          code: params.failure.errorCode,
           ...(params.extraFields ?? {}),
-          ...(params.failure.candidates ? { candidates: params.failure.candidates } : {}),
-          ...(params.failure.errorMessage ? { message: params.failure.errorMessage } : {}),
-          ...(params.failure.details !== undefined ? { details: params.failure.details } : {}),
-          ...(params.failure.goalControlFailure ? { goalControlFailure: params.failure.goalControlFailure } : {}),
+          ...projectCliActionFailure(params.failure),
         },
       },
       { exitCode: params.unexpected ? 2 : 1 },
@@ -321,13 +325,62 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   const callerInput = composed.callerInput;
   let context: ActionCliPresentationContext = { command, json, input, callerInput };
 
+  let result: ActionExecuteResult;
+  if (params.agentBridgeSessionId !== undefined || hasSessionMcpContext()) {
+    if (hasFlagBeforeTerminator(actionCliCommandInputArgv(command, params.argv), new Set(commandTransportValueFlags(command)))) {
+      await reportFailure({ json, kind, failure: { errorCode: 'invalid_arguments',
+        errorMessage: 'Session MCP selects the Home and execution context. Supply resource targets in the Action input.' },
+        extraFields: null, humanSuffix: null, unexpected: false, help: null });
+      return;
+    }
+    // This argument records provenance only. The admitted MCP endpoint owns
+    // Session authority; neither it nor Action input is resolved via an Account.
+    const observation = command.binding.observation ? new AbortController() : null;
+    const onInterrupt = () => observation?.abort();
+    if (observation) process.on('SIGINT', onInterrupt);
+    const callerSignal = observation
+      ? params.signal ? AbortSignal.any([params.signal, observation.signal]) : observation.signal
+      : params.signal;
+    const requestSignal = requestSignalForCommand(command, callerSignal);
+    const execute = (actionId: Parameters<typeof prepareSavedSecretsCliInput>[0]['actionId'], actionInput: unknown) =>
+      executeSessionMcpAction(actionId, actionInput, { ...(requestSignal ? { signal: requestSignal } : {}) });
+    try {
+      if (prepareInput) {
+        input = await prepareSavedSecretsCliInput({ actionId: command.actionId, input, signal: requestSignal,
+          secretInput: command.spec, execute });
+        const validated = command.spec.inputSchema.safeParse(input);
+        if (!validated.success) throw new SavedSecretsInputFailure({ errorCode: 'invalid_arguments', errorMessage: 'Invalid prepared Action input.' });
+        input = validated.data as Readonly<Record<string, unknown>>;
+        context = { command, json, input, callerInput };
+      }
+      result = await execute(command.actionId, input);
+    } catch (error) {
+      if (error instanceof SavedSecretsInputReadApproval) {
+        await tryHandleApprovalRequestCreated({ envelopeKind: kind, json, result: error.result, executionPlacement: 'account' });
+        return;
+      }
+      if (error instanceof SavedSecretsInputFailure) {
+        await reportFailure({ json, kind, failure: error.failure, extraFields: null, humanSuffix: null,
+          unexpected: false, help: null });
+        return;
+      }
+      const mapped = normalizeCliActionThrownError(error);
+      await reportFailure({ json, kind, failure: mapped.failure,
+        extraFields: null, humanSuffix: null, unexpected: mapped.unexpected, help: null });
+      return;
+    } finally { if (observation) process.removeListener('SIGINT', onInterrupt); }
+  } else {
   const deps: ActionCliExecutionDeps = { ...DEFAULT_DEPS, ...params.deps };
   let credentials: StoredCredentials | null;
   let fixedServer: ActionCliFixedServerTarget | null = null;
   let serverIdentityId: string | undefined;
   let machineId: string | null;
+  let executionTarget: ReturnType<typeof readActionCliExecutionTarget>;
   try {
     machineId = readTransportMachineId(command, params.argv);
+    executionTarget = readActionCliExecutionTarget(
+      command.transportProjectTargetFlags.length ? params.argv : [], machineId,
+    );
     const requestedServerId = readActionCliServerId(params.argv, command.acceptsServerId);
     if (command.requiresServerId && requestedServerId === null) {
       throw Object.assign(
@@ -341,15 +394,15 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       deps,
     }));
   } catch (error) {
-    const mapped = mapUnknownErrorToControlError(error);
+    const mapped = normalizeCliActionThrownError(error);
     await reportFailure({
       json,
       kind,
-      failure: { errorCode: mapped.code, ...(mapped.message ? { errorMessage: mapped.message } : {}) },
+      failure: mapped.failure,
       extraFields: null,
       humanSuffix: null,
       unexpected: mapped.unexpected,
-      help: mapped.code === 'invalid_arguments' && !json ? help : null,
+      help: mapped.failure.errorCode === 'invalid_arguments' && !json ? help : null,
     });
     return;
   }
@@ -376,7 +429,6 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     ? params.signal ? AbortSignal.any([params.signal, observation.signal]) : observation.signal
     : params.signal;
   const requestSignal = requestSignalForCommand(command, callerSignal);
-  let result: ActionExecuteResult;
   try {
     const serverFeaturesStore = deps.createServerFeaturesSnapshotStoreFn({
       serverUrl: fixedServer?.serverApiUrl ?? resolveServerHttpBaseUrl(),
@@ -397,11 +449,12 @@ export async function runCompiledActionCliCommand(params: Readonly<{
         : deps.readCredentialsFn,
       resolveServerFeaturesSnapshot,
       ...(machineId !== null ? { machineId } : {}),
-      // Discovery reads the daemon's contributed registry, and client-placed
-      // commands reach the answering mounted owner through that same ingress.
-      // The CLI compiler owns argv/help/completion, not client-side state.
+      // Workflow admission needs the daemon's executable registry; mounted
+      // client Actions and discovery use that same external ingress. The CLI
+      // compiler projects commands without becoming another runtime owner.
       ...(command.actionId === 'action.spec.search'
         || command.actionId === 'action.spec.get'
+        || isWorkflowActionCliCommand(command.actionId)
         || resolveActionExecutionPlacementForInput(command.spec, input) === 'client'
         ? { externalActionClient: true as const }
         : {}),
@@ -462,10 +515,11 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       ...(requestSignal ? { signal: requestSignal } : {}),
       ...(fixedServer ? { serverId: fixedServer.serverId } : {}),
       ...(serverIdentityId ? { serverIdentityId } : {}),
-      // An Account Action's explicit execution Machine is exact routing, not
-      // the credentialed factory's automatic administration preference.
-      ...(machineId !== null && resolveActionExecutionPlacementForInput(command.spec, input) === 'account'
-        ? { externalActionTarget: { kind: 'machine' as const, machineId } } : {}),
+      // Workflow aliases retain the generic invocation's complete target;
+      // Account Actions also retain their exact execution Machine selector.
+      ...(executionTarget && (isWorkflowActionCliCommand(command.actionId)
+        || resolveActionExecutionPlacementForInput(command.spec, input) === 'account')
+        ? { externalActionTarget: executionTarget } : {}),
       ...(command.binding.observation === 'changes' ? {
         onWaitSnapshot: async (snapshot: unknown) => writeJsonStdout({
           kind, target: input.target, condition: input.condition, snapshot,
@@ -482,12 +536,12 @@ export async function runCompiledActionCliCommand(params: Readonly<{
         unexpected: false, help: null });
       return;
     }
-    const mapped = mapUnknownErrorToControlError(error);
+    const mapped = normalizeCliActionThrownError(error);
     await reportFailure({
       json,
       kind,
-      failure: { errorCode: mapped.code, ...(mapped.message ? { errorMessage: mapped.message } : {}) },
-      extraFields: presentation?.failureFields?.({ errorCode: mapped.code }, context) ?? null,
+      failure: mapped.failure,
+      extraFields: presentation?.failureFields?.(mapped.failure, context) ?? null,
       humanSuffix: null,
       unexpected: mapped.unexpected,
       help: null,
@@ -495,6 +549,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     return;
   } finally {
     if (observation) process.removeListener('SIGINT', onInterrupt);
+  }
   }
 
   const payload = result.ok ? unwrapCliActionSuccessPayload(result.result) : undefined;
@@ -521,13 +576,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
 
   const normalized = normalizeActionExecuteResult(result);
   if (!normalized.ok) {
-    const failure: ActionCliFailure = {
-      errorCode: normalized.errorCode,
-      ...(normalized.errorMessage ? { errorMessage: normalized.errorMessage } : {}),
-      ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
-      ...(normalized.details !== undefined ? { details: normalized.details } : {}),
-      ...(normalized.goalControlFailure ? { goalControlFailure: normalized.goalControlFailure } : {}),
-    };
+    const failure: ActionCliFailure = normalized;
     await reportFailure({
       json,
       kind,
@@ -544,9 +593,9 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     try {
       if (await params.consumeSuccess(payload)) return;
     } catch (error) {
-      const mapped = mapUnknownErrorToControlError(error);
+      const mapped = normalizeCliActionThrownError(error);
       await reportFailure({ json, kind,
-        failure: { errorCode: mapped.code, ...(mapped.message ? { errorMessage: mapped.message } : {}) },
+        failure: mapped.failure,
         extraFields: null, humanSuffix: null, unexpected: mapped.unexpected, help: null });
       return;
     }
@@ -596,6 +645,7 @@ export function describeCompiledActionCliCommandArgvPolicy(command: CompiledActi
     booleanFlags: Object.freeze([ACTION_CLI_JSON_OUTPUT_FLAG, ...ACTION_CLI_HELP_FLAGS, ...flags.booleanFlags]),
     valueFlags: Object.freeze([
       ...command.transportMachineIdFlags,
+      ...command.transportProjectTargetFlags,
       ...(command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : []),
       ACTION_CLI_WHOLE_INPUT_FLAG,
       ...flags.valueFlags,

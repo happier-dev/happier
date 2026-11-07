@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -78,7 +79,7 @@ export type WorkflowDraftMutationResultV1 = z.infer<typeof WorkflowDraftMutation
 export type WorkflowMountedDraftV1 = z.infer<typeof WorkflowMountedDraftV1Schema>;
 export type WorkflowDraftGetResultV1 = z.infer<typeof WorkflowDraftGetResultV1Schema>;
 
-const mountedSurfaces = { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false } as const;
+const mountedSurfaces = { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false } as const;
 const addressHints = [
   { path: 'scope', title: 'Home and Account', widget: 'json', required: true },
   { path: 'draftId', title: 'Mounted draft id', widget: 'text', required: true },
@@ -101,7 +102,8 @@ export const WorkflowConversationBindResultV1Schema = lazyZodSchema(() => z.disc
 ]));
 export type WorkflowConversationBindInputV1 = z.infer<typeof WorkflowConversationBindInputV1Schema>;
 export type WorkflowConversationBindResultV1 = z.infer<typeof WorkflowConversationBindResultV1Schema>;
-export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
+function createWorkflowAuthoringActionSpecs() {
+  return [{
   id: 'workflow.authoring.conversation.bind', approval: {result: 'required'}, title: 'Bind Workflow conversation',
   cli: { commands: [{ path: ['workflow', 'authoring', 'conversation', 'bind'], visibility: 'canonical' }] },
   description: 'Bind a current existing Session to a step (or the default with stepId null) in the answering mounted Workflow draft. This authors one change; it does not save, start the Workflow or submit text.',
@@ -117,6 +119,7 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   ] },
 }, {
   id: 'workflow.authoring.draft.get', approval: {result: 'required'}, title: 'Read mounted Workflow draft',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'get'], visibility: 'canonical' }] },
   description: 'Read the answering client’s open Workflow draft, settings, validation and revision. Omit draftId to list drafts in the scope. Never loads or creates an editor.',
   safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_get', voiceClientToolName: 'readWorkflowDraft' },
@@ -125,6 +128,7 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
 }, {
   id: 'workflow.authoring.draft.edit', approval: {result: 'required'}, title: 'Edit mounted Workflow draft',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'edit'], visibility: 'canonical' }] },
   description: 'Apply canonical Workflow edit ops and/or a settings patch (description, projectTarget, executionTarget, triggers) to the open draft at expectedDraftRevision as one undoable change. A stale revision is refused. Changed blocks are highlighted. Does not save or run.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_edit', voiceClientToolName: 'editWorkflowDraft' },
@@ -135,6 +139,7 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   examples: { mcp: { argsExample: editExample }, voice: { argsExample: editExample } },
 }, {
   id: 'workflow.authoring.draft.undo', approval: {result: 'required'}, title: 'Undo Workflow draft change',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'undo'], visibility: 'canonical' }] },
   description: 'Undo through the mounted editor’s existing document and settings history. Does not save or run.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_undo', voiceClientToolName: 'undoWorkflowDraft' },
@@ -142,6 +147,7 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   inputHints: { fields: addressHints }, examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
 }, {
   id: 'workflow.authoring.draft.redo', approval: {result: 'required'}, title: 'Redo Workflow draft change',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'redo'], visibility: 'canonical' }] },
   description: 'Redo through the mounted editor’s existing document and settings history. Does not save or run.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_redo', voiceClientToolName: 'redoWorkflowDraft' },
@@ -149,6 +155,7 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   inputHints: { fields: addressHints }, examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
 }, {
   id: 'workflow.authoring.draft.save', approval: {result: 'required'}, title: 'Save mounted Workflow draft',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'save'], visibility: 'canonical' }] },
   description: 'Explicitly save through the mounted host’s validation and conflict-checked Save, including its trigger delta. Waits for Save to finish; never starts a Run.',
   safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_save', voiceClientToolName: 'saveWorkflowDraft' },
@@ -156,6 +163,9 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   inputHints: { fields: addressHints }, examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
 }, {
   id: 'workflow.authoring.draft.discard', approval: {result: 'required'}, title: 'Discard mounted Workflow edits',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'discard'], visibility: 'canonical' }] },
+  // The mounted editor already confirms Discard and preserves saved-draft Undo.
+  approvalPolicy: { uiConfirmation: 'direct' },
   description: 'Request human approval, then follow the host’s existing Discard confirmation. Cancel keeps the draft. A saved document stays open and Discard changes is undoable.',
   safety: 'danger', requiredAuthority: 'present_user', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_discard', voiceClientToolName: 'discardWorkflowDraft' },
@@ -163,6 +173,7 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   inputHints: { fields: addressHints }, examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
 }, {
   id: 'workflow.run.review.draft.set', approval: {result: 'required'}, title: 'Prepare open Workflow review value',
+  cli: { commands: [{ path: ['workflow', 'run', 'review', 'draft', 'set'], visibility: 'canonical' }] },
   description: 'Set the displayed human review buffer of the exact open hold at expectedContentRevision. Retains Keep my edits / Use newer semantics. Does not publish or accept the result.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_run_review_draft_set', voiceClientToolName: 'prepareWorkflowReviewValue' },
@@ -172,3 +183,6 @@ export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
     { path: 'value', title: 'Proposed review value', widget: 'json', required: true }] },
   examples: { mcp: { argsExample: reviewExample }, voice: { argsExample: reviewExample } },
 }] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const WORKFLOW_AUTHORING_ACTION_SPECS: ReturnType<typeof createWorkflowAuthoringActionSpecs> = lazyActionSpecArray(createWorkflowAuthoringActionSpecs);

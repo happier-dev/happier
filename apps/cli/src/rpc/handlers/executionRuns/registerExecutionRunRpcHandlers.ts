@@ -6,10 +6,12 @@ import type { ExecutionRunPublicState, SessionTranscriptObservationProvenanceV1,
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExecutionRunFollowFrontierRequestSchema, ExecutionRunFollowFrontierResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
+import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ExecutionRunRequestBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
-import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ExecutionRunTranscriptPublisher } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';
 import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
 import type {
@@ -33,6 +35,7 @@ import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/a
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
+import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -51,6 +54,7 @@ import {
 import { readCurrentReviewHostPluginAuthority } from '@/agent/executionRuns/profiles/review/pluginAuthority';
 import { resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { admitDaemonExecutionRunStart, checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
 import type { NativeAgentSessionInteractionHostBinding, ExecutionRunProjectLaunchContext } from '@/agent/runtime/registry/engineRegistryTypes';
@@ -61,6 +65,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
+import { registerSessionAgentStartSelectionRpc } from '../../../session/actions/agentStartSelectionRpc';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
   attachActionOperationOwner?: import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime['attachOwner'];
@@ -174,6 +179,7 @@ export function registerExecutionRunRpcHandlers(
   rpc: RpcHandlerRegistrar,
   ctx: ExecutionRunRpcHandlerContext,
 ): ExecutionRunRpcHandlerRegistration {
+  const disposeAgentStartSelection = registerSessionAgentStartSelectionRpc(rpc, ctx.sessionId, ctx.sessionInteractionHost);
   const policy = resolveExecutionRunPolicy({
     defaults: {
       // Centralized configuration is the only source of truth for execution-run defaults.
@@ -229,9 +235,12 @@ export function registerExecutionRunRpcHandlers(
           if (!serverId || !serverUrl || !machineId || !ctx.readPromptCredentials) return null;
           const credentials = await ctx.readPromptCredentials();
           if (!credentials) return null;
-          const rows = await runWithServerHttpBaseUrl(serverUrl, () => readProjectAccountRows({ credentials, serverId }));
+          const homeServerId = await resolveServerProfileHomeIdentityId(serverId) ?? serverId;
+          const rows = await runWithServerHttpBaseUrl(serverUrl, () => readProjectAccountRows({
+            credentials, serverId, selection: { kinds: ['workspace-ref'], serverId: homeServerId },
+          }));
           const workspace = resolveWorkspaceRefForMachineRoot(rows.workspaceRefs, {
-            serverId,
+            serverId: homeServerId,
             machineId,
             rootPath: ctx.cwd,
           });
@@ -340,10 +349,24 @@ export function registerExecutionRunRpcHandlers(
       if (!parsed.success) return invalidParams();
       const retained = await readRetainedExecutionRunRecord(parsed.data.runId);
       const run = retained?.state;
-      if (!run || run.sessionId !== parsed.data.sessionId || run.status !== 'running' && !run.terminalOccurrenceId)
+      if (!run || ('sessionId' in parsed.data ? run.sessionId !== parsed.data.sessionId
+        : ctx.machineId !== parsed.data.machineId || run.sessionId !== null)
+        || run.status !== 'running' && !run.terminalOccurrenceId)
         return { ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' };
-      return ExecutionRunFollowFrontierResponseSchema.parse({ sessionId: parsed.data.sessionId, runId: run.runId,
+      const output = parsed.data.outputRefs?.length ? createStoredReadSchema(ScmDiffSummaryGenerateOutputSchema).safeParse(
+        run.structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary ? run.structuredMeta.payload : run.latestToolResult) : null;
+      const outputs = parsed.data.outputRefs?.flatMap(outputRef => {
+        if (!output?.success || output.data.comparison?.id !== outputRef.comparisonId || output.data.resultId !== outputRef.resultId
+          || output.data.revision === undefined) return [];
+        const progress = output.data.outputs?.[outputRef.kind === 'scm_diff_summary' ? outputRef.output : 'walkthrough'];
+        return progress ? [{ outputRef, revision: output.data.revision, state: progress.state }] : [];
+      });
+      return ExecutionRunFollowFrontierResponseSchema.parse({ ...('sessionId' in parsed.data ? { sessionId: parsed.data.sessionId }
+        : { machineId: parsed.data.machineId, sessionId: null }), runId: run.runId,
         status: run.status, terminalEventId: run.status === 'running' ? null : run.terminalOccurrenceId,
+        ...((run.status === 'failed' || run.status === 'timeout') && run.error?.runtimeIssueV1
+          ? { runtimeIssueV1: run.error.runtimeIssueV1 } : {}),
+        ...(outputs ? { outputs } : {}),
         ...(run.status === 'running' && run.attention ? { attention: run.attention } : {}) });
     });
 
@@ -425,5 +448,5 @@ export function registerExecutionRunRpcHandlers(
   );
 
   const detachActionOperationOwner = ctx.attachActionOperationOwner?.(manager.projectSetupOperations);
-  return { dispose() { detachActionOperationOwner?.(); } };
+  return { dispose() { disposeAgentStartSelection(); detachActionOperationOwner?.(); } };
 }

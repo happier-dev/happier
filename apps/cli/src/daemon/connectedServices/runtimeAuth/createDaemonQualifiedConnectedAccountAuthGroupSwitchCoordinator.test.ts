@@ -15,6 +15,7 @@ import { applyConnectedAccountRequestAuthRecovery } from '../requestAuth/Connect
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
 import { createProviderAccountUsageStore } from '../accountUsage/store';
+import { acknowledgeConnectedServiceLaunchGeneration } from '../resolveConnectedServiceAuthForLaunch';
 import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 
 const service = {
@@ -135,6 +136,74 @@ function accountScopedUsageFailure() {
 }
 
 describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () => {
+    it.each([
+        { requestedModel: 'model-b', exhaustedModel: 'model-a', blockedModel: null, selected: 'primary', includeRequestedMeter: true },
+        { requestedModel: 'model-a', exhaustedModel: 'model-a', blockedModel: null, selected: null, includeRequestedMeter: true },
+        { requestedModel: 'model-b', exhaustedModel: null, blockedModel: null, selected: null, includeRequestedMeter: true },
+        { requestedModel: 'model-b', exhaustedModel: 'model-a', blockedModel: 'model-b', selected: null, includeRequestedMeter: true },
+        { requestedModel: 'model-b', exhaustedModel: 'model-a', blockedModel: null, selected: 'primary', includeRequestedMeter: false },
+    ])('limits quota exhaustion to its model ($exhaustedModel → $requestedModel; entitlement $blockedModel; requested meter $includeRequestedMeter)', async ({ requestedModel, exhaustedModel, blockedModel, selected, includeRequestedMeter }) => {
+        const currentGroup = group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 0 });
+        if (blockedModel) currentGroup.members[0]!.state.modelUnavailableUntilMsByModelId = { [blockedModel]: 100_000 };
+        const listed = accounts();
+        listed.accounts[1]!.status = 'needs_reauth';
+        const store = createProviderAccountUsageStore();
+        const recordKey = { providerId: 'example', accountSubjectId: 'primary', subjectKind: 'account' as const, quotaScope: 'account' as const };
+        store.recordSnapshot({
+            v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'example', accountSubject: { kind: 'providerSubject', id: 'primary' },
+            observedAtMs: 900, fetchedAtMs: 900, staleAfterMs: 60_000,
+            source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+            meters: [
+                { meterId: 'limited', label: 'Limited allowance', used: 100, limit: 100, unit: 'unknown',
+                    remainingPct: 0, utilizationPct: 100, resetsAt: 100_000, status: 'ok',
+                    modelId: exhaustedModel, limitScope: exhaustedModel ? 'model' : 'account', details: {} },
+                ...(includeRequestedMeter ? [{ meterId: 'model-b', label: 'Other allowance', used: 20, limit: 100, unit: 'unknown',
+                    remainingPct: 80, utilizationPct: 20, resetsAt: 100_000, status: 'ok',
+                    modelId: 'model-b', limitScope: 'model', details: {} } as const] : []),
+            ],
+        }, { sources: [{ serviceId: buildQualifiedPluginContributionKey(service), profileId: 'primary',
+            bindingKind: 'group_member', groupId: 'fallbacks', groupGeneration: 7 }] });
+        const forbiddenEffect = async (): Promise<never> => { throw new Error('Selection read must not change the pool'); };
+        // Only Home HTTP responses are substituted. Store, quota projection,
+        // account health, coordinator and candidate selection are real owners.
+        const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+            token: 'fixture', nowMs: () => 1_000, accountUsageStore: store,
+            api: { readGroup: async () => currentGroup, listAccounts: async () => listed,
+                setActiveAccount: forbiddenEffect, updateRuntimeState: forbiddenEffect },
+            applyGeneration: acknowledgeConnectedServiceLaunchGeneration,
+        });
+        const result = await coordinator.readSelection({ serviceId: service, groupId: 'fallbacks', ...{ modelId: requestedModel } });
+        expect(result.selection.selected?.profileId ?? null).toBe(selected);
+        expect(result.selection.excluded).toContainEqual({ profileId: 'backup', reason: 'auth_invalid' });
+        if (selected === null) expect(result.selection.excluded).toContainEqual(expect.objectContaining({ profileId: 'primary', reason: blockedModel ? 'plan_unavailable' : 'quota_exhausted' }));
+        if (!includeRequestedMeter) {
+            // Pre-turn switching has no model context; the selection read above
+            // owns model-specific quota filtering.
+            await expect(coordinator.switchBeforeTurn({ serviceId: service, groupId: 'fallbacks',
+                observedProfileId: 'primary', reason: 'soft_threshold' }))
+                .resolves.toMatchObject({ status: 'no_eligible_member' });
+        }
+    });
+
+    it('never persists a limiter for an unknown failed member', async () => {
+        const updates: unknown[] = [];
+        const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+            token: 'unknown-member', nowMs: () => 1_000,
+            api: { readGroup: async () => group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 }),
+                listAccounts: async () => accounts(),
+                setActiveAccount: async () => group({ activeConnectedAccountId: 'backup', generation: 8, runtimeStateRevision: 3 }),
+                updateRuntimeState: async input => {
+                    updates.push(input);
+                    return group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 4 });
+                },
+            },
+            applyGeneration: async () => ({ ok: true, mode: 'hot_apply' }),
+        });
+        await coordinator.switchAfterClassifiedFailure({ serviceId: service, groupId: 'fallbacks',
+            reason: 'usage_limit', observedProfileId: null, quotaScope: 'account' });
+        expect(updates).toEqual([]);
+    });
     it('cancels pre-commit lease waiting without releasing its transaction owner', async () => {
         const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry();
         const owner = leases.acquire({ serviceId: 'quota-service', groupId: 'fallbacks' });
@@ -177,7 +246,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         };
         const forbiddenEffect = async (): Promise<never> => { throw new Error('cancelled read must not switch'); };
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'cancellation-account', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+            token: 'cancellation-account', nowMs: () => 1_000,
             api: {
                 // Qualified Home HTTP is the boundary; state loading and selection stay real.
                 readGroup: async input => {
@@ -229,7 +298,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         }
         const forbiddenEffect = async () => { throw new Error('selection read must not mutate'); };
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'read-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000, accountUsageStore,
+            token: 'read-token', nowMs: () => 1_000, accountUsageStore,
             api: { readGroup: async () => currentGroup, listAccounts: async () => accounts(),
                 setActiveAccount: forbiddenEffect, updateRuntimeState: forbiddenEffect },
             applyGeneration: forbiddenEffect,
@@ -258,7 +327,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         }] });
         const forbiddenEffect = async () => { throw new Error('read must not mutate or refresh'); };
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'read-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+            token: 'read-token', nowMs: () => 1_000,
             accountUsageStore,
             api: { readGroup: async () => currentGroup, listAccounts: async () => accounts(),
                 setActiveAccount: forbiddenEffect, updateRuntimeState: forbiddenEffect },
@@ -305,7 +374,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             });
             const forbiddenEffect = async () => { throw new Error('read must not mutate or refresh'); };
             const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-                token: 'read-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+                token: 'read-token', nowMs: () => 1_000,
                 api: { readGroup: async () => currentGroup, listAccounts: async () => accounts(),
                     setActiveAccount: forbiddenEffect, updateRuntimeState: forbiddenEffect },
                 applyGeneration: forbiddenEffect, prepareCandidateForSwitch: forbiddenEffect,
@@ -329,7 +398,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         const currentGroup = group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 });
         const forbiddenEffect = async () => { throw new Error('read must not mutate'); };
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'read-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000, isCurrent: async () => current,
+            token: 'read-token', nowMs: () => 1_000, isCurrent: async () => current,
             api: { readGroup: async () => currentGroup, listAccounts: async () => { current = false; return accounts(); },
                 setActiveAccount: forbiddenEffect, updateRuntimeState: forbiddenEffect },
             applyGeneration: forbiddenEffect,
@@ -344,7 +413,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             return currentGroup;
         });
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'bob-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+            token: 'bob-token', nowMs: () => 1_000,
             isCurrent: async () => current,
             api: {
                 readGroup: async () => currentGroup,
@@ -360,76 +429,113 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         expect(setActiveAccount).not.toHaveBeenCalled();
     });
 
-    it('persistently disables the exact model-ineligible member when the pool opts in', async () => {
+    it.each([true, false])('PORT-PS-AB selects before disabling the active model-ineligible member (replacement %s)', async usable => {
         let currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({
             ...group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 }),
-            policy: {
-                ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
-                autoSwitch: true,
-                autoDisablePlanInvalidAccounts: true,
-            },
+            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true, autoDisablePlanInvalidAccounts: true },
         });
-        const updateRuntimeState = vi.fn(async () => currentGroup);
-        const updateMember = vi.fn(async (input: Readonly<{ token: string; mutation: unknown }>) => {
-            const mutation = QualifiedConnectedAccountGroupMemberMutationV4Schema.parse(
-                input.mutation,
-            );
-            currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({
-                ...currentGroup,
-                activeConnectedAccountId: 'backup',
-                generation: currentGroup.generation + 1,
-                runtimeStateRevision: currentGroup.runtimeStateRevision + 1,
-                members: currentGroup.members.map((member) => member.connectedAccountId === 'primary'
-                    ? { ...member, enabled: false, state: mutation.state }
-                    : member),
-            });
-            return currentGroup;
-        });
+        if (!usable) currentGroup = { ...currentGroup, members: currentGroup.members.map(member => member.connectedAccountId === 'backup'
+            ? { ...member, state: { authInvalidUntilMs: 100_000 } } : member) };
+        const effects: string[] = [];
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'server-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+            token: 'server-token', nowMs: () => 1_000,
             api: {
-                readGroup: async () => currentGroup,
-                listAccounts: async () => accounts(),
-                setActiveAccount: vi.fn(async () => currentGroup),
-                updateRuntimeState,
-                updateMember,
+                readGroup: async () => currentGroup, listAccounts: async () => accounts(),
+                setActiveAccount: async ({ mutation }) => {
+                    effects.push('select:' + mutation.connectedAccountId);
+                    return currentGroup = { ...currentGroup, activeConnectedAccountId: mutation.connectedAccountId, generation: currentGroup.generation + 1 };
+                },
+                updateRuntimeState: async ({ patch }) => {
+                    currentGroup = { ...currentGroup, runtimeStateRevision: currentGroup.runtimeStateRevision + 1,
+                        members: currentGroup.members.map(member => ({ ...member,
+                            state: patch.runtimeState.memberStates?.find(change => change.connectedAccountId === member.connectedAccountId)?.state ?? member.state })) };
+                    return currentGroup;
+                },
+                updateMember: async ({ mutation }) => {
+                    effects.push('disable:' + mutation.connectedAccountId);
+                    // Simulate the real server fallback: disabling the active member chooses priority, so doing this first is wrong.
+                    if (currentGroup.activeConnectedAccountId === mutation.connectedAccountId) effects.push('server-fallback');
+                    return currentGroup = { ...currentGroup, generation: currentGroup.generation + 1,
+                        members: currentGroup.members.map(member => member.connectedAccountId === mutation.connectedAccountId
+                            ? { ...member, enabled: false, state: mutation.state ?? member.state } : member) };
+                },
             },
-            applyGeneration: vi.fn(async () => ({ ok: true as const, mode: 'spawn_next_turn' as const })),
+            applyGeneration: async () => ({ ok: true, mode: 'spawn_next_turn' }),
         });
+        await coordinator.switchAfterClassifiedFailure({ serviceId: service, groupId: 'fallbacks', reason: 'plan',
+            limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: 'gpt-5.6-sol', observedProfileId: 'primary', planType: 'free' });
+        expect(effects).toEqual(usable ? ['select:backup', 'disable:primary'] : []);
+        expect(currentGroup.activeConnectedAccountId).toBe(usable ? 'backup' : 'primary');
+        expect(currentGroup.members.find(member => member.connectedAccountId === 'primary')).toMatchObject({
+            enabled: !usable, state: { autoDisabledReason: 'model_not_entitled',
+                modelUnavailableUntilMsByModelId: { 'gpt-5.6-sol': 1_000 + currentGroup.policy.cooldownMs } },
+        });
+    });
 
-        await coordinator.switchAfterClassifiedFailure({
-            serviceId: service,
-            groupId: 'fallbacks',
-            reason: 'plan',
-            limitCategory: 'plan_invalid',
-            quotaScope: 'model',
-            providerLimitId: 'gpt-5.6-sol',
-            observedProfileId: 'primary',
-            planType: 'free',
+    it('PORT-PS-AB still disables an already inactive failed member without invoking server fallback', async () => {
+        let currentGroup = group({ activeConnectedAccountId: 'backup', generation: 8, runtimeStateRevision: 3 });
+        currentGroup = { ...currentGroup, policy: { ...currentGroup.policy, autoDisablePlanInvalidAccounts: true } };
+        const disabled: string[] = [];
+        const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({ token: 'server-token', nowMs: () => 1_000,
+            api: { readGroup: async () => currentGroup, listAccounts: async () => accounts(),
+                setActiveAccount: async () => { throw new Error('The replacement is already selected'); },
+                updateRuntimeState: async () => currentGroup,
+                updateMember: async ({ mutation }) => {
+                    expect(mutation.connectedAccountId).not.toBe(currentGroup.activeConnectedAccountId);
+                    disabled.push(mutation.connectedAccountId);
+                    return currentGroup = { ...currentGroup, generation: currentGroup.generation + 1,
+                        members: currentGroup.members.map(member => member.connectedAccountId === mutation.connectedAccountId
+                            ? { ...member, enabled: false, state: mutation.state ?? member.state } : member) };
+                },
+            }, applyGeneration: async () => ({ ok: true }),
         });
+        await coordinator.switchAfterClassifiedFailure({ serviceId: service, groupId: 'fallbacks', observedProfileId: 'primary',
+            reason: 'plan', limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: 'restricted-model' });
+        expect(disabled).toEqual(['primary']);
+        expect(currentGroup.activeConnectedAccountId).toBe('backup');
+    });
 
-        expect(updateMember).toHaveBeenCalledWith({
-            token: 'server-token',
-            mutation: expect.objectContaining({
-                connectedAccountId: 'primary',
-                enabled: false,
-                expectedGeneration: 7,
-                expectedRuntimeStateRevision: 3,
-                state: expect.objectContaining({
-                    autoDisabledReason: 'model_not_entitled',
-                    lastFailureCode: 'model_not_entitled',
-                }),
-            }),
+    it.each(['classified-model', 'live-model'])('PORT-PS-AB observes model eligibility and persists superseded plan evidence (%s)', async model => {
+        let currentGroup = group({ activeConnectedAccountId: 'backup', generation: 8, runtimeStateRevision: 3 });
+        currentGroup = { ...currentGroup, policy: { ...currentGroup.policy, autoDisablePlanInvalidAccounts: true },
+            members: currentGroup.members.map(member => member.connectedAccountId === 'backup'
+                ? { ...member, state: { modelUnavailableUntilMsByModelId: { [model]: 100_000 } } } : member) };
+        const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({ token: 'server-token', nowMs: () => 1_000,
+            resolveRequiredModelIds: () => model === 'live-model' ? [model] : [],
+            api: { readGroup: async () => currentGroup, listAccounts: async () => accounts(),
+                setActiveAccount: async () => { throw new Error('Observation must not select'); },
+                updateRuntimeState: async () => { throw new Error('Inactive plan failure must use the existing member owner'); },
+                updateMember: async ({ mutation }) => {
+                    expect(mutation.connectedAccountId).toBe('primary');
+                    return currentGroup = { ...currentGroup, generation: currentGroup.generation + 1,
+                        members: currentGroup.members.map(member => member.connectedAccountId === mutation.connectedAccountId
+                            ? { ...member, enabled: false, state: mutation.state ?? member.state } : member) };
+                },
+            }, applyGeneration: async () => ({ ok: true }),
         });
-        expect(updateRuntimeState).not.toHaveBeenCalled();
-        expect(currentGroup.members.find((member) => member.connectedAccountId === 'primary')).toMatchObject({
-            enabled: false,
-            state: {
-                autoDisabledReason: 'model_not_entitled',
-                lastFailureCode: 'model_not_entitled',
-                modelUnavailableUntilMsByModelId: { 'gpt-5.6-sol': 86_401_000 },
-            },
-        });
+        await expect(coordinator.observeCurrentGenerationForRecovery({ serviceId: service, groupId: 'fallbacks', observedProfileId: 'primary',
+            modelId: model === 'classified-model' ? model : undefined,
+            failure: { reason: 'plan', limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: 'classified-model', planType: 'free' },
+        })).resolves.toMatchObject({ status: 'no_eligible_member', activeProfileId: 'backup',
+            excluded: expect.arrayContaining([expect.objectContaining({ profileId: 'backup', reason: 'plan_unavailable' })]) });
+        expect(currentGroup.members.find(member => member.connectedAccountId === 'primary')).toMatchObject({ enabled: false,
+            state: { autoDisabledReason: 'model_not_entitled', modelUnavailableUntilMsByModelId: { 'classified-model': 1_000 + currentGroup.policy.cooldownMs } } });
+    });
+
+    it('PORT-PS-AB consumes live-session model requirements at the qualified owner', async () => {
+        let currentGroup = group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 });
+        currentGroup = { ...currentGroup, members: currentGroup.members.map(member => member.connectedAccountId === 'backup'
+            ? { ...member, state: { modelUnavailableUntilMsByModelId: { 'live-model': 100_000 } } } : member) };
+        const effects: string[] = [];
+        const options = { token: 'server-token', nowMs: () => 1_000, resolveRequiredModelIds: () => ['live-model'],
+            api: { readGroup: async () => currentGroup, listAccounts: async () => accounts(),
+                setActiveAccount: async () => { effects.push('commit'); return currentGroup; }, updateRuntimeState: async () => currentGroup },
+            applyGeneration: async () => ({ ok: true as const }),
+        };
+        const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator(options);
+        await expect(coordinator.switchAfterClassifiedFailure({ serviceId: service, groupId: 'fallbacks', observedProfileId: 'primary', reason: 'auth_expired' }))
+            .resolves.toMatchObject({ status: 'no_eligible_member' });
+        expect(effects).toEqual([]);
     });
 
     it('uses canonical qualified account-usage evidence before choosing a group fallback', async () => {
@@ -447,7 +553,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         }] });
         const currentGroup = group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 });
         const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: 'server-token', quotaFreshnessMs: 60_000, nowMs: () => 1_000,
+            token: 'server-token', nowMs: () => 1_000,
             accountUsageStore,
             api: {
                 readGroup: async () => currentGroup,
@@ -465,41 +571,19 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         });
     });
 
-    it('switches a novel service through the existing policy, selector, and coordinator with exact qualified CAS basis', async () => {
+    it.each([7, 8])('switches an unchanged request-auth source at current group generation %s with exact qualified CAS basis', async generation => {
         let currentGroup = group({
             activeConnectedAccountId: 'primary',
-            generation: 7,
+            generation,
             runtimeStateRevision: 3,
         });
-        const updateRuntimeState = vi.fn(async (input: Readonly<{ patch: unknown }>) => {
-            const patch = input.patch as {
-                expectedRuntimeStateRevision: number;
-                runtimeState: {
-                    memberStates: Array<{
-                        connectedAccountId: string;
-                        state: Record<string, unknown>;
-                    }>;
-                };
-            };
-            currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({
-                ...currentGroup,
-                runtimeStateRevision: currentGroup.runtimeStateRevision + 1,
-                members: currentGroup.members.map((member) => {
-                    const replacement = patch.runtimeState.memberStates.find(
-                        (candidate) => candidate.connectedAccountId
-                            === member.connectedAccountId,
-                    );
-                    return replacement
-                        ? { ...member, state: replacement.state }
-                        : member;
-                }),
-            });
-            return currentGroup;
+        const updateRuntimeState = vi.fn(async () => {
+            throw new Error('Request-auth fallback must not persist a separate limiter');
         });
         const setActiveAccount = vi.fn(async () => {
             currentGroup = group({
                 activeConnectedAccountId: 'backup',
-                generation: 8,
+                generation: generation + 1,
                 runtimeStateRevision: 5,
             });
             return currentGroup;
@@ -511,7 +595,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         const coordinator =
             createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
                 token: 'server-token',
-                quotaFreshnessMs: 60_000,
                 nowMs: () => 1_000,
                 api: {
                     readGroup: vi.fn(async () => currentGroup),
@@ -546,7 +629,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
                 group: { service, groupId: 'fallbacks' },
                 connectedAccountId: 'backup',
                 expectedIncarnation: 'qualified-group-row-fallbacks',
-                expectedGeneration: 7,
+                expectedGeneration: generation,
                 expectedRuntimeStateRevision: 3,
                 expectedSource: {
                     connectedAccountId: 'primary',
@@ -561,7 +644,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             serviceId: service,
             groupId: 'fallbacks',
             activeProfileId: 'backup',
-            generation: 8,
+            generation: generation + 1,
             credentialRevision: backupCredentialRevision,
             reason: 'usage_limit',
         });
@@ -581,15 +664,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             accounts({
                 primaryRevision: replacementCredentialRevision,
             }),
-        ],
-        [
-            'newer group generation',
-            group({
-                activeConnectedAccountId: 'primary',
-                generation: 8,
-                runtimeStateRevision: 3,
-            }),
-            accounts(),
         ],
         [
             'different current group member',
@@ -619,7 +693,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
             const coordinator =
                 createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
                     token: 'server-token',
-                    quotaFreshnessMs: 60_000,
                     nowMs: () => 1_000,
                     api: {
                         readGroup: vi.fn(async () => currentGroup),
@@ -674,7 +747,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         const coordinator =
             createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
                 token: 'server-token',
-                quotaFreshnessMs: 60_000,
                 nowMs: () => 1_000,
                 api: {
                     readGroup: vi.fn(async () => currentGroup),
@@ -740,7 +812,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         const coordinator =
             createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
                 token: 'server-token',
-                quotaFreshnessMs: 60_000,
                 nowMs: () => 1_000,
                 api: {
                     readGroup: vi.fn(async () => currentGroup),
@@ -830,7 +901,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         const coordinator =
             createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
                 token: 'server-token',
-                quotaFreshnessMs: 60_000,
                 nowMs: () => 1_000,
                 api: {
                     readGroup: vi.fn(async () => currentGroup),
@@ -873,7 +943,6 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
         const coordinator =
             createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
                 token: 'server-token',
-                quotaFreshnessMs: 60_000,
                 nowMs: () => 1_000,
                 api: {
                     readGroup: vi.fn(async () => group({

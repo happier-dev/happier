@@ -1,6 +1,6 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { z } from 'zod/mini';
-import axios from 'axios';
+import { timeApprovalPhase } from '@/daemon/externalActions/webLatencyTrace';
+import axios from '@/api/client/credentialAxios';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DiscussionAgentPublisherRequestV1Schema as PublisherRequestV1Schema, DiscussionAgentPostRequestV1Schema, DiscussionDetailsResponseV1Schema, type DiscussionAgentPublisherRequestV1, type DiscussionAgentPublisherInputV1, type DiscussionAgentPublisherPublicationInputV1 } from '@happier-dev/protocol/discussions/api';
 import { bindDiscussionActionHttpRequestV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
@@ -13,7 +13,7 @@ import { AgentRuntimeDaemonServiceTurnWitnessV1Schema, projectAgentRuntimeDaemon
 import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { RunnerMcpSessionWithContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/participants';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -24,7 +24,7 @@ import { openSessionStoredContent } from '@/session/transport/encryption/session
 import { projectSessionMessageReplyOutcome, readSessionMessageReply } from '@/session/services/sessionMessageReply';
 import { readApprovedDiscussionPublication, type ApprovedDiscussionSourceActionExecute } from './approvedDiscussionPublication';
 import { WorkflowInvocationGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import { projectWorkflowDiscussionResultContentV1 } from '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1';
+import { isWorkflowDiscussionResultPublishableV1, projectWorkflowDiscussionResultContentV1 } from '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { uploadDiscussionAgentAttachments } from './uploadDiscussionAgentAttachments';
 import { DiscussionAgentPublisherPublicationV1Schema } from '@happier-dev/protocol/discussions/api';
@@ -174,7 +174,8 @@ async function verifyTerminalDiscussionReturn(params: Readonly<{
         id => id === params.serverId || id === params.serverIdentityId ? params.serverIdentityId : null)
         || delivery.discussion.discussionId !== request.discussionId
         || delivery.messageId !== parentMessageId || delivery.throughSeq !== progress.discussion.throughSeq) return false;
-      if (!['completed', 'failed', 'cancelled'].includes(index.lifecycle) || index.runId !== workflow.runId || index.id !== workflow.invocationRecordId
+      if (!isWorkflowDiscussionResultPublishableV1({ blockKind: invocation.blockKind, lifecycle: index.lifecycle,
+        ...(invocation.execution ? { execution: invocation.execution } : {}) }) || index.runId !== workflow.runId || index.id !== workflow.invocationRecordId
         || index.attempt !== workflow.invocationAttempt || invocation.attempt !== workflow.invocationAttempt
         || invocation.execution?.kind !== 'session' || invocation.execution.sessionId !== request.sessionId
         || invocation.execution.localInputId !== marker.requestLocalId || progress.outcome.kind === 'declined') return false;
@@ -184,8 +185,12 @@ async function verifyTerminalDiscussionReturn(params: Readonly<{
           ...(signal ? { signal } : {}) });
         if (!projected) return false;
         expectedContent = { v: 1, parts: [{ t: 'text', text: projected.message }] };
-      } else expectedContent = projectWorkflowDiscussionResultContentV1({ ...workflow,
-        lifecycle: index.lifecycle, ...(invocation.result !== undefined ? { result: invocation.result } : {}) });
+      } else {
+        const content = projectWorkflowDiscussionResultContentV1({ ...workflow,
+          lifecycle: index.lifecycle, ...(invocation.result !== undefined ? { result: invocation.result } : {}) });
+        if (!content) return false;
+        expectedContent = content;
+      }
     } else {
       const projected = await projectSessionMessageReplyOutcome({ credentials, serverId: params.serverId,
         sessionId: request.sessionId, localId: marker.requestLocalId, outcome: progress.outcome, ...(signal ? { signal } : {}) });
@@ -271,20 +276,21 @@ export function createDiscussionAgentPublisher(params: Readonly<{
     const signal = signals.length > 0 ? AbortSignal.any(signals) : undefined;
     if (signal?.aborted) return denied();
     if ('approvedActionReplay' in parsed.data) {
+      const artifactId = parsed.data.approvedActionReplay.artifactId;
       stage = 'discussion_approval';
       let publication: DiscussionAgentPublisherPublicationInputV1 | null;
       try {
-        const credentials = await params.readOwnerAccountCredentials();
+        const credentials = await timeApprovalPhase('approval.publication.credentials', () => params.readOwnerAccountCredentials());
         if (!credentials) return denied();
-        const approved = await readApprovedDiscussionPublication({
-          artifactId: parsed.data.approvedActionReplay.artifactId, request: parsed.data.request,
+        const approved = await timeApprovalPhase('approval.publication.admission', () => readApprovedDiscussionPublication({
+          artifactId, request: parsed.data.request,
           credentials, sessionId: params.session.sessionId, serverId: params.serverId, serverUrl: params.serverUrl,
           callerAuthority: context?.callerAuthority,
           requesterApprovalDecision: context?.requesterApprovalDecision,
           isApprovalExecutionOriginCurrent: params.isApprovalExecutionOriginCurrent, ...(signal ? { signal } : {}),
           ...(params.executeSourceAction ? { executeSourceAction: params.executeSourceAction } : {}),
-        });
-        if (!approved || (await params.readOwnerAccountCredentials())?.token !== credentials.token || signal?.aborted) return denied();
+        }));
+        if (!approved || (await timeApprovalPhase('approval.publication.credentials_settlement', () => params.readOwnerAccountCredentials()))?.token !== credentials.token || signal?.aborted) return denied();
         const { terminalReturn, draftReview, serverIdentityId, ...reviewedOrigin } = approved;
         publicationHomeId = serverIdentityId;
         if (terminalReturn) {
@@ -314,7 +320,7 @@ export function createDiscussionAgentPublisher(params: Readonly<{
       } catch (error) { return readFailed(error); }
       // Once publication begins, loss of its acknowledgement is not proof of
       // denial. Preserve the transport failure for normal outcome reconciliation.
-      return publication ? await publish(publication, signal) : denied();
+      return publication ? await timeApprovalPhase('approval.publication.write', () => publish(publication, signal)) : denied();
     }
     const { v: _version, sessionId: _sessionId, sourceSession: _authoredSource, attachmentSources: _sources, ...request } = parsed.data.request;
     if (!activePublication) {

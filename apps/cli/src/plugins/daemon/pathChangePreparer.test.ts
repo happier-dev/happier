@@ -30,7 +30,7 @@ import {
   type PluginDevelopmentSourceObservationDelivery,
 } from '@/plugins/authoring/sourceObserver';
 import { successfulManagedPluginPnpmBoundary as successfulManagedPnpmBoundary } from '@/plugins/testkit/managedPnpmBoundary';
-import { requestUserPluginChange } from './changeClient';
+import { describeUserPluginChangeFailure, requestUserPluginChange } from './changeClient';
 import { updateSelectedPluginOptionalAccess } from './optionalAccessSelections';
 import { preserveValidPluginOptionalSelections } from './updateReviewPolicy';
 import { bindProcessLogger, Logger } from '@/ui/logger';
@@ -44,7 +44,7 @@ import * as persistence from '@/persistence';
 import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-
+import { presentMachineAuthorityV1, type MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import { createExternalStoreKind } from '../../../../../packages/plugin-sdk/examples/public-authoring/storeKinds';
 
 const BUNDLED_PLUGIN_ROOT = resolve(import.meta.dirname, '../../../../../packages/plugins/codex');
@@ -324,6 +324,40 @@ describe('createDaemonPathPluginChangePreparer', () => {
       const [installed] = await readInstalledPluginCatalog({ happyHomeDir });
       expect(installed?.diagnostics).toEqual([]);
       expect(installed?.manifest?.contributes.storeKinds).toMatchObject([{ id: 'theme', operations: { acquire: 'acquire', manage: 'manage' } }]);
+    } finally { await service.shutdown(); }
+  });
+
+  it.each(['development', 'developmentModule', 'installPath'] as const)('preserves the typed attributed Settings refusal through %s preparation without publishing', async (kind) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-path-settings-home-'));
+    roots.push(happyHomeDir);
+    const pluginRoot = await createDescriptorPlugin();
+    const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.contributes.settings = [{ id: 'preferences', title: 'Preferences', scope: 'daemon', target: { kind: 'plugin' },
+      fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: 'private-settings-value' }] }];
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    if (kind === 'developmentModule') {
+      await writeFile(join(pluginRoot, 'index.ts'), `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`);
+    }
+    const service = createBaseDaemonPluginChangeService({ prepare: createBaseDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: { prepare: async () => { throw new Error('Invalid candidate must not publish'); } },
+      runManagedPluginPnpm: successfulManagedPnpmBoundary,
+    }) });
+    try {
+      const result = await service.requestPluginChange(kind === 'installPath'
+        ? { kind, locator: pluginRoot }
+        : { kind: 'development', sourceRootPath: pluginRoot });
+      expect(result).toMatchObject({ kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
+        message: expect.stringContaining("Plugin 'acme.descriptor' Settings 'preferences' field 'enabled'") });
+      if (result.kind !== 'failed') throw new Error('Invalid Settings must refuse preparation');
+      const publicFailure = describeUserPluginChangeFailure(result);
+      expect(publicFailure).toMatchObject({ code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
+        details: { causeCode: 'PLUGIN_SETTINGS_DEFAULT_INVALID' },
+        message: expect.stringContaining("Plugin 'acme.descriptor' Settings 'preferences' field 'enabled'") });
+      expect(JSON.stringify(result)).not.toContain('private-settings-value');
+      expect(JSON.stringify(publicFailure)).not.toContain('private-settings-value');
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
     } finally { await service.shutdown(); }
   });
 
@@ -620,8 +654,14 @@ describe('createDaemonPathPluginChangePreparer', () => {
       'hostAccess: { required: [], optional: [] }, contributes: {} };',
       'export function activate() {}',
     ].join('\n'), 'utf8');
+    const daemonRights = { freshness: 'current', observation: {
+      version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
+      rootEquivalentGroups: [], passwordlessSudoToRoot: 'denied', managedDropIn: 'absent',
+      tailscaledOperator: { authorization: 'allowed' },
+    } } satisfies MachineDaemonRightsV1;
     const prepare = createDaemonPathPluginChangePreparer({
       happyHomeDir,
+      readDaemonRights: () => daemonRights,
       runtimeLifecycle: {
         prepare: async () => {
           throw new Error('development preparation must not enter the managed lifecycle');
@@ -644,10 +684,13 @@ describe('createDaemonPathPluginChangePreparer', () => {
       reviewReason: 'firstInstall',
       review: { pluginId: 'acme.registered-root', requiredHostAccess: [], optionalHostAccess: [] },
     });
+    if (!('kind' in candidate) || candidate.kind !== 'preparedDevelopmentCandidate' || !candidate.review) throw new Error('Expected prepared development review');
+    expect(presentMachineAuthorityV1(candidate.review.daemonRights ?? {})).toMatchObject({ hostAuthority: 'ordinary',
+      tailscaledOperator: { currentAuthorization: 'allowed' } });
     await candidate.cleanup();
   });
 
-  it('keeps watcher changes review-free while retaining disclosure for an enclosing install approval after restart', async () => {
+  it('keeps equal watcher changes review-free and reviews wider grants after restart while retaining enclosing Action approval', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-development-authority-restart-'));
     roots.push(happyHomeDir);
     const pluginRoot = await createDescriptorPlugin({ development: true, developmentEntryPath: 'src/activate.ts' });
@@ -741,11 +784,11 @@ describe('createDaemonPathPluginChangePreparer', () => {
       observedRevision: 3,
       changedPaths: ['.happier-plugin/plugin.json'],
     });
-    // Development plugins never prompt on change (PPS §9 ruling (a), refined).
     expect(widenedAfterRestart).toMatchObject({
       kind: 'preparedDevelopmentCandidate',
-      requiresReview: false,
-      authorityExpansion: [],
+      requiresReview: true,
+      reviewReason: 'authorityExpansion',
+      authorityExpansion: ['requiredHostAccess'],
     });
     await widenedAfterRestart.cleanup();
   });
@@ -2077,9 +2120,8 @@ describe('createDaemonPathPluginChangePreparer', () => {
       'utf8',
     )).resolves.toContain('fixture-retry-dependency');
 
-    // A current ordinary generation is not a known complete development
-    // closure. After installation approval, even a source-only batch must make
-    // one fresh daemon dependency preparation instead of cloning that owner.
+    // Restoring development custody does not expand the installed grant.
+    // A source-only batch still prepares its executable/UI closure normally.
     await createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle }).update(async (state) => ({
       ...state,
       plugins: {
@@ -2094,17 +2136,11 @@ describe('createDaemonPathPluginChangePreparer', () => {
       },
     }));
     runManagedPluginPnpm.mockClear();
-    const ordinaryGenerationSourceReview = await service.requestPluginChange({
+    await expect(service.requestPluginChange({
       kind: 'development',
       pluginId: 'acme.development-closure',
       sourceRootPath: sourceRoot,
       changedPaths: ['src/ui-byte.txt'],
-    });
-    expect(ordinaryGenerationSourceReview.kind).toBe('reviewRequired');
-    if (ordinaryGenerationSourceReview.kind !== 'reviewRequired' || ordinaryGenerationSourceReview.reviewKind !== 'installation') throw new Error('Expected installation review');
-    await expect(service.decidePluginChange({
-      pendingChangeId: ordinaryGenerationSourceReview.pendingChangeId,
-      decision: 'installAndTrust', optionalSelections: [],
     })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.development-closure' });
     expect(runManagedPluginPnpm).not.toHaveBeenCalled();
     await expect(service.requestPluginChange({
@@ -2776,7 +2812,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       .plugins['acme.descriptor']?.state.enabled).toBe(false);
   });
 
-  it('reuses source trust for trusted development replacements that narrow or widen required access', async () => {
+  it('reuses source trust for narrowed development grants but reviews wider authority', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-home-'));
     roots.push(happyHomeDir);
     const pluginRoot = await createDescriptorPlugin({
@@ -2811,7 +2847,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       optional: unknown[];
     };
     // Dropping an origin reaches nowhere the approved grant could not, so the
-    // reviewed source trust carries the replacement without a new decision.
+    // incumbent authority carries the replacement without a new decision.
     hostAccess.required[0]!.scope.targets = [{
       kind: 'fixedOrigin',
       origin: 'https://api.example.test',
@@ -2828,8 +2864,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       sourceRootPath: pluginRoot,
     })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
 
-    // Re-adding the dropped origin widens reach, but a development change never
-    // prompts (PPS §9 ruling (a), refined).
+    // Re-adding the dropped origin widens the incumbent's current grant.
     hostAccess.required[0]!.scope.targets = [
       { kind: 'fixedOrigin', origin: 'https://api.example.test' },
       { kind: 'fixedOrigin', origin: 'https://secondary.example.test' },
@@ -2844,7 +2879,9 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await expect(service.requestPluginChange({
       kind: 'development',
       sourceRootPath: pluginRoot,
-    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.descriptor' });
+    })).resolves.toMatchObject({ kind: 'reviewRequired', review: { pluginId: 'acme.descriptor' },
+      reason: 'authorityExpansion', authorityExpansion: ['requiredHostAccess'] });
+    await service.shutdown();
   });
 
   it('rejects a development source whose manifest identity changed after observation', async () => {
