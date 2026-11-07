@@ -1,18 +1,26 @@
 import {
     PluginUiMarkdown, PluginUiPrivateDiffViewer, CodeBlockView, ProseDiffViewer, QRCode,
     PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, PluginVoiceCompactTranscript,
-    PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt,
+    PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt, SessionBotFace,
     ExecutableParticipantPickerPresentation,
 } from './pluginUiPrivateContent';
 import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
 import { usePluginVoiceAttempt } from './PluginVoicePresence';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
+import { createCollectionSpacesStripHost } from '@/components/ui/lists/collection/collectionSpacesStripHost';
 import * as React from 'react';
+import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
+import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
+import type { HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
+import { showTaskShareSheet } from '@/components/sharing/tasks/showTaskShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { SelectionCheckGlyph, type SelectionCheckSize, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
+import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '@happier-dev/plugin-ui';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { COMPANION_WEB_POINTER_BINDING } from '@/components/companion/interaction/useCompanionPointerDragSession';
 import { NativeFloatingFrame } from '@/components/companion/interaction/NativeFloatingFrame';
-import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol';
+import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
     PluginUiInstanceKeyV1,
     PluginUiJsonValueV1,
@@ -42,6 +50,9 @@ import {
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { CORE_COLLECTION_ADD_MENU_HOST } from '@/components/ui/lists/collection/CollectionAddMenu';
+import { t } from '@/text';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
 import { SetupBlockGrid } from '@/components/ui/setupBlocks/SetupBlockGrid';
@@ -65,7 +76,7 @@ import {
     resolvePluginUiIconName,
     type PluginUiIconDirection,
 } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
-import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import type { HappierUiPalette } from '@happier-dev/plugin-ui/environment';
 import type { PluginUiSessionPartPresentation, PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
 import type { FindSurfaceRegistrationHost } from '@happier-dev/plugin-ui/advanced';
@@ -79,8 +90,11 @@ import { useCollectionRailWidth } from '@/components/ui/lists/collection/useColl
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { resolveAppLocalDateTimePicker } from '@/components/ui/dateTime/LocalDateTimeEditor';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
+import { PageAsideColumns } from '@/components/ui/layout/PageAsideColumns';
+import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
 import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
+import type { BotFaceProps, PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '@happier-dev/plugin-ui/components';
 import type { ExecutableParticipantPickerProps } from '@happier-dev/plugin-ui/components';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
@@ -90,7 +104,7 @@ import {
 } from '@/components/plugins/shared/installedPluginBrandPresentation';
 
 type PluginUiPrivatePageChrome = HappierPageChrome & Readonly<{
-    renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode;
+    renderNavigationActions?: (actions: React.ReactNode, placement?: 'navigation' | 'page') => React.ReactNode;
 }>;
 
 const MATCHING_PLUGIN_POPOVER_PORTAL_OPTIONS = Object.freeze({
@@ -178,6 +192,7 @@ export type PluginDestinationRowInput = NavigationListDestination & Readonly<{
 const PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU = { useFacts: useCollectionRowNeedsYouHostFacts };
 
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
+    runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
     /** Canonical mounted plugin identity, supplied by the physical host. */
     pluginId?: string;
     /** Workspace image bytes stay bound to the physical mount's already admitted target. */
@@ -244,29 +259,21 @@ type PluginUiPrivateTargetBrandMarkInput = Readonly<{
 
 function renderPluginUiPrivateBrandMark(input: Readonly<{
     brand: InstalledPluginBrandPresentation;
-    pluginId?: string;
     size?: HappierImageSize;
     pixelSize?: number;
     showName: boolean;
     externallyLabelled: boolean;
     testID?: string;
 }>): React.ReactElement {
-    const mark = (
-        <InstalledPluginBrandMark
+    return (
+        <HappierBrandMark
             brand={input.brand}
-            pluginId={input.pluginId}
             size={input.size}
             pixelSize={input.pixelSize}
-            externallyLabelled={input.showName || input.externallyLabelled}
-            testID={input.showName && input.testID ? `${input.testID}-mark` : input.testID}
+            showName={input.showName}
+            externallyLabelled={input.externallyLabelled}
+            testID={input.testID}
         />
-    );
-    if (!input.showName) return mark;
-    return (
-        <View testID={input.testID} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {mark}
-            <Text>{input.brand.displayName}</Text>
-        </View>
     );
 }
 
@@ -280,7 +287,6 @@ function ResolvedPluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBran
     });
     return renderPluginUiPrivateBrandMark({
         brand: resolved ?? { displayName: props.target.displayName },
-        pluginId: props.target.installedPackage.id,
         size: props.size,
         pixelSize: props.pixelSize,
         showName: props.showName,
@@ -300,7 +306,6 @@ function PluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBrandMarkInp
     }
     return renderPluginUiPrivateBrandMark({
         brand: { displayName: props.target?.displayName ?? props.fallbackBrandDisplayName },
-        pluginId: props.target?.installedPackage.id,
         size: props.size,
         pixelSize: props.pixelSize,
         showName: props.showName,
@@ -308,6 +313,7 @@ function PluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBrandMarkInp
         testID: props.testID,
     });
 }
+
 
 /**
  * Thin plugin-surface adapter over the incumbent app QR renderer. Encoding,
@@ -331,6 +337,15 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
 
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
+    useScmFileViewed,
+    taskShareSheet: {
+        open({ taskRef, title, anchor }) {
+            showTaskShareSheet({ ...taskRef, title,
+                anchor: resolvePressTriggerAnchor({ currentTarget: anchor?.current }),
+            });
+        },
+    } satisfies HostTaskShareSheet,
+    collectionAddMenu: CORE_COLLECTION_ADD_MENU_HOST,
     renderExecutableParticipantPicker(input: ExecutableParticipantPickerProps) {
         return <ExecutableParticipantPickerPresentation {...input} />;
     },
@@ -361,14 +376,26 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         return <PluginDictationButton {...input} />;
     },
     storedImageHost: STORED_IMAGE_HOST,
+    renderKeyboardStickyFooter(input: KeyboardStickyFooterProps) {
+        return <KeyboardStickyFooter {...input} style={input.style as StyleProp<ViewStyle>} />;
+    },
+    renderBotFace({ seed, face, ...input }: Omit<BotFaceProps, 'fallback'>) {
+        return <SessionBotFace facts={{ seed, face: face ?? null }} {...input} />;
+    },
+    renderPlanChecklistCard(input: Omit<import('@happier-dev/plugin-ui/components').PlanChecklistCardProps, 'fallback'>) {
+        return <PlanChecklistCard {...input} style={input.style as StyleProp<ViewStyle>} />;
+    },
+    renderPageAsideColumns(input: Omit<PageAsideColumnsProps, 'fallback'>) {
+        return <PageAsideColumns {...input} />;
+    },
+    renderPagePinnedBar(input: Omit<PagePinnedBarProps, 'fallback'>) {
+        return <PagePinnedBar {...input} style={input.style as StyleProp<ViewStyle>} />;
+    },
     renderHorizontalScrollEdgeMask(input: import('@happier-dev/plugin-ui/components').HorizontalScrollEdgeMaskProps) {
         return <HorizontalScrollEdgeMask {...input} />;
     },
     useModalCardPhoneSheet() {
         return useSheetDismiss() !== null;
-    },
-    renderKeyboardStickyFooter(input: Readonly<{ openedOffset: number; children: React.ReactNode }>) {
-        return <KeyboardStickyFooter offset={input.openedOffset}>{input.children}</KeyboardStickyFooter>;
     },
     // The web picker reaches this host through shared collection controls while
     // its module is still loading. Resolve its binding when a host is consumed.
@@ -469,6 +496,14 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     renderDisclosureCaret(input: Readonly<{ expanded: boolean; density?: HappierDisclosureCaretDensity }>) {
         return <DisclosureCaret expanded={input.expanded} density={input.density ?? 'row'} />;
     },
+    /** The checkbox mark of core's own list and tree rows, so a plugin checkbox is the same mark. */
+    renderCheckboxMark(input: Readonly<{ state: SelectionCheckState; size: SelectionCheckSize }>) {
+        return <SelectionCheckGlyph state={input.state} size={input.size} />;
+    },
+    /** Happier's own mark (the app's logo, light and dark), for content Happier holds itself, such as a personal task. */
+    renderHostMark(input: Readonly<{ pixelSize: number; testID?: string }>) {
+        return <View testID={input.testID}><HeaderLogo size={input.pixelSize} inset={0} /></View>;
+    },
     renderQRCode(input: Readonly<{ data: string; size: number; testID?: string }>) {
         return <PluginUiPrivateQRCode data={input.data} size={input.size} testID={input.testID} />;
     },
@@ -488,6 +523,7 @@ const PLUGIN_UI_PANE_HEADER_SCROLL = Object.freeze({
 
 export type PluginUiPrivatePresentationHost = Readonly<
     typeof PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS & {
+        runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
         createScrollActivityTracker(scrollRef: React.RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
         paneHeaderScroll: Readonly<{ useReporter(): ((distancePx: number) => void) | null }>;
         /** The host's real type-role styles for same-realm plugin text. */
@@ -656,6 +692,12 @@ export function createPluginUiPrivatePresentationHost(
     const pluginId = options?.pluginId;
     return Object.freeze({
         ...presentationRenderers,
+        renderDetailsPaneOpenAsPageButton(input: import('@happier-dev/plugin-ui/components').DetailsPaneOpenAsPageButtonProps) {
+            const label = input.accessibilityLabel ?? t('settingsPlugins.surfaces.openAsPage');
+            return <IconButton testID={input.testID} iconName="arrow-square-out"
+                accessibilityLabel={label} tooltip={label} variant="plain"
+                disabled={input.disabled} onPress={input.onPress} />;
+        },
         ...(options?.markdownWorkspace ? { renderMarkdown(input: HappierMarkdownRenderInput) {
             return <PluginUiMarkdown input={input} workspace={options.markdownWorkspace} />;
         } } : {}),
@@ -667,10 +709,12 @@ export function createPluginUiPrivatePresentationHost(
         createScrollActivityTracker: createScrollViewNearViewportTracker,
         paneHeaderScroll: PLUGIN_UI_PANE_HEADER_SCROLL,
         collectionRowNeedsYou: PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU,
+        collectionSpacesStrip: createCollectionSpacesStripHost(pluginId),
         ...(options?.renderDragSource === undefined ? {} : { renderDragSource: options.renderDragSource }),
         ...(options?.renderDropTarget === undefined ? {} : { renderDropTarget: options.renderDropTarget }),
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),
         ...(options?.mediaStage ? { mediaStage: options.mediaStage } : {}),
+        ...(options?.runPress ? { runPress: options.runPress } : {}),
         typography: readPluginUiHostTypography(),
         ...(options?.palette === undefined ? {} : { palette: options.palette }),
         ...(options?.resolveMaterialColor === undefined ? {} : { resolveMaterialColor: options.resolveMaterialColor }),

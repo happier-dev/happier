@@ -27,6 +27,36 @@ inventory](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-ui/A
 `node_modules/@happier-dev/plugin-ui/API.md` in the generated project is the
 exact installed inventory. Do not guess exports from examples or app source.
 
+## Execution checklists (0.3 development)
+
+Import `PlanChecklistCard` and its `PlanChecklistItem` and
+`PlanChecklistExecutionState` types from `@happier-dev/plugin-ui/components`.
+On same-realm native and web surfaces, it renders the existing checklist used
+by deployment logs and onboarding, including nested steps, disclosure, execution
+logs and diagnostic copying. Keep selection, expansion and execution state in
+your surface and pass the corresponding callbacks; the component does not run
+work or acquire logs. Hosts without the checklist presentation bridge render
+the optional `fallback` instead.
+
+```tsx
+import { PlanChecklistCard, type PlanChecklistItem } from '@happier-dev/plugin-ui/components';
+
+const items: readonly PlanChecklistItem[] = [
+  { id: 'build', title: 'Build', satisfied: false, disabled: false },
+];
+
+<PlanChecklistCard
+  items={items}
+  phase="execute"
+  selectedIds={['build']}
+  expandedIds={['build']}
+  executionById={{
+    build: { status: 'running', logs: [{ ts: 0, level: 'info', message: 'Build started' }] },
+  }}
+  onToggleExpanded={toggleExpanded}
+/>
+```
+
 ## Live viewer input (0.3 development)
 
 `HappierLiveStreamInputLayer` from `@happier-dev/plugin-ui/components` is the
@@ -478,6 +508,13 @@ keys and add only.
   shortcuts
 />
 ```
+
+`CollectionConditionTokens` keeps a collection's active conditions visible as removable
+chips. Supply `tokens` (`id`, `label`, `valueLabel`), `onRemove`, a `testIDPrefix`,
+and localized `labels={{ remove: (field) => words.remove(field), save: words.saveAsSpace }}`.
+An optional `onSave` adds Save as space. Conditions wrap in a narrow column; Save
+keeps its accessible name and becomes an icon when its words crowd the chips.
+The collection owner retains filtering and persistence.
 
 ## Avatars, loading pages and card footers (0.3 development)
 

@@ -1,46 +1,19 @@
-import * as React from 'react';
+import type {
+    PlanChecklistExecutionState,
+    PlanChecklistItem,
+    PlanChecklistPhase,
+} from '@happier-dev/plugin-ui/components';
 
-export type PlanChecklistPhase = 'select' | 'execute';
-
-export type PlanChecklistItemStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
-
-export type PlanChecklistKind = 'item' | 'stage' | 'substep' | 'prompt';
-
-export type PlanChecklistVariant = 'default' | 'onboarding';
-
-export type PlanChecklistLogEntry = Readonly<{
-    ts: number;
-    level: 'info' | 'warn' | 'error';
-    message: string;
-    details?: string;
-}>;
-
-export type PlanChecklistExecutionError = Readonly<{
-    title: string;
-    message?: string;
-    raw?: unknown;
-}>;
-
-export type PlanChecklistExecutionState = Readonly<{
-    status: PlanChecklistItemStatus;
-    logs: readonly PlanChecklistLogEntry[];
-    error?: PlanChecklistExecutionError;
-}>;
-
-export type PlanChecklistItem = Readonly<{
-    id: string;
-    kind?: PlanChecklistKind;
-    title: React.ReactNode;
-    subtitle?: React.ReactNode;
-    satisfied: boolean;
-    disabled: boolean;
-    defaultSelected?: boolean;
-    selected?: boolean;
-    badge?: React.ReactNode;
-    children?: readonly PlanChecklistItem[];
-    renderDetails?: () => React.ReactNode;
-    details?: React.ReactNode | (() => React.ReactNode);
-}>;
+export type {
+    PlanChecklistPhase,
+    PlanChecklistItemStatus,
+    PlanChecklistKind,
+    PlanChecklistVariant,
+    PlanChecklistLogEntry,
+    PlanChecklistExecutionError,
+    PlanChecklistExecutionState,
+    PlanChecklistItem,
+} from '@happier-dev/plugin-ui/components';
 
 export type PlanChecklistControllerPublishSnapshot<Snapshot> = (snapshot: Snapshot) => void;
 

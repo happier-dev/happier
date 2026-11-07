@@ -3,6 +3,18 @@ export { formatUsageDurationCompact } from '@happier-dev/plugin-sdk/ui';
 export * from './Action.js';
 export { BotFace, type BotFaceProps, type BotFaceValue } from './BotFace.js';
 export {
+  PlanChecklistCard,
+  type PlanChecklistCardProps,
+  type PlanChecklistPhase,
+  type PlanChecklistItemStatus,
+  type PlanChecklistKind,
+  type PlanChecklistVariant,
+  type PlanChecklistLogEntry,
+  type PlanChecklistExecutionError,
+  type PlanChecklistExecutionState,
+  type PlanChecklistItem,
+} from './PlanChecklistCard.js';
+export {
   PageAsideColumns, PagePinnedBar, KeyboardStickyFooter,
   type PageAsideColumnsProps, type PagePinnedBarProps, type KeyboardStickyFooterProps,
 } from './PageLayout.js';
@@ -35,6 +47,8 @@ export * from './Collection.js';
 export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
   type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';
 export * from './CollectionSavedViewsStrip.js';
+export { EntityFlatReorderList, type EntityFlatReorderItem, type EntityFlatReorderControls,
+  type EntityFlatReorderListProps } from './EntityFlatReorderList.js';
 export { CollectionAddMenu, type CollectionAddMenuItem, type CollectionAddMenuProps } from './CollectionAddMenu.js';
 export {
   useCollectionSavedViewsControl,
@@ -46,6 +60,8 @@ export {
 } from './CollectionSavedViews.js';
 export * from './CollectionFilter.js';
 export { CollectionConditionEditor, type CollectionConditionEditorProps } from './CollectionConditionEditor.js';
+export { CollectionConditionTokens, type CollectionConditionTokensProps } from './CollectionConditionTokens.js';
+export type { CollectionConditionToken } from '../presentation/collection/CollectionConditionTokens.js';
 export {
   HAPPIER_COLLECTION_CONDITION_EDITOR_METRICS,
   HappierCollectionConditionEditor,

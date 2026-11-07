@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { NavigationListDestination } from '../components/NavigationList.js';
 import type { ItemProps } from '../components/List.js';
@@ -21,7 +22,9 @@ import type { HappierLiveStreamProps } from '../presentation/media/LiveStream.js
 import type { HappierFloatingFramePointerBinding, HappierFloatingFrameNativeBindingProps } from '../presentation/layout/FloatingFrame.js';
 import type { HappierStoredImageHost } from '../presentation/content/StoredImage.js';
 import type { DragSourceProps, DropTargetProps } from '../components/EntityDragDrop.js';
+import type { EntityFlatReorderListProps } from '../components/EntityFlatReorderList.js';
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
+import type { HostTaskShareSheet } from '../hostApi/taskShareSheet.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '../components/Voice.js';
@@ -30,14 +33,21 @@ import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
 import type { ExecutableParticipantPickerProps } from '../components/ExecutableParticipantPicker.js';
 import type { DetailsPaneOpenAsPageButtonProps } from '../components/DetailsPaneOpenAsPageButton.js';
+import type { HappierCollectionAddMenuHost } from '../presentation/collection/CollectionAddMenu.js';
+import type { BotFaceProps } from '../components/BotFace.js';
+import type { PlanChecklistCardProps } from '../components/PlanChecklistCard.js';
+import type { PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '../components/PageLayout.js';
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
+
+/** Optional positioning context for an action that opens another anchored surface. */
+export type PluginUiMenuSelection = Readonly<{ anchorRef?: RefObject<unknown> }>;
 
 /**
  * Minimal Popover facts exposed to plugin-owned content. Pointer dismissal and
  * the viewport calculation remain inside the incumbent app Popover.
  */
-export type PluginUiPopoverContentControls = Readonly<{
+export type PluginUiPopoverContentControls = PluginUiMenuSelection & Readonly<{
   requestClose(reason: 'selection' | 'escape'): void;
   /** Current viewport height computed by the incumbent host Popover. */
   maxHeight: number;
@@ -125,6 +135,8 @@ export type PluginUiDetailsPanePresentation = Readonly<{
   /** Private semantic binding to the incumbent pane header, never an author DOM/native-ref API. */
   headingRef?: (target: HappierFocusable | null) => void;
   subtitle?: string;
+  /** Where the item lives, outermost first: the band draws it above the title, with its actions on that row. */
+  breadcrumb?: readonly string[];
   /** The item's identity mark beside the title (a kind glyph); it stands on its own, with no tile. */
   leading?: ReactNode;
   /** A mark leading the subtitle line (the source's brand mark). */
@@ -169,8 +181,9 @@ export type PluginUiPaneHeaderPresentation = Readonly<{
 export type PluginUiPaneHeaderLineSegment = string | Readonly<{ text: string; attention: true }>;
 
 /**
- * The pane header of the tab the host mounted this surface in; absent where the surface has no
- * header of its own (a page, a widget). Package-private: authors use the public `PaneHeaderContent`.
+ * The pane header of the tab the host mounted this surface in, or the header of its widget frame;
+ * absent where the surface has no such header (a page). Package-private: authors use the public
+ * `PaneHeaderContent`.
  */
 export type PluginUiPaneHeaderHost = Readonly<{
   /** Publishes the header content from where it is declared; renders nothing in place. */
@@ -185,7 +198,12 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
-  renderCheckboxMark?(input: Readonly<{ state: 'checked' | 'unchecked' | 'mixed'; size: 'regular' | 'compact' }>): ReactNode;
+  /** Host-private synchronous press scope; never carried by public Host API requests. */
+  runPress?(event: unknown, invoke: () => unknown): unknown;
+  /** Same-realm presentation capability; task reads and grants remain with the incumbent ShareSheet. */
+  taskShareSheet?: HostTaskShareSheet;
+  /** Same-realm hook: the app retains source acquisition, Action lifetime and per-path observation. */
+  useScmFileViewed?(params: ScmFileViewedRequest): ScmFileViewedSource | null;
   /** Device-local collection widths, already scoped to this plugin by the host. */
   panelSizing?: Readonly<{
     useWidth(resizeKey: string): Readonly<{
@@ -220,11 +238,36 @@ export type PluginUiPresentationHost = Readonly<{
   renderSetupBlockTile?(input: Omit<SetupBlockTileProps, 'fallback'>): ReactNode;
   renderSetupBlockGrid?(input: Omit<SetupBlockGridProps, 'fallback'>): ReactNode;
   renderDictationButton?(input: Omit<DictationButtonProps, 'fallback'> & Readonly<{ presented: boolean }>): ReactNode;
+  /**
+   * The host's leaves for `CollectionSavedViewsStrip`, so a plugin's strip is the host's strip. Absent (a hosted-web
+   * realm), the public page tabs draw it and the gestures and digit shortcuts have no host owner to reach.
+   */
+  collectionSpacesStrip?: Readonly<{
+    renderTabs: (input: import('../presentation/collection/CollectionSpacesStrip.js').HappierCollectionSpacesStripTabsInput) => ReactNode;
+    useEdgeMask: () => import('../presentation/collection/CollectionSpacesStrip.js').HappierCollectionSpacesStripEdgeMask;
+    useReducedMotion?: () => boolean;
+    useOrdinalLabel?: () => (ordinal: number) => string | undefined;
+    useOrdinalCommands?: (input: Readonly<{ enabled: boolean; selectOrdinal: (ordinal: number) => boolean }>) => void;
+    useReorder?: (input: Readonly<{
+      testID: string;
+      items: readonly Readonly<{ id: string; name: string }>[];
+      onReorder?: (id: string, beforeId: string | null) => Promise<boolean>;
+    }>) => Readonly<{ wrapList: (tabs: ReactNode) => ReactNode; wrapTab: (id: string, tab: import('react').ReactElement) => ReactNode }>;
+    SwipeZone?: import('react').ComponentType<Readonly<{
+      testID: string;
+      canPrevious: boolean;
+      canNext: boolean;
+      onCommit: (direction: -1 | 1) => void;
+      children: ReactNode;
+    }>>;
+  }>;
   /** The person's needs-you highlight facts for `CollectionRowNeedsYouHighlight`; read only by a row that needs them. */
   collectionRowNeedsYou?: Readonly<{ useFacts(): Readonly<{ preference: import('../presentation/collection/needsYouHighlight.js').HappierNeedsYouHighlightPreference; reducedMotion: boolean; presented: boolean }> }>;
   /** Thin presentation requests; the existing mounted host owns identity, gestures and Actions. */
   renderDragSource?(input: DragSourceProps): ReactNode;
   renderDropTarget?(input: DropTargetProps): ReactNode;
+  /** Same flat-list gestures and chooser as core; callers retain membership and the receiving write. */
+  renderEntityFlatReorderList?(input: EntityFlatReorderListProps): ReactNode;
   /** The incumbent host material owner; no settings or platform policy enters the author API. */
   renderMaterialSurface?: import('../presentation/layout/Surface.js').HappierMaterialSurfaceRender;
   /** Concrete paint from the same host material owner, for native secondary controls. */
@@ -237,10 +280,16 @@ export type PluginUiPresentationHost = Readonly<{
   }>;
   /**
    * Keep a pushed detail's pinned footer above the on-screen keyboard through the host's keyboard
-   * owner. `openedOffset` is how much of the footer's bottom padding (its home-indicator inset) may
+   * owner. `offset` is how much of the footer's bottom padding (its home-indicator inset) may
    * tuck under the open keyboard. Absent (web, a hosted frame), the footer stays at the page's foot.
    */
-  renderKeyboardStickyFooter?(input: Readonly<{ openedOffset: number; children: ReactNode }>): ReactNode;
+  renderKeyboardStickyFooter?(input: KeyboardStickyFooterProps): ReactNode;
+  /** Existing app presentation owners; no Session read or layout policy crosses these ports. */
+  renderBotFace?(input: Omit<BotFaceProps, 'fallback'>): ReactNode;
+  /** One incumbent checklist owns selection, disclosure and log-body presentation. */
+  renderPlanChecklistCard?(input: Omit<PlanChecklistCardProps, 'fallback'>): ReactNode;
+  renderPageAsideColumns?(input: Omit<PageAsideColumnsProps, 'fallback'>): ReactNode;
+  renderPagePinnedBar?(input: Omit<PagePinnedBarProps, 'fallback'>): ReactNode;
   /** The existing native alpha-mask leaf; web uses the shared CSS mask directly. */
   renderHorizontalScrollEdgeMask?(input: import('../components/HorizontalScrollEdgeMask.js').HorizontalScrollEdgeMaskProps): ReactNode;
   /** Hook into the containing card's existing phone-sheet binding. */
@@ -364,6 +413,8 @@ export type PluginUiPresentationHost = Readonly<{
   renderSessionPart?(input: PluginUiSessionPartPresentation): ReactNode;
   /** One controlled choice/search presenter; no participant inventory or execution authority. */
   renderExecutableParticipantPicker?(input: ExecutableParticipantPickerProps): ReactNode;
+  /** Incumbent collection menu primitives; the shared presentation owns the composition. */
+  collectionAddMenu?: HappierCollectionAddMenuHost;
   /**
    * Render one declared widget area of this page through the host's one widget area owner (the
    * public `WidgetSurface`). Absent where the host cannot present widgets (isolated tests, a
@@ -435,6 +486,18 @@ export type PluginUiPresentationHost = Readonly<{
    * Absent, the package draws its shared chevron.
    */
   renderDisclosureCaret?(input: Readonly<{ expanded: boolean; density?: HappierDisclosureCaretDensity }>): ReactNode;
+  /**
+   * The checkbox mark the host's own list and tree rows draw (checked, unchecked, or a partly checked group), so a
+   * package checkbox reads like the host's. Decorative: the package control owns the press and checked state.
+   * Absent, the package draws its own box.
+   */
+  renderCheckboxMark?(input: Readonly<{ state: 'checked' | 'unchecked' | 'mixed'; size: 'regular' | 'compact' }>): ReactNode;
+  /**
+   * The host product's own mark (Happier), for content the host itself holds rather than a package's source (a
+   * personal task). Decorative: an adjacent label names the content. Absent, `BrandMark host` draws the mounted
+   * plugin's brand.
+   */
+  renderHostMark?(input: Readonly<{ pixelSize: number; testID?: string }>): ReactNode;
   /** The incumbent pane action; navigation stays with the caller. */
   renderDetailsPaneOpenAsPageButton?(input: DetailsPaneOpenAsPageButtonProps): ReactNode;
   /**

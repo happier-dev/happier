@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { PlanChecklistCardProps as PublicPlanChecklistCardProps } from '@happier-dev/plugin-ui/components';
 
 import { PlanChecklistRow } from './PlanChecklistRow';
 import type {
     PlanChecklistExecutionState,
     PlanChecklistItem,
     PlanChecklistPhase,
-    PlanChecklistVariant,
 } from './types';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -36,22 +36,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export type PlanChecklistCardProps = Readonly<{
-    testID?: string;
-    items: readonly PlanChecklistItem[];
-    phase: PlanChecklistPhase;
-    variant?: PlanChecklistVariant;
-    selectedIds: readonly string[];
-    executionById?: Readonly<Record<string, PlanChecklistExecutionState>>;
-    expandedIds?: readonly string[];
-    expandedId?: string | null;
-    onToggleItem?: (itemId: string) => void;
-    onToggleExpanded?: (itemId: string) => void;
-    onCopyDiagnostics?: (item: PlanChecklistItem) => boolean | void | Promise<boolean | void>;
-    header?: React.ReactNode;
-    footer?: React.ReactNode;
+export type PlanChecklistCardProps = Omit<PublicPlanChecklistCardProps, 'fallback' | 'style'> & Readonly<{
     style?: StyleProp<ViewStyle>;
-    depth?: number;
 }>;
 
 function buildIdSet(ids: readonly string[]): ReadonlySet<string> {
