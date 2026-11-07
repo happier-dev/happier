@@ -5,10 +5,10 @@ import { createSharedManagedProviderSessionAccess, createSharedManagedProviderSe
 import { createRemoteManagedProviderSessionProjection } from "@/daemon/startup/remoteManagedProviderSession";
 import { isRemoteProviderGatewayPlacement } from "@/providers/managed/gatewayPlacement";
 import type { ApiMachineClient } from "@/api/apiMachine";
-import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from "@/configuration";
 import type { RequesterSessionRuntimeContext, RequesterSessionRuntimeContextPorts } from "@/daemon/sessionEncryption/requesterSessionCredentials";
-import { sameStoredCredentials, type StoredCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { createRunnerIsolationIdentity } from '@/daemon/agentRuntime/runnerIsolationIdentity';
 import { createRunnerAgentProjectLaunchInvocation } from "@/daemon/agentRuntime/runnerAgentProjectLaunch";
 import { ExecutionRunGetResponseSchema, ExecutionRunStopResponseSchema } from "@happier-dev/protocol/execution/runs/responseSchemas";
@@ -343,6 +343,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             basis: ProviderRuntimeBindingBasisV1,
             metadata: NonNullable<NonNullable<typeof tracked.spawnOptions>['providerBindingMetadataV1']>,
             revalidate: () => Promise<boolean>,
+            isCurrent: () => Promise<boolean>,
           ) => {
             if (basis.deployment.kind !== 'managedLocal' || created.lifetime !== 'sharedConsumer') {
               throw new PluginError({
@@ -407,7 +408,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 readProjection: () => captured,
                 ...(created.materializeManagedProviderAgentBinding ? { materialize: created.materializeManagedProviderAgentBinding } : {}),
                 endpointTemplateId: basis.endpoint.endpointTemplateId,
-                revalidate,
+                revalidate: isCurrent,
               }),
             });
           };
@@ -416,12 +417,14 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             metadata: NonNullable<NonNullable<typeof tracked.spawnOptions>['providerBindingMetadataV1']>,
             hardRevocationRevision: number,
             revalidate: () => Promise<boolean>,
+            readsAuthorityCurrent: () => boolean,
             retainedScope?: import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry').RetainedManagedProviderRuntimeInvocationScope,
           ) => await createRemoteManagedProviderSessionProjection({
             sessionId, machineId: params.machineId, basis, metadata, hardRevocationRevision,
             registry: lease.registry, ...(retainedScope ? { retainedScope } : {}), signal,
             isBootstrapCurrent: () => !signal.aborted && authorizeOperation(undefined),
-            isCurrent: async scope => !signal.aborted && authorizeOperation(undefined) && await revalidate()
+            isCurrent: async () => readsAuthorityCurrent(),
+            revalidateAdmission: async scope => readsAuthorityCurrent() && await revalidate()
               && await readCurrentPluginHardRevocationRevision({
                 paths: resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir }), pluginId: scope.pluginId,
               }) === hardRevocationRevision
@@ -486,39 +489,6 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               const retainedCustodyDispatch =
                 retained.custody === 'daemonShared' ? null
                   : await createSessionManagedProviderCustodyDispatch(scope);
-              let retainedProviderPolicyFence: Promise<void> | null = null;
-              let retainedProviderPolicyFenced = false;
-              const fenceRetainedProviderPolicy = async () => {
-                if (!retainedCustodyDispatch) return await cleanupManagedProvider();
-                if (retainedProviderPolicyFenced) return;
-                if (!retainedProviderPolicyFence) {
-                  const fenceAttempt = (async () => {
-                    const result = await retainedCustodyDispatch({
-                      v: 1,
-                      kind: 'fenceRetainedProviderPolicy',
-                      claim: scope,
-                    });
-                    if (result.kind !== 'retainedProviderPolicyFenced') {
-                      throw new PluginError({
-                        code: 'plugin_services_managed_provider_custody_unavailable',
-                        message:
-                          'Runner returned an invalid retained Provider policy-fence result',
-                      });
-                    }
-                  })();
-                  retainedProviderPolicyFence = fenceAttempt;
-                  try {
-                    await fenceAttempt;
-                    retainedProviderPolicyFenced = true;
-                  } finally {
-                    if (retainedProviderPolicyFence === fenceAttempt) {
-                      retainedProviderPolicyFence = null;
-                    }
-                  }
-                  return;
-                }
-                await retainedProviderPolicyFence;
-              };
               const revalidateRetainedProviderPolicy =
                 async (): Promise<boolean> =>
                   await revalidateAdoptedManagedProviderPolicy(
@@ -551,7 +521,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     message: 'Retained remote managed gateway authority changed' });
                 }
                 return await createRemoteManagedProjection(retainedBasis, metadata, currentHardRevocationRevision,
-                  async () => readsRetainedAuthorityCurrent() && await revalidateRetainedProviderPolicy(), {
+                  async () => readsRetainedAuthorityCurrent() && await revalidateRetainedProviderPolicy(), readsRetainedAuthorityCurrent, {
                     sessionId: scope.sessionId, runtimeBindingBasis: retainedBasis,
                     identity: { pluginId: scope.pluginId, localId: scope.providerLocalId }, occurrenceId: scope.occurrenceId,
                     sourceCustody: scope.sourceCustody, manifestAuthority: scope.manifestAuthority, operationClaimId: scope.operationClaimId,
@@ -638,25 +608,6 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               const isRetainedProviderCurrent = async () =>
                 await isRetainedManagedProviderInvocationCurrent({
                   readsRetainedAuthorityCurrent,
-                  revalidatePolicy: revalidateRetainedProviderPolicy,
-                  fenceRetainedPolicy: fenceRetainedProviderPolicy,
-                  readHardRevocationRevision: async () =>
-                    await readCurrentPluginHardRevocationRevision({
-                      paths: storePaths,
-                      pluginId: scope.pluginId,
-                    }),
-                  readGenerationIntegrityCurrentness: async () =>
-                    scope.sourceCustody.kind !== 'managed' ||
-                    (await readCurrentPluginImmutableGenerationIntegrityCurrentness(
-                      {
-                        paths: storePaths,
-                        pluginId: scope.pluginId,
-                        immutableGenerationId:
-                          scope.sourceCustody.immutableGenerationId,
-                      },
-                    )),
-                  hardRevocationRevisionAtAdmission:
-                    currentHardRevocationRevision,
                 });
               const retainedSessionBindingMetadata =
                 tracked.spawnOptions?.providerBindingMetadataV1;
@@ -679,6 +630,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     created,
                     scope.runtimeBindingBasis,
                     retainedSessionBindingMetadata,
+                    isRetainedProviderCurrent,
                     isRetainedProviderCurrent,
                   )
                 : null;
@@ -879,11 +831,6 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   typeof createRunnerManagedServicesClient
                 >['readAdoptedPublicOutcome']
               | null = null;
-            let fenceRetainedProviderPolicy:
-              | ReturnType<
-                  typeof createRunnerManagedServicesClient
-                >['fenceRetainedProviderPolicy']
-              | null = null;
             const readsSessionProviderAuthorityCurrent = (): boolean => {
               const currentBasis =
                 tracked.spawnOptions?.providerBindingMetadataV1
@@ -935,7 +882,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               };
             if (isRemoteProviderGatewayPlacement(runtimeBindingBasis.deployment.gatewayPlacement, params.machineId)) {
               return await createRemoteManagedProjection(runtimeBindingBasis, authorization.sessionBindingMetadata,
-                providerPluginHardRevocationRevisionAtAdmission, revalidateSessionProviderAuthority);
+                providerPluginHardRevocationRevisionAtAdmission, revalidateSessionProviderAuthority, readsSessionProviderAuthorityCurrent);
             }
             const createdManagedProviderInvocation = await createInvocation({
               identity,
@@ -967,10 +914,9 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     );
                   readAdoptedPublicOutcome =
                     custodyClient.readAdoptedPublicOutcome;
-                  fenceRetainedProviderPolicy =
-                    custodyClient.fenceRetainedProviderPolicy;
                   return Object.freeze({
                     managedServices: Object.freeze({
+                      observeWorkload: custodyClient.services.observeWorkload,
                       dependencies: custodyClient.services.dependencies,
                       supervise(
                         spec: Parameters<
@@ -1051,6 +997,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   runtimeBindingBasis,
                   authorization.sessionBindingMetadata,
                   revalidateSessionProviderAuthority,
+                  async () => readsSessionProviderAuthorityCurrent(),
                 )
               : null;
             let adoptionCommitted = false;
@@ -1107,38 +1054,6 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 revalidateInitialPolicy: revalidateSessionProviderAuthority,
                 readsRetainedAuthorityCurrent:
                   readsSessionProviderAuthorityCurrent,
-                revalidateRetainedPolicy: async () =>
-                  await revalidateAdoptedManagedProviderPolicy(
-                    runtimeBindingBasis,
-                  ),
-                fenceRetainedPolicy: async () => {
-                  if (sharedProjection) return await cleanupManagedProvider();
-                  if (!fenceRetainedProviderPolicy) {
-                    throw new PluginError({
-                      code: 'plugin_services_managed_provider_custody_unavailable',
-                      message:
-                        'Runner retained Provider policy-fence authority is unavailable',
-                    });
-                  }
-                  await fenceRetainedProviderPolicy();
-                },
-                readHardRevocationRevision: async () =>
-                  await readCurrentPluginHardRevocationRevision({
-                    paths: storePaths,
-                    pluginId: identity.pluginId,
-                  }),
-                readGenerationIntegrityCurrentness: async () =>
-                  bootstrap.sourceCustody.kind !== 'managed' ||
-                  (await readCurrentPluginImmutableGenerationIntegrityCurrentness(
-                    {
-                      paths: storePaths,
-                      pluginId: identity.pluginId,
-                      immutableGenerationId:
-                        bootstrap.sourceCustody.immutableGenerationId,
-                    },
-                  )),
-                hardRevocationRevisionAtAdmission:
-                  providerPluginHardRevocationRevisionAtAdmission,
               });
             return Object.freeze({
               bootstrap: Object.freeze({
@@ -1301,10 +1216,23 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               message: 'Retained Runner Agent PluginServices are unavailable',
             });
           }
+          // Run materialization owns the admitted profile. SDK services must
+          // read that exact subject from its Account owner, not the parent Session.
+          const runTarget = runSnapshot
+            ? connectedServiceRuntimeRegistry.getRunTargetByRunKey(invocationId)
+            : null;
           const invocationProjection = await createRetained({
             binding: retainedAgent,
             runnerSnapshotIdentity: runner.snapshotIdentity,
             sessionId,
+            ...(runTarget?.exactPurposeBindingSubjectId
+              ? {
+                  exactPurposeBindingSubjectId: runTarget.exactPurposeBindingSubjectId,
+                  ...(tracked.requesterSessionRuntimeContext
+                    ? { connectedAccountsOwner: tracked.requesterSessionRuntimeContext.connectedAccountsOwner }
+                    : {}),
+                }
+              : {}),
             managedDependencyRetention:
               tracked.runnerManagedDependencyRetentionV1 ?? {
                 v: 1 as const,
@@ -1679,14 +1607,18 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   || requester && tracked.requesterSessionRuntimeContext !== requester) {
                   throw new PluginError({ code: 'project_requester_credentials_unavailable', message: 'Run controller custody is unavailable' });
                 }
+                let installedAccountRuntime: Awaited<ReturnType<ApiMachineClient['resolveProjectFiniteRuntime']>> = null;
                 const callRunControl = async (method: string) => {
-                  if (!requester || !await requester.isCurrent()) throw new PluginError({
+                  if (requester && !await requester.isCurrent()) throw new PluginError({
+                    code: 'project_requester_credentials_unavailable', message: 'Run controller custody is unavailable' });
+                  const account = requester?.bootstrap ?? installedAccountRuntime;
+                  const credentials = account?.credentials;
+                  if (!account || !credentials) throw new PluginError({
                     code: 'project_requester_credentials_unavailable', message: 'Run controller custody is unavailable' });
                   // This is the existing Session's Run controller, under the
-                  // admitted requester Home and encryption owner. No Run state
-                  // or lifecycle decision is retained in the daemon projection.
-                  return await withSessionAccountHome(requester, async () => {
-                    const credentials = requester.bootstrap.credentials;
+                  // requester or already-qualified installed Account Home and
+                  // encryption owner. No Run lifecycle decision is copied here.
+                  return await runWithServerHttpBaseUrl(account.serverHttpBaseUrl, async () => {
                     const controlSignal = shutdownCancellationDomains.daemonWorkSignal;
                     const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal: controlSignal });
                     if (!transport.ok || transport.sessionId !== sessionId) throw new PluginError({
@@ -1712,8 +1644,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   isCurrent: () => authorizeOperation(undefined, { recordRefusal: true }),
                   ...(!requester ? { resolveInstalledAccountRuntime: async (requestSignal: AbortSignal) => {
                     const refuse = (reason: 'requester_unknown' | 'requester_separated' | 'machine_client_unavailable'
-                      | 'finite_runtime_unavailable' | 'account_mismatch' | 'machine_mismatch'
-                      | 'credentials_mismatch' | 'home_url_mismatch' | 'origin_retired'): null => {
+                      | 'finite_runtime_unavailable' | 'account_mismatch' | 'machine_mismatch'): null => {
                       try { logger.warnLocalFile(JSON.stringify({ kind: 'plugin_exec_installed_account_refused',
                         phase: 'installed_account_qualification', reason, sessionId })); } catch { /* Logging cannot mask the typed refusal. */ }
                       return null;
@@ -1727,9 +1658,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     if (!runtime) return refuse('finite_runtime_unavailable');
                     if (runtime.accountId !== identity.requester.accountId) return refuse('account_mismatch');
                     if (runtime.machineId !== identity.requester.machineId) return refuse('machine_mismatch');
-                    if (!sameStoredCredentials(params.credentials, runtime.credentials)) return refuse('credentials_mismatch');
-                    if (normalizeServerHttpBaseUrl(runtime.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.serverBaseUrl)) return refuse('home_url_mismatch');
-                    if (!await isolationStillCurrent(requestSignal)) return refuse('origin_retired');
+                    installedAccountRuntime = runtime;
                     return runtime;
                   } } : {}),
                   resolveRuntime: async ingress => {
@@ -1776,6 +1705,10 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               sessionCustodianAccountId: params.externalActionAccountId,
               hostHomeServerIdentityId: isolationOrigin?.machineId === params.machineId ? isolationOrigin.serverIdentityId : null,
               resolveRequesterIdentity: resolveIsolationIdentity,
+              providerEnvironmentKeys: capturedAgentProviderBinding ? [
+                ...capturedAgentProviderBinding.support.authIsolation.ownedEnvKeys,
+                ...(capturedAgentProviderBinding.support.authIsolation.optionalOwnedEnvKeys ?? []),
+              ] : [],
               readMaterial: () => (runSnapshot ? connectedServiceRuntimeRegistry.getRunTargetByRunKey(invocationId)
                 : connectedServiceRuntimeRegistry.getBySessionId(sessionId))?.agentLaunchMaterials,
             }),

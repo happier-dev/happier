@@ -1,83 +1,127 @@
-import { createProviderErrorV1, ProviderErrorCodeV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+  classifyJsonRpcSubmissionFailure,
+  readJsonRpcApplicationRejection,
+  type JsonRpcApplicationRejectionDetails,
+  type JsonRpcApplicationError,
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import {
+  RunnerDaemonPluginServicesPreparationCauseV1Schema,
+  SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH,
+  SessionRuntimeFailureCauseV1Schema,
+  sanitizeSessionRuntimeIssueV1,
+  readAgentStartupFailureCode,
+  readAgentStartupFailureDetails,
+  readSessionPreparationFailureCode,
+  readSessionRuntimeIssueCode,
+  readSessionStartupFailurePreview,
+  type SessionRuntimeIssueV1,
+} from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import {
+  createProviderErrorV1,
+  ProviderErrorCodeV1Schema,
+  type ProviderErrorV1,
+} from '@happier-dev/protocol/providers/errors';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import {
+  CodexSharedAppServerStartupError,
+  readCodexNativeTransportStartupFailure,
+  readCodexSharedAppServerStartupFailure,
+  type CodexSharedAppServerStartupFailure,
+} from '../sharedServer.js';
+
+import {
+  classifyCodexConnectedServiceAuthFailure,
+  isCodexWorkspaceRoutingUnauthorizedFailure,
+  type CodexConnectedServiceRuntimeFailureClassification,
+} from '../../../auth/services/runtime/auth/failure.js';
+import { readRecord, trimStringValue } from '../wire/fields.js';
 import { readCodexAppServerErrorPayload, type CodexAppServerErrorPayload } from './errorPayload.js';
 import { readCodexAppServerPrimaryFailure } from '../startupFailure.js';
 export { readCodexAppServerPrimaryFailure } from '../startupFailure.js';
-import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection, type JsonRpcApplicationRejectionDetails, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, readSessionRuntimeIssueCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { CodexSharedAppServerStartupError, readCodexNativeTransportStartupFailure, readCodexSharedAppServerStartupFailure, type CodexSharedAppServerStartupFailure } from '../sharedServer.js';
-
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
-import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
-
-import { classifyCodexConnectedServiceAuthFailure, isCodexWorkspaceRoutingUnauthorizedFailure } from '../../../auth/services/runtime/auth/failure.js';
-import {
-    readRecord,
-    trimStringValue,
-} from '../wire/fields.js';
 
 export type CodexAppServerTurnFailureAuthContext = Readonly<{
-    profileId: string | null;
-    groupId: string | null;
+  profileId: string | null;
+  groupId: string | null;
 }>;
 
 export type CodexAppServerTurnFailureSourceAccountIdentity = Readonly<{
-    providerAccountId?: string | null;
-    accountLabel?: string | null;
-    profileId?: string | null;
-    groupId?: string | null;
-    generation?: string | number | null;
-    credentialRevision?: string | null;
-    credentialFingerprint?: string | null;
+  providerAccountId?: string | null;
+  accountLabel?: string | null;
+  profileId?: string | null;
+  groupId?: string | null;
+  generation?: string | number | null;
+  credentialRevision?: string | null;
+  credentialFingerprint?: string | null;
 }>;
 
 const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
-    'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
+  'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
 const CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS = [
-    'codex ran out of room',
-    'context window',
+  'codex ran out of room',
+  'context window',
 ] as const;
 const CODEX_APP_SERVER_TURN_FAILURE_MESSAGE = 'Codex app-server turn failed.';
+const CODEX_APP_SERVER_TOOL_RESTRICTION_FAILURE_CODES = [
+  'codex_tool_restriction_unsupported_runtime',
+  'codex_tool_restriction_unsupported_model',
+  'codex_tool_restriction_unsupported_auth',
+  'codex_tool_restriction_catalog_unavailable',
+] as const;
+const CODEX_APP_SERVER_LOCAL_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'codex_collaboration_mode_unavailable',
+  'codex_app_server_unexpected_exit',
+  'codex_app_server_turn_in_flight',
+  ...CODEX_APP_SERVER_TOOL_RESTRICTION_FAILURE_CODES,
+]);
 const CODEX_APP_SERVER_DIAGNOSTIC_ERROR_CODES = new Set([
-    'ContextWindowExceeded', 'UsageLimitExceeded', 'Unauthorized', 'Other', 'HttpConnectionFailed',
+  'ContextWindowExceeded',
+  'UsageLimitExceeded',
+  'Unauthorized',
+  'Other',
+  'HttpConnectionFailed',
 ]);
 const CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES = [
-    'usage_limit',
-    'rate_limit',
-    'temporary_throttle',
-    'capacity',
-    'auth_expired',
-    'account_changed',
-    'refresh_failed',
-    'permission_denied',
-    'plan',
-    'unknown',
+  'usage_limit',
+  'rate_limit',
+  'temporary_throttle',
+  'capacity',
+  'auth_expired',
+  'account_changed',
+  'refresh_failed',
+  'permission_denied',
+  'plan',
+  'unknown',
 ] as const;
-const CODEX_APP_SERVER_RUNTIME_AUTH_KINDS: ReadonlySet<string> = new Set(CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES);
+const CODEX_APP_SERVER_RUNTIME_AUTH_KINDS: ReadonlySet<string> = new Set(
+  CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES,
+);
 
 type CodexFailureCause = NonNullable<SessionRuntimeIssueV1['failureCause']>;
 type CodexTurnFailureReason = CodexFailureCause['failureReason'];
 const CODEX_APP_SERVER_RUNTIME_AUTH_LIMIT_CATEGORIES = new Set([
-    'usage_limit',
-    'rate_limit',
-    'capacity',
-    'auth_invalid',
-    'plan_invalid',
+  'usage_limit',
+  'rate_limit',
+  'capacity',
+  'auth_invalid',
+  'plan_invalid',
 ]);
 const CODEX_APP_SERVER_RUNTIME_AUTH_SOURCES = new Set([
-    'structured_provider_error',
-    'stable_provider_message',
-    'provider_runtime_marker',
+  'structured_provider_error',
+  'stable_provider_message',
+  'provider_runtime_marker',
 ]);
 const CODEX_APP_SERVER_SAFE_PLAN_TYPES = new Set([
-    'free',
-    'go',
-    'plus',
-    'pro',
-    'team',
-    'business',
-    'enterprise',
-    'edu',
+  'free',
+  'go',
+  'plus',
+  'pro',
+  'team',
+  'business',
+  'enterprise',
+  'edu',
 ]);
 
 type CodexAppServerStartRejection = JsonRpcApplicationRejectionDetails &
@@ -86,77 +130,103 @@ type CodexAppServerStartRejection = JsonRpcApplicationRejectionDetails &
   }>;
 
 class CodexAppServerTurnFailure extends Error {
-    declare readonly code?: string;
-    declare readonly details?: Readonly<{ failureCause?: CodexFailureCause }>;
-    readonly failurePhase: CodexFailureCause['phase'];
-    readonly providerError: ProviderErrorV1 | null;
-    readonly retryable: boolean;
-    readonly inputNotDispatched: boolean;
-    readonly failureReason: CodexTurnFailureReason;
-    declare readonly providerErrorCode?: string | number;
-    declare readonly httpStatus?: number;
-    readonly isAuthAccountChanged: boolean;
-    readonly contextWindowExhaustionEvidence: 'structured' | 'message' | null;
-    readonly isTemporaryRecoverableTurnFailure: boolean;
-    readonly runtimeAuthClassification: unknown | null;
-    readonly isWorkspaceRoutingUnauthorized: boolean;
-    readonly isRejectedStartModelEntitlement: boolean;
-    readonly startRejection: CodexAppServerStartRejection | null;
+  declare readonly code?: string;
+  declare readonly details?: Readonly<{ failureCause?: CodexFailureCause }>;
+  readonly failurePhase: CodexFailureCause['phase'];
+  inputNotDispatched: boolean;
+  readonly retryable: boolean;
+  readonly failureReason: CodexTurnFailureReason;
+  declare readonly providerErrorCode?: string | number;
+  declare readonly httpStatus?: number;
+  readonly isAuthAccountChanged: boolean;
+  readonly contextWindowExhaustionEvidence: 'structured' | 'message' | null;
+  readonly isTemporaryRecoverableTurnFailure: boolean;
+  readonly runtimeAuthClassification: unknown | null;
+  readonly providerError: ProviderErrorV1 | null;
+  readonly isWorkspaceRoutingUnauthorized: boolean;
+  readonly isRejectedStartModelEntitlement: boolean;
+  readonly startRejection: CodexAppServerStartRejection | null;
 
-    constructor(message: string, options: Readonly<{
-        providerError?: ProviderErrorV1 | null;
-        inputNotDispatched?: boolean;
-        retryable?: boolean;
-        code?: string;
-        phase?: CodexFailureCause['phase'];
-        isAuthAccountChanged: boolean;
-        contextWindowExhaustionEvidence: 'structured' | 'message' | null;
-        isTemporaryRecoverableTurnFailure: boolean;
-        runtimeAuthClassification: unknown | null;
-        isWorkspaceRoutingUnauthorized: boolean;
-        isRejectedStartModelEntitlement: boolean;
-        startRejection: CodexAppServerStartRejection | null;
-        providerErrorCode?: string | number;
-        httpStatus?: number;
-    }>) {
-        super(message);
-        this.name = 'CodexAppServerTurnFailure';
-        this.failurePhase = options.phase ?? 'turn';
-        this.providerError = options.providerError ?? null;
-        this.retryable = options.retryable === true;
-        this.inputNotDispatched = options.inputNotDispatched === true;
-        if (options.code) this.code = options.code;
-        this.isAuthAccountChanged = options.isAuthAccountChanged;
-        this.contextWindowExhaustionEvidence = options.contextWindowExhaustionEvidence;
-        this.isTemporaryRecoverableTurnFailure = options.isTemporaryRecoverableTurnFailure;
-        this.runtimeAuthClassification = options.runtimeAuthClassification;
-        this.isWorkspaceRoutingUnauthorized = options.isWorkspaceRoutingUnauthorized;
-        this.isRejectedStartModelEntitlement = options.isRejectedStartModelEntitlement;
-        this.startRejection = options.startRejection;
-        const classification = readRecord(options.runtimeAuthClassification);
-        this.failureReason = options.isWorkspaceRoutingUnauthorized ? 'workspace_routing_unauthorized'
-            : options.contextWindowExhaustionEvidence === 'structured' ? 'context_window_exceeded'
-                : options.isAuthAccountChanged ? 'auth_account_changed'
-                    : CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES.find(kind => kind === classification?.kind) ?? 'unclassified_provider_error';
-        if (options.providerErrorCode !== undefined) this.providerErrorCode = options.providerErrorCode;
-        if (this.providerError) this.code = this.providerError.code;
-        else if (options.providerErrorCode === 'model_not_found') this.code = 'provider_model_not_found';
-        if (options.httpStatus !== undefined) this.httpStatus = options.httpStatus;
-    }
+  constructor(
+    message: string,
+    options: Readonly<{
+      isAuthAccountChanged: boolean;
+      contextWindowExhaustionEvidence: 'structured' | 'message' | null;
+      isTemporaryRecoverableTurnFailure: boolean;
+      runtimeAuthClassification: unknown | null;
+      isWorkspaceRoutingUnauthorized: boolean;
+      isRejectedStartModelEntitlement: boolean;
+      startRejection: CodexAppServerStartRejection | null;
+      nativeAuthenticationRequired: boolean;
+      providerError?: ProviderErrorV1 | null;
+      phase?: CodexFailureCause['phase'];
+      code?: string;
+      inputNotDispatched?: boolean;
+      retryable?: boolean;
+      providerErrorCode?: string | number;
+      httpStatus?: number;
+    }>,
+  ) {
+    super(message);
+    this.name = 'CodexAppServerTurnFailure';
+    this.failurePhase = options.phase ?? 'turn';
+    this.inputNotDispatched = options.inputNotDispatched === true;
+    this.retryable = options.retryable === true;
+    if (options.code) this.code = options.code;
+    this.isAuthAccountChanged = options.isAuthAccountChanged;
+    this.contextWindowExhaustionEvidence =
+      options.contextWindowExhaustionEvidence;
+    this.isTemporaryRecoverableTurnFailure =
+      options.isTemporaryRecoverableTurnFailure;
+    this.runtimeAuthClassification = options.runtimeAuthClassification;
+    this.providerError = options.providerError ?? null;
+    this.isWorkspaceRoutingUnauthorized =
+      options.isWorkspaceRoutingUnauthorized;
+    this.isRejectedStartModelEntitlement =
+      options.isRejectedStartModelEntitlement;
+    this.startRejection = options.startRejection;
+    const classification = readRecord(options.runtimeAuthClassification);
+    this.failureReason = options.isWorkspaceRoutingUnauthorized
+      ? 'workspace_routing_unauthorized'
+      : options.contextWindowExhaustionEvidence === 'structured'
+        ? 'context_window_exceeded'
+        : options.isAuthAccountChanged
+          ? 'auth_account_changed'
+          : options.nativeAuthenticationRequired
+            ? 'authentication_required'
+            : (CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES.find(
+                (kind) => kind === classification?.kind,
+              ) ?? 'unclassified_provider_error');
+    if (options.providerErrorCode !== undefined)
+      this.providerErrorCode = options.providerErrorCode;
+    if (this.providerError)
+      this.code = this.providerError.code;
+    else if (options.providerErrorCode === 'model_not_found')
+      this.code = 'provider_model_not_found';
+    else if (options.nativeAuthenticationRequired)
+      this.code = 'provider_endpoint_auth_required';
+    if (options.httpStatus !== undefined) this.httpStatus = options.httpStatus;
+  }
 }
 
-export function readCodexAppServerTurnFailureDiagnostic(error: unknown): Readonly<{
-    failureReason: CodexTurnFailureReason;
-    providerErrorCode?: string | number;
-    httpStatus?: number;
+export function readCodexAppServerTurnFailureDiagnostic(
+  error: unknown,
+): Readonly<{
+  failureReason: CodexTurnFailureReason;
+  providerErrorCode?: string | number;
+  httpStatus?: number;
 }> {
-    return error instanceof CodexAppServerTurnFailure
-        ? {
-            failureReason: error.failureReason,
-            ...(error.providerErrorCode === undefined ? {} : { providerErrorCode: error.providerErrorCode }),
-            ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
-        }
-        : { failureReason: 'unclassified_provider_error' };
+  return error instanceof CodexAppServerTurnFailure
+    ? {
+        failureReason: error.failureReason,
+        ...(error.providerErrorCode === undefined
+          ? {}
+          : { providerErrorCode: error.providerErrorCode }),
+        ...(error.httpStatus === undefined
+          ? {}
+          : { httpStatus: error.httpStatus }),
+      }
+    : { failureReason: 'unclassified_provider_error' };
 }
 
 function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
@@ -167,17 +237,19 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
   return retained.success ? retained.data : null;
 }
 
-function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  // Typed refusals already name their cause. Untyped startup exceptions need
-  // their initiating message retained under the same redaction and preview budget.
-  const preview = readRecord(error)?.stderrPreview;
-  const nativeError = error instanceof CodexSharedAppServerStartupError && error.cause instanceof Error
-    ? error.cause : error;
-  const message = readJsonRpcApplicationRejection(error) ? error.message
-    : typeof preview === 'string' ? preview
-      : nativeStartup && (!readSessionRuntimeIssueCode(readRecord(nativeError)?.code)
-        || readCodexNativeTransportStartupFailure(nativeError)) ? nativeError.message : undefined;
+function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false, nativeProviderMessage?: string | null): string | undefined {
+  // Correlated native Provider errors and untyped startup exceptions retain
+  // their initiating message under the same redaction and preview budget.
+  let message = nativeProviderMessage;
+  if (!message && error instanceof Error) {
+    const preview = readRecord(error)?.stderrPreview;
+    const nativeError = error instanceof CodexSharedAppServerStartupError && error.cause instanceof Error
+      ? error.cause : error;
+    message = readJsonRpcApplicationRejection(error) ? error.message
+      : typeof preview === 'string' ? preview
+        : nativeStartup && (!readSessionRuntimeIssueCode(readRecord(nativeError)?.code)
+          || readCodexNativeTransportStartupFailure(nativeError)) ? nativeError.message : undefined;
+  }
   return message ? redactBugReportSensitiveText(message).trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined : undefined;
 }
 
@@ -198,12 +270,14 @@ export function readCodexAppServerFailureCause(
     // This reader already admits only closed OS identities. Keep the cause
     // beneath the public startup category, never native prose or paths.
     (nativeStartup?.phase === 'native_system_error' ? nativeStartup.errnoCode : null) ??
-    readCodexAppServerFailureCode(error);
+    readCodexAppServerFailureCode(error) ??
+    readCodexAppServerSafeErrorCode(error);
   return SessionRuntimeFailureCauseV1Schema.parse({
     ...(code ? { code } : {}),
     phase:
       error instanceof CodexAppServerTurnFailure ? error.failurePhase : 'turn',
     ...diagnostic,
+    ...(error instanceof CodexAppServerTurnFailure ? { retryable: error.retryable } : {}),
     ...readAgentStartupFailureDetails(error),
     ...(rejection ? { providerErrorCode: rejection.providerErrorCode } : {}),
     ...(providerErrorMessage ? { providerErrorMessage } : {}),
@@ -218,6 +292,11 @@ export function readCodexAppServerFailureCode(error: unknown): string | null {
 
 export function readCodexAppServerProviderError(error: unknown): ProviderErrorV1 | null {
   return error instanceof CodexAppServerTurnFailure ? error.providerError : null;
+}
+
+/** Error codes are non-content identifiers; the issue owner supplies their bound. */
+export function readCodexAppServerSafeErrorCode(error: unknown): string | null {
+  return readSessionRuntimeIssueCode(readRecord(error)?.code);
 }
 
 export function readCodexAppServerRuntimeIssueSource(
@@ -252,6 +331,244 @@ export function readCodexAppServerRuntimeIssueSource(
   }
 }
 
+/** Only the input-dispatch owner may establish this pre-effect proof. */
+export function isCodexAppServerPreTurnFailure(
+  error: unknown,
+): error is Error & { code: string; retryable: boolean } {
+  return (
+    error instanceof CodexAppServerTurnFailure &&
+    error.inputNotDispatched &&
+    typeof error.code === 'string'
+  );
+}
+
+function readBoundedString(value: unknown, maxLength = 256): string | null {
+  const normalized = trimStringValue(value);
+  return normalized && normalized.length <= maxLength ? normalized : null;
+}
+
+function readEnumValue(
+  value: unknown,
+  allowed: ReadonlySet<string>,
+): string | null {
+  const normalized = readBoundedString(value, 64);
+  return normalized && allowed.has(normalized) ? normalized : null;
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : null;
+}
+
+export function sanitizeCodexAppServerRuntimeAuthClassification(
+  value: unknown,
+): Readonly<Record<string, unknown>> | null {
+  const classification = readRecord(value);
+  const kind = readEnumValue(
+    classification?.kind,
+    CODEX_APP_SERVER_RUNTIME_AUTH_KINDS,
+  );
+  const source = readEnumValue(
+    classification?.source,
+    CODEX_APP_SERVER_RUNTIME_AUTH_SOURCES,
+  );
+  if (!classification || !kind || !source) return null;
+
+  const limitCategory = readEnumValue(
+    classification.limitCategory,
+    CODEX_APP_SERVER_RUNTIME_AUTH_LIMIT_CATEGORIES,
+  );
+  const serviceId =
+    classification.serviceId === 'openai-codex' ? 'openai-codex' : null;
+  const profileId = readBoundedString(classification.profileId);
+  const groupId = readBoundedString(classification.groupId);
+  const resetsAtMs = readNonNegativeInteger(classification.resetsAtMs);
+  const retryAfterMs = readNonNegativeInteger(classification.retryAfterMs);
+  const planType = readEnumValue(
+    classification.planType,
+    CODEX_APP_SERVER_SAFE_PLAN_TYPES,
+  );
+  const providerLimitId = readBoundedString(classification.providerLimitId);
+  const sourceProviderAccountId = readBoundedString(
+    classification.sourceProviderAccountId,
+  );
+  const sourceAccountLabel = readBoundedString(
+    classification.sourceAccountLabel,
+  );
+  const failingAccessTokenFingerprint = readBoundedString(
+    classification.failingAccessTokenFingerprint,
+    64,
+  );
+  const groupGeneration = readNonNegativeInteger(
+    classification.groupGeneration,
+  );
+  const expectedCredentialRevision = readBoundedString(
+    classification.expectedCredentialRevision,
+    64,
+  );
+  const recoveryAction = readRecord(classification.recoveryAction);
+  const recoveryActionKind =
+    recoveryAction?.kind === 'provider_state_sharing_required' ||
+    recoveryAction?.kind === 'quota_recovery_required'
+      ? recoveryAction.kind
+      : null;
+
+  return {
+    kind,
+    ...(limitCategory ? { limitCategory } : {}),
+    ...(serviceId ? { serviceId } : {}),
+    ...(classification.profileId === null
+      ? { profileId: null }
+      : profileId
+        ? { profileId }
+        : {}),
+    ...(classification.groupId === null
+      ? { groupId: null }
+      : groupId
+        ? { groupId }
+        : {}),
+    ...(classification.resetsAtMs === null
+      ? { resetsAtMs: null }
+      : resetsAtMs === null
+        ? {}
+        : { resetsAtMs }),
+    ...(classification.retryAfterMs === null
+      ? { retryAfterMs: null }
+      : retryAfterMs === null
+        ? {}
+        : { retryAfterMs }),
+    ...(classification.connectedServiceRecovery === 'available'
+      ? { connectedServiceRecovery: 'available' }
+      : {}),
+    ...(classification.quotaScope === 'provider' ||
+    classification.quotaScope === 'model'
+      ? { quotaScope: classification.quotaScope }
+      : {}),
+    ...(providerLimitId ? { providerLimitId } : {}),
+    ...(planType ? { planType } : {}),
+    ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
+    ...(sourceAccountLabel ? { sourceAccountLabel } : {}),
+    ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
+    ...(groupGeneration === null ? {} : { groupGeneration }),
+    ...(expectedCredentialRevision ? { expectedCredentialRevision } : {}),
+    source,
+    ...(recoveryActionKind
+      ? { recoveryAction: { kind: recoveryActionKind } }
+      : {}),
+  };
+}
+
+export function readCodexAppServerRetryReason(
+  value: unknown,
+): NonNullable<
+  Extract<AgentSessionRuntimeEvent, { kind: 'turn-progress' }>['retry']
+>['reason'] {
+  const payload = readCodexAppServerErrorPayload(value);
+  if (payload?.httpStatus === 429) return 'rate_limited';
+  if (payload?.httpStatus !== undefined && payload.httpStatus >= 500)
+    return 'server_error';
+  switch (normalizeCodexErrorInfo(payload?.codexErrorInfo ?? null)) {
+    case 'ratelimitexceeded':
+      return 'rate_limited';
+    case 'serveroverloaded':
+    case 'internalservererror':
+      return 'server_error';
+    case 'httpconnectionfailed':
+    case 'responsestreamconnectionfailed':
+    case 'responsestreamdisconnected':
+      return 'connection_failed';
+    default:
+      return 'unknown';
+  }
+}
+
+function isCodexAppServerAuthAccountChangedPayload(
+  payload: CodexAppServerErrorPayload,
+): boolean {
+  const codexErrorInfo = payload.codexErrorInfo?.toLowerCase() ?? null;
+  const hasAuthAccountChangedMessage = [
+    payload.message,
+    payload.additionalDetails,
+  ].some((value) =>
+    value?.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE),
+  );
+  return (
+    hasAuthAccountChangedMessage &&
+    (!codexErrorInfo || codexErrorInfo === 'unauthorized')
+  );
+}
+
+export function isCodexAppServerAuthAccountChangedError(
+  error: unknown,
+): boolean {
+  if (error instanceof CodexAppServerTurnFailure) {
+    return error.isAuthAccountChanged;
+  }
+  if (!(error instanceof Error)) return false;
+  return error.message.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE);
+}
+
+function normalizeCodexErrorInfo(value: string | null): string | null {
+  return value ? value.replace(/[_\-\s]/g, '').toLowerCase() : null;
+}
+
+function textMatchesCodexContextWindowExhaustedMessage(
+  value: string | null,
+): boolean {
+  const normalized = value?.toLowerCase() ?? '';
+  return CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS.every(
+    (marker) => normalized.includes(marker),
+  );
+}
+
+function readCodexAppServerContextWindowExhaustionEvidence(
+  payload: CodexAppServerErrorPayload,
+): 'structured' | 'message' | null {
+  if (
+    normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded'
+  )
+    return 'structured';
+  return [payload.message, payload.additionalDetails].some(
+    textMatchesCodexContextWindowExhaustedMessage,
+  )
+    ? 'message'
+    : null;
+}
+
+export function isCodexAppServerContextWindowExhaustedError(
+  error: unknown,
+  options?: Readonly<{ structuredOnly: boolean }>,
+): boolean {
+  if (error instanceof CodexAppServerTurnFailure) {
+    return options?.structuredOnly
+      ? error.contextWindowExhaustionEvidence === 'structured'
+      : error.contextWindowExhaustionEvidence !== null;
+  }
+  if (options?.structuredOnly || !(error instanceof Error)) return false;
+  return textMatchesCodexContextWindowExhaustedMessage(error.message);
+}
+
+export function isCodexAppServerTemporaryRecoverableTurnFailureError(
+  error: unknown,
+): boolean {
+  if (error instanceof CodexAppServerTurnFailure) {
+    return error.isTemporaryRecoverableTurnFailure;
+  }
+  if (!(error instanceof Error)) return false;
+  return classifyProviderLimitEvidence(error).category === 'capacity';
+}
+
+export function shouldDeferCodexAppServerTurnFailureToPromptLoop(
+  error: unknown,
+): boolean {
+  return (
+    isCodexAppServerAuthAccountChangedError(error) ||
+    isCodexAppServerContextWindowExhaustedError(error) ||
+    isCodexAppServerTemporaryRecoverableTurnFailureError(error)
+  );
+}
+
 export function readCodexAppServerStartupFailure(
   error: unknown,
 ): CodexSharedAppServerStartupFailure | null {
@@ -263,152 +580,62 @@ export function readCodexAppServerStartupFailure(
   );
 }
 
-function readBoundedString(value: unknown, maxLength = 256): string | null {
-    const normalized = trimStringValue(value);
-    return normalized && normalized.length <= maxLength ? normalized : null;
+export function readCodexAppServerToolRestrictionFailureCode(
+  error: unknown,
+): (typeof CODEX_APP_SERVER_TOOL_RESTRICTION_FAILURE_CODES)[number] | null {
+  const code = readRecord(error)?.code;
+  return (
+    CODEX_APP_SERVER_TOOL_RESTRICTION_FAILURE_CODES.find(
+      (known) => known === code,
+    ) ?? null
+  );
 }
 
-function readEnumValue(value: unknown, allowed: ReadonlySet<string>): string | null {
-    const normalized = readBoundedString(value, 64);
-    return normalized && allowed.has(normalized) ? normalized : null;
+function readModelEntitlementClassification(
+  classification: CodexConnectedServiceRuntimeFailureClassification | null,
+): CodexConnectedServiceRuntimeFailureClassification | null {
+  return classification?.kind === 'plan' &&
+    classification.limitCategory === 'plan_invalid' &&
+    classification.quotaScope === 'model' &&
+    Boolean(classification.providerLimitId)
+    ? classification
+    : null;
 }
 
-function readNonNegativeInteger(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0
-        ? Math.trunc(value)
-        : null;
+/** The model a classified account entitlement refusal names, for a bounded user preview. */
+export function readCodexAppServerRefusedModelId(
+  error: unknown,
+): string | null {
+  const classification = sanitizeCodexAppServerRuntimeAuthClassification(
+    readRecord(error)?.runtimeAuthClassification,
+  );
+  return classification?.kind === 'plan' &&
+    classification.limitCategory === 'plan_invalid' &&
+    classification.quotaScope === 'model' &&
+    typeof classification.providerLimitId === 'string'
+    ? classification.providerLimitId
+    : null;
 }
 
-export function sanitizeCodexAppServerRuntimeAuthClassification(
-    value: unknown,
-): Readonly<Record<string, unknown>> | null {
-    const classification = readRecord(value);
-    const kind = readEnumValue(classification?.kind, CODEX_APP_SERVER_RUNTIME_AUTH_KINDS);
-    const source = readEnumValue(classification?.source, CODEX_APP_SERVER_RUNTIME_AUTH_SOURCES);
-    if (!classification || !kind || !source) return null;
-
-    const limitCategory = readEnumValue(
-        classification.limitCategory,
-        CODEX_APP_SERVER_RUNTIME_AUTH_LIMIT_CATEGORIES,
-    );
-    const serviceId = classification.serviceId === 'openai-codex' ? 'openai-codex' : null;
-    const profileId = readBoundedString(classification.profileId);
-    const groupId = readBoundedString(classification.groupId);
-    const resetsAtMs = readNonNegativeInteger(classification.resetsAtMs);
-    const retryAfterMs = readNonNegativeInteger(classification.retryAfterMs);
-    const planType = readEnumValue(classification.planType, CODEX_APP_SERVER_SAFE_PLAN_TYPES);
-    const providerLimitId = readBoundedString(classification.providerLimitId);
-    const sourceProviderAccountId = readBoundedString(classification.sourceProviderAccountId);
-    const sourceAccountLabel = readBoundedString(classification.sourceAccountLabel);
-    const failingAccessTokenFingerprint = readBoundedString(classification.failingAccessTokenFingerprint, 64);
-    const groupGeneration = readNonNegativeInteger(classification.groupGeneration);
-    const expectedCredentialRevision = readBoundedString(classification.expectedCredentialRevision, 64);
-    const recoveryAction = readRecord(classification.recoveryAction);
-    const recoveryActionKind = recoveryAction?.kind === 'provider_state_sharing_required'
-        || recoveryAction?.kind === 'quota_recovery_required'
-        ? recoveryAction.kind
-        : null;
-
-    return {
-        kind,
-        ...(limitCategory ? { limitCategory } : {}),
-        ...(serviceId ? { serviceId } : {}),
-        ...(classification.profileId === null ? { profileId: null } : profileId ? { profileId } : {}),
-        ...(classification.groupId === null ? { groupId: null } : groupId ? { groupId } : {}),
-        ...(classification.resetsAtMs === null ? { resetsAtMs: null } : resetsAtMs === null ? {} : { resetsAtMs }),
-        ...(classification.retryAfterMs === null ? { retryAfterMs: null } : retryAfterMs === null ? {} : { retryAfterMs }),
-        ...(classification.connectedServiceRecovery === 'available'
-            ? { connectedServiceRecovery: 'available' }
-            : {}),
-        ...(classification.quotaScope === 'provider' || classification.quotaScope === 'model'
-            ? { quotaScope: classification.quotaScope }
-            : {}),
-        ...(providerLimitId ? { providerLimitId } : {}),
-        ...(planType ? { planType } : {}),
-        ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
-        ...(sourceAccountLabel ? { sourceAccountLabel } : {}),
-        ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
-        ...(groupGeneration === null ? {} : { groupGeneration }),
-        ...(expectedCredentialRevision ? { expectedCredentialRevision } : {}),
-        source,
-        ...(recoveryActionKind ? { recoveryAction: { kind: recoveryActionKind } } : {}),
-    };
-}
-
-function isCodexAppServerAuthAccountChangedPayload(payload: CodexAppServerErrorPayload): boolean {
-    const codexErrorInfo = payload.codexErrorInfo?.toLowerCase() ?? null;
-    const hasAuthAccountChangedMessage = [payload.message, payload.additionalDetails].some((value) =>
-        value?.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE),
-    );
-    return hasAuthAccountChangedMessage && (!codexErrorInfo || codexErrorInfo === 'unauthorized');
-}
-
-export function isCodexAppServerAuthAccountChangedError(error: unknown): boolean {
-    if (error instanceof CodexAppServerTurnFailure) {
-        return error.isAuthAccountChanged;
-    }
-    if (!(error instanceof Error)) return false;
-    return error.message.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE);
-}
-
-function normalizeCodexErrorInfo(value: string | null): string | null {
-    return value ? value.replace(/[_\-\s]/g, '').toLowerCase() : null;
-}
-
-function textMatchesCodexContextWindowExhaustedMessage(value: string | null): boolean {
-    const normalized = value?.toLowerCase() ?? '';
-    return CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS.every((marker) => normalized.includes(marker));
-}
-
-function readCodexAppServerContextWindowExhaustionEvidence(
-    payload: CodexAppServerErrorPayload,
-): 'structured' | 'message' | null {
-    if (normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded') return 'structured';
-    return [payload.message, payload.additionalDetails].some(textMatchesCodexContextWindowExhaustedMessage)
-        ? 'message'
-        : null;
-}
-
-export function isCodexAppServerContextWindowExhaustedError(
-    error: unknown,
-    options?: Readonly<{ structuredOnly: boolean }>,
-): boolean {
-    if (error instanceof CodexAppServerTurnFailure) {
-        return options?.structuredOnly
-            ? error.contextWindowExhaustionEvidence === 'structured'
-            : error.contextWindowExhaustionEvidence !== null;
-    }
-    if (options?.structuredOnly || !(error instanceof Error)) return false;
-    return textMatchesCodexContextWindowExhaustedMessage(error.message);
-}
-
-export function isCodexAppServerTemporaryRecoverableTurnFailureError(error: unknown): boolean {
-    if (error instanceof CodexAppServerTurnFailure) {
-        return error.isTemporaryRecoverableTurnFailure;
-    }
-    if (!(error instanceof Error)) return false;
-    return classifyProviderLimitEvidence(error).category === 'capacity';
-}
-
-export function shouldDeferCodexAppServerTurnFailureToPromptLoop(error: unknown): boolean {
-    return isCodexAppServerAuthAccountChangedError(error)
-        || isCodexAppServerContextWindowExhaustedError(error)
-        || isCodexAppServerTemporaryRecoverableTurnFailureError(error);
-}
-
-export function createCodexAppServerTurnFailure(params: Readonly<{
+export function createCodexAppServerTurnFailure(
+  params: Readonly<{
     value: unknown;
-    providerConnectionId?: string | null;
-    inputNotDispatched?: boolean;
     phase?: CodexFailureCause['phase'];
+    inputNotDispatched?: boolean;
     authContext?: CodexAppServerTurnFailureAuthContext | null;
     sourceAccountIdentity?: CodexAppServerTurnFailureSourceAccountIdentity | null;
+    providerConnectionId?: string | null;
     /** The native request owner proved application rejection before any provider work. */
     providerStartRejected?: 'thread/start' | 'turn/start';
-}>): Error {
-    const primary = readCodexAppServerPrimaryFailure(params.value);
-    if (primary !== params.value) return createCodexAppServerTurnFailure({ ...params, value: primary });
-    if (params.value instanceof CodexAppServerTurnFailure) return params.value;
+  }>,
+): Error {
+  const primary = readCodexAppServerPrimaryFailure(params.value);
+  if (primary !== params.value)
+    return createCodexAppServerTurnFailure({ ...params, value: primary });
+  if (params.value instanceof CodexAppServerTurnFailure) {
+    if (params.inputNotDispatched) params.value.inputNotDispatched = true;
+    return params.value;
+  }
   const submission = classifyJsonRpcSubmissionFailure(params.value, {
     method: params.providerStartRejected ?? 'turn/start',
     effectObserved: params.providerStartRejected === undefined,
@@ -439,25 +666,50 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         : {}),
     };
   }
-    const retainedCause = readRetainedFailureCause(params.value);
-    const phase = retainedCause?.phase ?? params.phase;
-    const nativeStartup = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication';
-    const providerErrorMessage = readRedactedProviderErrorMessage(params.value, nativeStartup);
-    const startupFailure = readCodexAppServerStartupFailure(params.value);
-    const rawCode = readRecord(params.value)?.code;
-    const knownCode = readAgentStartupFailureCode(rawCode) ?? readSessionPreparationFailureCode(rawCode);
-    const phaseCode = nativeStartup
-        ? params.value instanceof Error && params.value.name === 'JsonRpcApplicationError' && typeof rawCode === 'number'
-            ? 'agent_startup_rpc_rejected' : params.value instanceof TypeError ? 'agent_startup_invalid_state'
-                : params.value instanceof Error || startupFailure ? 'agent_startup_transport_failed' : 'agent_startup_failed'
-        : undefined;
-    const code = knownCode ?? phaseCode;
-    const daemonPreparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
-        readRecord(readRecord(params.value)?.details)?.cause);
-    const preparationCause = retainedCause?.preparationCause
-        ?? (daemonPreparationCause.success ? daemonPreparationCause.data : undefined);
-    const payload = readCodexAppServerErrorPayload(params.value);
-    const providerCode = ProviderErrorCodeV1Schema.safeParse(rawCode);
+  const payload = readCodexAppServerErrorPayload(params.value);
+  const rawCode = readRecord(params.value)?.code;
+  const providerCode = ProviderErrorCodeV1Schema.safeParse(rawCode);
+  const authContext = params.authContext ?? {
+    profileId: params.sourceAccountIdentity?.profileId ?? null,
+    groupId: params.sourceAccountIdentity?.groupId ?? null,
+  };
+  // A precise model-unavailable code must not become account/plan recovery
+  // merely because its private message happens to match an auth phrase.
+  const classifyAuthFailure = (error: unknown) =>
+    classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error,
+      serviceId: 'openai-codex',
+      profileId: authContext.profileId,
+      groupId: authContext.groupId,
+      sourceAccountIdentity: params.sourceAccountIdentity
+        ? {
+            providerAccountId: params.sourceAccountIdentity.providerAccountId,
+            accountLabel: params.sourceAccountIdentity.accountLabel,
+            groupGeneration: params.sourceAccountIdentity.generation,
+            credentialRevision: params.sourceAccountIdentity.credentialRevision,
+            credentialFingerprint:
+              params.sourceAccountIdentity.credentialFingerprint,
+          }
+        : null,
+    });
+  const retainedRuntimeAuth = sanitizeCodexAppServerRuntimeAuthClassification(
+    readRecord(params.value)?.runtimeAuthClassification,
+  );
+  const runtimeAuthClassification =
+    retainedRuntimeAuth ??
+    (payload && !payload.providerErrorCode && !providerCode.success
+      ? (classifyAuthFailure(params.value) ??
+        // The app-server's structured HTTP status is authoritative even
+        // when its private message contains no recognized auth marker.
+        (payload.httpStatus === 401
+          ? classifyAuthFailure({ error: { code: 'unauthorized' } })
+          : null))
+      : // A precise model refusal is pool evidence only when it proves this
+        // account cannot serve the named model; other prose stays unclassified.
+        payload?.providerErrorCode === 'model_not_found'
+        ? readModelEntitlementClassification(classifyAuthFailure(params.value))
+        : null);
   // The same structured native HTTP evidence targets the admitted model source.
   // A forbidden response alone does not prove that its credential is invalid.
   const providerError = params.providerConnectionId
@@ -467,76 +719,133 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         ? createProviderErrorV1('provider_endpoint_unreachable', { connectionId: params.providerConnectionId })
         : null
     : null;
-
-    const authContext = params.authContext ?? {
-        profileId: params.sourceAccountIdentity?.profileId ?? null,
-        groupId: params.sourceAccountIdentity?.groupId ?? null,
-    };
-    // A precise model-unavailable code must not become account/plan recovery
-    // merely because its private message happens to match an auth phrase.
-    const runtimeAuthClassification = payload && !payload.providerErrorCode
-        ? classifyCodexConnectedServiceAuthFailure({
-            providerErrorPath: true,
-            error: params.value,
-            serviceId: 'openai-codex',
-            profileId: authContext.profileId,
-            groupId: authContext.groupId,
-            sourceAccountIdentity: params.sourceAccountIdentity
-                ? {
-                    providerAccountId: params.sourceAccountIdentity.providerAccountId,
-                    accountLabel: params.sourceAccountIdentity.accountLabel,
-                    groupGeneration: params.sourceAccountIdentity.generation,
-                    credentialRevision: params.sourceAccountIdentity.credentialRevision,
-                    credentialFingerprint: params.sourceAccountIdentity.credentialFingerprint,
-                }
-                : null,
-        })
-        : null;
-    const sanitizedClassification = sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification);
-    const providerErrorCode = payload?.providerErrorCode ?? [...CODEX_APP_SERVER_DIAGNOSTIC_ERROR_CODES].find(code =>
-        normalizeCodexErrorInfo(code) === normalizeCodexErrorInfo(payload?.codexErrorInfo ?? null))
-        ?? readJsonRpcApplicationRejection(params.value)?.providerErrorCode;
-    const failure = new CodexAppServerTurnFailure(
-        readSessionStartupFailurePreview(code) ?? CODEX_APP_SERVER_TURN_FAILURE_MESSAGE,
-        {
-            ...(code ? { code } : {}),
-            phase,
-            providerError,
-            retryable: providerError?.retryable,
-            inputNotDispatched: params.inputNotDispatched,
-            isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
-            contextWindowExhaustionEvidence: payload ? readCodexAppServerContextWindowExhaustionEvidence(payload) : null,
-            isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
-            runtimeAuthClassification: providerError ? null : sanitizedClassification,
-            isWorkspaceRoutingUnauthorized: isCodexWorkspaceRoutingUnauthorizedFailure(params.value),
-            startRejection,
-            isRejectedStartModelEntitlement: params.providerStartRejected !== undefined
-                && sanitizedClassification?.kind === 'plan'
-                && sanitizedClassification.limitCategory === 'plan_invalid'
-                && sanitizedClassification.quotaScope === 'model'
-                && typeof sanitizedClassification.providerLimitId === 'string',
-            ...(providerErrorCode ? { providerErrorCode } : {}),
-            ...(payload?.httpStatus === undefined ? {} : { httpStatus: payload.httpStatus }),
-        },
-    );
-    if (startupFailure) Object.assign(failure, { startupFailure });
-    const startupDetails = readAgentStartupFailureDetails(params.value);
-    if (startupDetails) Object.assign(failure, { reason: startupDetails.reason });
-    Object.assign(failure, { details: {
-        ...(providerError ? { providerError } : {}),
-        v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure), ...startupDetails,
-        failureCause: { ...readCodexAppServerFailureCause(failure), ...retainedCause,
-            ...(providerErrorMessage ? { providerErrorMessage } : {}),
-            ...(preparationCause ? { preparationCause } : {}) },
-    } });
-    if (readRecord(params.value)?.happierNativeResumeIdentityMismatch === true) {
-        Object.assign(failure, { happierNativeResumeIdentityMismatch: true });
-    }
-    return failure;
+  const nativeAuthenticationRequired =
+    !params.providerConnectionId &&
+    payload?.httpStatus === 401 &&
+    runtimeAuthClassification?.kind === 'auth_expired' &&
+    !isCodexWorkspaceRoutingUnauthorizedFailure(params.value) &&
+    !authContext.profileId &&
+    !authContext.groupId;
+  const sanitizedClassification =
+    sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification);
+  const providerErrorCode =
+    payload?.providerErrorCode ??
+    [...CODEX_APP_SERVER_DIAGNOSTIC_ERROR_CODES].find(
+      (code) =>
+        normalizeCodexErrorInfo(code) ===
+        normalizeCodexErrorInfo(payload?.codexErrorInfo ?? null),
+    ) ??
+    readJsonRpcApplicationRejection(params.value)?.providerErrorCode;
+  const knownCode =
+    readAgentStartupFailureCode(rawCode) ??
+    readSessionPreparationFailureCode(rawCode) ??
+    (providerCode.success ? providerCode.data : null) ??
+    (typeof rawCode === 'string' &&
+    CODEX_APP_SERVER_LOCAL_FAILURE_CODES.has(rawCode)
+      ? rawCode
+      : null);
+  const retainedCause = readRetainedFailureCause(params.value);
+  const phase = retainedCause?.phase ?? params.phase ?? 'turn';
+  const nativeStartup = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication';
+  const providerErrorMessage = readRedactedProviderErrorMessage(params.value, nativeStartup,
+    phase === 'turn' && params.providerConnectionId && payload?.codexErrorInfo ? payload.message : undefined);
+  const daemonPreparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
+    readRecord(readRecord(params.value)?.details)?.cause,
+  );
+  const preparationCause = retainedCause?.preparationCause
+    ?? (daemonPreparationCause.success ? daemonPreparationCause.data : undefined);
+  const startupFailure = readCodexAppServerStartupFailure(params.value);
+  const nativeClientFailure = rawCode === 'PLUGIN_EXEC_CLIENT_EXITED' || rawCode === 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR';
+  const phaseCode =
+    nativeStartup
+      ? params.value instanceof Error &&
+        params.value.name === 'JsonRpcApplicationError' &&
+        typeof rawCode === 'number'
+        ? 'agent_startup_rpc_rejected'
+        : params.value instanceof TypeError
+          ? 'agent_startup_invalid_state'
+          : params.value instanceof Error || startupFailure || nativeClientFailure
+            ? 'agent_startup_transport_failed'
+            : 'agent_startup_failed'
+      : undefined;
+  const code =
+    (nativeClientFailure && phaseCode ? phaseCode : knownCode) ??
+    (startupFailure ? phaseCode : readCodexAppServerSafeErrorCode(params.value)) ??
+    phaseCode;
+  const failure = new CodexAppServerTurnFailure(
+    nativeAuthenticationRequired
+      ? 'Sign in to Codex or choose a Codex account.'
+      : (readSessionStartupFailurePreview(code) ??
+          CODEX_APP_SERVER_TURN_FAILURE_MESSAGE),
+    {
+      ...(code ? { code } : {}),
+      phase,
+      inputNotDispatched: params.inputNotDispatched,
+      retryable: providerError?.retryable ?? (providerCode.success
+        ? createProviderErrorV1(providerCode.data).retryable
+        : false),
+      nativeAuthenticationRequired,
+      providerError,
+      startRejection,
+      isAuthAccountChanged: payload
+        ? isCodexAppServerAuthAccountChangedPayload(payload)
+        : false,
+      contextWindowExhaustionEvidence: payload
+        ? readCodexAppServerContextWindowExhaustionEvidence(payload)
+        : null,
+      isTemporaryRecoverableTurnFailure:
+        runtimeAuthClassification?.kind === 'capacity',
+      runtimeAuthClassification: providerError ? null : sanitizedClassification,
+      isWorkspaceRoutingUnauthorized:
+        isCodexWorkspaceRoutingUnauthorizedFailure(params.value),
+      isRejectedStartModelEntitlement:
+        params.providerStartRejected !== undefined &&
+        sanitizedClassification?.kind === 'plan' &&
+        sanitizedClassification.limitCategory === 'plan_invalid' &&
+        sanitizedClassification.quotaScope === 'model' &&
+        typeof sanitizedClassification.providerLimitId === 'string',
+      ...(providerErrorCode === undefined ? {} : { providerErrorCode }),
+      ...(payload?.httpStatus === undefined
+        ? {}
+        : { httpStatus: payload.httpStatus }),
+    },
+  );
+  const startupDetails = readAgentStartupFailureDetails(params.value);
+  if (startupDetails)
+    Object.assign(failure, {
+      reason: startupDetails.reason,
+      details: startupDetails,
+    });
+  if (startupFailure) Object.assign(failure, { startupFailure });
+  Object.assign(failure, {
+    details: {
+      v: 1,
+      agentId: 'codex',
+      source: readCodexAppServerRuntimeIssueSource(failure),
+      ...startupDetails,
+      failureCause: {
+        ...readCodexAppServerFailureCause(failure),
+        ...retainedCause,
+        ...(payload?.requestId ? { requestId: payload.requestId } : {}),
+        ...(providerErrorMessage ? { providerErrorMessage } : {}),
+        ...(preparationCause ? { preparationCause } : {}),
+      },
+      ...(providerError ? { providerError } : {}),
+    },
+  });
+  if (readRecord(params.value)?.happierNativeResumeIdentityMismatch === true) {
+    Object.assign(failure, { happierNativeResumeIdentityMismatch: true });
+  }
+  return failure;
 }
 
-export function isCodexAppServerRejectedStartModelEntitlementError(error: unknown): error is Error {
-    return error instanceof CodexAppServerTurnFailure && error.isRejectedStartModelEntitlement;
+export function isCodexAppServerRejectedStartModelEntitlementError(
+  error: unknown,
+): error is Error {
+  return (
+    error instanceof CodexAppServerTurnFailure &&
+    error.isRejectedStartModelEntitlement
+  );
 }
 
 export function readCodexAppServerStartRejection(
@@ -547,12 +856,17 @@ export function readCodexAppServerStartRejection(
     : null;
 }
 
-export function isCodexAppServerWorkspaceRoutingUnauthorizedError(error: unknown): boolean {
-    return error instanceof CodexAppServerTurnFailure && error.isWorkspaceRoutingUnauthorized;
+export function isCodexAppServerWorkspaceRoutingUnauthorizedError(
+  error: unknown,
+): boolean {
+  return (
+    error instanceof CodexAppServerTurnFailure &&
+    error.isWorkspaceRoutingUnauthorized
+  );
 }
 
 export function formatCodexAppServerErrorForUi(error: Error): string {
-    const message = redactBugReportSensitiveText(error.message).trim();
-    if (!message) return 'Codex error';
-    return /^error[:\s]/i.test(message) ? message : `Error: ${message}`;
+  const message = redactBugReportSensitiveText(error.message).trim();
+  if (!message) return 'Codex error';
+  return /^error[:\s]/i.test(message) ? message : `Error: ${message}`;
 }

@@ -5,8 +5,9 @@ import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeI
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { join } from 'node:path';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
 
-const managedInstallHomeKey = 'HAPPIER_FIRST_PARTY_INSTALL_HOME';
+const managedInstallHomeKey = FIRST_PARTY_INSTALL_HOME_ENV_KEY;
 const ambientEnvironmentKeys = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'COLORTERM', 'TZ', managedInstallHomeKey] as const;
 const sessionContextFileKey = 'HAPPIER_SESSION_MCP_CONTEXT_FILE';
 
@@ -26,6 +27,7 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
   runtimeHome: string;
   environment: Readonly<Record<string, string | undefined>>;
   selectedEnvironmentKeys: readonly string[];
+  providerEnvironmentKeys?: readonly string[];
   selectedMaterials: readonly AgentLaunchSelectedMaterial[];
   sessionMcpContext?: SessionMcpLocalContext | null;
   memberIdentity?: AgentIsolationMemberNativeIdentity;
@@ -43,16 +45,20 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
   };
   const materialization = input.sessionMcpContext ? withSessionMcpAgentLaunchMaterial(selected, input.sessionMcpContext) : selected;
   const environment: Record<string, string> = {};
-  for (const key of new Set([...ambientEnvironmentKeys, ...input.selectedEnvironmentKeys, sessionContextFileKey])) {
+  const providerEnvironmentKeys = new Set(input.providerEnvironmentKeys);
+  for (const key of new Set([...ambientEnvironmentKeys, ...input.selectedEnvironmentKeys, ...providerEnvironmentKeys, sessionContextFileKey])) {
     // Happier's custodian/control/Account context never becomes Agent authority.
     // The bridge reference names selected transient material; the public install
     // home is the canonical nonsecret layout input for Agent tools.
-    if (key.startsWith('HAPPIER_') && key !== managedInstallHomeKey
+    if (key.startsWith('HAPPIER_') && !providerEnvironmentKeys.has(key) && key !== managedInstallHomeKey
       && (key !== sessionContextFileKey || !input.sessionMcpContext)) {
       if (!['HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE', 'HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE'].includes(key)
         || !materialization.selectedMaterials.some(file => join(materialization.runtimeHome, file.relativePath) === materialization.environment[key])) continue;
     }
-    const value = materialization.environment[key];
+    // The published install location is machine-wide runtime code, independent
+    // of the member HOME. Native finite operations do not select it as material.
+    const value = materialization.environment[key]
+      ?? (key === managedInstallHomeKey ? process.env[managedInstallHomeKey] : undefined);
     if (typeof value === 'string') environment[key] = value;
   }
   return {
