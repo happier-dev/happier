@@ -838,8 +838,10 @@
                   "redirect": "error"
                 },
                 "response": {
-                  "contentTypes": [],
-                  "maxBytes": 0
+                  "contentTypes": [
+                    "application/json"
+                  ],
+                  "maxBytes": 2097152
                 }
               },
               {

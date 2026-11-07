@@ -1364,50 +1364,6 @@ describe('account Voice operation service', () => {
   );
 
   it.each([
-    { status: 204, noBody: true, jsonHeader: false, bytes: '', accepted: true },
-    { status: 200, noBody: true, jsonHeader: false, bytes: '', accepted: true },
-    { status: 200, noBody: false, jsonHeader: false, bytes: '', accepted: false },
-    { status: 200, noBody: false, jsonHeader: true, bytes: '', accepted: false },
-    { status: 200, noBody: true, jsonHeader: true, bytes: '{}', accepted: false },
-  ])('enforces declared empty response bodies ($status, noBody=$noBody, jsonHeader=$jsonHeader, bytes=$bytes)', async ({ status, noBody, jsonHeader, bytes, accepted }) => {
-    const contract = normalizeRecipientContractV1({
-      ...multiPurposeRecipientContract,
-      operations: multiPurposeRecipientContract.operations.map(operation => ({
-        ...operation,
-        response: noBody ? { maxBytes: 0, contentTypes: [] } : operation.response,
-      })),
-    });
-    const declaration = VoiceProviderContributionSchema.parse({
-      ...defaultCredentialDeclaration,
-      credentials: {
-        ...defaultCredentialDeclaration.credentials!,
-        hostMediated: { operations: contract.operations },
-      },
-    });
-    if (declaration.kind !== 'conversation') throw new Error('Expected conversation provider');
-    const service = createQualifiedAccountVoiceOperationService({
-      providerId: 'happier.voice.openai/realtime-openai',
-      contribution,
-      declaration,
-      phase: 'prepare',
-      recipientContract: contract,
-      signal: new AbortController().signal,
-      isCurrent: () => true,
-      fetch: async () => new Response(bytes || null, {
-        status,
-        headers: jsonHeader ? { 'content-type': 'application/json' } : {},
-      }),
-      materializeSecret: async () => 'account-secret',
-    });
-    const result = requestClientAuth(service);
-    if (accepted) {
-      await expect(result).resolves.toMatchObject({ status, headers: {}, body: new Uint8Array() });
-    } else {
-      await expect(result).rejects.toMatchObject({ code: 'provider_response_invalid' });
-    }
-  });
-
-  it.each([
     {
       name: 'a non-success HTTP status',
       response: () => new Response('private provider response', { status: 422 }),
@@ -1468,35 +1424,12 @@ describe('account Voice operation service', () => {
     });
   });
 
-  it('retains only schema validation locations and codes in a typed 422 failure', async () => {
-    const response = new Response(JSON.stringify({ detail: [
-      { loc: ['body', 'session', 'extra'], type: 'extra_forbidden',
-        msg: 'private prompt account-secret', input: 'account-secret', ctx: { error: 'private prompt' } },
-      { loc: ['body', 'account-secret'], type: 'account-secret', msg: 'account-secret' },
-    ] }), { status: 422, headers: { 'content-type': 'application/json' } });
-    const service = createAccountVoiceOperationService({
-      providerId: 'happier.voice.openai/realtime-openai', recipientContract,
-      signal: new AbortController().signal, isCurrent: () => true,
-      fetch: async () => response, materializeSecret: async () => 'account-secret',
-    });
-    const failure = await requestClientAuth(service).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ code: 'provider_response_invalid', responseFailure: {
-      kind: 'http_status', status: 422,
-      validation: [{ path: 'body.session.extra', code: 'extra_forbidden' }],
-    } });
-    const { projectSafeSettingsActionFailure } = await import('@/voice/settings/voiceProviderSettingsActionInvoker');
-    expect(projectSafeSettingsActionFailure(failure).responseFailure).toMatchObject({
-      validation: [{ path: 'body.session.extra', code: 'extra_forbidden' }],
-    });
-    expect(JSON.stringify(failure)).not.toMatch(/private prompt|account-secret|"input"|"ctx"/);
-  });
-
-  it('never reads or retains provider response prose on a non-validation HTTP failure', async () => {
+  it('never reads or retains provider response prose on a non-success HTTP status', async () => {
     // A provider error body is arbitrary text: it can legitimately carry user
     // or startup instructions, tool definitions, workspace/agent identifiers,
     // and transcript fragments that are not byte-identical to any registered
-    // credential. Non-validation failures therefore keep the structural tuple
-    // without consuming the body, so nothing can reach a diagnostic later.
+    // credential. The owner therefore keeps the structural failure tuple and
+    // never consumes the body at all, so nothing can reach a diagnostic later.
     const sentinel = 'HAPPIER_PROVIDER_PROSE_SENTINEL agent_prompt.tool_ids is not owned by this workspace';
     const response = new Response(
       JSON.stringify({ detail: { status: 'invalid_tool_ids', message: sentinel } }),
@@ -1704,7 +1637,7 @@ describe('account Voice operation service', () => {
     }
   });
 
-  it.each(['materialization', 'response', 'responseBody', 'refusal', 'refusalBody'] as const)(
+  it.each(['materialization', 'response', 'responseBody', 'refusal'] as const)(
     'preserves mutation uncertainty when authority retires during %s', async (retirement) => {
       let current = true;
       const mutationContract = normalizeRecipientContractV1({
@@ -1727,12 +1660,12 @@ describe('account Voice operation service', () => {
         if (retirement === 'response' || retirement === 'refusal') current = false;
         const body = new ReadableStream<Uint8Array>({
           pull(controller) {
-            if (retirement === 'responseBody' || retirement === 'refusalBody') current = false;
+            if (retirement === 'responseBody') current = false;
             controller.enqueue(new TextEncoder().encode('{"ok":true}'));
             controller.close();
           },
         }, { highWaterMark: 0 });
-        return new Response(body, { status: retirement === 'refusal' || retirement === 'refusalBody' ? 422 : 200,
+        return new Response(body, { status: retirement === 'refusal' ? 422 : 200,
           headers: { 'content-type': 'application/json' } });
       });
       const service = createQualifiedAccountVoiceOperationService({
@@ -1750,7 +1683,7 @@ describe('account Voice operation service', () => {
         },
       });
 
-      await expect(requestClientAuth(service)).rejects.toMatchObject(retirement === 'refusal' || retirement === 'refusalBody' ? {
+      await expect(requestClientAuth(service)).rejects.toMatchObject(retirement === 'refusal' ? {
         code: 'provider_response_invalid',
         responseFailure: { kind: 'http_status', status: 422, statusClass: '4xx' },
       } : {

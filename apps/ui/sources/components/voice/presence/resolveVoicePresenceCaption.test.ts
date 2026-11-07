@@ -90,11 +90,4 @@ describe('Voice presence captions for a bound Session target', () => {
       ),
     ).toEqual({ kind: 'caption', text: 'Release captain' });
   });
-  it('keeps unavailable-input guidance visible while Thinking instead of the previous transcript', () => {
-    expect(resolveVoiceCompactLine({ ...base, surfaceState: 'thinking', canCommitInput: false }, 'Previous reply.', 'Release captain'))
-      .toEqual({ kind: 'caption', text: t('voicePresence.captions.thinkingInputUnavailable') });
-    expect(resolveVoiceCompactLine({ ...base, surfaceState: 'thinking', canCommitInput: true }, 'Previous reply.'))
-      .toEqual({ kind: 'transcript', text: 'Previous reply.' });
-  });
-
 });

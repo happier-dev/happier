@@ -34,11 +34,6 @@ const ACCOUNT_VOICE_CATALOG = Object.freeze({
 });
 
 const EXACT_SEND_MESSAGE_TOOL_CONFIG = Object.freeze({
-  disable_interruptions: false,
-  force_pre_tool_speech: false,
-  assignments: [],
-  tool_call_sound: null,
-  dynamic_variables: { dynamic_variable_placeholders: {} },
   tool_error_handling_mode: 'passthrough',
   tool_call_sound_behavior: 'auto',
   pre_tool_speech: 'auto',
@@ -46,13 +41,7 @@ const EXACT_SEND_MESSAGE_TOOL_CONFIG = Object.freeze({
   response_timeout_secs: 60,
   execution_mode: 'immediate',
   expects_response: true,
-  parameters: { type: 'object', description: '', dynamic_variable: '', is_omitted: false,
-    required: ['arguments_json'], properties: {
-    arguments_json: { type: 'string', enum: null, is_system_provided: false,
-      dynamic_variable: '', allowed_values: null, allowed_values_dynamic_variable: '',
-      constant_value: '', is_omitted: false,
-      description: 'A JSON-encoded argument object matching this JSON Schema: {"type":"object","properties":{}}' },
-  } },
+  parameters: { properties: {}, type: 'object' },
   description: 'Send a message.',
   name: 'sendMessage',
   type: 'client',
@@ -215,10 +204,6 @@ describe('ElevenLabs public account operations', () => {
     expect(createdToolConfig).toEqual({
       ...EXACT_SEND_MESSAGE_TOOL_CONFIG,
       ...tool,
-      parameters: { ...EXACT_SEND_MESSAGE_TOOL_CONFIG.parameters, properties: {
-        arguments_json: { ...EXACT_SEND_MESSAGE_TOOL_CONFIG.parameters.properties.arguments_json,
-          description: `A JSON-encoded argument object matching this JSON Schema: ${JSON.stringify(tool.parameters)}` },
-      } },
       response_timeout_secs: 120,
     });
 
@@ -233,45 +218,6 @@ describe('ElevenLabs public account operations', () => {
     expect(calls.find((call) => call.operationId === 'update-agent')?.parameters).toMatchObject({
       agentId: 'agent_spawn',
       body: { conversation_config: { agent: { prompt: { tool_ids: ['tool_spawn'] } } } },
-    });
-  });
-
-  it('reuses selected tools after ElevenLabs materializes neutral defaults on readback', async () => {
-    // Real GET /v1/convai/tools readback, observed 2026-11-06 after POST succeeded.
-    const vendorConfig = {
-      ...EXACT_SEND_MESSAGE_TOOL_CONFIG,
-      disable_interruptions: false, force_pre_tool_speech: false, assignments: [], tool_call_sound: null,
-      dynamic_variables: { dynamic_variable_placeholders: {} },
-      parameters: {
-        ...EXACT_SEND_MESSAGE_TOOL_CONFIG.parameters,
-        description: '', dynamic_variable: '', is_omitted: false,
-        properties: { arguments_json: {
-          ...EXACT_SEND_MESSAGE_TOOL_CONFIG.parameters.properties.arguments_json,
-          enum: null, is_system_provided: false, dynamic_variable: '', allowed_values: null,
-          allowed_values_dynamic_variable: '', constant_value: '', is_omitted: false,
-        } },
-      },
-    };
-    let createdTools = 0;
-    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string; parameters: unknown }>) => {
-      if (input.operationId === 'create-tool') createdTools += 1;
-      const body = input.operationId === 'voices' ? ACCOUNT_VOICE_CATALOG
-        : input.operationId === 'agent'
-          ? { agent_id: 'agent_1', conversation_config: { agent: { prompt: { tool_ids: ['tool_selected'] } } } }
-          : input.operationId === 'tools' ? { tools: [{ id: 'tool_selected', tool_config: vendorConfig }], has_more: false }
-            : input.operationId === 'create-tool' ? { id: 'tool_replacement' } : { agent_id: 'agent_1' };
-      return { status: 200, finalUrl: `https://api.elevenlabs.io/${input.operationId}`, headers: {},
-        body: new TextEncoder().encode(JSON.stringify(body)) };
-    });
-    await expect(provisionElevenLabsWithAccountOperations({
-      accountOperations: { request },
-      request: { kind: 'update', agentId: 'agent_1', prompt: 'Current prompt', tts: createProvisionTtsSettings(),
-        tools: [{ name: 'sendMessage', description: 'Send a message.', parameters: { type: 'object', properties: {} } }] },
-      signal: new AbortController().signal,
-    })).resolves.toEqual({ ok: true, updated: true });
-    expect(createdTools).toBe(0);
-    expect(request.mock.calls.find(([input]) => input.operationId === 'update-agent')?.[0].parameters).toMatchObject({
-      body: { conversation_config: { agent: { prompt: { tool_ids: ['tool_selected'] } } } },
     });
   });
 
@@ -611,73 +557,6 @@ describe('ElevenLabs public account operations', () => {
       agentId: 'agent_selected',
       body: { conversation_config: { agent: { prompt: { tool_ids: ['tool_replacement'] } } } },
     });
-  });
-
-  it.each([
-    { deleteStatus: 200, shared: false },
-    { deleteStatus: 204, shared: false },
-    { deleteStatus: 409, shared: true },
-  ])('removes only the tagged agent dependency it replaced (DELETE $deleteStatus, shared=$shared)', async ({ deleteStatus, shared }) => {
-    const tools = new Map([
-      ['tool_old', { ...EXACT_SEND_MESSAGE_TOOL_CONFIG, description: 'Earlier catalog.' }],
-      ['tool_retired', { ...EXACT_SEND_MESSAGE_TOOL_CONFIG, name: 'retiredCatalogTool' }],
-      ['tool_foreign', EXACT_SEND_MESSAGE_TOOL_CONFIG],
-    ]);
-    const deleted: string[] = [];
-    let createdCount = 0;
-    const request = provisionAccountRequest(async (input: Readonly<{
-      operationId: string;
-      parameters?: Readonly<{ toolId?: string; body?: { tool_config?: typeof EXACT_SEND_MESSAGE_TOOL_CONFIG } }>;
-    }>) => {
-      let body: unknown = {};
-      if (input.operationId === 'voices') body = ACCOUNT_VOICE_CATALOG;
-      if (input.operationId === 'agent') body = {
-        agent_id: 'agent_selected', tags: ['happier_voice_config_v1'],
-        conversation_config: { agent: { prompt: { tool_ids: ['tool_old', 'tool_retired'] } } },
-      };
-      if (input.operationId === 'tools') body = {
-        tools: [...tools].map(([id, tool_config]) => ({ id, tool_config })),
-      };
-      if (input.operationId === 'create-tool') {
-        createdCount += 1;
-        tools.set('tool_new', input.parameters!.body!.tool_config!);
-        body = { id: 'tool_new' };
-      }
-      const sharedTool = shared && input.parameters?.toolId === 'tool_old';
-      if (input.operationId === 'delete-tool') {
-        deleted.push(input.parameters!.toolId!);
-        if (!sharedTool) tools.delete(input.parameters!.toolId!);
-      }
-      return {
-        status: input.operationId === 'delete-tool' ? (sharedTool ? 409 : shared ? 204 : deleteStatus) : 200,
-        finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
-        headers: input.operationId === 'delete-tool' ? {} : { 'content-type': 'application/json' },
-        body: input.operationId === 'delete-tool' ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(body)),
-      };
-    });
-    const input = {
-      accountOperations: { request },
-      request: {
-        kind: 'update', agentId: 'agent_selected', prompt: 'Keep helping.',
-        tools: [{ name: 'sendMessage', description: 'Send a message.', parameters: { type: 'object', properties: {} } }],
-        tts: createProvisionTtsSettings(),
-      },
-      signal: new AbortController().signal,
-    };
-    if (shared) {
-      await expect(provisionElevenLabsWithAccountOperations(input)).rejects.toMatchObject({
-        stage: 'delete_tool', cleanupIncomplete: true,
-      });
-      expect(deleted).toEqual(['tool_old', 'tool_retired']);
-      expect([...tools.keys()].sort()).toEqual(['tool_foreign', 'tool_new', 'tool_old']);
-      return;
-    }
-    await expect(provisionElevenLabsWithAccountOperations(input)).resolves.toEqual({ ok: true, updated: true });
-    expect(deleted).toEqual(['tool_old', 'tool_retired']);
-    expect([...tools.keys()].sort()).toEqual(['tool_foreign', 'tool_new']);
-    await expect(provisionElevenLabsWithAccountOperations(input)).resolves.toEqual({ ok: true, updated: true });
-    expect(createdCount).toBe(1);
-    expect(deleted).toEqual(['tool_old', 'tool_retired']);
   });
 
   it('reuses an exact selected-agent dependency and only updates the agent', async () => {

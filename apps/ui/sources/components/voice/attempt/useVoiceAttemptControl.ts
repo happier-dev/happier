@@ -18,7 +18,7 @@ import { useProjectedConnectedServicesRegistry, useProjectedPluginLocalizedTextR
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { areSessionAddressesEqual, normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { storage, useActiveServerAccountScope, useSession, useSetting } from '@/sync/domains/state/storage';
 import { readLocalConversationVoiceSettings, readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -68,7 +68,6 @@ import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attem
 
 import {
     resolveVoiceAttemptControl,
-    resolveVoiceSessionNeedsYou,
     type VoiceAttemptControl,
 } from './resolveVoiceAttemptControl';
 import {
@@ -496,7 +495,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             ? resolveVoiceBindingBySessionId({ sessionId: controlSessionId, adapterId: snapAdapterId })
             : null;
         const address = binding ? resolveVoiceConversationNavigationAddress(binding) : null;
-        const requestAddress = binding?.conversationSessionAddress ?? binding?.targetSessionAddress ?? null;
+        const requestAddress = binding?.targetSessionAddress ?? binding?.conversationSessionAddress ?? null;
         const previous = cached?.value;
         const value = binding
             ? previous && previous.address?.sessionId === address?.sessionId
@@ -533,7 +532,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const openConversationSessionAddress = openConversationTarget?.address ?? null;
     const openConversationSessionId = openConversationSessionAddress?.sessionId ?? null;
     const canOpenConversation = openConversationTarget !== null;
-    const primaryRequestSessionAddress = presentedTarget ?? activeOpenConversationTarget?.requestAddress ?? null;
+    const pendingRequestSessionAddress = presentedTarget ?? activeOpenConversationTarget?.requestAddress ?? null;
 
     const firstSuccessAttemptId = React.useSyncExternalStore(
         subscribeToVoiceSessionEndedAttempt,
@@ -553,25 +552,11 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     }, [executeControl, expectedAttempt, openConversationTarget]);
 
 
-    const primarySession = useSession(primaryRequestSessionAddress?.sessionId ?? openConversationSessionId ?? snapSessionId ?? '',
-        primaryRequestSessionAddress?.serverId ?? openConversationSessionAddress?.serverId ?? recoverySessionServerId);
-    const primaryStatus = useSessionStatus(primarySession, { subscribeToSession: false, workingTextMode: 'static' });
-    const primarySessionIsHidden = primarySession !== null
-        && isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(primarySession));
-    // A native Voice Agent raises approvals on its own conversation Session,
-    // independently of the coding target. Both retain ordinary Session custody.
-    const conversationRequestAddress = activeOpenConversationTarget?.requestAddress ?? null;
-    const otherRequestAddress = areSessionAddressesEqual(primaryRequestSessionAddress, conversationRequestAddress)
-        ? null : conversationRequestAddress;
-    const conversationSession = useSession(otherRequestAddress?.sessionId ?? '', otherRequestAddress?.serverId);
-    const conversationStatus = useSessionStatus(conversationSession, { subscribeToSession: false, workingTextMode: 'static' });
-    const conversationSessionIsHidden = conversationSession !== null
-        && isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(conversationSession));
-    const presentConversationRequest = resolveVoiceSessionNeedsYou(conversationStatus, conversationSessionIsHidden)
-        && !resolveVoiceSessionNeedsYou(primaryStatus, primarySessionIsHidden);
-    const pendingRequestSessionAddress = presentConversationRequest ? otherRequestAddress : primaryRequestSessionAddress;
-    const sessionStatus = presentConversationRequest ? conversationStatus : primaryStatus;
-    const presentedSessionIsHidden = presentConversationRequest ? conversationSessionIsHidden : primarySessionIsHidden;
+    const presentedSession = useSession(pendingRequestSessionAddress?.sessionId ?? openConversationSessionId ?? snapSessionId ?? '',
+        pendingRequestSessionAddress?.serverId ?? openConversationSessionAddress?.serverId ?? recoverySessionServerId);
+    const sessionStatus = useSessionStatus(presentedSession, { subscribeToSession: false, workingTextMode: 'static' });
+    const presentedSessionIsHidden = presentedSession !== null
+        && isVoiceConversationCustodySessionMetadata(readSessionOwnerMetadataView(presentedSession));
     const elapsedStartedAt = getVoiceSessionAttemptStartedAt();
     // Hold is not inferred from commitInput or mute: the capture-input owner must admit the gesture.
     const canHoldToTalk = snap.status === 'connected' && snap.canHoldToTalk === true;

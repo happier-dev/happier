@@ -807,10 +807,10 @@ function resolveQuotaFetchFailureBackoffMs(input: Readonly<{
 }>): number | null {
   const error = isRecord(input.error) ? input.error : null;
   const retryAfterMs = readFiniteNonNegativeMs(error?.retryAfterMs);
-  if (retryAfterMs !== null && retryAfterMs > 0) return retryAfterMs;
+  if (retryAfterMs !== null) return Math.max(1, retryAfterMs);
 
   const resetAtMs = readFiniteNonNegativeMs(error?.resetAtMs);
-  if (resetAtMs !== null && resetAtMs > input.now) return resetAtMs - input.now;
+  if (resetAtMs !== null) return Math.max(1, resetAtMs - input.now);
 
   return null;
 }

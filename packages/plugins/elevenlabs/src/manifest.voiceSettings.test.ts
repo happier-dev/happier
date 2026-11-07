@@ -218,7 +218,7 @@ describe('ElevenLabs public Voice settings declaration', () => {
     });
   });
 
-  it('declares a bodyless force-false delete for provisioning cleanup', () => {
+  it('declares a bounded force-false delete only for current provisioning compensation', () => {
     const declaration = PLUGIN_MANIFEST.contributes.voiceProviders[0];
     const deleteToolOperation = declaration.credentials?.hostMediated?.operations.find(
       (operation) => operation.id === 'delete-tool',
@@ -253,7 +253,7 @@ describe('ElevenLabs public Voice settings declaration', () => {
           target: { kind: 'path', placeholder: 'toolId', encoding: 'uri_component' },
         }],
       },
-      response: { maxBytes: 0, contentTypes: [] },
+      response: { maxBytes: 2097152, contentTypes: ['application/json'] },
     });
   });
 });

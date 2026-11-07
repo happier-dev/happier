@@ -2,8 +2,6 @@
 
 export type VoiceReadinessCopy = {
   ready: string;
-  permissionQuestion: (params: { approve: string; deny: string }) => string;
-  permissionTapRequired: string;
   permissionAnnouncement: (params: { summary: string }) => string;
   userActionAnnouncement: (params: { question: string }) => string;
   userActionFallback: string;
@@ -85,8 +83,6 @@ export function defineVoiceReadinessTranslation(readiness: VoiceReadinessCopy) {
 export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTranslation({
     ready: 'Ready for Voice.',
     permissionAnnouncement: ({ summary }) => `The coding session needs permission for ${summary}.`,
-    permissionQuestion: ({ approve, deny }) => `Should I allow it? Say “${approve}” or “${deny}”.`,
-    permissionTapRequired: "Use the approval card to continue.",
     userActionAnnouncement: ({ question }) => `The coding session needs your input. ${question}`,
     userActionFallback: 'The coding session needs your input. Answer the question so I can continue.',
     requestedTool: 'the requested tool',

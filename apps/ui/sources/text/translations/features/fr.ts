@@ -13879,7 +13879,7 @@ const voicePresenceTranslations = { fr: {
         mute: "Couper le micro",
         unmute: "Réactiver",
         end: "Terminer",
-        captions: { thinkingInputUnavailable: "Attendez la réponse avant d’envoyer un autre message.", connecting: "Ouverture du canal audio", listening: "Vas-y", transcribing: "Transcription en cours", thinking: "Préparation d’une réponse", speaking: "Tu peux interrompre à tout moment", interrupted: "Vas-y", muted: "Réactive le micro pour parler · Voix peut encore parler", reconnecting: "Connexion perdue · nouvelle tentative", blocked: "Autorise l’accès au micro pour parler", failed: "Réessaie ou vérifie les réglages de Voix", needsYou: "En attente de ta décision" },
+        captions: { connecting: "Ouverture du canal audio", listening: "Vas-y", transcribing: "Transcription en cours", thinking: "Préparation d’une réponse", speaking: "Tu peux interrompre à tout moment", interrupted: "Vas-y", muted: "Réactive le micro pour parler · Voix peut encore parler", reconnecting: "Connexion perdue · nouvelle tentative", blocked: "Autorise l’accès au micro pour parler", failed: "Réessaie ou vérifie les réglages de Voix", needsYou: "En attente de ta décision" },
         recovery: { allow: "Autoriser", setUp: "Configurer" },
         readAloud: { preparing: "Préparation de la lecture", speaking: "Lecture à voix haute", stop: "Arrêter la lecture" },
         containerA11y: ({ status }) => `Voix, ${status}`,
@@ -13929,8 +13929,6 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { fr: defineVoiceReadinessTranslation({
     ready: 'Prêt pour Voice.',
     permissionAnnouncement: ({ summary }) => `La session de code a besoin d’une autorisation pour ${summary}.`,
-    permissionQuestion: ({ approve, deny }) => `Dois-je l’autoriser ? Dites « ${approve} » ou « ${deny} ».`,
-    permissionTapRequired: "Utilisez la carte d’approbation pour continuer.",
     userActionAnnouncement: ({ question }) => `La session de code a besoin de ta réponse. ${question}`,
     userActionFallback: 'La session de code a besoin de ta réponse. Réponds à la question pour que je puisse continuer.',
     requestedTool: 'l’outil demandé',

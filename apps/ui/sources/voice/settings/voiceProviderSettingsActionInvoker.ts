@@ -1,5 +1,4 @@
 import { createHostPluginSettingsActionInvoker } from '@happier-dev/protocol/plugins/settingsActionInvoker';
-import { projectProviderValidationIssues, type ProviderValidationIssue } from '@/voice/credentials/providerValidationFailure';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { VoiceRealtimeJsonValueSchema } from '@happier-dev/protocol/voice/realtime/events';
 import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
@@ -37,7 +36,7 @@ function actionError(code: string): Error {
 export type SafeSettingsActionFailureDiagnostic = Readonly<{
   code?: string;
   stage?: string;
-  responseFailure?: Readonly<{ kind: string; status: number; statusClass: string; validation?: readonly ProviderValidationIssue[] }>;
+  responseFailure?: Readonly<{ kind: string; status: number; statusClass: string }>;
 }>;
 const SAFE_RESPONSE_FAILURE_KINDS = new Set([
   'redirect', 'http_status', 'content_type', 'body_too_large', 'body_read_failed', 'json_projection_failed',
@@ -56,9 +55,7 @@ export function projectSafeSettingsActionFailure(error: unknown): SafeSettingsAc
     && SAFE_RESPONSE_FAILURE_KINDS.has(raw.kind) && 'status' in raw && typeof raw.status === 'number'
     && Number.isInteger(raw.status) && raw.status >= 100 && raw.status <= 599
     && 'statusClass' in raw && raw.statusClass === `${Math.floor(raw.status / 100)}xx`) {
-    const validation = projectProviderValidationIssues('validation' in raw ? raw.validation : null);
-    responseFailure = { kind: raw.kind, status: raw.status, statusClass: raw.statusClass,
-      ...(validation.length ? { validation } : {}) };
+    responseFailure = { kind: raw.kind, status: raw.status, statusClass: raw.statusClass };
   }
   return { ...(code ? { code } : {}), ...(stage ? { stage } : {}), ...(responseFailure ? { responseFailure } : {}) };
 }

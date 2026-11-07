@@ -663,14 +663,12 @@ describe('VoiceProviderSettingsActions', () => {
     );
   });
 
-  it.each([false, true])('surfaces structural failure details while stripping provider prose (validation: %s)', async (validation) => {
+  it('surfaces the failing stage and status while stripping provider prose from the log and the alert', async () => {
     const http = provider.fetch.getMockImplementation()!;
     provider.fetch.mockImplementation(async (input, init) => {
       if (providerUrl(input).pathname !== '/v1/convai/agents/create') return await http(input, init);
-      const prose = 'HAPPIER_PROVIDER_PROSE_SENTINEL private-agent-id secret credential';
-      return new Response(JSON.stringify({ detail: validation
-        ? [{ loc: ['body', 'tool_config', 'parameters', 'additionalProperties'], type: 'extra_forbidden', msg: prose, input: prose }]
-        : prose }), {
+      return new Response(JSON.stringify({ detail:
+        'HAPPIER_PROVIDER_PROSE_SENTINEL private-agent-id secret credential: tool ids must be owned by this workspace' }), {
         status: 422,
         headers: { 'content-type': 'application/json', authorization: 'secret credential', 'x-provider-request-id': 'private-agent-id' },
       });
@@ -698,18 +696,14 @@ describe('VoiceProviderSettingsActions', () => {
 
     expect(log.getLogs().filter(message => message.startsWith('[VoiceProviderSettingsActions]'))).toHaveLength(1);
     expect(log.getLogs()).toContain(
-      '[VoiceProviderSettingsActions] settings action failed ' + JSON.stringify({ actionId: 'create-agent', code: 'provider_response_invalid', stage: 'create_agent', responseFailure: {
-        kind: 'http_status', status: 422, statusClass: '4xx',
-        ...(validation ? { validation: [{ path: 'body.tool_config.parameters.additionalProperties', code: 'extra_forbidden' }] } : {}),
-      } }),
+      '[VoiceProviderSettingsActions] settings action failed {"actionId":"create-agent","code":"provider_response_invalid","stage":"create_agent","responseFailure":{"kind":"http_status","status":422,"statusClass":"4xx"}}',
     );
     // The press is still actionable: the alert names the failing step and the
     // provider status without repeating a single character of provider prose.
     expect(nativeAlert.mock.calls.map(call => call.slice(0, 2))).toContainEqual([
       t('common.error'),
       t('settingsVoice.realtimeProviders.operationFailedUnsaved')
-        + '\n\n' + (validation ? 'body.tool_config.parameters.additionalProperties: extra_forbidden\n' : '')
-        + t('settingsVoice.realtimeProviders.operationFailedStage', { stage: 'create_agent' })
+        + '\n\n' + t('settingsVoice.realtimeProviders.operationFailedStage', { stage: 'create_agent' })
         + '\n' + t('settingsVoice.realtimeProviders.operationFailedStatus', { status: 422 }),
     ]);
     const surfaced = JSON.stringify([log.getLogs(), nativeAlert.mock.calls]);

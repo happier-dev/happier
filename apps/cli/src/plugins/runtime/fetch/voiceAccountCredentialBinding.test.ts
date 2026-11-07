@@ -1231,46 +1231,6 @@ describe('Voice account Plugin fetch credential binding', () => {
         expect(result).not.toHaveProperty('arrayBuffer');
     });
 
-    it.each([
-        { status: 204, noBody: true, jsonHeader: false, bytes: '', accepted: true },
-        { status: 200, noBody: true, jsonHeader: false, bytes: '', accepted: true },
-        { status: 200, noBody: false, jsonHeader: false, bytes: '', accepted: false },
-        { status: 200, noBody: false, jsonHeader: true, bytes: '', accepted: false },
-        { status: 200, noBody: true, jsonHeader: true, bytes: '{}', accepted: false },
-    ])('enforces declared empty response bodies ($status, noBody=$noBody, jsonHeader=$jsonHeader, bytes=$bytes)', async ({ status, noBody, jsonHeader, bytes, accepted }) => {
-        const currentDefinition = {
-            ...definition,
-            credentials: {
-                ...definition.credentials!,
-                hostMediated: {
-                    operations: definition.credentials!.hostMediated!.operations.map(operation => ({
-                        ...operation,
-                        response: noBody ? { maxBytes: 0, contentTypes: [] } : operation.response,
-                    })),
-                },
-            },
-        };
-        publishCredential('acme.voice/conversation', 1, undefined, currentDefinition);
-        const service = createCatalogService(async () => ({
-            status,
-            finalUrl: 'https://voice.example.test/v1/voices',
-            headers: jsonHeader ? { 'content-type': 'application/json' } : {},
-            body: new TextEncoder().encode(bytes),
-        }), undefined, [{
-            pluginId: 'acme.voice',
-            identity: { pluginId: 'acme.voice', localId: 'conversation' },
-            definition: currentDefinition,
-        }]);
-        const result = service.request(catalogRequest());
-        if (accepted) {
-            await expect(result).resolves.toMatchObject({ status, headers: {}, body: new Uint8Array() });
-        } else {
-            await expect(result).rejects.toMatchObject({
-                code: jsonHeader ? 'plugin_fetch_voice_catalog_artifact_invalid' : 'plugin_fetch_voice_account_operation_failed',
-            });
-        }
-    });
-
     it('diagnoses a rejected provider response without retaining response-derived or secret text', async () => {
         publishCredential();
         const recordResponseDiagnostic = vi.fn(() => {

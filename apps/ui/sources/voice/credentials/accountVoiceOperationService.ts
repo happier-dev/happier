@@ -1,7 +1,6 @@
-import { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from '@happier-dev/cli-common/plugins/http';
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
-import { readProviderValidationIssues, type ProviderValidationIssue } from './providerValidationFailure';
 import { materializeRecipientOperationRequestV1, normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { resolveVoiceCredentialOperationAuthorization, type VoiceCredentialAccessPhase, type VoiceCredentialOperationAuthorization, type VoiceCredentialOperationSelectedSource, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -58,20 +57,19 @@ type AccountVoiceResponseFailureKind =
 /**
  * Structural, provider-neutral account of *how* an operation failed.
  *
- * It deliberately carries no projection of the provider's own prose. A
+ * It deliberately carries no projection of the provider's own response text. A
  * provider error body is arbitrary prose: it can legitimately echo user or
  * startup instructions, tool definitions, account/workspace/agent identifiers,
  * and transcript fragments, none of which are byte-identical to a registered
  * credential and none of which a credential scrubber can therefore remove. The
  * Voice privacy contract is that Happier diagnostics carry typed transitions,
- * provider identity, and bounded structural facts only. JSON 422 failures may
- * add validation locations/categories, never messages, input values or context.
+ * provider identity, and bounded structural facts only, so the body is never
+ * read on a failure path and the failure stays a `kind`/status tuple.
  */
 type AccountVoiceResponseFailure = Readonly<{
   kind: AccountVoiceResponseFailureKind;
   status: number;
   statusClass: '1xx' | '2xx' | '3xx' | '4xx' | '5xx' | 'unknown';
-  validation?: readonly ProviderValidationIssue[];
 }>;
 
 function responseStatusClass(status: number): AccountVoiceResponseFailure['statusClass'] {
@@ -368,6 +366,33 @@ function composeAccountOperationSignal(
   });
 }
 
+function projectJsonBody(
+  response: Response,
+  body: Uint8Array,
+  sourceCredentials: readonly string[],
+  maxBytes: number,
+): Uint8Array {
+  const projectionFailure = responseFailure(response, 'json_projection_failed');
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+    const projectedText = JSON.stringify(JSON.parse(text));
+    if (
+      projectedText === undefined
+      || containsProviderRegisteredSensitiveValue(projectedText, sourceCredentials)
+    ) {
+      throw operationError('provider_response_invalid', projectionFailure);
+    }
+    const projected = new TextEncoder().encode(projectedText);
+    if (projected.byteLength > maxBytes) {
+      throw operationError('provider_response_invalid', projectionFailure);
+    }
+    return projected;
+  } catch (error) {
+    if ((error as Readonly<{ code?: unknown }>).code === 'provider_response_invalid') throw error;
+    throw operationError('provider_response_invalid', projectionFailure);
+  }
+}
+
 /**
  * Trusted first-party UI binding for the public Voice account-operation
  * contract. The account SavedSecret is materialized only after the declared
@@ -632,30 +657,20 @@ export function createAccountVoiceOperationService(input: Readonly<{
           );
         }
         if (httpFailure) {
-          let validation: readonly ProviderValidationIssue[] = [];
-          if (response.status === 422 && operation.response.contentTypes.includes(responseContentType)) {
-            try {
-              const bytes = await readBoundedBody(response, operation.response.maxBytes, operationSignal.signal);
-              validation = readProviderValidationIssues(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), sourceCredentials);
-            } catch { /* Optional diagnostics never replace the provider's known rejection. */ }
-          } else {
-            await response.body?.cancel().catch(() => undefined);
-          }
-          const rejection = operationError(
+          await response.body?.cancel().catch(() => undefined);
+          throw rejectedMutation ?? operationError(
             httpFailure,
-            { ...responseFailure(response, 'http_status'), ...(validation.length ? { validation } : {}) },
+            responseFailure(response, 'http_status'),
           );
-          if (mutationDispatched) rejectedMutation = rejection;
-          throw rejection;
         }
-        if (!acceptsRecipientOperationResponseContentType(operation.response, responseContentType)) {
+        if (!operation.response.contentTypes.includes(responseContentType)) {
           await response.body?.cancel().catch(() => undefined);
           throw operationError(
             'provider_response_invalid',
             responseFailure(response, 'content_type'),
           );
         }
-        const responseBody = response.body === null ? new Uint8Array() : await readBoundedBody(
+        const responseBody = await readBoundedBody(
           response,
           operation.response.maxBytes,
           operationSignal.signal,
@@ -663,18 +678,16 @@ export function createAccountVoiceOperationService(input: Readonly<{
         if (operationSignal.signal.aborted || !isAuthorityCurrent(operationAuthority)) {
           throw operationError('voice_account_operation_cancelled');
         }
-        const body = projectRecipientOperationResponseBody(
-          operation.response,
+        const body = projectJsonBody(
+          response,
           responseBody,
           sourceCredentials,
+          operation.response.maxBytes,
         );
-        if (body === null) {
-          throw operationError('provider_response_invalid', responseFailure(response, 'json_projection_failed'));
-        }
         return Object.freeze({
           status: response.status,
           finalUrl: materialized.url,
-          headers: Object.freeze<Record<string, string>>(responseContentType ? { 'content-type': responseContentType } : {}),
+          headers: Object.freeze({ 'content-type': responseContentType }),
           body,
         });
       } catch (error) {

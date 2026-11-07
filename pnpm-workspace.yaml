@@ -137,6 +137,7 @@ patchedDependencies:
   "@prisma/client@6.19.2": patches/@prisma__client@6.19.2.patch
   "@react-native/gradle-plugin@0.83.5": patches/@react-native__gradle-plugin@0.83.5.patch
   "@react-navigation/core@7.21.5": patches/@react-navigation__core@7.21.5.patch
+  "@react-navigation/elements@2.9.17": patches/@react-navigation__elements@2.9.17.patch
   "@sentry/react-native@7.11.0": patches/@sentry__react-native@7.11.0.patch
   "@socket.io/redis-streams-adapter@0.3.1": patches/@socket.io__redis-streams-adapter@0.3.1.patch
   expo-crypto@55.0.12: patches/expo-crypto@55.0.12.patch

@@ -701,7 +701,7 @@ export const ELEVENLABS_PLUGIN = definePlugin({
                   target: { kind: 'path', placeholder: 'toolId', encoding: 'uri_component' },
                 }],
               },
-              response: { maxBytes: 0, contentTypes: [] },
+              response: { maxBytes: 2097152, contentTypes: ['application/json'] },
             },
             {
               id: 'create-agent',

@@ -13831,7 +13831,7 @@ const voicePresenceTranslations = { it: {
         mute: "Silenzia",
         unmute: "Riattiva",
         end: "Termina",
-        captions: { thinkingInputUnavailable: "Attendi la risposta prima di inviare altri messaggi.", connecting: "Apertura del canale audio", listening: "Vai pure", transcribing: "Conversione in testo", thinking: "Sto preparando una risposta", speaking: "Puoi interrompere in qualsiasi momento", interrupted: "Vai pure", muted: "Riattiva il microfono per parlare · Voce può ancora parlare", reconnecting: "Connessione persa · nuovo tentativo", blocked: "Consenti l'accesso al microfono per parlare", failed: "Riprova o controlla le impostazioni di Voce", needsYou: "In attesa della tua decisione" },
+        captions: { connecting: "Apertura del canale audio", listening: "Vai pure", transcribing: "Conversione in testo", thinking: "Sto preparando una risposta", speaking: "Puoi interrompere in qualsiasi momento", interrupted: "Vai pure", muted: "Riattiva il microfono per parlare · Voce può ancora parlare", reconnecting: "Connessione persa · nuovo tentativo", blocked: "Consenti l'accesso al microfono per parlare", failed: "Riprova o controlla le impostazioni di Voce", needsYou: "In attesa della tua decisione" },
         recovery: { allow: "Consenti", setUp: "Configura" },
         readAloud: { preparing: "Preparazione della lettura", speaking: "Lettura ad alta voce", stop: "Interrompi la lettura" },
         containerA11y: ({ status }) => `Voce, ${status}`,
@@ -13881,8 +13881,6 @@ const defineVoiceReadinessTranslation = Shared_voiceReadinessTranslations.define
 const voiceReadinessTranslations = { it: defineVoiceReadinessTranslation({
     ready: 'La funzione Voce è pronta.',
     permissionAnnouncement: ({ summary }) => `La sessione di codice richiede l’autorizzazione per ${summary}.`,
-    permissionQuestion: ({ approve, deny }) => `Devo consentirlo? Di’ «${approve}» o «${deny}».`,
-    permissionTapRequired: "Usa la scheda di approvazione per continuare.",
     userActionAnnouncement: ({ question }) => `La sessione di codice ha bisogno della tua risposta. ${question}`,
     userActionFallback: 'La sessione di codice ha bisogno della tua risposta. Rispondi alla domanda per permettermi di continuare.',
     requestedTool: 'lo strumento richiesto',

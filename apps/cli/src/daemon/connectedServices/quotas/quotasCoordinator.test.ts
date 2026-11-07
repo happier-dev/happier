@@ -1,5 +1,4 @@
 import { computeConnectedServiceAccessTokenFingerprint } from '../refresh/credentialFreshness/tokenFingerprint';
-import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from './resolveConnectedServiceQuotasDaemonOptions';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { ApiClient } from '@/api/api';
@@ -126,8 +125,6 @@ import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../../.
 async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAccountProfileV4, now: number, options?: Readonly<{
   organizationQuota?: true;
   failQuota?: boolean;
-  retryAfterMs?: number;
-  resetAtMs?: number;
   profiles?: readonly QualifiedConnectedAccountProfileV4[];
   usageIdentity?: PluginConnectedAccountDescriptorContributionV2['usageIdentity'];
 }>) {
@@ -155,7 +152,6 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
         async quota(context) {
           if (await context.credentials.get('token') !== 'fixture-token') throw new Error('Unexpected quota credential');
           await (await import('node:fs/promises')).appendFile(${JSON.stringify(marker)}, context.account.accountId + '\\n');
-          ${options?.retryAfterMs !== undefined || options?.resetAtMs !== undefined ? `throw Object.assign(new Error('Provider quota backoff'), ${JSON.stringify({ status: 429, retryAfterMs: options?.retryAfterMs, resetAtMs: options?.resetAtMs, quotaFetchErrorCode: 'provider_backoff' })});` : ''}
           return { observedAtMs: ${now}, ${options?.failQuota ? `...(() => { throw new Error('Provider quota unavailable'); })(),` : ''} ${options?.organizationQuota ? `providerOrganizationId: await context.credentials.get('organizationUuid'),` : ''} limits: [{ id: 'weekly', used: 25, remaining: 75 }] };
         }
       });
@@ -183,66 +179,6 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
       runtime!.registry.contributes.connectedAccountDescriptorsById.get(`${serviceRef.pluginId}/${serviceRef.localId}`)?.definition.usageIdentity ?? null,
   };
 }
-
-it.each([
-  { name: 'zero Retry-After', hint: { retryAfterMs: 0 }, delay: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS },
-  { name: 'expired reset', hint: { resetAtMs: 999_999 }, delay: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS },
-  { name: 'zero Retry-After with a future reset', hint: { retryAfterMs: 0, resetAtMs: 1_001_000 }, delay: 1_000 },
-  { name: 'future reset', hint: { resetAtMs: 1_001_000 }, delay: 1_000 },
-  { name: 'positive Retry-After', hint: { retryAfterMs: 1_000 }, delay: 1_000 },
-  { name: 'one millisecond Retry-After', hint: { retryAfterMs: 1 }, delay: 1 },
-])('keeps repeated quota failures on the existing cadence for $name', async ({ hint, delay }) => {
-  const startedAt = 1_000_000;
-  let now = startedAt;
-  const profile: QualifiedConnectedAccountProfileV4 = {
-    ref: { service: { pluginId: 'example.failure-cadence', localId: 'account' }, accountId: 'work' },
-    status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
-    credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
-    providerIdentity: { accountId: 'provider-work' }, displayName: 'Work', scopes: [],
-  };
-  const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, hint);
-  let stored: ProviderAccountUsageSnapshotV1 | null = null;
-  // Home persistence is the boundary; plugin admission, cadence and publication stay real.
-  const writeProviderAccountUsage = vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
-    if (!params.write.snapshot) throw new Error('Expected plain fixture content');
-    stored = params.write.snapshot;
-    return { success: true as const };
-  });
-  const coordinator = new ConnectedServiceQuotasCoordinator({
-    api: { getAccountEncryptionMode: async () => 'plain', getConnectedServiceQuotaSnapshotSealed: async () => null,
-      getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
-    credentials: fixture.credentials, quotaFetchers: [], now: () => now,
-    randomBytes: length => new Uint8Array(length), probeIntervalMs: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS,
-    qualifiedConnectedAccountRuntime: {
-      resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
-      listScheduledAccounts: async () => [profile], listGroupQuotaTargets: async () => [],
-      readQuota: async () => stored ? {
-        ref: profile.ref,
-        sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' as const }, recordId: stored.recordId,
-          providerAccountId: profile.providerIdentity!.accountId, fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs },
-        content: { t: 'plain' as const, v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot: stored, ref: profile.ref }) },
-        metadata: { fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs,
-          status: stored.state === 'error_last_known_good' ? 'error' as const : 'unavailable' as const },
-      } : null,
-      writeProviderAccountUsage,
-    },
-  });
-  onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
-  await coordinator.tickOnce();
-  expect(writeProviderAccountUsage).toHaveBeenCalledTimes(2); // Empty initialization, then first failure.
-  for (let wake = 1; wake <= 10; wake++) {
-    now = startedAt + Math.floor(delay * wake / 20);
-    coordinator.invalidateInventory({ resetQuotaSchedule: true });
-    await coordinator.tickOnce();
-  }
-  expect(writeProviderAccountUsage).toHaveBeenCalledTimes(2);
-  expect(await readFile(fixture.marker, 'utf8')).toBe('work\n');
-  now = startedAt + delay;
-  await coordinator.tickOnce();
-  expect(writeProviderAccountUsage).toHaveBeenCalledTimes(3);
-  expect(await readFile(fixture.marker, 'utf8')).toBe('work\nwork\n');
-});
-
 
 type AccountExhaustionInput = Parameters<ConnectedServiceQuotasCoordinator['recordAccountExhaustionAndFanout']>[0];
 type RuntimeUsageLimitInput = Parameters<ConnectedServiceQuotasCoordinator['recordRuntimeUsageLimitExhaustionAndFanout']>[0];

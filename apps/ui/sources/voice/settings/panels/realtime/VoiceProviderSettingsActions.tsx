@@ -46,7 +46,6 @@ function settingsActionFailureBody(
 ): string {
   const remedyKey = diagnostic.code ? ACTIONABLE_FAILURE_COPY_KEYS[diagnostic.code] : undefined;
   const facts = [
-    ...(diagnostic.responseFailure?.validation?.map(issue => `${issue.path}: ${issue.code}`) ?? []),
     ...(diagnostic.stage
       ? [t('settingsVoice.realtimeProviders.operationFailedStage', { stage: diagnostic.stage })]
       : []),

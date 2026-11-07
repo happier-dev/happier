@@ -140,11 +140,9 @@ export const RecipientOperationV1Schema = lazyZodSchema(() => z.strictObject({
     mapping: z.array(RecipientParameterMappingV1Schema).check(z.maxLength(128)),
   }),
   response: z.strictObject({
-    maxBytes: z.number().check(z.int(), z.minimum(0), z.maximum(8 * 1024 * 1024)),
-    contentTypes: z.array(ContentTypeSchema).check(z.maxLength(16)),
-  }).check(z.refine(response => (response.maxBytes === 0) === (response.contentTypes.length === 0), {
-    message: 'A bodyless response requires zero bytes and no content types together',
-  })),
+    maxBytes: z.number().check(z.int(), z.minimum(1), z.maximum(8 * 1024 * 1024)),
+    contentTypes: z.array(ContentTypeSchema).check(z.minLength(1), z.maxLength(16)),
+  }),
 }).check(z.superRefine((operation, context) => {
   const schema = operation.parameters.schema;
   const properties = schema.type === 'object' && schema.properties

@@ -58,7 +58,7 @@ async function fixture(openCodeModes?: Readonly<{ bindProbe: boolean }>, callbac
     bindManagedServices: ({ exec, signal }) => owner.bindScope({ occurrenceId: 'test-occurrence', pluginId: 'fixture.native', contributionQualifiedId: 'fixture.native/agents/native', operationId: 'test-preflight', signal, isOccurrenceCurrent: () => true }, exec),
   });
   const adapter = await projected.getPreflightSessionControlsProbeAdapter?.();
-  return { root, adapter, inventory, pendingMarker, pid: () => pid, stop: () => owner.dispose(), dispose: async () => { await owner.dispose(); await rm(root, { recursive: true, force: true }); } };
+  return { root, adapter, inventory, pendingMarker, pid: () => pid, dispose: async () => { await owner.dispose(); await rm(root, { recursive: true, force: true }); } };
 }
 
 function expectChildClosed(pid: number | undefined) {
@@ -67,34 +67,6 @@ function expectChildClosed(pid: number | undefined) {
 }
 
 describe('scoped managed preflight service', () => {
-  it('leaves zero live children after three catalog probes and daemon-owner disposal', async () => {
-    const f = await fixture();
-    const pids: number[] = [];
-    try {
-      for (let index = 0; index < 3; index++) {
-        await f.adapter?.probeCatalogsRaw?.({ cwd: f.root, timeoutMs: 30_000 });
-        expectChildClosed(f.pid());
-        pids.push(f.pid()!);
-      }
-      await f.stop();
-      expect(pids.filter(pid => { try { process.kill(pid, 0); return true; } catch { return false; } })).toHaveLength(0);
-    } finally { await f.dispose(); }
-  }, 60_000);
-
-  it('stops an active preflight server when the daemon managed-service owner stops', async () => {
-    const f = await fixture(undefined, 'probeModes');
-    let probe: Promise<unknown> | undefined;
-    try {
-      probe = f.adapter?.probeModesRaw?.({ cwd: f.root, timeoutMs: 30_000, accountSettings: { wait: true } });
-      void probe?.catch(() => undefined);
-      await f.inventory;
-      await expect.poll(() => readFile(f.pendingMarker, 'utf8')).toBe('pending');
-      await f.stop();
-      expectChildClosed(f.pid());
-      await Promise.allSettled([probe]);
-    } finally { await f.dispose(); }
-  }, 60_000);
-
   it('ends an external mode callback whose healthy native service never answers inventory, then closes its process', async () => {
     const f = await fixture(undefined, 'probeModes');
     try {

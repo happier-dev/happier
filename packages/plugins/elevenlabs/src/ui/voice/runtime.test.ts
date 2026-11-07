@@ -258,16 +258,12 @@ describe('ElevenLabs public Voice provider leaf', () => {
           tool_config: expect.objectContaining({
             name: 'hostListMachines',
             description: 'Host-normalized machine inventory',
-            parameters: expect.objectContaining({
+            parameters: {
               type: 'object',
-              properties: { arguments_json: expect.objectContaining({
-                type: 'string', description: expect.stringContaining(JSON.stringify({
-                  type: 'object', additionalProperties: false,
-                  properties: { limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['limit'],
-                })),
-              }) },
-              required: ['arguments_json'],
-            }),
+              additionalProperties: false,
+              properties: { limit: { type: 'integer', minimum: 1, maximum: 10 } },
+              required: ['limit'],
+            },
           }),
         },
       },
