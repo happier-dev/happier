@@ -25,6 +25,14 @@ export function ModalPortalTargetProvider(props: {
     return <ModalLayerZIndexContext.Provider value={props.layerZIndex}>{provided}</ModalLayerZIndexContext.Provider>;
 }
 
+/**
+ * The dialog layer for a dialog that lays out without its own portal target (a card hung from its control):
+ * body-level surfaces opened inside it stack above this layer.
+ */
+export function ModalLayerZIndexProvider(props: Readonly<{ layerZIndex: number; children: React.ReactNode }>) {
+    return <ModalLayerZIndexContext.Provider value={props.layerZIndex}>{props.children}</ModalLayerZIndexContext.Provider>;
+}
+
 /** A body-level surface opened from inside a dialog stacks above this layer, not below the dialog. */
 export function useModalLayerZIndex(): number | null {
     return React.useContext(ModalLayerZIndexContext);

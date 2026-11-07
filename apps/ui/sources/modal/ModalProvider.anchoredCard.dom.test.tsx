@@ -111,3 +111,47 @@ it.each([390, 1440])('returns an anchored sheet to its persistent trigger after 
         container.remove();
     }
 });
+
+it('stacks a card hung from a control inside a dialog above that dialog (Connect → Custom endpoint → Add key)', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 600, y: 300, width: 80, height: 32, top: 300, left: 600, right: 680, bottom: 332, toJSON: () => ({}),
+    });
+    // The highest stacking value on the way from an element to the body: what decides which layer paints on top.
+    const layerOf = (element: Element) => {
+        let z = 0;
+        for (let node: Element | null = element; node; node = node.parentElement) {
+            const value = Number((node as HTMLElement).style?.zIndex);
+            if (Number.isFinite(value) && value > z) z = value;
+        }
+        return z;
+    };
+    function KeySheet() {
+        return <button data-testid="key-sheet">Paste a key</button>;
+    }
+    function ConnectDialog() {
+        const anchorRef = React.useRef<HTMLButtonElement>(null);
+        return <button ref={anchorRef} data-testid="add-key" onClick={() => Modal.show({
+            component: KeySheet,
+            chrome: { kind: 'card', title: 'Connect', phonePresentation: 'sheet', scrollHost: 'bounded', anchor: { kind: 'view', ref: anchorRef } },
+        })}>Add key</button>;
+    }
+    try {
+        // As in the app, the dialogs render under a screen's popover host.
+        const { PopoverScope } = await import('@/components/ui/popover/PopoverScope');
+        await act(async () => root.render(<PopoverScope><ModalProvider><span /></ModalProvider></PopoverScope>));
+        await act(async () => { Modal.show({ component: ConnectDialog, chrome: { kind: 'card', title: 'Connect a provider' } }); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="add-key"]')).not.toBeNull());
+        await act(async () => document.querySelector('[data-testid="add-key"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="key-sheet"]')).not.toBeNull());
+        const host = layerOf(document.querySelector('[data-testid="add-key"]')!);
+        expect(host).toBeGreaterThan(0);
+        expect(layerOf(document.querySelector('[data-testid="key-sheet"]')!)).toBeGreaterThan(host);
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});

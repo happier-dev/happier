@@ -17,6 +17,8 @@ import { areChromeConfigsEqual, mergeChromeConfig, resolveCustomModalPresentatio
 import { ModalCommands } from './ModalCommands';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { t } from '@/text';
+import { MODAL_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
+import { ModalLayerZIndexProvider } from '@/modal/portal/ModalPortalTarget';
 
 interface CustomModalProps {
     config: CustomModalConfig;
@@ -168,7 +170,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             {content}
         </ModalCardFrame>;
         if (presentation.anchor) {
-            return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel}
+            return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
                 dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={frame} />;
         }
         return (
@@ -215,11 +217,13 @@ function AnchoredModalCard(props: Readonly<{
     dimensions: CustomModalChromeCardConfig['dimensions'];
     focusReturnRef: CustomModalConfig['focusReturnRef'];
     onRequestClose: () => void;
+    /** Its place in the dialog stack: a card opened from inside another dialog lays out above that dialog. */
+    zIndexBase: number;
     frame: (style: React.ComponentProps<typeof ModalCardFrame>['style'], closeButton: boolean) => React.ReactElement;
 }>) {
     // The card's own bound (its width and its height ceiling) is the popover's cap, so it reads at the size it has as a dialog.
     const dimensions = useModalCardDimensions(props.dimensions);
-    return <Popover
+    return <ModalLayerZIndexProvider layerZIndex={props.zIndexBase}><Popover
         open={props.visible}
         anchor={props.anchor}
         accessibilityLabel={props.accessibilityLabel}
@@ -234,9 +238,16 @@ function AnchoredModalCard(props: Readonly<{
         maxWidthCap={dimensions.width + 2 * ANCHORED_CARD_EDGE_PADDING_PX}
         edgePadding={ANCHORED_CARD_EDGE_PADDING_PX}
         // Opens toward the open side: a trigger on the left (a rail's "+") never hangs the card over the sidebar.
-        portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'auto' }}
+        // A dialog mounts on the body, as every modal does (`resolveModalWebPortalTarget`), never in a screen's popover
+        // host: there its layer is the dialog stack's, so a card opened from inside another dialog stacks above it.
+        portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'auto' }}
         onRequestClose={props.onRequestClose}
     >
-        {({ maxHeight, maxWidth }) => props.frame({ maxHeight, width: Math.min(dimensions.width, maxWidth), maxWidth }, false)}
-    </Popover>;
+        {({ maxHeight, maxWidth }) => (
+            // What the card opens (a dropdown, a menu) stacks above the card itself.
+            <ModalLayerZIndexProvider layerZIndex={props.zIndexBase + 1}>
+                {props.frame({ maxHeight, width: Math.min(dimensions.width, maxWidth), maxWidth }, false)}
+            </ModalLayerZIndexProvider>
+        )}
+    </Popover></ModalLayerZIndexProvider>;
 }
