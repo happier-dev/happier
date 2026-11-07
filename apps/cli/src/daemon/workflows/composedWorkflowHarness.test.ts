@@ -3899,7 +3899,6 @@ describe('composed Session approvals and observation deadlines', () => {
       },
     });
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       executeStep: sessionOwner,
       resolveWorkspace: async () => ({ ok: true as const, workspace }),
@@ -3934,7 +3933,6 @@ describe('composed practical large Run without invented limits', () => {
     const files = Array.from({ length: 500 }, (_, index) => `src/file-${index % 50}.ts`);
     const seen: string[] = [];
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       executeStep: async ({ step: current, item }) => {
         seen.push(String(item?.value));

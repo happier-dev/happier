@@ -14,7 +14,7 @@ const run = (definition: WorkflowDefinitionV1) => ({ runId: 'loop-run', definiti
   executionTarget: { kind: 'session' as const }, authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } });
 const workflow = (blocks: WorkflowDefinitionV1['blocks']): WorkflowDefinitionV1 => ({ version: 1, inputs: [], defaults: { agentTarget }, blocks });
 const deps = (store: ReturnType<typeof createInMemoryWorkflowCoordinatorStore>, executeStep: WorkflowStepExecutor) => ({
-  store, executeStep, resolveWorkspace: async () => ({ ok: true as const, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+  store, executeStep, resolveWorkspace: async () => ({ ok: true as const, workspace }),
 });
 const closingOutcome = (store: ReturnType<typeof createInMemoryWorkflowCoordinatorStore>) =>
   [...store.records.values()].find((row) => row.blockId === 'rounds' && !row.frame)?.container?.closing;

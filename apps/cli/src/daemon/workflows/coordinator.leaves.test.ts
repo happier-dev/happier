@@ -88,7 +88,7 @@ describe('workflow Action leaves', () => {
       return { ok: false, errorCode, error: errorCode, failureCause, details };
     } });
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true }),
         observeRun: async () => { throw new Error('Scalar Action has no awaited Run'); } } });
     const input = { runId: 'scalar-unknown', definition: definition([leaf]), inputs: {}, executionTarget,
@@ -139,7 +139,6 @@ describe('workflow Action leaves', () => {
         executeStep: async () => { throw new Error('Finite Action must not spawn an Agent'); },
         resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace: accepted.snapshot.workspaceTarget.project,
           scm: createGitWorkflowWorkspaceTestDependencies() }),
-        isAcceptedAuthorizationCurrent: async () => true,
         action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
           externalActionTarget: { kind: 'machine', machineId: acceptedMachineId,
             project: { machineId: acceptedMachineId, directory } } }),
@@ -175,7 +174,7 @@ describe('workflow Action leaves', () => {
     } });
     // Admission remains real; the process-effect dependency supplies its definitive response.
     const observedCoordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
         externalActionTarget: { kind: 'machine', machineId: workspace.machineId,
           project: { machineId: workspace.machineId, directory: workspace.directory } } }),
@@ -199,7 +198,7 @@ describe('workflow Action leaves', () => {
       return success ? output : { ok: false, errorCode: 'command_cancelled', error: 'Command cancelled', details: output };
     } });
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
         externalActionTarget: { kind: 'machine', machineId: workspace.machineId,
           project: { machineId: workspace.machineId, directory: workspace.directory } } }),
@@ -241,7 +240,7 @@ describe('workflow Action leaves', () => {
       },
     });
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
         kind: 'machine', machineId: workspace.machineId,
         project: { machineId: workspace.machineId, directory: workspace.directory } } }),
@@ -259,7 +258,7 @@ describe('workflow Action leaves', () => {
     const materialized = frozen(leaf);
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor: createTestActionExecutor({ sessionGoalSet: async () => { effects++; return { ok: true }; } }),
         buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
         observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
@@ -279,7 +278,7 @@ describe('workflow Action leaves', () => {
       status: { kind: 'literal', value: 'complete' } } };
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor: createTestActionExecutor({ sessionGoalSet: async () => { effects++; return { ok: true }; } }),
         buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
         observeRun: async () => { throw new Error('Immediate Action'); } } });
@@ -304,7 +303,7 @@ describe('workflow Action leaves', () => {
     if (!completion || typeof completion !== 'object' || Array.isArray(completion)) throw new Error('Expected Action completion contract');
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor: createTestActionExecutor({
         executionRunCheckProtocolV2: async () => ({ ok: true }),
         executionRunStart: async () => {
@@ -347,7 +346,7 @@ describe('workflow Action leaves', () => {
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor: createTestActionExecutor({
         executionRunCheckProtocolV2: async () => ({ ok: true }),
         executionRunStart: async () => {
@@ -383,7 +382,7 @@ describe('workflow Action leaves', () => {
     const executor = createTestActionExecutor({ sessionGoalSet: async () => { effects++; return { ok: true }; } });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Wait has no Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => {
         preparing(); await preparation;
         return { surface: 'cli', authority: 'account_automation' };
@@ -419,7 +418,7 @@ describe('workflow Action leaves', () => {
       runsAs: { kind: 'background_run', intent: 'review' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async (input) => {
         const selected = ResolvedRoleV1Schema.safeParse('role' in input ? input.role : undefined);
         return { surface: 'agent', authority: 'account_automation', sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -452,7 +451,7 @@ describe('workflow Action leaves', () => {
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
         kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } } }),
         observeRun: async () => { throw new Error('Interrupted claim cannot observe'); } } });
@@ -480,7 +479,7 @@ describe('workflow Action leaves', () => {
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'origin', localInputId: params.invocationRecordId! });
         return { kind: 'completed', result: 'body' };
-      }, resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      }, resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
         observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
     const body = { kind: 'step' as const, id: 'body', document: { text: 'Body', references: [], attachments: [] },
@@ -532,7 +531,7 @@ describe('workflow Action leaves', () => {
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async (input) => ({ surface: 'agent', authority: 'account_automation',
         actionCaller: { kind: 'workflowRun', runId: input.runId, authorization: input.authorization },
         callerPermissionMode: input.authorization.admittedPermissionCeiling,
@@ -554,7 +553,7 @@ describe('workflow Action leaves', () => {
     const executor = createTestActionExecutor({ sessionGoalSet: async () => ({ ok: true }) });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli' }), observeRun: async () => { throw new Error('No runs'); } } });
     const sidecar = frozen(goal);
     expect(await coordinator.run({ runId: 'schema-drift', definition: definition([goal]), inputs: {}, executionTarget,
@@ -572,7 +571,7 @@ describe('workflow Action leaves', () => {
     const child = { ...definition([goal]), finalOutput: { kind: 'result' as const,
       producer: { blockId: goal.id, scope: { kind: 'current' as const } }, path: [] } };
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent dispatch'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli' }), observeRun: async () => { throw new Error('No runs'); } } });
     const leaves: WorkflowMaterializedLeafV1[] = [frozen(goal), { ...frozen(goal), sourceKey: first.workflowRef },
       ...[first, second].map((leaf) => ({ authoredWorkspace: { kind: 'inherit' as const }, sourceKey: '$root', blockId: leaf.id, kind: 'workflow' as const,
@@ -616,7 +615,6 @@ describe('workflow Action leaves', () => {
     const observed: string[] = [];
     const coordinator = createWorkflowCoordinator({ store: boundary,
       executeStep: async () => { throw new Error('Agent dispatch'); }, resolveWorkspace: async () => ({ ok: true, workspace }),
-      isAcceptedAuthorizationCurrent: async () => true,
       action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
         kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } } }),
         observeRun: async (run) => {
@@ -646,7 +644,7 @@ describe('workflow Action leaves', () => {
     const executor = createTestActionExecutor({ sessionGoalSet: async () => { effects++; return { ok: true }; } });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent dispatch'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       onReviewEntered: async () => { entries++; },
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
         observeRun: async () => { throw new Error('Immediate Action observation'); } } });
@@ -666,7 +664,7 @@ describe('workflow Action leaves', () => {
     const executor = createTestActionExecutor({ sessionGoalSet: async (value) => { writes.push(value); return { ok: true }; } });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent dispatch'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }), observeRun: async () => { throw new Error('Immediate Action observation'); } },
     });
     const result = await coordinator.run({ runId: 'immediate', definition: definition([goal]), materializedLeaves: [frozen(goal)],
@@ -685,7 +683,7 @@ describe('workflow Action leaves', () => {
     const executor = createTestActionExecutor({ sessionGoalSet: async () => { effects++; throw new Error('response lost'); } });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent dispatch'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }), observeRun: async () => { throw new Error('No launch fact'); } },
     });
     const params = { runId: 'lost', definition: definition([goal]), materializedLeaves: [frozen(goal)], inputs: {}, executionTarget,
@@ -701,7 +699,7 @@ describe('workflow Action leaves', () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const leaf = { ...goal, input: { ...goal.input, status: { kind: 'literal' as const, value: 42 } } };
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent dispatch'); },
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }), observeRun: async () => { throw new Error('No launch'); } },
     });
     expect(await coordinator.run({ runId: 'invalid', definition: definition([leaf]), materializedLeaves: [frozen(leaf)], inputs: {},

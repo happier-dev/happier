@@ -326,9 +326,7 @@ export class WorkflowControlBoundary extends Error {
   }
 }
 
-/** Exact abort reason shared with the incumbent claimed-Run heartbeat. */
-export const WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON = 'workflow_authorization_not_current';
-/** Exact abort reason the incumbent claimed-Run heartbeat uses for a persisted cancel request. */
+/** Exact abort reason used by the claimed Run's pushed Stop signal. */
 export const WORKFLOW_CANCEL_REQUESTED_ABORT_REASON = 'workflow_cancel_requested';
 
 class WorkflowLeafFailure extends Error {
@@ -346,10 +344,6 @@ class WorkflowFailStopClosure extends WorkflowLeafFailure {
   constructor(code: string, readonly original: unknown) {
     super('interrupted', code);
   }
-}
-
-class WorkflowGenerationRefusal extends Error {
-  constructor(readonly code: string) { super(code); }
 }
 
 function failStopCausalReason(signal: AbortSignal | undefined): string {
@@ -375,21 +369,19 @@ export type WorkflowAbortClassification =
   | 'none'
   | 'cancelled'
   | 'fail_stop'
-  | 'authorization_revoked'
   | 'waiting_for_review'
   | 'interrupted';
 
 /**
  * The one reading of a claim/coordinator abort. Only an authoritative or
- * persisted cancel request, a fail-stop sibling closure, or authority
- * revocation may stop owned work or close the frontier; every other abort is
+ * persisted cancel request or a fail-stop sibling closure may stop owned
+ * work or close the frontier; every other abort is
  * a runtime interruption of this attempt.
  */
 export function classifyWorkflowAbort(signal: AbortSignal | undefined): WorkflowAbortClassification {
   if (!signal?.aborted) return 'none';
   const reason: unknown = signal.reason;
   if (reason instanceof WorkflowControlBoundary && reason.state === 'waiting_for_review') return 'waiting_for_review';
-  if (reason === WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON) return 'authorization_revoked';
   if (reason === WORKFLOW_CANCEL_REQUESTED_ABORT_REASON || isAuthoritativeAutomationRunCancellation(signal)) {
     return 'cancelled';
   }
@@ -780,14 +772,6 @@ function createWorkflowFinalResult(
   }
 }
 
-async function assertAcceptedAuthorizationCurrent(context: ExecutionContext): Promise<void> {
-  const isCurrent = await context.deps.isAcceptedAuthorizationCurrent({
-    authorization: context.authorization,
-    ...(context.signal ? { signal: context.signal } : {}),
-  });
-  if (!isCurrent) throw new WorkflowLeafFailure('interrupted', 'workflow_authorization_not_current');
-}
-
 function holdReadiness(row: WorkflowCoordinatorInvocation) {
   return classifyWorkflowHoldV1({ isCurrent: row.lifecycle !== 'superseded', lifecycle: row.lifecycle, progress: { review: row.review } });
 }
@@ -893,12 +877,8 @@ type WorkflowCoordinatorDependencies = Readonly<{
   prepareStep?: WorkflowStepPreparer;
   action?: WorkflowActionExecutor;
   resolveWorkspace: WorkflowWorkspaceResolver;
-  /** Revalidates the accepted Account/authority binding before a new leaf effect. */
-  isAcceptedAuthorizationCurrent: WorkflowAcceptedAuthorizationCurrentness;
   /** Parks fresh effects without preventing observation of accepted native work. */
   waitForNewWorkAdmission?: (signal?: AbortSignal) => Promise<void>;
-  /** The production worker supplies the full live controller/current-authority gate for Generate. */
-  checkReviewGenerationAuthority?: (params: Readonly<{ signal?: AbortSignal }>) => Promise<string | undefined>;
   allocateInvocationRecordId?: () => string;
   rootInvocationRecordId?: string;
   onReviewEntered?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) => Promise<void>;
@@ -979,9 +959,6 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
             executeStep: (input) => holds.track(() => deps.executeStep(input)),
             ...(deps.prepareStep ? { prepareStep: (input: Parameters<WorkflowStepPreparer>[0]) => holds.track(() => deps.prepareStep!(input)) } : {}),
             resolveWorkspace: (input) => holds.track(() => deps.resolveWorkspace(input)),
-            isAcceptedAuthorizationCurrent: (input) => holds.track(() => deps.isAcceptedAuthorizationCurrent(input)),
-            ...(deps.checkReviewGenerationAuthority ? { checkReviewGenerationAuthority: (input: Readonly<{ signal?: AbortSignal }>) =>
-              holds.track(() => deps.checkReviewGenerationAuthority!(input)) } : {}),
             ...(deps.onReviewEntered ? { onReviewEntered: (input: Parameters<NonNullable<typeof deps.onReviewEntered>>[0]) => holds.track(() => deps.onReviewEntered!(input)) } : {}),
             allocateInvocationRecordId: deps.allocateInvocationRecordId ?? randomUUID },
           admissionGate: new KeyedAdmissionGate(), signal, holds,
@@ -1004,7 +981,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
         }
         // A reclaimed pause drains already-owned input, then hands off paused
         // even when that input was the last leaf in the definition.
-        await assertAdmissionOpen(context);
+        assertWorkflowAbortSignal(context);
         const finalOutput = definition.finalOutput
           ? await resolveWorkflowValueReference(definition.finalOutput, createResolutionRuntime(inputs, root, deps.store, deps.sessionContext))
           : undefined;
@@ -1065,19 +1042,13 @@ type ExecutionContext = Readonly<{
 
 /**
  * Synchronous in-process abort classification shared by every admission
- * boundary. This performs no store I/O: fail-stop, heartbeat-cancel and
- * authorization-revocation aborts stay responsive even where the expensive
- * persisted control read below is coalesced away.
+ * boundary. This performs no store I/O: fail-stop and pushed Stop stay
+ * responsive without a full persisted control pre-read.
  */
 export function assertWorkflowAdmissionSignal(signal: AbortSignal | undefined): void {
   switch (classifyWorkflowAbort(signal)) {
     case 'waiting_for_review':
       throw new WorkflowControlBoundary('waiting_for_review');
-    case 'authorization_revoked':
-      throw new WorkflowLeafFailure(
-        'interrupted',
-        WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON,
-      );
     case 'interrupted':
       throw new WorkflowRuntimeInterruption();
     case 'cancelled':
@@ -1092,7 +1063,7 @@ function assertWorkflowAbortSignal(context: ExecutionContext): void {
   assertWorkflowAdmissionSignal(context.signal);
 }
 
-async function assertAdmissionOpen(context: ExecutionContext): Promise<void> {
+async function reconcileAdmissionRefusal(context: ExecutionContext): Promise<void> {
   assertWorkflowAbortSignal(context);
   const control = await context.deps.store.readControl(context.runId);
   if (control === 'pause_requested') throw new WorkflowControlBoundary('paused');
@@ -1174,10 +1145,8 @@ async function persistWaitingForCapacity(params: Readonly<{
   });
   if (current) return;
   assertWorkflowAbortSignal(params.context);
-  // Capacity visibility is not an executable input. Pause/Cancel can forbid
-  // this new marker without fencing observation of the pipeline occupying the
-  // slot; that pipeline and the normal admission owner settle the control.
-  if (await params.context.deps.store.readControl(params.context.runId) !== 'running') return;
+  // The server's ordinary allocation CAS fences a new visibility marker too;
+  // no full Run snapshot pre-read is needed before that transaction.
   const key = workflowInvocationKey({
     runId: params.context.runId,
     blockId: params.owner.id,
@@ -1266,7 +1235,6 @@ async function executeBodyFrame(params: Readonly<{
   // New frames and pending frames still pass the admission check below.
   assertWorkflowAbortSignal(params.context);
   if (!existing) {
-    await assertAdmissionOpen(params.context);
     try {
       await params.context.deps.store.ensureIntent({
         key,
@@ -1287,11 +1255,11 @@ async function executeBodyFrame(params: Readonly<{
       // A parent CAS can lose to an external pause/cancel after the
       // container-level admission check. Re-read only the canonical control
       // owner; do not retry a new row or reinterpret unrelated failures.
-      await assertAdmissionOpen(params.context);
+      await reconcileAdmissionRefusal(params.context);
       throw error;
     }
   } else if (existing.lifecycle === 'pending' || existing.lifecycle === 'waiting_for_capacity') {
-    await assertAdmissionOpen(params.context);
+    assertWorkflowAbortSignal(params.context);
     await params.context.deps.store.commitFact({ key, lifecycle: 'running' });
   }
   if (workflowBodyOwnsConversation(params.owner)) {
@@ -1355,7 +1323,7 @@ async function ensureAndCommitContainer(
   // An existing structural frame can contain owned input which an expired
   // pause claim must reconcile. Controls fence only allocation/new admission.
   if (!existing || existing.lifecycle === 'pending' || existing.lifecycle === 'waiting_for_capacity') {
-    await assertAdmissionOpen(context);
+    assertWorkflowAbortSignal(context);
   }
   if (!existing) {
     await context.deps.store.ensureIntent({
@@ -1402,7 +1370,7 @@ async function skipWorkflowBlock(
   memberOrdinal: string,
   reason: string,
 ): Promise<void> {
-  await assertAdmissionOpen(context);
+  assertWorkflowAbortSignal(context);
   const key = workflowInvocationKey({ runId: context.runId, blockId: block.id, scope, attempt: 0 });
   await context.deps.store.ensureIntent({ key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId,
     blockId: block.id, blockKind: block.kind, memberOrdinal, ...(parentKey ? { parentKey } : {}), path: { blockId: block.id, scope }, attempt: 0, lifecycle: 'pending' });
@@ -1720,10 +1688,16 @@ async function executeWaitBlock(
     if (holdReadiness(row) === 'generate') throw new WorkflowLeafFailure('interrupted', 'continuation_unavailable');
   }
   if (!row) {
-    await assertAdmissionOpen(context);
-    row = await context.deps.store.ensureIntent({ key: workflowInvocationKey({ runId: context.runId, blockId: leaf.id, scope, attempt: 0 }),
-      recordId: context.deps.allocateInvocationRecordId(), runId: context.runId, blockId: leaf.id, blockKind: 'wait',
-      path: { blockId: leaf.id, scope }, attempt: 0, memberOrdinal, ...(parentKey ? { parentKey } : {}), acceptedAtMs: Date.now(), lifecycle: 'pending' });
+    assertWorkflowAbortSignal(context);
+    try {
+      row = await context.deps.store.ensureIntent({ key: workflowInvocationKey({ runId: context.runId, blockId: leaf.id, scope, attempt: 0 }),
+        recordId: context.deps.allocateInvocationRecordId(), runId: context.runId, blockId: leaf.id, blockKind: 'wait',
+        path: { blockId: leaf.id, scope }, attempt: 0, memberOrdinal, ...(parentKey ? { parentKey } : {}), acceptedAtMs: Date.now(), lifecycle: 'pending' });
+    } catch (error) {
+      // S29 refuses new slots after Pause/Stop; surface that control state.
+      await reconcileAdmissionRefusal(context);
+      throw error;
+    }
   }
   if (row.lifecycle === 'pending') row = await enterReview({ key: row.key, lifecycle: 'waiting_for_review',
     ...(leaf.result ? { resultContract: leaf.result } : {}) }, context);
@@ -1819,11 +1793,17 @@ async function executeActionBlock(
     throw new WorkflowLeafFailure('interrupted', 'target_unavailable');
   }
   if (!row) {
-    await assertAdmissionOpen(context);
-    row = await context.deps.store.ensureIntent({ key: workflowInvocationKey({ runId: context.runId, blockId: leaf.id, scope, attempt: 0 }),
-      recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: leaf.id,
-      blockKind: 'action', path: { blockId: leaf.id, scope }, attempt: 0, lifecycle: 'pending', memberOrdinal,
-      ...(parentKey ? { parentKey } : {}) });
+    assertWorkflowAbortSignal(context);
+    try {
+      row = await context.deps.store.ensureIntent({ key: workflowInvocationKey({ runId: context.runId, blockId: leaf.id, scope, attempt: 0 }),
+        recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: leaf.id,
+        blockKind: 'action', path: { blockId: leaf.id, scope }, attempt: 0, lifecycle: 'pending', memberOrdinal,
+        ...(parentKey ? { parentKey } : {}) });
+    } catch (error) {
+      // S29 refuses new slots after Pause/Stop; surface that control state.
+      await reconcileAdmissionRefusal(context);
+      throw error;
+    }
   }
   const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false,
     result?: WorkflowJsonValue, failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'], message?: string) => {
@@ -1878,8 +1858,7 @@ async function executeActionBlock(
       : context.deps.action!.executor.prepare('action.invoke', { action: contributedAction, input }, actionContext));
     if (prepared.kind === 'settled' && !prepared.result.ok) return await fail(prepared.result.errorCode, 'failed', true);
     await context.deps.waitForNewWorkAdmission?.(context.signal);
-    await assertAdmissionOpen(context);
-    await assertAcceptedAuthorizationCurrent(context);
+    assertWorkflowAbortSignal(context);
     // Read the same declaration used by public approval presentation. The live
     // prepared invocation retains its admitted operand; correspondence is display
     // data and must never become a secret-bearing replay input.
@@ -1910,10 +1889,12 @@ async function executeActionBlock(
         // fact transport. Attempted writes, including lost ACKs, stay uncertain.
         return await fail(error.code, 'failed', true);
       }
+      // S29 refuses `admitting` after Pause/Stop. Nothing was dispatched, so
+      // park on that control state; otherwise a lost ACK stays uncertain.
+      await reconcileAdmissionRefusal(context);
       return await fail('outcome_uncertain', 'outcome_uncertain');
     }
     await context.deps.waitForNewWorkAdmission?.(context.signal);
-    await assertAdmissionOpen(context);
     assertWorkflowAbortSignal(context);
     const invoked = await context.holds.track(async () => {
       try { return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result; }
@@ -2130,7 +2111,7 @@ async function executeStepBlock(
   if (existing?.lifecycle === 'waiting_for_review') {
     const resolved = await awaitReviewedInvocation(existing, context);
     if (holdReadiness(resolved) === 'generate') {
-      await assertAdmissionOpen(context);
+      assertWorkflowAbortSignal(context);
       if (!resolved.review?.decision) throw new WorkflowLeafFailure('interrupted', 'continuation_unavailable');
       const originalMaterialized = resolved.input ? undefined : await materializeWorkflowStepInput({ document: step.document,
         automationCause: context.automationCause,
@@ -2202,7 +2183,7 @@ async function executeStepBlock(
     // Allocation is fenced separately from input release. Preparation stays
     // pending; the adapter's final callback validates the exact parent claim
     // and controls atomically with the admitting fact after all async work.
-    await assertAdmissionOpen(context);
+    assertWorkflowAbortSignal(context);
     try {
       admitted = await context.deps.store.ensureIntent({
         key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: step.id, memberOrdinal, ...(parentKey ? { parentKey } : {}),
@@ -2213,7 +2194,7 @@ async function executeStepBlock(
       // container/claim-level admission check. Re-read only the canonical
       // control owner; do not retry a new row or reinterpret unrelated
       // storage failures.
-      await assertAdmissionOpen(context);
+      await reconcileAdmissionRefusal(context);
       throw error;
     }
   }
@@ -2274,26 +2255,19 @@ async function executeStepBlock(
   const executionInput: MaterializedWorkflowStepInput = { ...input,
     ...(replyParent ? { discussionReplyTo: replyParent } : {}) };
   let durableExecution = admitted.execution;
-  const assertInputAuthorization = async () => {
-    if (isReviewGeneration && !rejoining && !durableExecution && context.deps.checkReviewGenerationAuthority) {
-      const refusal = await context.deps.checkReviewGenerationAuthority({ ...(context.signal ? { signal: context.signal } : {}) });
-      if (refusal !== undefined) throw new WorkflowGenerationRefusal(refusal);
-    } else await assertAcceptedAuthorizationCurrent(context);
-  };
   const onOriginInputOffered: Parameters<WorkflowStepExecutor>[0]['onOriginInputOffered'] = isOriginInput ? async (correspondence, renderedText) => {
       if (correspondence.sessionId !== context.originSessionId
         || (durableExecution && !sameStrictJsonValue(durableExecution, correspondence))) {
         throw new Error('workflow_invocation_fact_conflict');
       }
-      await assertAdmissionOpen(context);
-      await assertInputAuthorization();
+      assertWorkflowAbortSignal(context);
       try {
         admitted = await context.deps.store.commitFact({ key, lifecycle: 'admitting', execution: correspondence,
           input: { ...authoredInput, renderedText }, resultContract: step.result,
           ...(replyParent ? { discussionReplyTo: replyParent } : {}) });
         durableExecution = correspondence;
       } catch (error) {
-        await assertAdmissionOpen(context);
+        await reconcileAdmissionRefusal(context);
         throw error;
       }
     } : undefined;
@@ -2323,15 +2297,7 @@ async function executeStepBlock(
     let preparedStep: Awaited<ReturnType<WorkflowStepPreparer>> | undefined;
     if (!admitted.execution || (isOriginInput && !rejoining)) {
       if (!rejoining) await context.deps.waitForNewWorkAdmission?.(context.signal);
-      if (!rejoining) await assertAdmissionOpen(context);
-      try {
-        await assertInputAuthorization();
-      } catch (error) {
-        if (error instanceof WorkflowLeafFailure) {
-          await context.deps.store.commitFact({ key, lifecycle: 'needs_attention', reason: error.code });
-        }
-        throw error;
-      }
+      if (!rejoining) assertWorkflowAbortSignal(context);
       preparedStep = await context.deps.prepareStep?.({
         runId: context.runId,
         step: effectiveStep,
@@ -2356,7 +2322,7 @@ async function executeStepBlock(
         ...(frame.iteration ? { iteration: frame.iteration } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
       });
-      if (!rejoining) await assertAdmissionOpen(context);
+      if (!rejoining) assertWorkflowAbortSignal(context);
       if (preparedStep?.failure) {
         if (classifyWorkflowReviewEntryV1({ mayEnterReview: !rejoining && !durableExecution,
           pauseForReview: step.pauseForReview === true, isGeneration: isReviewGeneration, inputCompleted: false,
@@ -2403,23 +2369,15 @@ async function executeStepBlock(
         ? { conversationWorkspace: preparedStep.conversationWorkspace }
         : {}),
     });
-    if (!rejoining) await assertAdmissionOpen(context);
+    if (!rejoining) assertWorkflowAbortSignal(context);
     if (!workspaceResolution.ok) {
       await context.deps.store.commitFact({ key, lifecycle: 'needs_attention', reason: workspaceResolution.code });
       throw new WorkflowLeafFailure('interrupted', workspaceResolution.code);
     }
     let execution: WorkflowStepExecutionResult;
     if (!admitted.execution && !rejoining) {
-      await assertAdmissionOpen(context);
+      assertWorkflowAbortSignal(context);
       await context.deps.waitForNewWorkAdmission?.(context.signal);
-      try {
-        await assertInputAuthorization();
-      } catch (error) {
-        if (error instanceof WorkflowLeafFailure) {
-          await context.deps.store.commitFact({ key, lifecycle: 'needs_attention', reason: error.code });
-        }
-        throw error;
-      }
     }
     execution = await context.deps.executeStep({
       runId: context.runId,
@@ -2452,8 +2410,7 @@ async function executeStepBlock(
       ...(frame.iteration ? { iteration: frame.iteration } : {}),
       beforeInputAdmission: async () => {
         await context.deps.waitForNewWorkAdmission?.(context.signal);
-        await assertAdmissionOpen(context);
-        await assertInputAuthorization();
+        assertWorkflowAbortSignal(context);
         if (!isOriginInput && (admitted.lifecycle === 'pending' || admitted.lifecycle === 'waiting_for_capacity' || admitted.lifecycle === 'admitting'
           || (admitted.lifecycle === 'waiting_for_approval' && admitted.execution?.kind === 'action'
             && admitted.execution.actionId === 'discussion.invite'))) {
@@ -2462,15 +2419,11 @@ async function executeStepBlock(
           } catch (error) {
             // A lost transition response is ambiguous. Do not dispatch on the
             // strength of a subsequent read that merely says `admitting`.
-            await assertAdmissionOpen(context);
+            await reconcileAdmissionRefusal(context);
             throw error;
           }
         }
-        // The admitting write is asynchronous too; Generate's live gate is
-        // the final boundary before releasing input, not a prepared capability.
-        if (isReviewGeneration && context.deps.checkReviewGenerationAuthority) await assertInputAuthorization();
         await context.deps.waitForNewWorkAdmission?.(context.signal);
-        await assertAdmissionOpen(context);
         assertWorkflowAbortSignal(context);
       },
       onSessionReady: async (correspondence) => {
@@ -2669,8 +2622,6 @@ async function executeStepBlock(
       // Session it creates before this leaf can release custody.
       throw new WorkflowRuntimeInterruption();
     }
-    const authorizationRevoked = context.signal?.aborted
-      && context.signal.reason === WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON;
     const failStopClosure = classifyWorkflowAbort(context.signal) === 'fail_stop';
     if (isOriginInput && execution.kind === 'cancelled' && execution.code === 'workflow_origin_input_withdrawn') {
       const control = await context.deps.store.readControl(context.runId);
@@ -2701,8 +2652,6 @@ async function executeStepBlock(
       : execution.kind;
     const reason = failStopClosure
       ? failStopCausalReason(context.signal)
-      : authorizationRevoked && execution.kind === 'cancelled'
-      ? WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON
       : execution.code;
     await context.deps.store.commitFact({
       key,
@@ -2718,12 +2667,6 @@ async function executeStepBlock(
       ...(execution.replyOutcome ? { replyOutcome: execution.replyOutcome } : {}),
     });
     nativeTerminalCommitted = execution.kind === 'failed' || execution.kind === 'cancelled';
-    if (authorizationRevoked && execution.kind === 'cancelled') {
-      throw new WorkflowLeafFailure(
-        'interrupted',
-        WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON,
-      );
-    }
     if (context.signal?.aborted && context.signal.reason instanceof WorkflowLeafFailure) {
       throw context.signal.reason;
     }
@@ -2733,18 +2676,6 @@ async function executeStepBlock(
       execution.kind === 'failed',
     );
   } catch (error) {
-    if (error instanceof WorkflowGenerationRefusal && !rejoining && !durableExecution
-      && classifyWorkflowReviewEntryV1({ mayEnterReview: !context.signal?.aborted,
-        pauseForReview: step.pauseForReview === true, isGeneration: isReviewGeneration, inputCompleted: false,
-        observation: { kind: 'failed', code: error.code }, continuationRefusedBeforeAdmission: true }) === 'waiting_for_review') {
-      const row = await enterReview({ key, lifecycle: 'waiting_for_review', reason: error.code,
-        reasonMessage: `Couldn't generate: ${error.code}` }, context, () => {
-        nativeTerminalCommitted = true;
-        releaseAdmission();
-      });
-      await awaitReviewedInvocation(row, context);
-      return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
-    }
     if (executionTarget.kind === 'detached_run' && !nativeTerminalCommitted) {
       admissionFailure = { error };
     }

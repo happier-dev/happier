@@ -95,7 +95,7 @@ describe('workflow contributed Action leaves', () => {
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'brief-session', localInputId: params.invocationRecordId! });
         return { kind: 'completed', result: { content }, resultEncoding: 'typed' };
-      }, resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
+      }, resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async params => buildWorkflowActionContext(params),
         observeRun: async () => { throw new Error('Immediate plugin Action must not observe Runs'); } } });
     const run = { ...accepted.snapshot, runId: 'brief-run' };

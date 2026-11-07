@@ -354,7 +354,7 @@ function harness(fixtures: Fixtures = {}) {
         creationIntent, pathIsDirectory: async () => true,
         inspectLocation: async () => ({ inspection: { rootPath: workspace.checkoutRootPath } }),
       }),
-    } }), isAcceptedAuthorizationCurrent: async () => true,
+    } }),
     sessionContext: {
       resolveSessionContext: async () => ({ usage: { kind: 'unavailable' }, turns: [], truncated: false }),
       resolveSessionContextField: async (field) => {

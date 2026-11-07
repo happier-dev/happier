@@ -86,7 +86,6 @@ describe('workflow coordinator', () => {
     let lostAck = true;
     const published: string[] = [];
     const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep: async params => {
         executions += 1;
         await params.beforeInputAdmission();
@@ -121,7 +120,7 @@ describe('workflow coordinator', () => {
       materializedLeaves: [{ sourceKey: '$root', blockId: leaf.id, kind: 'step' as const,
         selection: { agentTarget, conversation: { kind: 'fresh' as const } }, executionTarget,
         authoredWorkspace: { kind: 'inherit' as const } }] };
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async params => {
         executions += 1;
         await params.beforeInputAdmission();
@@ -155,7 +154,6 @@ describe('workflow coordinator', () => {
     const resolveSelectedWorkspace = vi.fn(async () => ({ ok: true as const, workspace }));
     const observed: unknown[] = [];
     const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: resolveSelectedWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       prepareStep: async params => {
         observed.push(params.participant);
         return { conversationWorkspace: { machineId: 'machine-1', directory: '/review' } };
@@ -183,7 +181,7 @@ describe('workflow coordinator', () => {
       materializedLeaves: [{ sourceKey: '$root', blockId: leaf.id, kind: 'step' as const,
         selection: { agentTarget, conversation: { kind: 'fresh' as const } }, executionTarget,
         authoredWorkspace: { kind: 'inherit' as const } }] };
-    const interrupted = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const interrupted = createWorkflowCoordinator({ store, resolveWorkspace,
       sessionContext: { resolveDiscussionContext: async () => context },
       prepareStep: async () => { throw new WorkflowRuntimeInterruption(); },
       executeStep: async () => { throw new Error('Preparation did not release an input'); } });
@@ -191,7 +189,7 @@ describe('workflow coordinator', () => {
     const row = store.list().find(record => record.blockId === leaf.id);
     expect(row?.input?.input).toEqual([context]);
     const dispatched: unknown[] = [];
-    const recovered = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const recovered = createWorkflowCoordinator({ store, resolveWorkspace,
       sessionContext: { resolveDiscussionContext: async () => { throw new Error('History advanced and must not be reread'); } },
       executeStep: async params => {
         await params.beforeInputAdmission();
@@ -207,7 +205,7 @@ describe('workflow coordinator', () => {
     const values: WorkflowJsonValue[] = ['#1482', { nested: { hidden: 'not a label' }, title: ' src/main.ts ' },
       { number: 1483, secret: { token: 'not a label' } }, { nested: ['no raw JSON'] },
       { id: 1484, title: '🚀'.repeat(300) }, false];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async () => ({ kind: 'completed', result: 'done' }) });
     const outcome = await coordinator.run({ runId: 'item-labels', inputs: {}, executionTarget, authorization,
       definition: definition([{ kind: 'loop', id: 'files', repetition: { kind: 'items',
@@ -237,7 +235,7 @@ describe('workflow coordinator', () => {
         left: { kind: 'result', producer: { blockId: 'report', scope: { kind: 'current' } }, path: [] },
         right: { kind: 'literal', value: enabled ? '' : 'not this report' } },
     }, step('unrelated-last')]);
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ step: current }) => ({ kind: 'completed', result: current.id === 'report' ? report : 'last' }),
       action: {
         executor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
@@ -270,7 +268,7 @@ describe('workflow coordinator', () => {
           left: { kind: 'result', producer: { blockId: 'report', scope: { kind: 'current' } }, path: [] },
           right: { kind: 'literal', value: '' } } },
     ] }]);
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ iteration }) => ({ kind: 'completed', result: iteration?.index === 0 ? '' : 'Second iteration' }),
       action: { executor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
         notificationsNotifyMe: async () => ({ attemptedChannels: 1, deliveredChannels: 1 }) }),
@@ -293,7 +291,6 @@ describe('workflow coordinator', () => {
     let releaseDrain = () => {};
     const workflow = definition([step('accepted'), step('next')]);
     const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       waitForNewWorkAdmission: async (signal?: AbortSignal) => {
         if (drain.isQuiescing()) parked = true;
         await waitForDaemonAdmission(drain, signal);
@@ -323,7 +320,7 @@ describe('workflow coordinator', () => {
       ] },
       step('publish'),
     ]);
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async (params) => {
         ordinals.set(params.step.id, params.stepOrdinal);
         return { kind: 'completed', result: params.step.id };
@@ -340,7 +337,7 @@ describe('workflow coordinator', () => {
       : placement === 'branch' ? [{ kind: 'parallel', id: 'panel', failurePolicy: 'fail_stop', branches: [{ id: 'lane', blocks }] }]
       : placement === 'loop' ? [{ kind: 'loop', id: 'repeat', repetition: { kind: 'count', count: { kind: 'literal', value: 1 } }, body: blocks }]
       : [{ kind: 'if', id: 'choice', when: { kind: 'exists', value: { kind: 'literal', value: true } }, then: blocks, otherwise: [] }]);
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ step: current }) => {
         executed.push(current.id);
         return current.id === 'fails' ? { kind: 'failed', code: 'command_failed' } : { kind: 'completed', result: current.id };
@@ -357,7 +354,7 @@ describe('workflow coordinator', () => {
     for (const kind of ['completed', 'cancelled', 'outcome_uncertain'] as const) {
       const store = createInMemoryWorkflowCoordinatorStore();
       const executed: string[] = [];
-      const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
         executeStep: async ({ step: current }) => {
           executed.push(current.id);
           if (current.id !== 'first' || kind === 'completed') return { kind: 'completed', result: current.id };
@@ -378,7 +375,7 @@ describe('workflow coordinator', () => {
     let interrupted = false;
     const child = definition([step('fails'), { ...step('rescue'), runWhen: 'failure' }, step('after')]);
     const nested = { kind: 'workflow' as const, id: 'nested', workflowRef: 'builtin:child', input: {} };
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ step: current }) => {
         if (current.id === 'rescue' && !interrupted) { interrupted = true; throw new WorkflowRuntimeInterruption(); }
         executed.push(current.id);
@@ -404,7 +401,6 @@ describe('workflow coordinator', () => {
       inputs: [{ name: 'input', valueType: 'json', required: true }] };
     const rendered: string[] = [];
     const coordinator = createWorkflowCoordinator({ store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep: async (params) => {
         rendered.push(params.input.text);
         expect(params.input.values).toEqual([external]);
@@ -435,7 +431,7 @@ describe('workflow coordinator', () => {
     const correspondence = target === 'session'
       ? { kind: 'session' as const, sessionId: 'child', localInputId: 'input' }
       : detachedRun('native', 'input');
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       prepareStep: async () => {
         if (attempt === 0) expect(store.list().find((row) => row.blockId === authored.id)?.observationDeadline).toBeUndefined();
         return {};
@@ -464,7 +460,7 @@ describe('workflow coordinator', () => {
   it('reads origin context through the canonical runtime for conditions and leaf input', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const executed: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       sessionContext: {
         resolveSessionContext: async () => ({ usage: { kind: 'accounted', tokensUsed: 42 }, turns: [], truncated: false }),
         resolveSessionContextField: async () => 42,
@@ -489,7 +485,7 @@ describe('workflow coordinator', () => {
     const authored = { ...step('origin-work'), timeoutMs: 500, execution: { conversation: { kind: 'origin_session' as const } } };
     const coordinator = createWorkflowCoordinator({
       store: { ...store, commitFact: async (fact) => { commits.push(fact); return await store.commitFact(fact); } },
-      resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      resolveWorkspace,
       prepareStep: async (params) => {
         expect(params.onOriginInputOffered).toBeTypeOf('function');
         return {};
@@ -518,7 +514,7 @@ describe('workflow coordinator', () => {
   it.each(['withdrawn', 'unavailable', 'dispatched'] as const)('keeps an offered origin row under Pause until authoritative withdrawal (%s)', async (answer) => {
     let control: 'running' | 'pause_requested' = 'running';
     const store = { ...createInMemoryWorkflowCoordinatorStore(), readControl: async () => control };
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async (params) => {
         await params.beforeInputAdmission();
         await params.onOriginInputOffered!({ kind: 'session', sessionId: 'origin', localInputId: 'same-input' }, 'Frozen origin input');
@@ -540,7 +536,7 @@ describe('workflow coordinator', () => {
     const store = { ...createInMemoryWorkflowCoordinatorStore(), readControl: async () => control };
     let first = true;
     const offeredIds: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async (params) => {
         const correspondence = { kind: 'session' as const, sessionId: 'origin', localInputId: 'stable-input' };
         if (!params.invocation.execution) {
@@ -573,7 +569,7 @@ describe('workflow coordinator', () => {
       if (loseResponse && fact.lifecycle === 'admitting') throw lost;
       return committed;
     } };
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async (params) => {
         if (params.observationOnly) return { kind: 'needs_attention', code: 'exact_input_absent' };
         await params.beforeInputAdmission();
@@ -595,8 +591,7 @@ describe('workflow coordinator', () => {
   it('closes the synchronous release boundary when Cancel arrives after the awaited callback', async () => {
     const controller = new AbortController();
     let effects = 0;
-    const coordinator = createWorkflowCoordinator({ store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true, executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace, executeStep: async (params) => {
         await params.beforeInputAdmission();
         controller.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
         assertWorkflowAdmissionSignal(params.signal);
@@ -646,7 +641,6 @@ describe('workflow coordinator', () => {
     const dispatched: Array<{ blockId: string; target: string; owner?: string; class?: string }> = [];
     const events: string[] = [];
     const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep: async (params) => {
         const binding = params.conversationBinding;
         const target = params.executionTarget.kind;
@@ -699,7 +693,7 @@ describe('workflow coordinator', () => {
   it('inherits one conversation per parallel item through If and sequential loop bodies', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const owners: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async (params) => {
         const binding = params.conversationBinding;
         if (binding?.kind !== 'shared') throw new Error('shared_binding_missing');
@@ -744,7 +738,6 @@ describe('workflow coordinator', () => {
       previousAttemptRecordId: 'previous-exact', recovery: { conversation: 'fresh_agent', input: { kind: 'original' } } });
     let selectedTail: string | undefined;
     const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: 'root-exact', resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep: async (params) => {
         expect(params.step.id).toBe('tail');
         const pointer = store.read(rootKey)?.sharedConversationInvocationRecordId?.detached_run;
@@ -778,7 +771,7 @@ describe('workflow coordinator', () => {
     const prepared: string[] = [];
     const dispatched: string[] = [];
     const coordinator = createWorkflowCoordinator({
-      store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store, resolveWorkspace,
       prepareStep: async ({ step }) => { prepared.push(step.id); return {}; },
       executeStep: async (params) => {
         dispatched.push(params.step.id);
@@ -813,7 +806,7 @@ describe('workflow coordinator', () => {
     const firstAccepted = new Promise<void>((resolve) => { accepted = resolve; });
     const secondPrepared = new Promise<void>((resolve) => { preparedSecond = resolve; });
     const coordinator = createWorkflowCoordinator({
-      store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store, resolveWorkspace,
       prepareStep: async (params) => {
         prepared.push(params.step.id);
         const binding = params.conversationBinding;
@@ -858,90 +851,6 @@ describe('workflow coordinator', () => {
     expect(pointer && store.readByLogicalInvocation(pointer)?.blockId).toBe('first');
   });
 
-  it('drains existing owned parallel input on reclaimed Pause without admitting a sibling', async () => {
-    const interruptedClaim = new AbortController();
-    let control: 'running' | 'pause_requested' = 'running';
-    const store = { ...createInMemoryWorkflowCoordinatorStore(), readControl: async () => control };
-    let recovering = false;
-    const observed: string[] = [];
-    const coordinator = createWorkflowCoordinator({
-      store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
-      executeStep: async (params) => {
-        if (!recovering) {
-          await params.beforeInputAdmission();
-          await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: 'owned-input' });
-          interruptedClaim.abort('lease_lost');
-          throw new WorkflowRuntimeInterruption();
-        }
-        expect(params.invocation.execution).toEqual({ kind: 'session', sessionId: 'session', localInputId: 'owned-input' });
-        observed.push(params.step.id);
-        return { kind: 'completed', result: 'drained' };
-      },
-    });
-    const run = { runId: 'pause-drain', definition: definition([{ kind: 'parallel' as const, id: 'group',
-      maxConcurrent: 1, failurePolicy: 'collect_outcomes' as const,
-      branches: [{ id: 'owned', blocks: [step('owned-work')] }, { id: 'new', blocks: [step('new-work')] }],
-    }]), inputs: {}, executionTarget, authorization };
-    await expect(coordinator.run({ ...run, signal: interruptedClaim.signal })).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
-    recovering = true;
-    control = 'pause_requested';
-    await expect(coordinator.run(run)).resolves.toEqual({ state: 'paused' });
-    expect(observed).toEqual(['owned-work']);
-  });
-
-  it.each(['preparation', 'workspace'] as const)('keeps reusable pending intent when Pause wins during %s', async (boundary) => {
-    let control: 'running' | 'pause_requested' = 'running';
-    const store = { ...createInMemoryWorkflowCoordinatorStore(), readControl: async () => control };
-    let pause = true;
-    let inputs = 0;
-    const checkPreparation = async () => {
-      const leaf = [...store.records.values()].find((row) => row.blockId === 'work');
-      expect(leaf?.lifecycle).toBe('pending');
-      if (pause) control = 'pause_requested';
-    };
-    const coordinator = createWorkflowCoordinator({
-      store, isAcceptedAuthorizationCurrent: async () => true,
-      prepareStep: async () => { if (boundary === 'preparation') await checkPreparation(); return {}; },
-      resolveWorkspace: async () => { if (boundary === 'workspace') await checkPreparation(); return { ok: true, workspace }; },
-      executeStep: async (params) => {
-        await admitPreparedInput(params);
-        inputs += 1;
-        await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: 'exact-input' });
-        return { kind: 'completed', result: 'finished' };
-      },
-    });
-    const run = { runId: `pending-${boundary}`, definition: definition([step('work')]), inputs: {}, executionTarget, authorization };
-    await expect(coordinator.run(run)).resolves.toEqual({ state: 'paused' });
-    expect(inputs).toBe(0);
-    const pending = [...store.records.values()].find((row) => row.blockId === 'work');
-    expect(pending?.lifecycle).toBe('pending');
-    control = 'running';
-    pause = false;
-    await expect(coordinator.run(run)).resolves.toMatchObject({ state: 'succeeded' });
-    expect(inputs).toBe(1);
-    expect([...store.records.values()].filter((row) => row.blockId === 'work')).toHaveLength(1);
-  });
-
-  it('checks Pause again in the required adapter callback after asynchronous adapter preparation', async () => {
-    let control: 'running' | 'pause_requested' = 'running';
-    const store = { ...createInMemoryWorkflowCoordinatorStore(), readControl: async () => control };
-    let inputs = 0;
-    const coordinator = createWorkflowCoordinator({
-      store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
-      executeStep: async (params) => {
-        await Promise.resolve();
-        control = 'pause_requested';
-        await admitPreparedInput(params);
-        inputs += 1;
-        return { kind: 'completed', result: 'unexpected' };
-      },
-    });
-    await expect(coordinator.run({ runId: 'adapter-final-boundary', definition: definition([step('work')]), inputs: {}, executionTarget, authorization }))
-      .resolves.toEqual({ state: 'paused' });
-    expect(inputs).toBe(0);
-    expect([...store.records.values()].find((row) => row.blockId === 'work')?.lifecycle).toBe('pending');
-  });
-
   it('binds sequential duplicate items to the immediately preceding body of the same loop occurrence', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const selected: unknown[] = [];
@@ -954,7 +863,7 @@ describe('workflow coordinator', () => {
       input: [{ kind: 'result', producer: { blockId: 'source', scope: { kind: 'previous_iteration', loopBlockId: 'items' } }, path: [] }] },
     ] }]);
     expect(validateWorkflowDefinition(workflow)).toMatchObject({ valid: true });
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ step: current, item, input }) => {
         if (current.id === 'consumer') selected.push(input.values);
         return { kind: 'completed', result: `${item?.index}:${item?.value}` };
@@ -977,7 +886,7 @@ describe('workflow coordinator', () => {
         { kind: 'literal', value: 'tail' },
       ] },
     ] }]);
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ step: current, iteration, input }) => {
         if (current.id === 'reader') inputs.push(input.values);
         return { kind: 'completed', result: current.id === 'decision' && iteration?.index !== 2 ? 'yes' : 'no' };
@@ -986,7 +895,7 @@ describe('workflow coordinator', () => {
     await expect(coordinator.run({ runId: 'trailing-facts', definition: workflow, inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
     expect(inputs).toEqual([[1, 'tail'], [2, 'tail'], [0, 'tail'], [1, 'tail']]);
-    await expect(createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    await expect(createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async () => { throw new Error('completed effect replayed'); },
     }).run({ runId: 'trailing-facts', definition: workflow, inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
@@ -1010,7 +919,7 @@ describe('workflow coordinator', () => {
     ]);
     expect(validateWorkflowDefinition(workflow)).toMatchObject({ valid: true });
     const coordinator = createWorkflowCoordinator({
-      store, isAcceptedAuthorizationCurrent: async () => true,
+      store,
       prepareStep: async (params) => {
         if (params.step.id === 'consumer') {
           const record = await params.producerBinding.resolve(producer);
@@ -1047,7 +956,7 @@ describe('workflow coordinator', () => {
     expect(validateWorkflowDefinition(workflow)).toMatchObject({ valid: true });
     const store = createInMemoryWorkflowCoordinatorStore();
     const effects: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async ({ step: current, item }) => { effects.push(`${current.id}:${JSON.stringify(item?.value)}`); return { kind: 'completed', result: 'done' }; },
     });
     await expect(coordinator.run({ runId: 'nested-source-facts', definition: workflow, inputs: {}, executionTarget, authorization }))
@@ -1056,7 +965,7 @@ describe('workflow coordinator', () => {
     expect([...store.records.values()].filter((record) => !record.frame && record.container?.kind === 'loop' && record.blockId !== 'outer-items')
       .every((record) => record.container?.kind === 'loop' && 'source' in record.container
         && record.container.source.kind === 'definition' && record.container.source.reference.kind === 'literal')).toBe(true);
-    await expect(createWorkflowCoordinator({ store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+    await expect(createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async () => { throw new Error('completed effect replayed'); },
     }).run({ runId: 'nested-source-facts', definition: workflow, inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
@@ -1066,7 +975,6 @@ describe('workflow coordinator', () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const controller = new AbortController();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store, resolveWorkspace,
       executeStep: async ({ onInputAccepted }) => {
         await onInputAccepted({ kind: 'session', sessionId: 'session-1', localInputId: 'input-1' });
@@ -1080,39 +988,6 @@ describe('workflow coordinator', () => {
     })).resolves.toEqual({ state: 'interrupted', reason: 'session_input_result_read_failed' });
     expect([...store.records.values()].find((record) => record.blockId === 'work')?.lifecycle)
       .toBe('needs_attention');
-  });
-
-  it('reports authority revocation as interruption after the incumbent child owner confirms stop', async () => {
-    const store = createInMemoryWorkflowCoordinatorStore();
-    const controller = new AbortController();
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
-      store,
-      resolveWorkspace,
-      executeStep: async ({ onInputAccepted }) => {
-        await onInputAccepted({ kind: 'session', sessionId: 'session-1', localInputId: 'input-1' });
-        controller.abort('workflow_authorization_not_current');
-        return { kind: 'cancelled', code: 'session_input_cancelled' };
-      },
-    });
-
-    await expect(coordinator.run({
-      runId: 'run-revoked',
-      definition: definition([step('work')]),
-      inputs: {},
-      executionTarget,
-      authorization,
-      signal: controller.signal,
-    })).resolves.toEqual({
-      state: 'interrupted',
-      reason: 'workflow_authorization_not_current',
-    });
-    expect(store.read(workflowInvocationKey({
-      runId: 'run-revoked', blockId: 'work', scope: [], attempt: 0,
-    }))).toMatchObject({
-      lifecycle: 'cancelled',
-      reason: 'workflow_authorization_not_current',
-    });
   });
 
   it('projects only a directly addressable immediate frozen Session binding for self-wait prevention', () => {
@@ -1214,8 +1089,7 @@ describe('workflow coordinator', () => {
       calls.push(current.id);
       return { kind: 'completed' as const, result: `${current.id}-result` };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store: durableStore, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store: durableStore, executeStep, resolveWorkspace });
     const workflow = definition([step('a'), step('b')]);
 
     await expect(coordinator.run({ runId: 'run-1', definition: workflow, inputs: {}, executionTarget, authorization }))
@@ -1236,7 +1110,6 @@ describe('workflow coordinator', () => {
   it('binds the final result to its exact persisted producer invocation', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => ({ kind: 'completed', result: `${current.id}-result` }),
@@ -1271,7 +1144,6 @@ describe('workflow coordinator', () => {
   it('retains a top-level container final output with its exact producer invocation', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => ({ kind: 'completed', result: `${current.id}-result` }),
@@ -1308,7 +1180,6 @@ describe('workflow coordinator', () => {
   it('persists owner-reported usage on the exact completed leaf invocation', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async () => ({
@@ -1339,7 +1210,6 @@ describe('workflow coordinator', () => {
       providerSessionId: 'provider-session-1',
     };
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ onExecutionObservation, onInputAccepted }) => {
@@ -1375,7 +1245,6 @@ describe('workflow coordinator', () => {
   it('persists owner-reported usage on the exact failed leaf invocation', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async () => ({
@@ -1400,7 +1269,6 @@ describe('workflow coordinator', () => {
   it('persists owner-reported usage on the exact cancelled leaf invocation', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async () => ({
@@ -1426,7 +1294,6 @@ describe('workflow coordinator', () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const consumed: unknown[] = [];
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace: async ({ step: current, invocation }) => {
         const selected = current.id === 'analyze'
@@ -1465,8 +1332,7 @@ describe('workflow coordinator', () => {
   it('persists the prepared objective and resolved context before executing a step', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const executeStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'done' }));
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace,
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace,
     });
     const authoredStep = {
       ...step('prepared', 'Finish the reviewed objective'),
@@ -1505,8 +1371,7 @@ describe('workflow coordinator', () => {
       events.push(`end:${label}`);
       return { kind: 'completed' as const, result: label };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
     const workflow = definition([{
       kind: 'loop', id: 'items',
       repetition: {
@@ -1570,7 +1435,7 @@ describe('workflow coordinator', () => {
       body: [freshStep('work')],
     }]), finalOutput: { kind: 'result' as const, producer: { blockId: 'bounded-items', scope: { kind: 'current' as const } }, path: [] } };
     const running = createWorkflowCoordinator({
-      store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store, resolveWorkspace,
       executeStep: async ({ item }) => {
         started.push(item!.index);
         await new Promise<void>((resolve) => releases.set(item!.index, resolve));
@@ -1634,7 +1499,7 @@ describe('workflow coordinator', () => {
       body: [freshStep('work')],
     }]);
     const running = createWorkflowCoordinator({
-      store, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store, resolveWorkspace,
       executeStep: async ({ item }) => {
         started.push(item!.index);
         await new Promise<void>((resolve) => releases.set(item!.index, resolve));
@@ -1648,123 +1513,13 @@ describe('workflow coordinator', () => {
     releases.get(1)!();
     await expect(running).resolves.toMatchObject({ state: expectedState });
     expect(started).toEqual([0, 1]);
-    expect([...baseStore.records.values()].filter((record) =>
-      record.blockId === 'bounded-items' && record.frame?.source.kind === 'item' && record.lifecycle !== 'waiting_for_capacity')).toHaveLength(2);
-    expect([...baseStore.records.values()].filter((record) => record.lifecycle === 'waiting_for_capacity'))
-      .toMatchObject([{ frame: { source: { index: '2' } } }]);
-  });
-
-  it('settles accepted parallel inputs at pause and admits no next frontier until resume', async () => {
-    const store = createInMemoryWorkflowCoordinatorStore();
-    let control: 'running' | 'pause_requested' = 'running';
-    const releases = new Map<string, () => void>();
-    const events: string[] = [];
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
-      store: { ...store, readControl: async () => control }, resolveWorkspace,
-      executeStep: async ({ step: current, execution, onInputAccepted }) => {
-        events.push(`start:${current.id}`);
-        await onInputAccepted(detachedRun(`native-${current.id}`, `input-${current.id}`, execution));
-        if (current.id !== 'b') await new Promise<void>((resolve) => releases.set(current.id, resolve));
-        events.push(`settled:${current.id}`);
-        return { kind: 'completed', result: current.id };
-      },
-    });
-    const workflow = definition([{
-      kind: 'parallel', id: 'active', failurePolicy: 'fail_stop',
-      branches: [
-        { id: 'left', blocks: [freshStep('a-left')] },
-        { id: 'right', blocks: [freshStep('a-right')] },
-      ],
-    }, freshStep('b')]);
-    const pausing = coordinator.run({ runId: 'run-pause-boundary', definition: workflow, inputs: {}, executionTarget, authorization });
-    await vi.waitFor(() => expect(events.filter((event) => event.startsWith('start:a-'))).toHaveLength(2));
-    control = 'pause_requested';
-    releases.get('a-left')!();
-    releases.get('a-right')!();
-    await expect(pausing).resolves.toEqual({ state: 'paused' });
-    expect(events).toEqual(expect.arrayContaining(['settled:a-left', 'settled:a-right']));
-    expect(events).not.toContain('start:b');
-    control = 'running';
-    await expect(coordinator.run({ runId: 'run-pause-boundary', definition: workflow, inputs: {}, executionTarget, authorization }))
-      .resolves.toEqual({ state: 'succeeded' });
-    expect(events.filter((event) => event === 'start:a-left')).toHaveLength(1);
-    expect(events.filter((event) => event === 'start:a-right')).toHaveLength(1);
-    expect(events).toContain('start:b');
-  });
-
-  it.each([
-    {
-      label: 'parallel branch',
-      pauseBefore: (stepId: string, _invocation: { path: { scope: readonly unknown[] } }) =>
-        stepId === 'paused-before-admission',
-      blocks: [{
-        kind: 'parallel' as const, id: 'active', failurePolicy: 'fail_stop' as const,
-        branches: [
-          { id: 'left', blocks: [freshStep('admitted')] },
-          { id: 'right', blocks: [freshStep('completed-before-pause'), freshStep('paused-before-admission')] },
-        ],
-      }],
-    },
-    {
-      label: 'parallel item',
-      pauseBefore: (stepId: string, invocation: { path: { scope: readonly unknown[] } }) =>
-        stepId === 'second' && (invocation.path.scope.at(-1) as { index?: number } | undefined)?.index === 1,
-      blocks: [{
-        kind: 'loop' as const, id: 'active',
-        repetition: {
-          kind: 'items' as const,
-          items: { kind: 'literal' as const, value: ['admitted', 'paused'] },
-          execution: 'parallel' as const,
-          failurePolicy: 'fail_stop' as const,
-        },
-        body: [freshStep('first'), freshStep('second')],
-      }],
-    },
-  ])('does not abort an admitted $label sibling when pause closes another admission', async ({ blocks, pauseBefore }) => {
-    const store = createInMemoryWorkflowCoordinatorStore();
-    let control: 'running' | 'pause_requested' = 'running';
-    let releaseAdmitted!: () => void;
-    let admittedSettled = false;
-    let completedBeforePause = false;
-    const coordinator = createWorkflowCoordinator({
-      store: { ...store, readControl: async () => control },
-      resolveWorkspace: async ({ step: current, invocation }) => {
-        if (pauseBefore(current.id, invocation)) control = 'pause_requested';
-        return { ok: true as const, workspace };
-      },
-      isAcceptedAuthorizationCurrent: async () => true,
-      executeStep: async ({ step: current, item, signal }) => {
-        const isAdmittedSibling = current.id === 'admitted' || (current.id === 'first' && item?.index === 0);
-        if (!isAdmittedSibling) {
-          completedBeforePause = true;
-          return { kind: 'completed', result: 'before-pause' };
-        }
-        await new Promise<void>((resolve, reject) => {
-          releaseAdmitted = resolve;
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-        });
-        admittedSettled = true;
-        return { kind: 'completed', result: 'done' };
-      },
-    });
-    const running = coordinator.run({
-      runId: `run-pause-${blocks[0]!.kind}`,
-      definition: definition(blocks),
-      inputs: {}, executionTarget, authorization,
-    });
-    await vi.waitFor(() => expect(control).toBe('pause_requested'));
-    expect(completedBeforePause).toBe(true);
-    releaseAdmitted();
-    await expect(running).resolves.toEqual({ state: 'paused' });
-    expect(admittedSettled).toBe(true);
+    expect([...baseStore.records.values()].filter(record => record.blockId === 'work')).toHaveLength(2);
   });
 
   it('does not invent a concurrency fallback when maxConcurrent is omitted', async () => {
     const releases: Array<() => void> = [];
     let started = 0;
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async () => {
@@ -1799,7 +1554,6 @@ describe('workflow coordinator', () => {
       return { kind: 'completed' as const, result: current.id };
     });
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store, resolveWorkspace, executeStep,
     });
     const running = coordinator.run({
@@ -1827,7 +1581,6 @@ describe('workflow coordinator', () => {
     let maximumActiveReuse = 0;
     const sends: string[] = [];
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current, execution, onInputAccepted }) => {
@@ -1871,50 +1624,6 @@ describe('workflow coordinator', () => {
     expect([...store.records.values()].find((record) => record.blockId === 'reuse-b')?.result).toBe('reuse-b');
   });
 
-  it.each([
-    ['pause_requested', 'paused'],
-    ['cancel_requested', 'cancelled'],
-  ] as const)('does not send the next detached producer reuse after %s wins while it waits', async (requestedControl, expectedState) => {
-    const baseStore = createInMemoryWorkflowCoordinatorStore();
-    let control: 'running' | 'pause_requested' | 'cancel_requested' = 'running';
-    const store = { ...baseStore, readControl: async () => control };
-    let releaseFirstReuse!: () => void;
-    const sends: string[] = [];
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
-      store,
-      resolveWorkspace,
-      executeStep: async ({ step: current, execution, onInputAccepted }) => {
-        await onInputAccepted(detachedRun('native-producer-run', `input-${current.id}`, execution));
-        if (current.id === 'producer') return { kind: 'completed', result: 'producer' };
-        sends.push(current.id);
-        await new Promise<void>((resolve) => { releaseFirstReuse = resolve; });
-        return { kind: 'completed', result: current.id };
-      },
-    });
-    const fromProducer = { kind: 'from_step' as const, producer: { blockId: 'producer', scope: { kind: 'outer' as const, levels: 1 } } };
-    const running = coordinator.run({
-      runId: `run-detached-reuse-${requestedControl}`,
-      definition: definition([
-        { ...step('producer'), execution: { conversation: { kind: 'fresh' } } },
-        {
-          kind: 'parallel', id: 'reuse', failurePolicy: 'fail_stop',
-          branches: [
-            { id: 'b', blocks: [{ ...step('reuse-b'), execution: { conversation: fromProducer } }] },
-            { id: 'c', blocks: [{ ...step('reuse-c'), execution: { conversation: fromProducer } }] },
-          ],
-        },
-      ]),
-      inputs: {}, executionTarget: { kind: 'detached_run' }, authorization,
-    });
-
-    await vi.waitFor(() => expect(sends).toEqual(['reuse-b']));
-    control = requestedControl;
-    releaseFirstReuse();
-    await expect(running).resolves.toMatchObject({ state: expectedState });
-    expect(sends).toEqual(['reuse-b']);
-  });
-
   it.each([false, true])('keeps a recovered exact shared turn ahead of an unadmitted sibling with reversed declarations %s', async (reversed) => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const firstScope = [{ kind: 'branch' as const, blockId: 'parallel', branchId: 'one' }];
@@ -1950,7 +1659,6 @@ describe('workflow coordinator', () => {
     let releaseFirst!: () => void;
     const started: string[] = [];
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       rootInvocationRecordId: 'root-record',
       resolveWorkspace,
@@ -2014,7 +1722,6 @@ describe('workflow coordinator', () => {
     const started: number[] = [];
     const releases = new Map<number, () => void>();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ item }) => {
@@ -2043,7 +1750,6 @@ describe('workflow coordinator', () => {
     const siblingStarted = new Promise<void>((resolve) => { markSiblingStarted = resolve; });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current, signal }) => {
@@ -2096,7 +1802,6 @@ describe('workflow coordinator', () => {
   it('collects definitive member failures but keeps unresolved effects actionable', async () => {
     const definitiveCalls: string[] = [];
     const definitive = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async ({ step: current }) => {
@@ -2119,7 +1824,6 @@ describe('workflow coordinator', () => {
     expect(definitiveCalls).not.toContain('must-not-run');
 
     const unresolved = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async ({ step: current }) => current.id === 'uncertain'
@@ -2183,7 +1887,6 @@ describe('workflow coordinator', () => {
     const coordinator = createWorkflowCoordinator({
       store,
       resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep,
     });
     const workflow = definition([{
@@ -2206,7 +1909,6 @@ describe('workflow coordinator', () => {
       await baseStore.commitContainerResult!(params));
     const store = { ...baseStore, commitContainerResult };
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => ({ kind: 'completed', result: `${current.id}-result` }),
@@ -2246,7 +1948,7 @@ describe('workflow coordinator', () => {
       result: `iteration-${iteration?.index}`,
     }));
     const firstCoordinator = createWorkflowCoordinator({
-      store: firstStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: firstStore, resolveWorkspace, executeStep,
     });
 
     await expect(firstCoordinator.run({ runId: 'run-count-restart', definition: workflow, inputs: {}, executionTarget, authorization }))
@@ -2265,7 +1967,7 @@ describe('workflow coordinator', () => {
     for (const [key, record] of firstStore.records) restartedStore.records.set(key, record);
     const restartedExecuteStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'must-not-replay' }));
     const restartedCoordinator = createWorkflowCoordinator({
-      store: restartedStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store: restartedStore, resolveWorkspace,
       executeStep: restartedExecuteStep,
     });
 
@@ -2289,8 +1991,7 @@ describe('workflow coordinator', () => {
       body: [freshStep('work')],
     }]);
     await expect(createWorkflowCoordinator({
-      store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace, executeStep,
     }).run({ runId: 'run-count-zero', definition: zero, inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
     expect(executeStep).not.toHaveBeenCalled();
@@ -2305,8 +2006,7 @@ describe('workflow coordinator', () => {
     };
     expect(validateWorkflowDefinition(dynamicZero)).toMatchObject({ valid: true, issues: [] });
     await expect(createWorkflowCoordinator({
-      store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace, executeStep,
     }).run({
       runId: 'run-count-dynamic-zero', definition: dynamicZero, inputs: { count: 0 },
       executionTarget, authorization,
@@ -2319,8 +2019,7 @@ describe('workflow coordinator', () => {
       body: [freshStep('work')],
     }]), inputs: [{ name: 'count', valueType: 'number', required: true }] };
     await expect(createWorkflowCoordinator({
-      store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace, executeStep,
     }).run({
       runId: 'run-count-unsafe', definition: unsafe,
       // This deliberately corrupted recovered input is below the admission boundary.
@@ -2404,7 +2103,6 @@ describe('workflow coordinator', () => {
     const coordinator = createWorkflowCoordinator({
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep: async ({ step: current, item, iteration }) => {
         const values = observed.get(current.id) ?? [];
         values.push({ item, iteration });
@@ -2460,7 +2158,7 @@ describe('workflow coordinator', () => {
       return { kind: 'completed' as const, result: `${current.id}-result` };
     });
     const coordinator = createWorkflowCoordinator({
-      store: firstStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: firstStore, resolveWorkspace, executeStep,
     });
     const running = coordinator.run({ runId: 'run-branch-binding', definition: workflow, inputs: {}, executionTarget, authorization });
     await vi.waitFor(() => expect(executeStep.mock.calls.some(([params]) => params.step.id === 'right-leaf')).toBe(true));
@@ -2472,7 +2170,7 @@ describe('workflow coordinator', () => {
     for (const [key, record] of firstStore.records) restartedStore.records.set(key, record);
     const restartedExecuteStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'must-not-replay' }));
     await expect(createWorkflowCoordinator({
-      store: restartedStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store: restartedStore, resolveWorkspace,
       executeStep: restartedExecuteStep,
     }).run({ runId: 'run-branch-binding', definition: workflow, inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
@@ -2522,14 +2220,14 @@ describe('workflow coordinator', () => {
       return { kind: 'completed' as const, result: `body-${iteration?.index}` };
     });
     await expect(createWorkflowCoordinator({
-      store: firstStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: firstStore, resolveWorkspace, executeStep,
     }).run({ runId: `run-evaluator-${history}`, definition: workflow, inputs: {}, executionTarget, authorization }))
       .rejects.toThrow('simulated_process_crash');
 
     const restartedStore = createInMemoryWorkflowCoordinatorStore();
     for (const [key, record] of firstStore.records) restartedStore.records.set(key, record);
     const restartedResult = await createWorkflowCoordinator({
-      store: restartedStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      store: restartedStore, resolveWorkspace, executeStep,
     }).run({ runId: `run-evaluator-${history}`, definition: workflow, inputs: {}, executionTarget, authorization });
     expect(restartedResult, JSON.stringify(restartedResult)).toMatchObject({ state: 'succeeded' });
     expect(evaluatorInputs).toEqual(expected);
@@ -2538,7 +2236,7 @@ describe('workflow coordinator', () => {
   it('keeps an identified uncertain execution interrupted until observation resolves it, but terminalizes identity-less uncertainty', async () => {
     const recoverableStore = createInMemoryWorkflowCoordinatorStore();
     const identified = createWorkflowCoordinator({
-      store: recoverableStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store: recoverableStore, resolveWorkspace,
       executeStep: async ({ onInputAccepted }) => {
         await onInputAccepted({ kind: 'session', sessionId: 'session-1', localInputId: 'input-1' });
         return { kind: 'outcome_uncertain', code: 'result_unavailable' };
@@ -2551,7 +2249,7 @@ describe('workflow coordinator', () => {
     const uncertain = [...recoverableStore.records.values()].find((record) => record.blockId === 'work')!;
     const stillUncertainReplay = vi.fn(async () => ({ kind: 'completed' as const, result: 'must-not-replay' }));
     await expect(createWorkflowCoordinator({
-      store: recoverableStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true,
+      store: recoverableStore, resolveWorkspace,
       executeStep: stillUncertainReplay,
     }).run({ runId: 'run-uncertain-identified', definition: definition([step('work')]), inputs: {}, executionTarget, authorization }))
       .resolves.toEqual({ state: 'interrupted', reason: 'result_unavailable' });
@@ -2560,14 +2258,13 @@ describe('workflow coordinator', () => {
     recoverableStore.records.set(uncertain.key, { ...uncertain, lifecycle: 'completed', result: 'observed-result' });
     const replay = vi.fn(async () => ({ kind: 'completed' as const, result: 'must-not-replay' }));
     await expect(createWorkflowCoordinator({
-      store: recoverableStore, resolveWorkspace, isAcceptedAuthorizationCurrent: async () => true, executeStep: replay,
+      store: recoverableStore, resolveWorkspace, executeStep: replay,
     }).run({ runId: 'run-uncertain-identified', definition: definition([step('work')]), inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
     expect(replay).not.toHaveBeenCalled();
 
     await expect(createWorkflowCoordinator({
       store: createInMemoryWorkflowCoordinatorStore(), resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep: async () => ({ kind: 'outcome_uncertain', code: 'start_ambiguous_without_identity' }),
     }).run({ runId: 'run-uncertain-identityless', definition: definition([step('work')]), inputs: {}, executionTarget, authorization }))
       .resolves.toEqual({ state: 'outcome_uncertain', reason: 'start_ambiguous_without_identity' });
@@ -2581,8 +2278,7 @@ describe('workflow coordinator', () => {
       expect(store.readByLogicalInvocation(invocation.logicalInvocationRecordId)?.lifecycle).toBe('admitting');
       return { kind: 'completed' as const, result: 'done' };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
     await coordinator.run({ runId: 'run-4', definition: definition([step('a')]), inputs: {}, executionTarget, authorization });
     expect(executeStep).toHaveBeenCalledTimes(1);
   });
@@ -2621,14 +2317,12 @@ describe('workflow coordinator', () => {
     };
 
     await expect(createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       executeStep,
       resolveWorkspace,
     }).run(run)).rejects.toThrow('simulated_correspondence_write_failure');
 
     await expect(createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       executeStep,
       resolveWorkspace,
@@ -2662,8 +2356,7 @@ describe('workflow coordinator', () => {
       firstStepCompleted = true;
       return { kind: 'completed' as const, result: current.id };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
 
     await expect(coordinator.run({ runId: 'run-cancel-boundary', definition: definition([step('a'), step('b')]), inputs: {}, executionTarget, authorization }))
       .resolves.toEqual({ state: 'cancelled' });
@@ -2682,8 +2375,7 @@ describe('workflow coordinator', () => {
         abortWith(controller);
         return { kind: 'completed' as const, result: current.id };
       });
-      const coordinator = createWorkflowCoordinator({
-        isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+      const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
 
       await expect(coordinator.run({
         runId: 'run-cancel-abort', definition: definition([step('a'), step('b')]), inputs: {},
@@ -2703,8 +2395,7 @@ describe('workflow coordinator', () => {
       controller.abort();
       return { kind: 'completed' as const, result: current.id };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
 
     await expect(coordinator.run({
       runId: 'run-interrupted-abort', definition: definition([step('a'), step('b')]), inputs: {},
@@ -2725,8 +2416,7 @@ describe('workflow coordinator', () => {
       }
       return { kind: 'completed' as const, result: current.id };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
     const parallel = {
       kind: 'parallel' as const, id: 'group', failurePolicy: 'fail_stop' as const,
       branches: [{ id: 'left', blocks: [step('a')] }, { id: 'right', blocks: [step('b')] }],
@@ -2761,8 +2451,7 @@ describe('workflow coordinator', () => {
       expect(invocation.execution).toEqual({ kind: 'session', sessionId: 'session-1', localInputId: 'workflow-input-1' });
       return { kind: 'completed' as const, result: 'rejoined-result' };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
     await expect(coordinator.run({ runId: 'run-rejoin', definition: definition([step('a')]), inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
     expect(executeStep).toHaveBeenCalledOnce();
@@ -2811,8 +2500,7 @@ describe('workflow coordinator', () => {
       expect(invocation.logicalInvocationRecordId).toBe('attempt-1');
       return { kind: 'completed' as const, result: 'retried' };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
     await expect(coordinator.run({ runId: 'run-retry', definition: definition([step('a')]), inputs: {}, executionTarget, authorization }))
       .resolves.toMatchObject({ state: 'succeeded' });
     expect(store.read(firstKey)?.lifecycle).toBe('failed');
@@ -2836,8 +2524,7 @@ describe('workflow coordinator', () => {
       execution: { kind: 'session', sessionId: 'session-1', localInputId: 'failed-input' },
     });
     const executeStep = vi.fn();
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
 
     await expect(coordinator.run({ runId: 'run-failed', definition: definition([step('a')]), inputs: {}, executionTarget, authorization }))
       .resolves.toEqual({ state: 'interrupted', reason: 'provider_failed' });
@@ -2847,7 +2534,6 @@ describe('workflow coordinator', () => {
   it('fails closed when the Session result violates the authored result contract', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async () => ({
@@ -2882,7 +2568,6 @@ describe('workflow coordinator', () => {
       },
     }]);
     const valid = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async () => ({ kind: 'completed', result: '{"answer":42}' }),
@@ -2891,7 +2576,6 @@ describe('workflow coordinator', () => {
       .resolves.toMatchObject({ state: 'succeeded' });
 
     const invalid = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async () => ({ kind: 'completed', result: '{"answer":"no"}' }),
@@ -2925,7 +2609,6 @@ describe('workflow coordinator', () => {
       },
     ]);
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async ({ step: current, input }) => {
@@ -2945,7 +2628,6 @@ describe('workflow coordinator', () => {
   it('runs evaluator loops against the exact current body result and stops without another iteration', async () => {
     const calls: string[] = [];
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: createInMemoryWorkflowCoordinatorStore(),
       resolveWorkspace,
       executeStep: async ({ step: current, input, iteration }) => {
@@ -3003,7 +2685,6 @@ describe('workflow coordinator', () => {
       },
     ]);
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => current.id === 'count-source'
@@ -3141,7 +2822,6 @@ describe('workflow coordinator', () => {
     };
     const calls: string[] = [];
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store: durableStore,
       resolveWorkspace,
       executeStep: async ({ step: current, iteration }) => {
@@ -3189,7 +2869,6 @@ describe('workflow coordinator', () => {
       otherwise: [step('otherwise-a')],
     }]), inputs: [{ name: 'chooseThen', valueType: 'boolean', required: true }] };
     const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => {
@@ -3213,7 +2892,6 @@ describe('workflow coordinator', () => {
 
     const restartedCalls: string[] = [];
     const restarted = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true,
       store,
       resolveWorkspace,
       executeStep: async ({ step: current }) => {
@@ -3238,8 +2916,7 @@ describe('workflow coordinator', () => {
       await store.commitFact({ key: invocation.key, lifecycle: 'pending', workspace: { descriptor: workspace } });
       return { ok: true as const, workspace };
     });
-    const coordinator = createWorkflowCoordinator({
-      isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace: resolveBeforeDispatch });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace: resolveBeforeDispatch });
     await coordinator.run({ runId: 'run-workspace', definition: definition([step('a')]), inputs: {}, executionTarget, authorization });
     expect(resolveBeforeDispatch).toHaveBeenCalledOnce();
     expect(executeStep).toHaveBeenCalledOnce();
@@ -3262,7 +2939,6 @@ describe('workflow coordinator', () => {
         store: createInMemoryWorkflowCoordinatorStore(),
         prepareStep,
         resolveWorkspace: mismatchedWorkspace,
-        isAcceptedAuthorizationCurrent: async () => true,
         executeStep,
       });
 
@@ -3288,7 +2964,6 @@ describe('workflow coordinator', () => {
           expect(conversationWorkspace).toEqual(workspace);
           return { ok: true as const, workspace };
         },
-        isAcceptedAuthorizationCurrent: async () => true,
         executeStep: compatibleExecute,
       });
       await expect(compatible.run({
@@ -3301,172 +2976,6 @@ describe('workflow coordinator', () => {
     },
   );
 
-  it('revalidates accepted authorization before a new effect but not while observing an admitted effect', async () => {
-    const newEffectStore = createInMemoryWorkflowCoordinatorStore();
-    const newEffectEvents: string[] = [];
-    const isAcceptedAuthorizationCurrent = vi.fn(async () => {
-      newEffectEvents.push('authorization');
-      return false;
-    });
-    const executeNewEffect = vi.fn(async () => {
-      newEffectEvents.push('execute');
-      return { kind: 'completed' as const, result: 'done' };
-    });
-    const coordinator = createWorkflowCoordinator({
-      store: newEffectStore,
-      prepareStep: async () => {
-        newEffectEvents.push('conversation-preflight');
-        return {};
-      },
-      resolveWorkspace: async () => {
-        newEffectEvents.push('workspace');
-        return { ok: true as const, workspace };
-      },
-      isAcceptedAuthorizationCurrent,
-      executeStep: executeNewEffect,
-    });
-
-    await expect(coordinator.run({
-      runId: 'run-authorization-currentness',
-      definition: definition([step('a')]),
-      inputs: {},
-      executionTarget,
-      authorization,
-    })).resolves.toEqual({ state: 'interrupted', reason: 'workflow_authorization_not_current' });
-    expect(newEffectEvents).toEqual(['authorization']);
-    expect(executeNewEffect).not.toHaveBeenCalled();
-    expect([...newEffectStore.records.values()][0]).toMatchObject({
-      lifecycle: 'needs_attention',
-      reason: 'workflow_authorization_not_current',
-    });
-
-    const observingStore = createInMemoryWorkflowCoordinatorStore();
-    const key = workflowInvocationKey({
-      runId: 'run-authorization-observe', blockId: 'a', scope: [], attempt: 0,
-    });
-    await observingStore.ensureIntent({ blockKind: 'step',
-      key,
-      recordId: 'record-a',
-      runId: 'run-authorization-observe',
-      blockId: 'a',
-      memberOrdinal: '0',
-      path: { blockId: 'a', scope: [] },
-      attempt: 0,
-      acceptedAtMs: 1,
-      lifecycle: 'running',
-      execution: { kind: 'session', sessionId: 'session-a', localInputId: 'input-a' },
-    });
-    const observeCurrentness = vi.fn(async () => false);
-    const observeExecution = vi.fn(async () => ({ kind: 'completed' as const, result: 'observed' }));
-    const observingCoordinator = createWorkflowCoordinator({
-      store: observingStore,
-      resolveWorkspace,
-      isAcceptedAuthorizationCurrent: observeCurrentness,
-      executeStep: observeExecution,
-    });
-
-    await expect(observingCoordinator.run({
-      runId: 'run-authorization-observe',
-      definition: definition([step('a')]),
-      inputs: {},
-      executionTarget,
-      authorization,
-    })).resolves.toEqual({ state: 'succeeded' });
-    expect(observeCurrentness).not.toHaveBeenCalled();
-    expect(observeExecution).toHaveBeenCalledOnce();
-  });
-
-  it('rechecks accepted authorization after awaited preparation and immediately before fresh dispatch', async () => {
-    const store = createInMemoryWorkflowCoordinatorStore();
-    const events: string[] = [];
-    const currentness = vi.fn()
-      .mockImplementationOnce(async () => { events.push('currentness-before-prepare'); return true; })
-      .mockImplementationOnce(async () => { events.push('currentness-before-dispatch'); return false; });
-    const executeStep = vi.fn(async () => {
-      events.push('execute');
-      return { kind: 'completed' as const, result: 'done' };
-    });
-    const coordinator = createWorkflowCoordinator({
-      store,
-      isAcceptedAuthorizationCurrent: currentness,
-      prepareStep: async () => { events.push('prepare'); return {}; },
-      resolveWorkspace: async () => { events.push('workspace'); return { ok: true as const, workspace }; },
-      executeStep,
-    });
-
-    await expect(coordinator.run({
-      runId: 'run-authorization-final-choke', definition: definition([step('a')]), inputs: {}, executionTarget, authorization,
-    })).resolves.toEqual({ state: 'interrupted', reason: 'workflow_authorization_not_current' });
-    expect(events).toEqual([
-      'currentness-before-prepare', 'prepare', 'workspace', 'currentness-before-dispatch',
-    ]);
-    expect(executeStep).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['revoked', false, { state: 'interrupted', reason: 'workflow_authorization_not_current' }, ['a']],
-    ['current', true, { state: 'succeeded' }, ['a', 'b']],
-  ] as const)('rechecks a mediated source between effects when it remains %s', async (
-    _label,
-    sourceRemainsCurrent,
-    expected,
-    expectedEffects,
-  ) => {
-    let sourceCurrent = true;
-    const effects: string[] = [];
-    const store = createInMemoryWorkflowCoordinatorStore();
-    const coordinator = createWorkflowCoordinator({
-      store,
-      resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => sourceCurrent,
-      executeStep: async ({ step: current }) => {
-        effects.push(current.id);
-        if (current.id === 'a') sourceCurrent = sourceRemainsCurrent;
-        return { kind: 'completed' as const, result: `${current.id}-done` };
-      },
-    });
-
-    await expect(coordinator.run({
-      runId: `run-mediated-${_label}`,
-      definition: definition([step('a'), step('b')]),
-      inputs: {},
-      executionTarget,
-      authorization: {
-        admittedPermissionCeiling: 'read-only',
-        principal: { kind: 'host' },
-        sourceAuthority: {
-          mediatorPluginId: 'happier.channels',
-          sourceRef: 'channels:binding:binding-1',
-          sourceRevisionOrEpoch: '4:7',
-          remoteApprovalMaxScope: 'session',
-        },
-      },
-    })).resolves.toEqual(expected);
-    expect(effects).toEqual(expectedEffects);
-  });
-
-  it('closes a new leaf admission when pause wins after currentness validation', async () => {
-    const baseStore = createInMemoryWorkflowCoordinatorStore();
-    let control: 'running' | 'pause_requested' = 'running';
-    const executeStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'unexpected' }));
-    const coordinator = createWorkflowCoordinator({
-      store: { ...baseStore, readControl: async () => control },
-      resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => {
-        control = 'pause_requested';
-        return true;
-      },
-      executeStep,
-    });
-
-    await expect(coordinator.run({
-      runId: 'run-pause-after-currentness',
-      definition: definition([step('a')]),
-      inputs: {}, executionTarget, authorization,
-    })).resolves.toEqual({ state: 'paused' });
-    expect(executeStep).not.toHaveBeenCalled();
-  });
-
   it('reconciles an admission CAS loss only through the canonical control owner', async () => {
     const baseStore = createInMemoryWorkflowCoordinatorStore();
     const executeStep = vi.fn();
@@ -3477,7 +2986,6 @@ describe('workflow coordinator', () => {
         readControl: async () => 'cancel_requested',
       },
       resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => true,
       executeStep,
     });
 
@@ -3486,49 +2994,6 @@ describe('workflow coordinator', () => {
       inputs: {}, executionTarget, authorization,
     })).resolves.toEqual({ state: 'cancelled' });
     expect(executeStep).not.toHaveBeenCalled();
-  });
-
-  it('leaves the live run reclaimable when authorization currentness cannot be fetched', async () => {
-    const store = createInMemoryWorkflowCoordinatorStore();
-    const executeStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'unexpected' }));
-    const coordinator = createWorkflowCoordinator({
-      store,
-      resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => { throw new Error('owner_unavailable'); },
-      executeStep,
-    });
-
-    await expect(coordinator.run({
-      runId: 'run-authorization-unavailable',
-      definition: definition([step('a')]),
-      inputs: {},
-      executionTarget,
-      authorization,
-    })).rejects.toThrow('owner_unavailable');
-    expect(executeStep).not.toHaveBeenCalled();
-    expect([...store.records.values()].every((record) => record.reason !== 'workflow_authorization_not_current')).toBe(true);
-  });
-
-  it('still observes pause requested before the leaf effect when pre-intent reads are coalesced', async () => {
-    const baseStore = createInMemoryWorkflowCoordinatorStore();
-    let control: 'running' | 'pause_requested' = 'running';
-    let controlReads = 0;
-    const baseEnsureIntent = baseStore.ensureIntent.bind(baseStore);
-    let flipped = false;
-    const store = {
-      ...baseStore,
-      ensureIntent: async (invocation: Parameters<typeof baseEnsureIntent>[0]) => {
-        const admitted = await baseEnsureIntent(invocation);
-        if (!flipped) { flipped = true; control = 'pause_requested'; }
-        return admitted;
-      },
-      readControl: async () => { controlReads += 1; return control; },
-    };
-    const executeStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'unexpected' }));
-    const coordinator = createWorkflowCoordinator({ isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
-    await expect(coordinator.run({ runId: 'run-pause-pre-effect', definition: definition([step('a')]), inputs: {}, executionTarget, authorization })).resolves.toEqual({ state: 'paused' });
-    expect(executeStep).not.toHaveBeenCalled();
-    expect(controlReads).toBeGreaterThanOrEqual(1);
   });
 
   it('surfaces pause when a branch body admission loses its CAS race', async () => {
@@ -3547,32 +3012,12 @@ describe('workflow coordinator', () => {
         if (admissions === 2) throw new Error('parent_revision_conflict');
         return await baseEnsureIntent(invocation);
       },
-      readControl: async (): Promise<'running' | 'pause_requested'> => {
-        controls += 1;
-        // Container entry observes running; the pause lands before the body
-        // admission CAS, so only the post-conflict re-read can surface it
-        // now that the per-branch body pre-intent read is coalesced away.
-        return controls <= 1 ? 'running' : 'pause_requested';
-      },
+      // Only the refused allocation needs a control reconciliation read.
+      readControl: async () => 'pause_requested' as const,
     };
     const workflow = definition([{ kind: 'parallel' as const, id: 'p', failurePolicy: 'collect_outcomes' as const, branches: [{ id: 'left', blocks: [step('a')] }] }]);
-    const coordinator = createWorkflowCoordinator({ isAcceptedAuthorizationCurrent: async () => true, store, executeStep, resolveWorkspace });
+    const coordinator = createWorkflowCoordinator({ store, executeStep, resolveWorkspace });
     await expect(coordinator.run({ runId: 'run-body-cas-pause', definition: workflow, inputs: {}, executionTarget, authorization })).resolves.toEqual({ state: 'paused' });
     expect(executeStep).not.toHaveBeenCalled();
-  });
-
-  it('rechecks live authorization immediately before the leaf effect after awaited preparation', async () => {
-    const baseStore = createInMemoryWorkflowCoordinatorStore();
-    let checks = 0;
-    const executeStep = vi.fn(async () => ({ kind: 'completed' as const, result: 'unexpected' }));
-    const coordinator = createWorkflowCoordinator({
-      store: baseStore, resolveWorkspace,
-      isAcceptedAuthorizationCurrent: async () => { checks += 1; return checks < 2; },
-      prepareStep: async () => ({}),
-      executeStep,
-    });
-    await expect(coordinator.run({ runId: 'run-auth-pre-effect', definition: definition([step('a')]), inputs: {}, executionTarget, authorization })).resolves.toMatchObject({ state: 'interrupted', reason: 'workflow_authorization_not_current' });
-    expect(executeStep).not.toHaveBeenCalled();
-    expect(checks).toBe(2);
   });
 });

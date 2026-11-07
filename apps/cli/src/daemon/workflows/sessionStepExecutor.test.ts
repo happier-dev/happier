@@ -2124,7 +2124,7 @@ describe('workflow Session step executor', () => {
             creationIntent, pathIsDirectory: async () => true,
             inspectLocation: async () => ({ inspection: { rootPath: workspace.checkoutRootPath } }),
           }),
-        } }), isAcceptedAuthorizationCurrent: async () => true,
+        } }),
         executeStep: createWorkflowSessionStepExecutor({ credentials, workDepth: 0,
           prepareConversation: async params => await conversations.prepare(params),
           materializeConversation: async (prepared, params) => ({ sessionId: (await conversations.materialize(prepared, params)).sessionId,

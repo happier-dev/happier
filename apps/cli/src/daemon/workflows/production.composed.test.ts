@@ -21,6 +21,7 @@ vi.mock('@/api/session/sockets', async importOriginal => ({
 }));
 import {
   ARTIFACT_PLAIN_DATA_KEY_MARKER,
+  API_TOKEN_FULL_GRANT_V1,
   encodePlainArtifactStoredContent,
   AutomationStoredWorkflowDefinitionV2Schema,
   admitAgentStartV1,
@@ -261,14 +262,115 @@ describe('production workflow coordinator', () => {
         frontier: { nextBlockOrdinal: 0, paused: false } }, storage: fixture.boundary });
     expect(await reloaded.readByLogicalInvocation(fixture.intent.recordId)).toMatchObject({ reason: 'outcome_unknown', failureCause, result });
   });
-  it.each(['healthy', 'slow_timeout', 'never_answers'] as const)('keeps renewing a claimed Workflow during slow native admission (%s)', async scenario => {
+  it.each(['complete', 'boundary_resume', 'boundary_resume_denied', 'stop_during_preparation', 'pause_during_preparation', 'capacity', 'pause_after_first_input'] as const)('releases multiple already-admitted inputs without re-listing their accepted API authority (%s)', async outcome => {
+    const controller = new AbortController();
+    if (outcome === 'stop_during_preparation' || outcome === 'pause_during_preparation') {
+      const read = vi.mocked(axios.get).getMockImplementation()!;
+      vi.mocked(axios.get).mockImplementation(async (...args) => {
+        const result = await read(...args);
+        // Native Session readiness is an HTTP boundary beneath real preparation.
+        if (args[0].includes('/v2/sessions/')) {
+          if (outcome === 'pause_during_preparation') boundary.requestControl('pause_requested');
+          else controller.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
+        }
+        return result;
+      });
+    }
+    const credentialId = '8f250f0e-4f31-4f7d-8f68-61638b73b526';
+    const witness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: null };
+    const leaves = [{ ...onlyStep, id: 'first' }, { ...onlyStep, id: 'second' }];
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+      conversation: { kind: 'existing_session', sessionId: 'session-1', machineId },
+    }, blocks: outcome === 'capacity' || outcome === 'pause_after_first_input'
+      ? [{ kind: 'parallel', id: 'parallel', maxConcurrent: 1, failurePolicy: 'collect_outcomes',
+        branches: leaves.map(leaf => ({ id: `branch-${leaf.id}`, blocks: [leaf] })) }] : leaves };
+    const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition, context: {
+      source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+      workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+      origin: { kind: 'direct' }, authorization: { principal: { kind: 'api', accountId,
+        principalId: accountId, credentialId } },
+    }, admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+    if (!admitted.ok) throw new Error(admitted.error.code);
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: admitted.snapshot,
+    }));
+    const resuming = outcome === 'boundary_resume' || outcome === 'boundary_resume_denied';
+    const boundary = createWorkflowRunStorageTestkit({ runId, accountId, machineId,
+      origin: { kind: 'direct' }, acceptedEnvelope, ...(resuming ? { state: 'paused' } : {}) });
+    if (resuming) await boundary.execute({ operation: 'resume', runId, expectedRevision: boundary.run().revision });
+    let authorityReads = 0;
+    let credentialRevoked = outcome === 'boundary_resume_denied';
+    const isAcceptedAuthorizationCurrent = createWorkflowAcceptedAuthorizationCurrentness({ accountId,
+      // Account API-token storage is an external service boundary. The real
+      // currentness reader and production coordinator remain beneath it.
+      listAccountApiTokens: async () => {
+        authorityReads += 1;
+        if (credentialRevoked) return { tokens: [] };
+        return { tokens: [{ tokenId: credentialId, label: 'automation', displayPrefix: 'hap_v1_8f250f0e',
+          createdAt: now, lastUsedAt: null, expiresAt: null, hasEncryptionAccess: false,
+          hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
+          parentTokenId: null, activeChildCount: 0, embedConfig: null }] };
+      },
+      resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
+      isMediatedSourceCurrent: async () => false,
+    });
+    const inputs: string[] = [];
+    const inputControlReads: number[] = [];
+    const snapshotReadsAtInput: number[] = [];
+    let snapshotReads = 0;
+    let pendingInputControlReads: number | null = null;
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: {
+      observeChanges: boundary.observeChanges,
+      execute: async (operation, options) => {
+        const result = await boundary.execute(operation, options);
+        if (operation.operation === 'get') snapshotReads++;
+        if (operation.operation === 'invocations.fact' && operation.lifecycle === 'admitting') pendingInputControlReads = 0;
+        else if (operation.operation === 'get' && pendingInputControlReads !== null) pendingInputControlReads += 1;
+        return result;
+      },
+    },
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'present_user', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness }),
+      isAcceptedAuthorizationCurrent,
+      execution: productionExecution({ enqueue: async request => {
+        inputs.push(request.workflow.invocationRecordId);
+        // Revocation affects the next admission; both inputs in this admitted
+        // Run retain their frozen principal and finish unless explicitly stopped.
+        credentialRevoked = true;
+        if (pendingInputControlReads === null) throw new Error('Input bypassed the durable admission boundary');
+        inputControlReads.push(pendingInputControlReads);
+        snapshotReadsAtInput.push(snapshotReads);
+        pendingInputControlReads = null;
+        if (outcome === 'pause_after_first_input') boundary.requestControl('pause_requested');
+        return { status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) };
+      }, observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId,
+        result: { kind: 'final_text', text: 'done' } }) }),
+      workspaceScm: { inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+    });
+    await expect(coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
+      ...(resuming ? { workflowResumeRequestedRevision: boundary.run().revision } : {}),
+      acceptedEnvelope, accountCurrentness: witness, signal: controller.signal })).resolves.toMatchObject({
+        state: outcome === 'stop_during_preparation' ? 'cancelled'
+          : outcome === 'pause_during_preparation' || outcome === 'pause_after_first_input' || outcome === 'boundary_resume_denied' ? 'paused' : 'succeeded',
+        ...(outcome === 'boundary_resume_denied' ? { reason: 'run_access_denied' } : {}) });
+    expect(inputs).toHaveLength(outcome === 'stop_during_preparation' || outcome === 'pause_during_preparation' || outcome === 'boundary_resume_denied'
+      ? 0 : outcome === 'pause_after_first_input' ? 1 : 2);
+    expect(new Set(inputs).size).toBe(inputs.length);
+    expect.soft(authorityReads).toBe(resuming ? 1 : 0);
+    expect.soft(inputControlReads).toEqual(inputs.map(() => 0));
+    // Only the initial Run snapshot is needed before releasing the first input;
+    // authored capacity visibility is not another control/permission owner.
+    if (outcome === 'capacity') expect(snapshotReadsAtInput[0]).toBe(1);
+    if (outcome === 'pause_after_first_input') expect(boundary.rowById(inputs[0])?.index.lifecycle).toBe('completed');
+  });
+
+  it.each(['healthy', 'network_failure', 'never_answers'] as const)('keeps renewing a claimed Workflow during slow native admission (%s)', async scenario => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(0);
     const leaseLog = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     let releaseNative!: () => void;
     const nativeOpen = new Promise<void>(resolve => { releaseNative = resolve; });
-    let releaseCurrentness!: () => void;
-    const currentnessRead = new Promise<void>(resolve => { releaseCurrentness = resolve; });
     let nativeEntered = false;
     let currentnessEntered = false;
     const witness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: null };
@@ -294,7 +396,7 @@ describe('production workflow coordinator', () => {
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: boundary,
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
       resolveAccountEncryption: async () => {
-        if (nativeEntered) { currentnessEntered = true; await currentnessRead; }
+        if (nativeEntered) currentnessEntered = true;
         return { kind: 'available', witness };
       },
       isAcceptedAuthorizationCurrent: async () => true,
@@ -312,12 +414,12 @@ describe('production workflow coordinator', () => {
       if (!url.endsWith('/heartbeat')) return await readinessPost(url, body, config);
       renewalStarts.push(Date.now());
       renewalBudgets.push(config?.timeout ?? 0);
-      if (scenario === 'never_answers' || (scenario === 'slow_timeout' && renewalStarts.length === 1)) {
+      if (scenario === 'never_answers' || (scenario === 'network_failure' && renewalStarts.length === 1)) {
         // Axios/HTTP is the boundary: a silent server consumes the actual
         // timeout supplied by the real ClaimClient, never a fixture deadline.
         await new Promise((_resolve, reject) => setTimeout(() => reject(
           Object.assign(new Error('HTTP response deadline'), { code: 'ECONNABORTED' }),
-        ), config?.timeout));
+        ), scenario === 'network_failure' ? polling.heartbeatMs * 2 : config?.timeout));
       }
       if (failHeartbeat) throw { response: { status: 503, data: { token: 'private-response-token' } } };
       return { status: 200, data: { ok: true, leaseExpiresAt: Date.now() + polling.leaseDurationMs } };
@@ -341,20 +443,17 @@ describe('production workflow coordinator', () => {
         const observations = leaseLog.mock.calls.filter(([message]) => message === '[DAEMON AUTOMATION] Claim lease observation')
           .map(([, observation]) => observation);
         expect(renewalStarts[0]).toBe(5_000);
-        expect(renewalBudgets[0]).toBe(12_500);
-        expect(renewalStarts[1]).toBeGreaterThan(17_499);
-        expect(renewalStarts[1]).toBeLessThan(18_000);
-        // Only transient retries accelerate, within the existing 1s floor.
-        expect(renewalStarts.every((start, index) => index === 0 || start - renewalStarts[index - 1] >= 1_000)).toBe(true);
+        expect(renewalBudgets[0]).toBe(polling.leaseDurationMs - renewalStarts[0]);
         if (scenario === 'never_answers') {
           expect(observations).toContainEqual(expect.objectContaining({ event: 'expired', observedAtMs: 30_000,
             leaseExpiresAtMs: 30_000 }));
           expect(renewalStarts.every(start => start < 30_000)).toBe(true);
         } else {
           expect(observations).not.toContainEqual(expect.objectContaining({ event: 'expired' }));
-          expect(currentnessEntered).toBe(true);
+          expect(renewalStarts[1]).toBe(20_000);
         }
-        releaseCurrentness(); releaseNative();
+        expect(currentnessEntered).toBe(false);
+        releaseNative();
         await running;
         // An expired claimant has no authority to publish a parent transition;
         // the server's ordinary reclaim owns the still-running row.
@@ -363,7 +462,7 @@ describe('production workflow coordinator', () => {
       }
       const elapsed = polling.leaseDurationMs * 6;
       await vi.advanceTimersByTimeAsync(elapsed);
-      expect(currentnessEntered).toBe(true);
+      expect(currentnessEntered).toBe(false);
       expect(heartbeatRun).toHaveBeenCalledTimes(elapsed / polling.heartbeatMs);
       const leaseRecords = () => leaseLog.mock.calls.filter(([message]) =>
         message === '[DAEMON AUTOMATION] Claim lease observation' || message === '[DAEMON AUTOMATION] Lease renewal transport');
@@ -371,14 +470,13 @@ describe('production workflow coordinator', () => {
       failHeartbeat = true;
       await vi.advanceTimersByTimeAsync(polling.heartbeatMs);
       expect(leaseLog).toHaveBeenCalledWith('[DAEMON AUTOMATION] Claim lease observation',
-        expect.objectContaining({ runId, machineId, attempt: 0, event: 'transient_failure', currentnessInFlight: true,
+        expect.objectContaining({ runId, machineId, attempt: 0, event: 'transient_failure',
           renewalTransport: expect.objectContaining({ stage: 'http', publisherProofDurationMs: 0 }) }));
       expect(leaseLog).toHaveBeenCalledWith('[DAEMON AUTOMATION] Lease renewal transport',
         expect.objectContaining({ runId, machineId, attempt: 0, event: 'failure', stage: 'http', status: 503 }));
       expect(JSON.stringify(leaseRecords())).not.toMatch(/private-account-token|private-publisher-proof|private-response-token/);
       failHeartbeat = false;
       await vi.advanceTimersByTimeAsync(polling.heartbeatMs / 2);
-      releaseCurrentness();
       releaseNative();
       await running;
       expect(boundary.run().state).toBe('succeeded');
@@ -386,7 +484,7 @@ describe('production workflow coordinator', () => {
       expect(leaseLog).toHaveBeenCalledWith('[DAEMON AUTOMATION] Claim lease observation',
         expect.objectContaining({ event: 'stopped', runId, machineId, attempt: 0 }));
     } finally {
-      releaseCurrentness(); releaseNative();
+      releaseNative();
       await running;
       leaseLog.mockRestore();
       heartbeatHttp.mockRestore();

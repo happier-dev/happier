@@ -95,7 +95,6 @@ async function fixture(blocks: readonly WorkflowBlock[], options: Readonly<{ pro
     sessionContext?: Parameters<typeof createWorkflowCoordinator>[0]['sessionContext']) => {
     const effects: string[] = [];
     const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId, sessionContext,
-      isAcceptedAuthorizationCurrent: async () => true,
       resolveWorkspace: async () => ({ ok: true, workspace }),
       executeStep: effect ?? (async ({ step, beforeInputAdmission }) => {
         await beforeInputAdmission(); effects.push(step.id); return { kind: 'completed', result: step.id };

@@ -36,18 +36,6 @@ export type WorkflowClaimForCoordination = Readonly<{
   automationEvidenceEnvelope?: string | null;
   /** Automation origin only: immutable bounded cause captured at admission. */
   automationCause?: AutomationRunCause;
-  /**
-   * Registers the exact accepted-authorization predicate with the incumbent
-   * claim heartbeat. The heartbeat owns liveness; the Workflow owner keeps
-   * private source/principal interpretation behind this closure.
-   */
-  registerAuthorizationCurrentnessCheck?: (
-    check: (signal?: AbortSignal) => Promise<boolean>,
-  ) => void;
-  /** Registers the exact persisted Run/invocation control read with the incumbent claim heartbeat. */
-  registerControlCheck?: (
-    check: () => Promise<'running' | 'pause_requested' | 'cancel_requested'>,
-  ) => void;
   /** Exact live coordinator callback; the incumbent worker remains its owner. */
   registerReviewHoldRefresh?: (refresh: () => Promise<void>) => void;
   /** Projects this claim's actual coordinator custody through the incumbent worker map. */

@@ -768,7 +768,6 @@ describe('resolveWorkflowWorkspace', () => {
       let producerInput: readonly unknown[] | undefined;
       const coordinator = () => createWorkflowCoordinator({ store,
         resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace, scm }),
-        isAcceptedAuthorizationCurrent: async () => true,
         // Agent admission/observation is the process boundary; frame and SCM behavior stays real.
         executeStep: async (params) => {
           if (params.step.id === 'b' && !interrupted) {

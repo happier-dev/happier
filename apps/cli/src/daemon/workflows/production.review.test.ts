@@ -130,7 +130,7 @@ describe('durable review coordinator', () => {
     expect(decodeExecutionRunResultObservation({ encoding: 'typed', value: held.progress.result }, undefined))
       .toMatchObject({ ok: false, reason: 'not_text' });
   });
-  it.each(['transport', 'revoked'] as const)('keeps heartbeat uncertainty reclaimable and distinguishes authoritative revocation (%s)', async outcome => {
+  it.each(['transport', 'revoked'] as const)('renews admitted custody without re-reading accepted authority (%s)', async outcome => {
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
       { kind: 'wait', id: 'human', document: { text: 'Continue', references: [], attachments: [] } },
     ] };
@@ -151,17 +151,17 @@ describe('durable review coordinator', () => {
     const initialized = new Promise<void>(resolve => { entered = resolve; });
     const response = new Promise<void>(resolve => { release = resolve; });
     let executionSignal: AbortSignal | undefined;
+    let authorityReads = 0;
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine',
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'default' }),
       resolveAccountEncryption: async signal => { executionSignal = signal; return { kind: 'available', witness: encryption.witness }; },
       isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
-        listAccountApiTokens: async () => { if (outcome === 'transport') throw new Error('transport disconnected'); return { tokens: [] }; },
+        listAccountApiTokens: async () => { authorityReads++; if (outcome === 'transport') throw new Error('transport disconnected'); return { tokens: [] }; },
         resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
         isMediatedSourceCurrent: async () => false,
       }), onCommittedTransition: async () => {}, onReviewEntered: async () => {},
       storage: { observeChanges: boundary.observeChanges, execute: async (operation, options) => {
-        // Delay one genuine Home response after registration so the real claim
-        // heartbeat probes accepted authorization before any leaf is released.
+        // Delay one genuine Home response while the real claim lease renews.
         if (operation.operation === 'initialize') { entered(); await response; }
         return boundary.execute(operation, options);
       } }, execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
@@ -170,7 +170,7 @@ describe('durable review coordinator', () => {
         detachedRun: { actionExecutor: createActionExecutor({} as ActionExecutorDeps),
           buildActionContext: () => ({ surface: 'agent', authority: 'account_automation' }) },
       } });
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
       const execution = executeClaimedRun({ machineId: 'machine', heartbeatMs: 1_000, leaseDurationMs: 10_000,
         claimClient: { heartbeatRun: async (request: { leaseDurationMs: number }) => Date.now() + request.leaseDurationMs, failRun: async () => { throw new Error('Must not settle unknown custody'); } },
@@ -180,63 +180,13 @@ describe('durable review coordinator', () => {
       });
       await initialized;
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(classifyWorkflowAbort(executionSignal)).toBe(outcome === 'transport' ? 'interrupted' : 'authorization_revoked');
+      expect(classifyWorkflowAbort(executionSignal)).toBe('none');
+      expect(authorityReads).toBe(0);
       release();
       await execution;
-      expect(boundary.run()).toMatchObject({ workflowCustodyState: 'pending' });
-      expect(boundary.rows()).toHaveLength(1); // No downstream leaf gained authority.
+      expect(boundary.run()).toMatchObject({ state: 'waiting_for_review' });
+      expect(boundary.rows()).toHaveLength(2);
     } finally { release(); vi.useRealTimers(); }
-  });
-  it.each(['narrower_controller', 'revoked_authority', 'narrowed_during_preparation'] as const)('reholds Generate with typed authority refusal before input (%s)', async denial => {
-    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
-      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
-        authoredDefinition: { version: 1, inputs: [], defaults: { agentTarget: generationAgentTarget }, blocks: [step] },
-        startedBy: 'user', workDepth: 0, metadata: null, frozenChildren: {},
-        materializedLeaves: [{ sourceKey: '$root', blockId: 'draft', kind: 'step',
-          selection: { agentTarget: generationAgentTarget }, authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' } }],
-        definition: { version: 1, inputs: [], defaults: { agentTarget: generationAgentTarget }, blocks: [step] },
-        source: { kind: 'inline' }, inputs: {}, machineId: 'machine', executionTarget: { kind: 'session' },
-        workspaceTarget: { project: workspace }, origin: { kind: 'direct' },
-        authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
-      } }));
-    const h = await harness(acceptedEnvelope);
-    const key = workflowInvocationKey({ runId, blockId: 'draft', scope: [], attempt: 0 });
-    await h.store.ensureIntent({ blockKind: 'step', key, recordId: '33333333-3333-4333-8333-333333333333', runId, blockId: 'draft', memberOrdinal: '0',
-      path: { blockId: 'draft', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'pending' });
-    await h.store.commitFact({ key, lifecycle: 'waiting_for_review', result: 'prior', workspace: { descriptor: workspace },
-      execution: { kind: 'session', sessionId: 'conversation', localInputId: 'prior-input' },
-      review: { decision: { kind: 'generate', requestedFromContentRevision: '0' } } });
-    let callerPermissionMode: 'default' | 'safe-yolo' = denial === 'narrower_controller' ? 'default' : 'safe-yolo';
-    let admittedInput = false;
-    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine', storage: h.storage,
-      // Filesystem/SCM boundary: the retained fixture checkout exists at its exact recorded path.
-      workspaceScm: { verifyRecordedWorkspace: async descriptor => descriptor.directory === workspace.directory ? 'available' : 'missing' },
-      resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
-      resolveControllerContext: async () => ({ surface: 'ui', authority: 'present_user',
-        callerPermissionMode }),
-      isAcceptedAuthorizationCurrent: async () => denial !== 'revoked_authority', onCommittedTransition: async () => {}, onReviewEntered: async () => {},
-      execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
-
-        machineAdmissionTransport: async () => { throw new Error('denied_generate_cannot_admit'); },
-        resolveExistingSessionConversation: async ({ sessionId }) => {
-          if (denial !== 'narrowed_during_preparation') throw new Error('denied_generate_cannot_prepare');
-          callerPermissionMode = 'default';
-          return { sessionId, machineId: 'machine', directory: '/repo', agentTarget: generationAgentTarget };
-        },
-        sessionInput: { enqueue: async () => { admittedInput = true; return { status: 'accepted', localId: 'forbidden-input' }; },
-          observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId,
-            result: { kind: 'final_text', text: 'forbidden result' } }) },
-        detachedRun: { actionExecutor: createActionExecutor({} as ActionExecutorDeps),
-          buildActionContext: () => ({ surface: 'agent', authority: 'account_automation' }) } } });
-    const outcome = await coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
-      acceptedEnvelope, accountCurrentness: encryption.witness });
-    expect(admittedInput).toBe(false);
-    expect(await (await h.load()).readCurrent({ runId, blockId: 'draft', scope: [], memberOrdinal: '0' }))
-      .toMatchObject({ lifecycle: 'waiting_for_review', reason: 'run_access_denied', reasonMessage: "Couldn't generate: run_access_denied" });
-    if (denial === 'narrowed_during_preparation') expect(callerPermissionMode).toBe('default');
-    expect(outcome).toMatchObject({ state: 'waiting_for_review' });
-    expect(await (await h.load()).readByLogicalInvocation('33333333-3333-4333-8333-333333333333'))
-      .toMatchObject({ result: 'prior', execution: { localInputId: 'prior-input' } });
   });
   it('reholds an offline generation request when production preparation cannot reach the retained Session', async () => {
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
@@ -261,13 +211,11 @@ describe('durable review coordinator', () => {
     let entries = 0;
     let admittedInput = false;
     let restored = false;
-    let callerPermissionMode: 'safe-yolo' | 'default' = 'safe-yolo';
-    let narrowDuringPreparation = true;
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine',
       // Filesystem/SCM boundary; continuation/admission and all authority decisions stay real.
       workspaceScm: { verifyRecordedWorkspace: async descriptor => descriptor.directory === workspace.directory ? 'available' : 'missing' },
       resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
-      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode }),
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'safe-yolo' }),
       isAcceptedAuthorizationCurrent: async () => true, onCommittedTransition: async () => {},
       onReviewEntered: async () => { entries++; }, storage: h.storage,
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
@@ -275,7 +223,6 @@ describe('durable review coordinator', () => {
         machineAdmissionTransport: async () => { admittedInput = true; throw new Error('missing_session_must_not_admit_input'); },
         resolveExistingSessionConversation: async ({ sessionId }) => {
           if (!restored) return null;
-          if (narrowDuringPreparation) callerPermissionMode = 'default';
           return { sessionId, machineId: 'machine', directory: '/repo', agentTarget: generationAgentTarget };
         },
         // External Session network ports, beneath the real production conversation/admission owners.
@@ -303,23 +250,10 @@ describe('durable review coordinator', () => {
     await h.storage.execute({ operation: 'transition', runId, parentAttempt: 0, expectedRevision: h.storage.run().revision,
       state: 'claimed', checkpointEnvelope: h.storage.checkpointEnvelope()! });
     expect(await coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
-      acceptedEnvelope, accountCurrentness: encryption.witness })).toMatchObject({ state: 'waiting_for_review' });
-    expect(admittedInput).toBe(false);
-    const deniedStore = await h.load();
-    const denied = (await deniedStore.readCurrent({ runId, blockId: 'draft', scope: [], memberOrdinal: '0' }))!;
-    expect(denied).toMatchObject({ lifecycle: 'waiting_for_review', attempt: 2, reason: 'run_access_denied' });
-    expect(denied.execution).toBeUndefined();
-    callerPermissionMode = 'safe-yolo';
-    narrowDuringPreparation = false;
-    await deniedStore.commitFact({ key: denied.key, lifecycle: 'waiting_for_review',
-      review: { decision: { kind: 'generate', requestedFromContentRevision: denied.contentRevision! } } });
-    await h.storage.execute({ operation: 'transition', runId, parentAttempt: 0, expectedRevision: h.storage.run().revision,
-      state: 'claimed', checkpointEnvelope: h.storage.checkpointEnvelope()! });
-    expect(await coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
       acceptedEnvelope, accountCurrentness: encryption.witness })).toMatchObject({ state: 'succeeded' });
     expect(admittedInput).toBe(true);
     expect(await (await h.load()).readCurrent({ runId, blockId: 'draft', scope: [], memberOrdinal: '0' }))
-      .toMatchObject({ lifecycle: 'completed', result: 'generated', attempt: 3,
+      .toMatchObject({ lifecycle: 'completed', result: 'generated', attempt: 2,
         execution: { sessionId: 'missing-session', localInputId: 'second-generation-input' } });
     expect(await (await h.load()).readByLogicalInvocation('33333333-3333-4333-8333-333333333333'))
       .toMatchObject({ lifecycle: 'superseded', result: 'prior', execution: { localInputId: 'prior-input' } });
@@ -507,7 +441,6 @@ describe('durable review coordinator', () => {
     // coordinator opens it. Account.seq is not the content's encryption identity.
     let current = structuredClone(accountEncryption);
     current.witness.version = 2;
-    let registeredCheck: ((signal?: AbortSignal) => Promise<boolean>) | undefined;
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine',
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'default' }),
       resolveAccountEncryption: async () => current,
@@ -532,18 +465,16 @@ describe('durable review coordinator', () => {
       } });
     expect(await coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
       accountCurrentness: accountEncryption.witness,
-      registerAuthorizationCurrentnessCheck: (check) => { registeredCheck = check; },
     })).toMatchObject({ state: 'waiting_for_review' });
-    expect(registeredCheck).toBeTypeOf('function');
     expect(boundary.checkpointEnvelope()).not.toBeNull();
     expect(boundary.rows()).toEqual(expect.arrayContaining([expect.objectContaining({ index: expect.objectContaining({ lifecycle: 'waiting_for_review' }) })]));
     current.witness.version = 4;
-    expect(await registeredCheck!()).toBe(true);
+    expect(await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
+      accountCurrentness: accountEncryption.witness, acceptedEnvelope })).toMatchObject({ state: 'waiting_for_review' });
     const changedMaterial = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
       material: { type: 'legacy', secret: new Uint8Array(32).fill(1) } });
     current = { kind: 'available', witness: { mode: 'e2ee', version: 4,
       contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(changedMaterial.contentPublicKeyFingerprint) }, material: changedMaterial };
-    expect(await registeredCheck!()).toBe(false);
     const contentBeforeRefusal = boundary.checkpointEnvelope();
     expect(await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
       accountCurrentness: accountEncryption.witness, acceptedEnvelope })).toMatchObject({ state: 'failed', reason: 'content_unavailable' });
@@ -597,7 +528,7 @@ describe('durable review coordinator', () => {
     const { store, storage, load } = await harness();
     let entries = 0;
     const create = (current: DurableWorkflowCoordinatorStore) => createWorkflowCoordinator({ store: current,
-      rootInvocationRecordId: rootId, isAcceptedAuthorizationCurrent: async () => true,
+      rootInvocationRecordId: rootId,
       onReviewEntered: async () => { entries += 1; },
       prepareStep: async () => { throw new Error('wait_must_not_prepare'); },
       resolveWorkspace: async () => { throw new Error('wait_must_not_resolve_workspace'); },
@@ -665,8 +596,7 @@ describe('durable review coordinator', () => {
         execution: { kind: 'session', sessionId: 'session', localInputId: 'prior-input' }, workspace: { descriptor: workspace },
         review: { resultSource: { kind: 'execution_input' }, decision: { kind: 'generate', requestedFromContentRevision: '1' } } });
       clock.mockReturnValue(Date.parse('2026-10-11T10:05:00.000Z'));
-      const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId,
-        isAcceptedAuthorizationCurrent: async () => true, resolveWorkspace: async () => ({ ok: true, workspace }),
+      const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId, resolveWorkspace: async () => ({ ok: true, workspace }),
         executeStep: async (params) => {
           expect(params.recoveryPreviousExecution).toMatchObject({ sessionId: 'session', localInputId: 'prior-input' });
           await params.beforeInputAdmission();

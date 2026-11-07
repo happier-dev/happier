@@ -13,10 +13,6 @@ import type { AutomationClaimClient, AutomationLeaseRenewalProgress } from './au
 import { logAutomationWarn } from './automationTelemetry';
 import type { AutomationClaimedRunPayload, AutomationV3ClaimedAutomation } from './automationTypes';
 import type { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
-import {
-  WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON,
-  WORKFLOW_CANCEL_REQUESTED_ABORT_REASON,
-} from '@/daemon/workflows/coordinator';
 
 export type ClaimableRunPayload = AutomationClaimedRunPayload;
 
@@ -186,8 +182,6 @@ export async function executeClaimedRun(params: {
 
   const executionController = new AbortController();
   let heartbeat: ReturnType<typeof startAutomationLeaseHeartbeat> | null = null;
-  let workflowAuthorizationCurrentnessCheck: ((signal?: AbortSignal) => Promise<boolean>) | null = null;
-  let workflowControlCheck: (() => Promise<'running' | 'pause_requested' | 'cancel_requested'>) | null = null;
   const abortExecution = (reason?: unknown) => {
     heartbeat?.stop();
     if (!executionController.signal.aborted) {
@@ -215,20 +209,11 @@ export async function executeClaimedRun(params: {
       signal,
       onProgress,
     });
-    const checkCurrentness = async () => {
-      if (workflowAuthorizationCurrentnessCheck
-        && !await workflowAuthorizationCurrentnessCheck(executionController.signal)) {
-        abortExecution(WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON);
-      }
-      if (workflowControlCheck && await workflowControlCheck() === 'cancel_requested') {
-        abortExecution(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
-      }
-    };
     // Claim delivery and receipt replay consume the server-granted lease.
     // The same heartbeat owner handles every renewal, including the first.
     const leaseExpiresAtMs = claimed.run.leaseExpiresAt;
     heartbeat = startAutomationLeaseHeartbeat({
-      heartbeatMs, leaseExpiresAtMs, onHeartbeat: renewLease, onRenewed: checkCurrentness,
+      heartbeatMs, leaseExpiresAtMs, onHeartbeat: renewLease,
       onObservation: observation => {
         if (observation.event === 'renewal_started' || observation.event === 'renewed') return;
         logger.warnLocalFile('[DAEMON AUTOMATION] Claim lease observation', {
@@ -260,12 +245,6 @@ export async function executeClaimedRun(params: {
           }),
           accountCurrentness: claimed.accountCurrentness,
           acceptedEnvelope: claimed.run.workflowAcceptedSnapshotEnvelope,
-          registerAuthorizationCurrentnessCheck: (check) => {
-            workflowAuthorizationCurrentnessCheck = check;
-          },
-          registerControlCheck: (check) => {
-            workflowControlCheck = check;
-          },
           registerReviewHoldRefresh: params.registerReviewHoldRefresh,
           acquireMachineStartCapacity: params.acquireMachineStartCapacity,
           signal: executionController.signal,
@@ -295,12 +274,6 @@ export async function executeClaimedRun(params: {
           lastSucceededRun: claimed.run.lastSucceededRun,
           automationEvidenceEnvelope: claimed.run.automationEvidenceEnvelope,
           automationCause: claimed.run.cause,
-          registerAuthorizationCurrentnessCheck: (check) => {
-            workflowAuthorizationCurrentnessCheck = check;
-          },
-          registerControlCheck: (check) => {
-            workflowControlCheck = check;
-          },
           registerReviewHoldRefresh: params.registerReviewHoldRefresh,
           acquireMachineStartCapacity: params.acquireMachineStartCapacity,
           signal: executionController.signal,

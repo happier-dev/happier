@@ -1689,7 +1689,9 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           ...(signal ? { signal } : {}),
         });
     };
-    claim.registerAuthorizationCurrentnessCheck?.(isOpenedAuthorizationCurrent);
+
+    const isPublicationEncryptionCurrent = async (signal?: AbortSignal): Promise<boolean> =>
+      sameAutomationAccountContentIdentityV1((await params.resolveAccountEncryption(signal)).witness, accountEncryption.witness);
 
     const checkControllerDominance = async (signal?: AbortSignal) => {
       try {
@@ -1764,7 +1766,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         materializedLeaves: accepted.materializedLeaves, originSessionId: accepted.origin?.originSessionId }).leaves,
     });
     await durableStore.refreshStepProgress();
-    claim.registerControlCheck?.(async () => await durableStore.readControl());
     const rootAtStart = durableStore.rootIndex;
     if (!rootAtStart) throw new Error('workflow_root_invocation_missing');
     rootRecordId = rootAtStart.id;
@@ -1919,13 +1920,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     const publishDiscussionResult = accepted.resultDelivery?.kind === 'originating_discussion'
       ? createWorkflowDiscussionResultPublisher({
         credentials: params.execution.credentials, origin: accepted.resultDelivery,
-        isCurrent: isOpenedAuthorizationCurrent,
+        isCurrent: isPublicationEncryptionCurrent,
         publish: createDiscussionReplyReturnPublisher({ credentials: params.execution.credentials,
           machineId: params.machineId, serverId: params.execution.serverId,
           workflowAuthorization: accepted.authorization,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: claim.signal ?? new AbortController().signal,
           ...(params.execution.postWorkflowMessage ? { postWorkflowMessage: params.execution.postWorkflowMessage } : {}),
-          isCurrent: isOpenedAuthorizationCurrent }),
+          isCurrent: isPublicationEncryptionCurrent }),
         ...(claim.signal ? { signal: claim.signal } : {}),
       }) : null;
     const coordinator = createWorkflowCoordinator({
@@ -1960,9 +1961,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         ...(claim.signal ? { signal: claim.signal } : {}),
       }) : {}) },
       rootInvocationRecordId: rootInvocation.recordId,
-      isAcceptedAuthorizationCurrent: async (currentness) =>
-        await isOpenedAuthorizationCurrent(currentness.signal),
-      checkReviewGenerationAuthority: async ({ signal }) => await checkControllerDominance(signal),
       prepareStep: async (executionParams) => {
         try {
           if (executionParams.executionTarget.kind === 'detached_run') {

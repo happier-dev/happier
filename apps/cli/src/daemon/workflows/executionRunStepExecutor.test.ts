@@ -161,7 +161,6 @@ describe('workflow detached Execution Run step executor', () => {
         buildActionContext, resolveSharedRunConversation: async () => null,
         resolveProducerConversation: async () => null });
       const coordinator = createWorkflowCoordinator({ store, executeStep,
-        isAcceptedAuthorizationCurrent: async () => true,
         resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
 
       await expect(coordinator.run({ runId: params.runId,
@@ -214,7 +213,6 @@ describe('workflow detached Execution Run step executor', () => {
       } },
     });
     const coordinator = createWorkflowCoordinator({ store, executeStep,
-      isAcceptedAuthorizationCurrent: async () => true,
       resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace: params.workspace,
         scm }) });
     const running = coordinator.run({ runId: params.runId, definition: { version: 1, inputs: [], defaults: params.execution,
@@ -268,7 +266,6 @@ describe('workflow detached Execution Run step executor', () => {
       });
       const coordinator = createWorkflowCoordinator({ store, executeStep,
         resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }),
-        isAcceptedAuthorizationCurrent: async () => true,
         prepareStep: async () => { await vi.advanceTimersByTimeAsync(8_000); return {}; },
       });
       let settled = false;

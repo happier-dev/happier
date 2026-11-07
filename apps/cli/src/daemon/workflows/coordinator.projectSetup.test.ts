@@ -56,7 +56,7 @@ describe('Workflow Project setup consent custody', () => {
           ...(options?.localActionContext?.actionRequestId ? { requestId: options.localActionContext.actionRequestId } : {}),
           ...(options?.signal ? { signal: options.signal } : {}),
         }) } });
-    const coordinator = createTestWorkflowCoordinator({ store, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createTestWorkflowCoordinator({ store,
       resolveWorkspace: createCoordinatorWorkspaceResolver({ store,
         projectWorkspace: { machineId: 'machine', directory: rootPath, checkoutRootPath: rootPath },
         scm: createGitWorkflowWorkspaceTestDependencies() }),

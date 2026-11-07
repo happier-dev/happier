@@ -197,7 +197,7 @@ describe('finite Project command Workflow completion', () => {
       actionsSettings: settings };
     const store = createInMemoryWorkflowCoordinatorStore();
     let downstream = false;
-    const coordinator = createTestWorkflowCoordinator({ store, isAcceptedAuthorizationCurrent: async () => true,
+    const coordinator = createTestWorkflowCoordinator({ store,
       resolveWorkspace: createCoordinatorWorkspaceResolver({ store,
         projectWorkspace: { machineId, directory: root, checkoutRootPath: root },
         scm: createGitWorkflowWorkspaceTestDependencies() }),
