@@ -1,5 +1,5 @@
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
-import { isConnectedServiceUxDiagnosticSpawnErrorDetail, normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { isConnectedServiceResumeUnreachableSpawnErrorDetail, isConnectedServiceUxDiagnosticSpawnErrorDetail, normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readSessionPreparationFailureCode, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
@@ -26,7 +26,8 @@ export function projectSessionSpawnFailure(input: Readonly<{
           ? sanitizeConnectedServiceDiagnosticString(input.errorMessage)
           : 'Account encryption currentness is unavailable', currentnessFailure } };
   }
-  if (isConnectedServiceUxDiagnosticSpawnErrorDetail(input.errorDetail)) {
+  if (isConnectedServiceUxDiagnosticSpawnErrorDetail(input.errorDetail)
+    || isConnectedServiceResumeUnreachableSpawnErrorDetail(input.errorDetail)) {
     const diagnostic = input.errorDetail.uxDiagnostic;
     const reason = diagnostic.diagnostics?.reason;
     const cause = typeof reason === 'string' && reason !== 'spawn_preflight' && reason !== 'profile_action_required'

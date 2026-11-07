@@ -43,6 +43,7 @@ import {
   resolveSessionSpawnConnectedServicesDefaultsPayload,
 } from '@/session/services/spawnConnectedServicesDefaults';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveSessionUserMessageRequestedAction } from '@/session/services/resolveSessionUserMessageRequestedAction';
@@ -634,8 +635,13 @@ async function activateTargetAndAdmitInput(params: Readonly<{
       ...(params.externalAction ? { externalAction: params.externalAction,
         executionAuthority: params.externalAction.context.authority } : {}),
     }).catch(() => null);
-    if (!resumed?.ok) return committed.committed('target_start_failed',
-      resumed?.errorDetail?.kind === 'launch_error' ? resumed.errorDetail : undefined);
+    if (!resumed?.ok) {
+      const failure = resumed?.errorDetail ? projectSessionSpawnFailure({
+        errorCode: resumed.code, errorMessage: resumed.message, errorDetail: resumed.errorDetail, requestId: localId,
+      }) : undefined;
+      return committed.committed('target_start_failed',
+        failure && 'launchError' in failure ? failure.launchError : undefined);
+    }
   }
 
   // `accepted` still means exactly what section 6.1 says: the current view and

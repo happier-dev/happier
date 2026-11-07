@@ -110,7 +110,7 @@ function readSafePluginErrorCode(error: unknown): string | null {
   return null;
 }
 
-function normalizeFailure(error: unknown): Readonly<{ code: string; message: string }> {
+async function normalizeFailure(error: unknown): Promise<Readonly<{ code: string; message: string }>> {
   const code = readSafePluginErrorCode(error);
   switch (code) {
     case 'invalid_arguments':
@@ -141,8 +141,11 @@ function normalizeFailure(error: unknown): Readonly<{ code: string; message: str
     case 'plugin_secret_custody_unavailable':
     case 'plugin_secret_custody_locked':
       return { code, message: 'Plugin Settings administration is unavailable.' };
-    default:
-      return { code: 'plugin_settings_unavailable', message: 'Plugin Settings administration is unavailable.' };
+    default: {
+      const { projectPluginActionFailureCode } = await import('@happier-dev/protocol/plugins/actions/invocation');
+      return { code: code === null ? 'plugin_settings_unavailable' : projectPluginActionFailureCode(code),
+        message: 'Plugin Settings administration is unavailable.' };
+    }
   }
 }
 
@@ -990,7 +993,7 @@ export const executePluginSettingsAdministrationAction: ExecutePluginSettingsAdm
   } catch (error) {
     const code = readSafePluginErrorCode(error);
     if (params.signal?.aborted && code !== 'plugin_settings_outcome_unknown' && code !== 'plugin_secret_outcome_unknown') throw error;
-    const normalized = normalizeFailure(error);
+    const normalized = await normalizeFailure(error);
     return failure(params.actionId, normalized.code, normalized.message);
   }
 }, {
@@ -1010,7 +1013,7 @@ export const executePluginSettingsAdministrationAction: ExecutePluginSettingsAdm
       return null;
     } catch (error) {
       if (params.signal?.aborted) throw error;
-      const normalized = normalizeFailure(error);
+      const normalized = await normalizeFailure(error);
       return { ok: false, errorCode: normalized.code, error: normalized.message };
     }
   },

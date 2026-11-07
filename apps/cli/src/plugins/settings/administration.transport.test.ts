@@ -26,6 +26,7 @@ import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { PluginAccountSettingsStorageUnavailableV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 
 const {
   daemonReply,
@@ -66,15 +67,20 @@ vi.mock('socket.io-client', () => ({ io: () => {
   return socket;
 } }));
 
-vi.mock('axios', () => ({ default: {
-  get: (...args: unknown[]) => axiosGet(...args),
-  post: (...args: unknown[]) => axiosPost(...args),
-} }));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: {
+    ...actual.default,
+    get: (...args: unknown[]) => axiosGet(...args),
+    post: (...args: unknown[]) => axiosPost(...args),
+  } };
+});
 
 vi.mock('@/configuration', async () => {
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   return { configuration: {
+    currentCliVersion: '0.2.10',
     serverUrl: 'https://api.example.test', apiServerUrl: 'https://api.example.test',
     activeServerId: 'home', activeServerDir: join(tmpdir(), 'happier-settings-transport-test'),
     happyHomeDir: join(tmpdir(), 'happier-settings-transport-test'),
@@ -562,6 +568,10 @@ describe('Plugin Settings Account administration explicit binding', () => {
     });
   }
 
+  function settingsRecordWrites() {
+    return axiosPost.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/plugin-settings/acme.settings');
+  }
+
   it('refuses declared secret record operands before hooks, approval disclosure, observations or writes', async () => {
     for (const transformToSecret of [false, true]) {
       const artifacts: ApprovalRequest[] = [];
@@ -585,7 +595,7 @@ describe('Plugin Settings Account administration explicit binding', () => {
       if (!transformToSecret) expect(intercepted).toEqual([]);
       expect(JSON.stringify(observations)).not.toContain(secretValue);
       expect(axiosGet).not.toHaveBeenCalled();
-      expect(axiosPost).not.toHaveBeenCalled();
+      expect(settingsRecordWrites()).toEqual([]);
       expect(revision).toBe(7);
     }
   });
@@ -663,6 +673,25 @@ describe('Plugin Settings Account administration explicit binding', () => {
     }
   });
 
+  it('preserves the safe Account persistence cause through the Settings Action', async () => {
+    const originalGet = axiosGet.getMockImplementation()!;
+    let recordRead = false;
+    axiosGet.mockImplementation(async (url: string, ...args: unknown[]) => {
+      if (new URL(url).pathname === '/v1/account/plugin-settings/acme.settings') {
+        recordRead = true;
+        return { status: 503, data: PluginAccountSettingsStorageUnavailableV1Schema.parse({
+          error: 'plugin_account_settings_storage_unavailable',
+        }) };
+      }
+      return originalGet(url, ...args);
+    });
+    const result = await executePluginSettingsAdministrationAction({
+      actionId: 'plugins.settings.get', happyHomeDir, input,
+    });
+    expect(recordRead).toBe(true);
+    expect(result).toMatchObject({ ok: false, errorCode: 'plugin_account_settings_storage_unavailable' });
+  });
+
   it.each([
     ['projects effective values and revision from one snapshot while hiding the backing map', true, 'https://fallback.example'],
     ['lists the declared default when the same snapshot has no own value', false, 'https://declared.example'],
@@ -709,7 +738,7 @@ describe('Plugin Settings Account administration explicit binding', () => {
     await expect(executePluginSettingsAdministrationAction({ actionId: 'plugins.settings.set', happyHomeDir,
       input: { ...input, bindingServerIdentityId: 'srv_selected_1', value: 'https://changed.example', expectedRevision: '6' } }))
       .resolves.toMatchObject({ ok: false, errorCode: 'plugin_settings_revision_conflict' });
-    expect(axiosPost).not.toHaveBeenCalled();
+    expect(settingsRecordWrites()).toEqual([]);
     expect(values.endpointByServer).toEqual({ srv_selected_1: 'https://selected.example', srv_neighbor_1: 'https://neighbor.example' });
   });
 
@@ -738,21 +767,21 @@ describe('Plugin Settings Account administration explicit binding', () => {
     await expect(executePluginSettingsAdministrationAction({ actionId: 'plugins.settings.set', happyHomeDir,
       input: { ...input, bindingServerIdentityId: 'srv_selected_1', value: 'https://changed.example' } }))
       .resolves.toMatchObject({ ok: false, errorCode: 'plugin_settings_revision_conflict' });
-    expect(axiosPost).not.toHaveBeenCalled();
+    expect(settingsRecordWrites()).toEqual([]);
     expect(values.endpointByServer).toEqual({ srv_selected_1: 'https://selected.example', srv_neighbor_1: 'https://new-neighbor.example' });
   });
 
   it('validates the visible field before writing its backing map', async () => {
     await expect(executePluginSettingsAdministrationAction({ actionId: 'plugins.settings.set', happyHomeDir,
       input: { ...input, bindingServerIdentityId: 'srv_selected_1', value: '' } })).resolves.toMatchObject({ ok: false });
-    expect(axiosPost).not.toHaveBeenCalled();
+    expect(settingsRecordWrites()).toEqual([]);
   });
 
   it.each(['srv_selected_1', null])('refuses explicit server binding %s on an ordinary field without writing', async (bindingServerIdentityId) => {
     await expect(executePluginSettingsAdministrationAction({ actionId: 'plugins.settings.set', happyHomeDir,
       input: { ...input, localId: 'other', bindingServerIdentityId, value: false } }))
       .resolves.toMatchObject({ ok: false });
-    expect(axiosPost).not.toHaveBeenCalled();
+    expect(settingsRecordWrites()).toEqual([]);
     expect(values.other).toBe(true);
   });
 });
