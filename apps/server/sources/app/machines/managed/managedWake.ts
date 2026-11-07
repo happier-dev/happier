@@ -28,7 +28,7 @@ import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPre
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '@/app/api/socket/machineSocketInstallationProof';
 import type { PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { readPendingSessionInputAdmission } from '@/app/session/pending/pendingInputAdmission';
-import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveManagedFiniteWakeControllerV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
 
@@ -48,19 +48,22 @@ export async function readCurrentManagedFiniteWakeCustodyInTx(tx: Tx, input: Rea
         actorAccountId: binding.accountId, machineId: binding.machineId,
         origin: { kind: 'finite-command', actionRequestId: binding.requestId },
     });
-    if (!target?.controller) return null;
+    if (!target) return null;
+    const finiteWake = resolveManagedFiniteWakeControllerV1(target);
+    if (finiteWake.kind === 'unavailable') return null;
+    const controllerBinding = finiteWake.controller;
     const row = await tx.managedMachine.findUnique({ where: { id: target.managedId } });
     if (!row) return null;
     try { await assertManagedWakeOriginCurrentInTx(tx, { row, target, actionOrigin: input.actionOrigin }); }
     catch (error) { if (error instanceof ManagedMachineError) return null; throw error; }
     const controller = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
-        machineId: target.controller.machineId, requiredRole: 'manage', requireOnline: true });
-    if (controller.kind !== 'admitted' || controller.installationId !== target.controller.installationId
+        machineId: controllerBinding.machineId, requiredRole: 'manage', requireOnline: true });
+    if (controller.kind !== 'admitted' || controller.installationId !== controllerBinding.installationId
         || controller.custodianAccountId !== row.custodianAccountId) return null;
-    const installed = await tx.machine.findUnique({ where: { id: target.controller.machineId }, select: {
+    const installed = await tx.machine.findUnique({ where: { id: controllerBinding.machineId }, select: {
         installationId: true, installationPublicKey: true,
     } });
-    if (installed?.installationId !== target.controller.installationId || !installed.installationPublicKey) return null;
+    if (installed?.installationId !== controllerBinding.installationId || !installed.installationPublicKey) return null;
     const publicKey = MachineInstallationPublicKeySchema.safeParse(encodeBase64(installed.installationPublicKey, 'base64url'));
     return publicKey.success ? { target, installationPublicKey: publicKey.data } : null;
 }
@@ -114,9 +117,11 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     });
     if (initial.online) return { kind: 'not-needed', isCurrent };
     target = initial.wake;
-    if (!target?.controller || !await isCurrent()) return { kind: 'unavailable' };
+    if (!target) return { kind: 'unavailable' };
+    const finiteWake = resolveManagedFiniteWakeControllerV1(target);
+    if (finiteWake.kind === 'unavailable' || !await isCurrent()) return { kind: 'unavailable' };
     const wakeTarget = target;
-    const controllerBinding = target.controller;
+    const controllerBinding = finiteWake.controller;
     const controller = await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
         machineId: controllerBinding.machineId, requiredRole: 'manage', requireOnline: true }));
     if (controller.kind !== 'admitted' || controller.installationId !== controllerBinding.installationId) return { kind: 'unavailable' };

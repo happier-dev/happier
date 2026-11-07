@@ -70,7 +70,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
         await encryption.initializeMachines(new Map([[fixture.id, storageMode === 'e2ee' ? dataKey : null]]));
         const cipher = encryption.getMachineEncryption(fixture.id)!;
         let row = { ...createPlainMachineRowFixture({ id: fixture.id, accountId: 'bob', machine: fixture }),
-            managedInputRuntime: { nativeReady: true, wakeState: null } as Machine['managedInputRuntime'] };
+            managedInputRuntime: { nativeReady: true, wakeState: null, newSessionWake: { kind: 'available' } } as Machine['managedInputRuntime'] };
         if (storageMode === 'e2ee') row = { ...row, dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64'),
             access: { ...row.access!, resourceMode: 'e2ee' },
             metadata: await cipher.encryptMetadata(fixture.metadata!), daemonState: await cipher.encryptDaemonState(fixture.daemonState) };
@@ -89,9 +89,17 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             await fetchAndApplyMachines(params);
             const first = storage.getState().machines[fixture.id];
             expect(first.metadata?.host).toBe(fixture.metadata?.host);
-            expect(first.managedInputRuntime).toEqual({ nativeReady: true, wakeState: null });
+            expect(first.managedInputRuntime).toEqual({ nativeReady: true, wakeState: null, newSessionWake: { kind: 'available' } });
             await fetchAndApplyMachines(params);
             expect(storage.getState().machines[fixture.id]).toBe(first);
+            row = { ...row, managedInputRuntime: { nativeReady: true, wakeState: null,
+                newSessionWake: { kind: 'unavailable', reason: 'no_controller' } } };
+            await fetchAndApplyMachines(params);
+            const runtimeChanged = storage.getState().machines[fixture.id];
+            expect(runtimeChanged).not.toBe(first);
+            expect(runtimeChanged.managedInputRuntime?.newSessionWake).toEqual({ kind: 'unavailable', reason: 'no_controller' });
+            await fetchAndApplyMachines(params);
+            expect(storage.getState().machines[fixture.id]).toBe(runtimeChanged);
             const metadata = { ...fixture.metadata!, host: 'replacement-host' };
             const daemonState = { status: 'running', pid: 2 };
             row = { ...row, installationId: 'replacement-installation',

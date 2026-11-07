@@ -1,3 +1,4 @@
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -67,6 +68,32 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         } });
         return { owner, recipient, other, machine };
     }
+
+    it.each([false, true])('projects the finite owner new-Session wake decision to guest Use recipients (controller: %s)', async hasController => {
+        const { owner, recipient, machine } = await fixture();
+        const controller = hasController ? await db.machine.create({ data: {
+            id: `controller-${randomUUID()}`, accountId: owner.id, installationId: `installation-${randomUUID()}`,
+            metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
+        } }) : null;
+        await db.managedMachine.create({ data: {
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id, enrolledMachineId: machine.id,
+            ...(controller ? { controllerMachineId: controller.id, controllerInstallationId: controller.installationId } : {}),
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+        } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: recipient.id }, level: 'view' }));
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(hasController
+                ? { kind: 'available' } : { kind: 'unavailable', reason: 'no_controller' });
+            expect(response.json().machine.managedInputRuntime).not.toHaveProperty('controller');
+        });
+    });
 
     it('publishes enrollment identity changes to the existing Machine refresh feed in both directions', async () => {
         const { owner, machine } = await fixture();

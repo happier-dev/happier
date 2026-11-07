@@ -25,12 +25,20 @@ export type ManagedMachineRefV1 = z.infer<typeof ManagedMachineRefV1Schema>;
 export const ManagedMachineInputWakeV1Schema = lazyDefinition(() => z.enum(['asleep', 'starting']));
 export type ManagedMachineInputWakeV1 = z.infer<typeof ManagedMachineInputWakeV1Schema>;
 
+/** Finite wake transport support; this grants no Action or controller custody. */
+export const ManagedMachineNewSessionWakeV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('available') }),
+    z.strictObject({ kind: z.literal('unavailable'), reason: z.literal('no_controller') }),
+]));
+export type ManagedMachineNewSessionWakeV1 = z.infer<typeof ManagedMachineNewSessionWakeV1Schema>;
+
 /** Native qualification is independent of the exact guest's live reachability. */
 export const ManagedMachineInputRuntimeV1Schema = lazyDefinition(() => z.strictObject({
     nativeReady: z.boolean(),
     wakeState: z.nullable(ManagedMachineInputWakeV1Schema),
     /** Native wake placement only; the Home Pending record retains input ownership. */
     acceptedInputWakeOwner: z.optional(z.enum(['home', 'caller'])),
+    newSessionWake: z.optional(ManagedMachineNewSessionWakeV1Schema),
 }));
 export type ManagedMachineInputRuntimeV1 = z.infer<typeof ManagedMachineInputRuntimeV1Schema>;
 /** Released 0.2 Home rows omit this projection; explicit invalid references still fail. */

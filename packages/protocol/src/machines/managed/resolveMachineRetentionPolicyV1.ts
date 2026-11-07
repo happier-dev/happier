@@ -1,5 +1,5 @@
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from './providerFactsV1.js';
-import type { ManagedMachineV1, ManagedMachineInputWakeV1, RetentionV1 } from './managedMachineV1.js';
+import type { ManagedControllerV1, ManagedMachineV1, ManagedMachineInputWakeV1, ManagedMachineNewSessionWakeV1, RetentionV1 } from './managedMachineV1.js';
 import type { MachineRetentionCategoryV1, MachineRetentionDefaultsV1, MachineRetentionOverrideV1, MachineRetentionPolicyV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
 
 /** D21's selected product default, not a lifecycle timeout or resource limit. */
@@ -14,6 +14,14 @@ export function isMachineRetainedWakeEligibleV1(retention: RetentionV1, nativeCa
     && (!nativeCapabilities || nativeCapabilities.supportedIntents.some(intent => intent === 'start' || intent === 'resume'));
 }
 
+/** The finite wake owner selects only the assigned installed-controller transport. */
+export function resolveManagedFiniteWakeControllerV1(machine: Pick<ManagedMachineV1, 'controller'>):
+  Readonly<{ kind: 'available'; controller: ManagedControllerV1 }>
+  | Readonly<{ kind: 'unavailable'; reason: 'no_controller' }> {
+  return machine.controller ? { kind: 'available', controller: machine.controller }
+    : { kind: 'unavailable', reason: 'no_controller' };
+}
+
 /** One runtime decision for demand, Pending activation and retained-power presentation.
  * Presence and native observation remain independent inputs; this grants no dispatch authority.
  */
@@ -21,7 +29,9 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   machineReachable = false): Readonly<{
     available: boolean; ready: boolean; wakeState: ManagedMachineInputWakeV1 | null; inspectionRequired: boolean;
     acceptedInputWakeOwner: 'home' | 'caller';
+    newSessionWake: ManagedMachineNewSessionWakeV1;
   }> {
+  const finiteWake = resolveManagedFiniteWakeControllerV1(machine);
   const observation = machine.observation;
   const available = machine.creationState === 'active' && machine.allocation !== 'confirmed-absent'
     && observation?.availability !== 'absent' && observation?.storage !== 'lost';
@@ -39,6 +49,7 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   const wakeState = starting ? 'starting' : retainedWake && parked ? 'asleep' : null;
   // Home dispatches accepted input through an assigned controller or its custodian Account daemon.
   return { available, ready, wakeState, acceptedInputWakeOwner: 'home',
+    newSessionWake: finiteWake.kind === 'available' ? { kind: 'available' } : finiteWake,
     // An offline running observation may predate a vendor-side Stop. Native power owns fresh Inspect.
     inspectionRequired: wakeState === 'asleep' || !starting && !machineReachable && retainedWake && observation?.power === 'running' };
 }

@@ -3343,7 +3343,10 @@ Runtime demand, Pending activation and retained-power presentation consume
 availability, guest readiness and whether wake needs Inspect. Native power owns
 that fresh provider Inspect; passive reads do not wake. Home's admitted Pending
 record owns input activation: retiring the scheduler's compute-wake job cannot
-fail that independently admitted input.
+fail that independently admitted input. Public `newSessionWake` comes from the
+finite owner's controller selection: an assigned controller is available;
+controllerless resources report `no_controller`. The custodian Account daemon's
+existing Pending wake authority does not extend pre-Session finite custody.
 These are unreleased 0.3 source contracts. Final integrated validation,
 loaded-stack validation and final UI composition remain tracked in the VD-DELEG
 and VD-GUEST lane reports; no released availability is claimed.
