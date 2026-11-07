@@ -289,9 +289,10 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     {
         id: 'commandPalette.open',
         settingsTitleKey: 'settingsKeyboard.commands.commandPaletteOpen',
+        // Cmd/Ctrl+K everywhere: browsers let a page take it (only their search-field focus yields). Alt+K stays on the web.
         defaultBindings: [
+            { binding: 'Mod+K', nativeConsumable: true },
             { binding: 'Alt+K', platforms: ['web'] },
-            { binding: 'Mod+K', nativeConsumable: true, blockedSurfaces: ['web'] },
         ],
         when: (context) => !context.isEditableTarget,
     },

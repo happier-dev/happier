@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     deviceType: 'tablet' as 'phone' | 'tablet',
     installedPlugins: [] as unknown[],
     installedPluginsRead: true,
+    // A chosen Machine by default; the no-Machine page is its own case.
+    targetChosen: true,
     activeView: 'installed' as 'installed' | 'discover',
     setActiveView: vi.fn(),
 }));
@@ -59,7 +61,9 @@ vi.mock('./model/usePluginSettingsScreenState', () => ({
         daemonOperationsAvailable: true,
         isPluginActionInFlight: () => false,
         decidePendingPluginChange: () => {},
-        administrationTargetSelection: { state: { kind: 'unselected' }, candidates: [], selectedTarget: null, canExecute: false, resolveExecutionTarget: () => null },
+        administrationTargetSelection: mocks.targetChosen
+            ? { state: { kind: 'online' }, candidates: [], selectedTarget: { serverIdentityId: 'server-a', machineId: 'machine-a' }, canExecute: true, resolveExecutionTarget: () => null }
+            : { state: { kind: 'unselected' }, candidates: [], selectedTarget: null, canExecute: false, resolveExecutionTarget: () => null },
         installedPlugins: mocks.installedPlugins,
         installedPluginById: new Map(),
         canRefreshInstalledPlugins: true,
@@ -179,6 +183,7 @@ describe('Settings > Plugins information architecture', () => {
         mocks.deviceType = 'tablet';
         mocks.installedPlugins = [];
         mocks.installedPluginsRead = true;
+        mocks.targetChosen = true;
         mocks.setActiveView.mockClear();
         if (!routerMock.value) throw new Error('Router boundary must be installed');
         routerMock.value.resetParams();
@@ -205,7 +210,22 @@ describe('Settings > Plugins information architecture', () => {
         }
     });
 
+    it('offers no installed search, filter, view choice or Add until a Machine is chosen: none of them could act', async () => {
+        mocks.targetChosen = false;
+        mocks.installedPlugins = [
+            { pluginId: 'acme.alpha', title: 'Alpha', description: null, version: '1', enabled: false, source: { kind: 'npm', locator: 'a' }, install: { mode: 'copy', manifestVersion: '1' }, compatibility: { status: 'compatible', diagnostics: [] }, diagnostics: [] },
+        ];
+        const screen = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.search')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.statusFilter')).toBeNull();
+        expect(screen.findAll((node) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('settings.plugins.collectionView'))).toHaveLength(0);
+        expect(screen.findByTestId('settings.plugins.add')).toBeNull();
+        // The Machine chip stays: it is the one thing the page asks for.
+        expect(screen.findAll((node) => String(node.type) === 'MachineAdministrationTargetSelector')).toHaveLength(1);
+    });
+
     it('projects an unselected administration target as noTarget while the installed snapshot is unread', async () => {
+        mocks.targetChosen = false;
         mocks.installedPluginsRead = false;
         const screen = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
         const installedSection = screen.root.findAll((node) => String(node.type) === 'InstalledPluginsSection')[0];

@@ -195,6 +195,8 @@ describe('PluginSettingsHomeScreen segmented controls', () => {
     });
 
     it('draws Grid | List and the Installed status filter at their dense size', async () => {
+        // The installed controls exist once a Machine is chosen (nothing to search or lay out before).
+        mocks.targetKind = 'online';
         expect(await readSegmentMinimumWidths('settings.plugins.collectionView:grid'))
             .toEqual(['ios: dense', 'android: dense']);
         expect(await readSegmentMinimumWidths('settings.plugins.marketplace.installed.statusFilter', 'minHeight'))
@@ -202,6 +204,7 @@ describe('PluginSettingsHomeScreen segmented controls', () => {
     });
 
     it('offers the Installed status filter only when it can narrow the list', async () => {
+        mocks.targetKind = 'online';
         mocks.installedPlugins = [{ ...DISABLED_PLUGIN, pluginId: 'on', enabled: true }];
         const healthy = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
         expect(healthy.findByTestId('settings.plugins.marketplace.installed.statusFilter')).toBeNull();

@@ -15,7 +15,7 @@ export const fileContentSearchTranslationsEnglish = { "en": {
         updateRequired: "Update Happier on this machine to search text in files.",
         invalidPattern: "The regular expression is invalid. Edit the pattern and try again.",
         unavailable: "Text search is unavailable. Check the machine connection.",
-        placeholder: "Search files, messages, commits, sessions, settings and actions",
+        placeholder: "Search files, sessions, settings and more",
         matchCase: "Match case",
         regex: "Regular expression",
         findMode: "Find in",

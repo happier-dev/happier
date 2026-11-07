@@ -56,8 +56,9 @@ describe('UniversalSearchModal', () => {
     });
 
     // Lab G1 / G1s: Everything is a compact palette; Text in files (and the conversation results) widen it
-    // for the detail column beside the list.
-    it('widens the card while the controller shows a detail mode and narrows it again', async () => {
+    // for the detail column beside the list. Once wide, the open card never narrows under the pointer
+    // (removing the scope chip used to shrink it from 960 to 640).
+    it('widens the card for a detail mode and keeps that width while it stays open', async () => {
         const { UniversalSearchModal } = await import('./UniversalSearchModal');
         const screen = await renderScreen(<UniversalSearchModal commands={[]} onClose={vi.fn()} setChrome={setChrome} />);
         const setLayout = screen.findByType(UniversalSearchController).props.onSurfaceLayoutChange as ((layout: 'compact' | 'detail') => void) | undefined;
@@ -65,6 +66,6 @@ describe('UniversalSearchModal', () => {
         await act(async () => { setLayout!('detail'); });
         expect((capturedChrome.value?.dimensions as { width: number }).width).toBe(960);
         await act(async () => { setLayout!('compact'); });
-        expect((capturedChrome.value?.dimensions as { width: number }).width).toBe(640);
+        expect((capturedChrome.value?.dimensions as { width: number }).width).toBe(960);
     });
 });

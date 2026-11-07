@@ -208,6 +208,22 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(query).toBe('');
     });
 
+    it.each([
+        ['macos', { metaKey: true }],
+        ['windows', { ctrlKey: true }],
+        ['linux', { ctrlKey: true }],
+    ] as const)('opens the one Search palette from Cmd/Ctrl+K in a browser on %s, beside Alt+K', (platform, modifier) => {
+        const open = vi.fn();
+        const dispatcher = createKeyboardShortcutDispatcher({
+            enabled: true, platform, surface: 'web', webHost: 'browser', singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [], overrides: {}, handlers: { 'commandPalette.open': open },
+            getContext: () => context,
+        });
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', ...modifier }))).toBe(true);
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(true);
+        expect(open).toHaveBeenCalledTimes(2);
+    });
+
     it('does not dispatch registry commands when the kill switch is disabled', () => {
         const open = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
@@ -242,9 +258,9 @@ describe('createKeyboardShortcutDispatcher', () => {
             getContext: () => context,
         });
 
-        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(false);
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(true);
         expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(true);
-        expect(open).toHaveBeenCalledTimes(1);
+        expect(open).toHaveBeenCalledTimes(2);
         expect(dispatcher(keyEvent({ key: 'n', code: 'KeyN', metaKey: true, shiftKey: true }))).toBe(false);
         expect(newSession).not.toHaveBeenCalled();
     });
@@ -282,24 +298,6 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(dispatcher(keyEvent({ key: 'n', code: 'KeyN', metaKey: true, shiftKey: true }))).toBe(false);
         expect(dispatcher(keyEvent({ key: 'n', code: 'KeyN', altKey: true }))).toBe(true);
         expect(newSession).toHaveBeenCalledTimes(1);
-    });
-
-    it('uses the web-safe default for command palette instead of the browser address-bar shortcut', () => {
-        const open = vi.fn();
-        const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
-            platform: 'macos',
-            surface: 'web',
-            singleKeyShortcutsEnabled: true,
-            disabledCommandIds: [],
-            overrides: {},
-            handlers: { 'commandPalette.open': open },
-            getContext: () => context,
-        });
-
-        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(false);
-        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(true);
-        expect(open).toHaveBeenCalledTimes(1);
     });
 
     it('uses web-safe MRU session defaults instead of browser tab cycling shortcuts', () => {
@@ -421,7 +419,8 @@ describe('createKeyboardShortcutDispatcher', () => {
             },
         });
 
-        expect(labels['commandPalette.open']).toBe('Option+K');
+        // Search shows its Cmd+K default first; Alt+K remains a web alternative.
+        expect(labels['commandPalette.open']).toBe('Cmd+K');
         expect(labels['session.new']).toBe('Option+N');
         expect(labels['session.mru.next']).toBe('Option+PageDown');
         expect(labels['session.mru.previous']).toBe('Option+PageUp');
@@ -440,7 +439,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         });
 
         expect(labels['composer.abortConfirm']).toBe('Ctrl+.');
-        expect(labels['commandPalette.open']).toBe('Alt+K');
+        expect(labels['commandPalette.open']).toBe('Ctrl+K');
         expect(labels['session.new']).toBe('Alt+N');
     });
 

@@ -132,7 +132,7 @@ describe('keyboardShortcutsSettingsModel', () => {
             surface: 'web',
         });
 
-        expect(model.commandRows.find((row) => row.commandId === 'commandPalette.open')?.defaultLabel).toBe('Option+K');
+        expect(model.commandRows.find((row) => row.commandId === 'commandPalette.open')?.defaultLabel).toBe('Cmd+K');
         expect(model.commandRows.find((row) => row.commandId === 'session.new')?.defaultLabel).toBe('Option+N');
         expect(model.commandRows.find((row) => row.commandId === 'session.mru.next')?.defaultLabel).toBe('Option+PageDown');
         expect(model.commandRows.find((row) => row.commandId === 'mode.cycle')?.defaultLabel).toBe('Option+Shift+M');
@@ -224,7 +224,8 @@ describe('keyboardShortcutsSettingsModel', () => {
             settings: {
                 ...baseSettings,
                 keyboardShortcutOverridesV1: {
-                    'commandPalette.open': [{ binding: 'Command+K' }],
+                    // Browsers let a page take Cmd+K (Search's default); Cmd+S stays the browser's.
+                    'commandPalette.open': [{ binding: 'Command+S' }],
                     'session.new': [{ binding: 'Command+Shift+N' }],
                 },
             },

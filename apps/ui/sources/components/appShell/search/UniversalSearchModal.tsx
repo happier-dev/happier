@@ -24,8 +24,12 @@ export type UniversalSearchModalProps = CustomModalInjectedProps & Readonly<{
 
 export function UniversalSearchModal(props: UniversalSearchModalProps): React.ReactElement {
     const title = t('tools.names.search');
-    // The controller says which frame it needs: compact for everything, wider with a detail column.
+    // The controller says which frame it needs: compact for everything, wider with a detail column. Once wide,
+    // the open card stays wide: leaving a detail scope (removing its chip) never narrows it under the pointer.
     const [layout, setLayout] = React.useState<CommandSurfaceLayout>('compact');
+    const widenLayout = React.useCallback((next: CommandSurfaceLayout) => {
+        setLayout(previous => (previous === 'detail' ? previous : next));
+    }, []);
     // Spotlight: the command-surface card, with the search field as its top. Esc and the backdrop close it.
     const chrome = React.useMemo(() => buildCommandSurfaceCardChrome({
         title,
@@ -46,7 +50,7 @@ export function UniversalSearchModal(props: UniversalSearchModalProps): React.Re
             initialScope={props.initialScope}
             terminalJump={props.terminalJump}
             presentation="modal"
-            onSurfaceLayoutChange={setLayout}
+            onSurfaceLayoutChange={widenLayout}
             onRequestClose={props.onClose}
         />
     );

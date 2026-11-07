@@ -160,7 +160,7 @@ const press = async (screen: Awaited<ReturnType<typeof renderScreen>>, testID: s
 };
 
 let fixtureSequence = 0;
-async function renderDiscoverWithOneJob(options?: { view: string; focused: boolean; visible: boolean; distinctJobChoices?: boolean }, withFailures = false, allHealthy = false) {
+async function renderDiscoverWithOneJob(options?: { view: string; focused: boolean; visible: boolean; distinctJobChoices?: boolean; curatedUnavailable?: boolean }, withFailures = false, allHealthy = false) {
   // A skill choice from another admitted Registry: the curated catalog only points at it.
   const reference = {
     type: 'registryItem' as const,
@@ -220,7 +220,7 @@ async function renderDiscoverWithOneJob(options?: { view: string; focused: boole
             ? new Response(null, { status: 503 }) : Response.json(snapshot());
           return new Response(null, { status: 503 });
         }
-        if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return Response.json(catalog);
+        if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return options?.curatedUnavailable ? new Response(null, { status: 503 }) : Response.json(catalog);
         throw new Error(`Discover must read only the admitted curated catalog: ${url}`);
       },
     },
@@ -269,6 +269,14 @@ it('keeps Software in the phone Browse by kind entry alongside the other support
   // One row under the search opens every kind in place, so a phone never scrolls past the page to reach them.
   await act(async () => { screen.findAllHostsByTestId('store.discover.pinned.kinds.row')[0]!.props.onPress?.(); });
   await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('capabilities.store.kinds.software.title'));
+});
+
+it('offers the kinds once when the curated catalog cannot be reached: the Browse entry, never a second copy in the page', async () => {
+  const { screen, catalogReads } = await renderDiscoverWithOneJob({ view: 'discover', focused: true, visible: true, curatedUnavailable: true });
+  await waitForHomeGovernance(() => expect(catalogReads.length).toBeGreaterThan(0));
+  await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.discover.unavailable').length).toBeGreaterThan(0));
+  expect(screen.findAllHostsByTestId('store.discover.pinned.kinds.row').length).toBeGreaterThan(0);
+  expect(screen.findAllByTestId('store.discover.kinds')).toHaveLength(0);
 });
 
 it('keeps the retained Discover choices mounted while presentation withdraws native demand', async () => {

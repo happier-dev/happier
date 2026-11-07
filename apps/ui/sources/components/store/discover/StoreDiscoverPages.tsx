@@ -487,7 +487,6 @@ const DiscoverBody = React.memo(function DiscoverBody(
       Parameters<typeof StoreDiscover>[0]['children']
     >[0]['suggestions'];
     nav: ReturnType<typeof useStoreNavigation>;
-    /** No Store column (a phone): the kinds stay on the page even when shelves are held. */
   }>,
 ) {
   const { curation, nav } = props;
@@ -578,7 +577,7 @@ const DiscoverBody = React.memo(function DiscoverBody(
         onOpen={nav.openItem}
         onAdd={nav.addItem}
       />
-      {held ? null : <BrowseByKind onOpen={nav.openKind} />}
+      {/* No kinds here: the Store column (or a phone's pinned Browse by kind) already lists every kind. */}
     </>
   );
 });

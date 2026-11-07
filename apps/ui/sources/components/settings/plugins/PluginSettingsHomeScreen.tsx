@@ -287,9 +287,10 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                     testIDPrefix="settings.plugins.administration.target"
                     groupTitle={t('settingsPlugins.administrationMachineTitle')}
                 />
-                <RoundButton testID="settings.plugins.add" title={t('common.add')}
+                {/* Adding installs on the chosen Machine: until one is chosen the chip is the page's one ask. */}
+                {noTarget ? null : <RoundButton testID="settings.plugins.add" title={t('common.add')}
                     leading={<AddGlyph />}
-                    onPress={() => openPluginAddModal({ host })} />
+                    onPress={() => openPluginAddModal({ host })} />}
                 </>
             )}
         />
@@ -325,9 +326,10 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             views={settingsHost || viewChoiceInColumn ? null : views}
             activeView={activeView}
             onSelectView={state.setActiveView}
-            presentation={presentation}
+            presentation={activeView === 'installed' && noTarget ? null : presentation}
             onSelectPresentation={setPresentation}
-            installed={activeView === 'installed' ? {
+            // With no Machine chosen there is no list to search, filter or lay out: the section says to choose one.
+            installed={activeView === 'installed' && !noTarget ? {
                 // Beside the rail the Plugins column holds the search over this query.
                 query: installedQuery,
                 onChangeQuery: setPluginsInstalledQuery,
@@ -564,7 +566,8 @@ function PluginsToolbar(props: Readonly<{
     views: ReadonlyArray<Readonly<{ id: PluginSettingsViewId; label: string }>> | null;
     activeView: PluginSettingsViewId;
     onSelectView: (view: PluginSettingsViewId) => void;
-    presentation: PluginsCollectionPresentation;
+    /** Grid | List, or `null` while there is nothing to lay out (no Machine chosen). */
+    presentation: PluginsCollectionPresentation | null;
     onSelectPresentation: (presentation: PluginsCollectionPresentation) => void;
     installed: InstalledToolbarState | null;
     discover: DiscoverToolbarState | null;
@@ -656,14 +659,14 @@ function PluginsToolbar(props: Readonly<{
                             onChange: (id) => props.discover?.onSelectSource(id === DISCOVER_ALL_SOURCES_ID ? null : id),
                         }} />
                     ) : null}
-                <SettingAnchor setting={PLUGINS_SETTINGS.settings.collectionView}><SegmentedTabBar
+                {props.presentation ? <SettingAnchor setting={PLUGINS_SETTINGS.settings.collectionView}><SegmentedTabBar
                     tabs={presentationTabs}
                     activeTabId={props.presentation}
                     onSelectTab={props.onSelectPresentation}
                     testIDPrefix="settings.plugins.collectionView"
                     accessibilityLabel={t('settingsPlugins.surfaces.viewLabel')}
                     segmentSizing="content"
-                /></SettingAnchor>
+                /></SettingAnchor> : null}
                 {props.store ? (
                     <RoundButton
                         testID="settings.plugins.browseInStore"
