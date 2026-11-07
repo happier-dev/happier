@@ -86,8 +86,7 @@ type UsageWidgetBatch = Readonly<{
   clauses: UsageWidgetQueryOverrides;
   register(id: string, registration: BoundRegistration): () => void;
   resource: UsageWidgetResource;
-  inventorySlice: UsageQueryResultSlice | undefined;
-  costBasisOptions: readonly UsageQuery['costBasis'][];
+  inventoryQuery: UsageQuery | undefined;
 }>;
 
 const UsageWidgetBatchContext = React.createContext<UsageWidgetBatch | null>(
@@ -222,12 +221,9 @@ export function UsageWidgetBatchProvider(
     callerQuery: props.callerQuery,
     plan,
   });
-  const inventoryRows = React.useMemo(() => inventoryQuery ? [{ query: inventoryQuery, key: getUsageQueryKey(inventoryQuery) }] : [], [inventoryQuery]);
-  const inventorySlice = useUsageWidgetQueryModel(resource, 'inventory', inventoryRows, hasAccounting).slice ?? undefined;
-  const costBasisOptions = useUsageWidgetCostBasisOptions(resource);
   const value = React.useMemo(
-    () => ({ clauses: props.clauses, register, resource, inventorySlice, costBasisOptions }),
-    [props.clauses, inventorySlice, costBasisOptions, register, resource],
+    () => ({ clauses: props.clauses, register, resource, inventoryQuery }),
+    [props.clauses, inventoryQuery, register, resource],
   );
   return (
     <UsageWidgetBatchContext.Provider value={value}>
@@ -433,7 +429,10 @@ export function useUsageWidgetBatchHistory(): UsageHistoryModel {
 
 /** Unnarrowed choices share the page's canonical request, lifetime, decode and Resource owner. */
 export function useUsageWidgetBatchInventorySlice(): UsageQueryResultSlice | undefined {
-    return React.useContext(UsageWidgetBatchContext)?.inventorySlice;
+    const batch = React.useContext(UsageWidgetBatchContext);
+    const query = batch?.inventoryQuery;
+    const rows = React.useMemo(() => query ? [{ query, key: getUsageQueryKey(query) }] : [], [query]);
+    return useUsageWidgetQueryModel(batch?.resource ?? null, 'inventory', rows, hasAccounting).slice ?? undefined;
 }
 
 const NO_COST_BASES: readonly UsageQuery['costBasis'][] = Object.freeze([]);
@@ -441,12 +440,13 @@ const hasAccounting = (slice: UsageQueryResultSlice) => slice.accounting !== und
 
 /** Choices follow the displayed accounting query; period acquisition does not withdraw them. */
 export function useUsageWidgetBatchCostBasisOptions(): readonly UsageQuery['costBasis'][] {
-    return React.useContext(UsageWidgetBatchContext)?.costBasisOptions ?? NO_COST_BASES;
+    return useUsageWidgetCostBasisOptions(React.useContext(UsageWidgetBatchContext)?.resource ?? null);
 }
 
-function useUsageWidgetCostBasisOptions(resource: UsageWidgetResource): readonly UsageQuery['costBasis'][] {
-    const plan = resource.plan;
+function useUsageWidgetCostBasisOptions(resource: UsageWidgetResource | null): readonly UsageQuery['costBasis'][] {
+    const plan = resource?.plan;
     const rows = React.useMemo(() => {
+        if (!plan) return [];
         const displayed = new Map([...plan.widgets.values()].flatMap(widget => widget.key && widget.query
             ? [[widget.key, { key: widget.key, query: widget.query }] as const] : []));
         if (displayed.size === 0) return [];
