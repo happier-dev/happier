@@ -126,6 +126,8 @@ describe('author package boundary', () => {
         && importsOnlyNeutralPresentationContract(source, 'dropPreview');
       const isCanonicalMarkdownReviewContract = /presentation[\\/]content[\\/]Markdown\.tsx$/u.test(filePath)
         && importsOnlyNeutralPresentationContract(source, 'markdownReview');
+      const isCanonicalChangedFilesReviewContract = /presentation[\\/]content[\\/]ChangedFilesReview\.ts$/u.test(filePath)
+        && /^import type \{ ScmFileViewedSource \} from '@happier-dev\/plugin-sdk\/scm';$/mu.test(source);
       const isCanonicalConditionContract = /presentation[\\/]collection[\\/]conditionModel\.ts$/u.test(filePath)
         && importsOnlyNeutralPresentationContract(source, 'conditionModel')
         || /presentation[\\/]collection[\\/]CollectionConditionEditor\.tsx$/u.test(filePath)
@@ -141,6 +143,8 @@ describe('author package boundary', () => {
         .filter((specifier) => !(isCanonicalBoardPreviewContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalDropPreviewContract && specifier === '@happier-dev/plugin-sdk'))
         .filter((specifier) => !(isCanonicalMarkdownReviewContract && specifier === '@happier-dev/plugin-sdk/reviews'))
+        // The review's Viewed slot names the SDK's Viewed source type only; the host owns the source.
+        .filter((specifier) => !(isCanonicalChangedFilesReviewContract && specifier === '@happier-dev/plugin-sdk/scm'))
         .filter((specifier) => !(isCanonicalConditionContract && (specifier === '@happier-dev/plugin-sdk/ui' || specifier === '@happier-dev/plugin-sdk')))
         .map((specifier) => `${relative(sourceRoot, filePath)} → ${specifier}`);
     });

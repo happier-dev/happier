@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -227,8 +228,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       props.sessionId,
       props.serverId,
     );
-    const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
-    const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
+    const { maxFiles, maxChangedLines } = useScmReviewLimits();
     const scmCommitStrategySetting = useSetting('scmCommitStrategy');
     const scmCommitStrategy: ScmCommitStrategy = React.useMemo(() => {
       if (typeof scmCommitStrategySetting !== 'string') return 'atomic';
@@ -466,16 +466,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       providerDiffByPath,
     ]);
 
-    const maxFiles =
-      typeof scmReviewMaxFiles === 'number' &&
-      Number.isFinite(scmReviewMaxFiles)
-        ? scmReviewMaxFiles
-        : 25;
-    const maxChangedLines =
-      typeof scmReviewMaxChangedLines === 'number' &&
-      Number.isFinite(scmReviewMaxChangedLines)
-        ? scmReviewMaxChangedLines
-        : 2000;
 
     const openFile = React.useCallback(
       (fullPath: string, intent: 'default' | 'pinned' = 'default') => {

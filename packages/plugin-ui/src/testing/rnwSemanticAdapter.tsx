@@ -1,4 +1,4 @@
-import { act, cloneElement, Fragment, StrictMode, isValidElement, useLayoutEffect, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
+import { act, cloneElement, Fragment, StrictMode, isValidElement, useLayoutEffect, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
 import { Pressable, Text as NativeText, View } from 'react-native';
 
 import {
@@ -17,6 +17,7 @@ import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import type { HappierFocusable } from '../presentation/portableTypes.js';
 import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
+import type { HappierChangedFilesReviewRequest } from '../presentation/content/ChangedFilesReview.js';
 
 import { Text } from '../components/Text.js';
 import {
@@ -52,6 +53,13 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
    * `fallback`, as in any host that cannot present a Session.
    */
   sessions?: boolean;
+  /**
+   * Present `ChangedFilesReview` the way a same-realm host does, as a semantic stand-in: a `group` named by its
+   * label listing every file, each an "Open <path>" button that reads that one file through `loadDiff` and shows
+   * its diff (or its reason). The host's real review (index, tree/list, prefetch window) is app composition and
+   * never runs here. Omitted, the component renders its author fallback (the paths only).
+   */
+  changedFilesReview?: boolean;
   /** Optional host-owned scope shared by the artifact mounts under test. */
   ephemeralSharedScope?: PluginUiEphemeralSharedScope;
   /** Existing host Find registration boundary; the fixture supplies no parallel registry. */
@@ -101,6 +109,38 @@ function renderSemanticSessionPart(input: PluginUiSessionPartPresentation): Reac
   );
 }
 
+function SemanticChangedFile(props: Readonly<{ request: HappierChangedFilesReviewRequest; path: string }>) {
+  const [shown, setShown] = useState<string | null>(null);
+  const focused = props.request.focusPath === props.path;
+  // The host's review opens a focused file; the stand-in reads it the same way a press does.
+  useLayoutEffect(() => { if (focused) open(); }, [focused]);
+  function open() {
+    void props.request.loadDiff(props.path, new AbortController().signal).then((diff) => {
+      setShown(diff.state === 'unavailable' ? diff.reason
+        : diff.state === 'truncated' ? `${diff.unifiedDiff}\n${diff.reason}` : diff.unifiedDiff);
+    });
+  }
+  return (
+    <View>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Open ${props.path}`} onPress={open}>
+        <NativeText>{props.path}</NativeText>
+      </Pressable>
+      {shown === null ? null : <NativeText testID={`changed-file-diff:${props.path}`}>{shown}</NativeText>}
+    </View>
+  );
+}
+
+function SemanticChangedFilesReview(props: Readonly<{ request: HappierChangedFilesReviewRequest }>) {
+  const { request } = props;
+  return (
+    <View role="group" aria-label={request.label}>
+      {request.leadingContent}
+      {request.files.map((file) => <SemanticChangedFile key={file.path} request={request} path={file.path} />)}
+      {request.trailingContent}
+    </View>
+  );
+}
+
 function createSemanticPresentationHost(input: Readonly<{
   options: PluginUiRnwSemanticSurfaceAdapterOptions;
   readCurrentContext(): RenderContext;
@@ -108,6 +148,7 @@ function createSemanticPresentationHost(input: Readonly<{
   paneHeader?: PluginUiPaneHeaderHost;
 }>): PluginUiPresentationHost {
   return Object.freeze({
+    ...(input.options.changedFilesReview === true ? { renderChangedFilesReview: (request: HappierChangedFilesReviewRequest) => <SemanticChangedFilesReview request={request} /> } : {}),
     ...(input.options.find === undefined ? {} : { find: input.options.find }),
     ...(input.detailsPane === undefined ? {} : { detailsPane: input.detailsPane }),
     ...(input.paneHeader === undefined ? {} : { paneHeader: input.paneHeader }),
@@ -508,6 +549,7 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
         : createSemanticDetailsPane(options.detailsPane);
       const paneHeader = options.paneHeader === true ? createSemanticPaneHeader() : undefined;
       const presentationHost = options.targetedSurfaces === undefined
+        && options.changedFilesReview !== true
         && options.find === undefined
         && options.physicalFocus === undefined
         && options.overlays !== true

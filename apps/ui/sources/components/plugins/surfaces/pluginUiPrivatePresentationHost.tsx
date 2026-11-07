@@ -1,5 +1,5 @@
 import {
-    PluginUiMarkdown, PluginUiPrivateDiffViewer, CodeBlockView, ProseDiffViewer, QRCode,
+    PluginUiMarkdown, PluginUiPrivateDiffViewer, PluginUiPrivateChangedFilesReview, CodeBlockView, ProseDiffViewer, QRCode,
     PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, PluginVoiceCompactTranscript,
     PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt, SessionBotFace,
     ExecutableParticipantPickerPresentation,
@@ -41,6 +41,8 @@ import {
     normalizeHappierCodeLanguage,
     resolveHappierDiffViewerRequest,
     type HappierDiffViewerRequest,
+    resolveHappierChangedFilesReviewRequest,
+    type HappierChangedFilesReviewRequest,
     type HappierImageSize,
     type HappierMarkdownRenderInput,
     type HappierMaterialRole,
@@ -423,6 +425,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
             ? <ProseDiffViewer mode="text" testID={request.testID} oldText={request.before} newText={request.after} contextLines={0}
                 prose={{ oldLabel: request.beforeLabel, newLabel: request.afterLabel }} />
             : <PluginUiPrivateDiffViewer {...request} />;
+    },
+    renderChangedFilesReview(input: HappierChangedFilesReviewRequest) {
+        return <PluginUiPrivateChangedFilesReview {...resolveHappierChangedFilesReviewRequest(input)} />;
     },
     renderPopover(input: Readonly<{
         open: boolean;

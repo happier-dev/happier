@@ -8,6 +8,7 @@ import type { HappierUiPalette, HappierUiTypography } from '../environment/types
 import type { HappierFocusable, HappierStyleProp } from '../presentation/portableTypes.js';
 import type { HappierMaterialRole } from '../presentation/layout/material.js';
 import type { HappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
+import type { HappierChangedFilesReviewRequest } from '../presentation/content/ChangedFilesReview.js';
 import type { HappierMarkdownRenderInput } from '../presentation/content/Markdown.js';
 import type { HappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import type { HappierCollectionMotionDriver } from '../presentation/collection/collectionMotion.js';
@@ -439,6 +440,11 @@ export type PluginUiPresentationHost = Readonly<{
    * Parsing, syntax highlighting, settings, and virtualization remain host-owned.
    */
   renderDiffViewer?(input: HappierDiffViewerRequest): ReactNode;
+  /**
+   * Render a source's changed files through the product's one changed-files review (Session review tab):
+   * file index, tree/list modes, continuous diffs, prefetch and find. The host decides which diffs to read.
+   */
+  renderChangedFilesReview?(input: HappierChangedFilesReviewRequest): ReactNode;
   renderPopover(input: Readonly<{
     open: boolean;
     anchorRef: RefObject<unknown>;

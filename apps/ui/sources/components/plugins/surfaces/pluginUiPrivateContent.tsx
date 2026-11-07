@@ -12,6 +12,7 @@ function lazyPresenter<Props extends object>(load: () => Promise<{ default: Reac
 
 export const PluginUiMarkdown = lazyPresenter(async () => ({ default: (await import('./PluginUiMarkdown')).PluginUiMarkdown }));
 export const PluginUiPrivateDiffViewer = lazyPresenter(async () => ({ default: (await import('./PluginUiPrivateDiffViewer')).PluginUiPrivateDiffViewer }));
+export const PluginUiPrivateChangedFilesReview = lazyPresenter(async () => ({ default: (await import('./PluginUiPrivateChangedFilesReview')).PluginUiPrivateChangedFilesReview }));
 export const ProseDiffViewer = lazyPresenter(async () => ({ default: (await import('@/components/ui/code/diff/prose/ProseDiffViewer')).ProseDiffViewer }));
 
 export { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';

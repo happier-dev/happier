@@ -558,34 +558,50 @@ export type GithubChangedFileDiffV1 = Readonly<{
   unifiedDiff: string | null;
 }>;
 
-export type GithubChangedFileDiffControllerV1 = Readonly<{
-  state: GithubReadStateV1<GithubChangedFileDiffV1>;
-  failure: TriageSourceFailureV1 | null;
-  pending: boolean;
-  refresh: () => void;
-}>;
-
-/** Mount only inside an expanded file row. Closing unmounts this read owner. */
-export function useGithubChangedFileDiff(
-  input: TriageDetailSurfaceInputV1,
+/**
+ * One changed file's diff through the same changed-files Action, read when the shared review asks for
+ * it (`ChangedFilesReview`'s prefetch window) and cancelled through its signal.
+ */
+export type GithubChangedFileDiffLoaderV1 = (
   row: GithubChangedFileViewV1,
-): GithubChangedFileDiffControllerV1 {
+  signal: AbortSignal,
+) => ReturnType<GithubSettledReader<GithubChangedFileDiffV1>>;
+
+export function useGithubChangedFileDiffLoader(
+  input: TriageDetailSurfaceInputV1,
+): GithubChangedFileDiffLoaderV1 {
   const action = useMemo(() => ({
     pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles,
   }), []);
   const { execute } = useExecutePluginAction(action);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGithubRoutingToken(input);
-  const { active, activeSignal } = useTabPanelActivity();
-  const { path, blobSha, diffContinuation } = row;
-  const read: GithubSettledReader<GithubChangedFileDiffV1> = useCallback(async signal => {
+  // The Action controller runs one read at a time: each file's read waits for the one before it to
+  // settle, and a read the review cancelled while it waited is never dispatched.
+  const previousRead = useRef<Promise<unknown>>(Promise.resolve());
+  return useCallback(async (row, signal) => {
+    const { path, diffContinuation } = row;
+    if (routingToken === null) return { kind: 'failed', failure: ROUTE_UNAVAILABLE };
+    const prior = previousRead.current;
+    let settle!: () => void;
+    previousRead.current = new Promise<void>((resolve) => { settle = resolve; });
+    try {
+      await prior;
+      if (signal.aborted) return { kind: 'failed', failure: dispatchFailure({ status: 'idle' }, 'github-file-diff-read-failed') };
+      return await readOne(path, diffContinuation, signal);
+    } finally {
+      settle();
+    }
+  }, [execute, instance, localRef, routingToken]);
+
+  async function readOne(path: string, diffContinuation: string | null, signal: AbortSignal): ReturnType<GithubChangedFileDiffLoaderV1> {
     if (routingToken === null) return { kind: 'failed', failure: ROUTE_UNAVAILABLE };
     const execution = await execute({
       v: 1, instance, localRef, routingToken, limit: GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
       filePath: path, ...(diffContinuation === null ? {} : { continuation: diffContinuation }),
     }, { signal }) as ExecuteResult;
     if (execution.status !== 'success') return { kind: 'failed', failure: dispatchFailure(
-      execution.status, execution.code ?? 'github-file-diff-read-failed',
+      execution, 'github-file-diff-read-failed',
     ) };
     const parsed = GithubChangedFilesResultV1Schema.safeParse(execution.result);
     if (!parsed.success) return { kind: 'failed', failure: UNREADABLE_RESULT };
@@ -598,8 +614,7 @@ export function useGithubChangedFileDiff(
     return { kind: 'ready', value: Object.freeze({ evidence,
       unifiedDiff: evidence.state === 'unavailable' ? null : `--- ${before}\n+++ ${after}\n${evidence.patch}`,
     }) };
-  }, [blobSha, diffContinuation, execute, instance, localRef, path, routingToken]);
-  return useGithubSettledRead(read, active, activeSignal);
+  }
 }
 
 /* ------------------------------------------------------------------ feedback */

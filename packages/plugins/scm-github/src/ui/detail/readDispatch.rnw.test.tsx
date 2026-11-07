@@ -45,7 +45,7 @@ import {
   projectGithubChangedFileRows,
 } from '../../triage/detail/projection.js';
 import {
-  useGithubChangedFileDiff,
+  useGithubChangedFileDiffLoader,
   useGithubOverview,
   useGithubTimelineReader,
   type GithubChangedFileViewV1,
@@ -114,17 +114,26 @@ function launchInput() {
   });
 }
 
+/** Drives the loader the way the shared review does: one read per file in view, cancelled when it leaves. */
 function ExpandedDiffProbe({
   row,
 }: Readonly<{ row: GithubChangedFileViewV1 }>) {
-  const diff = useGithubChangedFileDiff(launchInput(), row);
-  return (
-    <Text testID="expanded-patch">
-      {diff.state.kind === 'ready'
-        ? (diff.state.value.unifiedDiff ?? diff.state.value.evidence.state)
-        : diff.state.kind}
-    </Text>
-  );
+  const load = useGithubChangedFileDiffLoader(launchInput());
+  const loadRef = React.useRef(load);
+  loadRef.current = load;
+  const [text, setText] = React.useState('loading');
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setText('loading');
+    void loadRef.current(row, controller.signal).then((read) => {
+      if (controller.signal.aborted) return;
+      setText(read.kind === 'ready'
+        ? (read.value.unifiedDiff ?? read.value.evidence.state)
+        : 'unavailable');
+    });
+    return () => controller.abort();
+  }, [row]);
+  return <Text testID="expanded-patch">{text}</Text>;
 }
 
 function FileDisclosureProbe() {
@@ -160,7 +169,7 @@ function FileDisclosureProbe() {
 }
 
 async function mountRegisteredFiles(
-  options: Readonly<{ misbind?: boolean; probe?: boolean }> = {},
+  options: Readonly<{ misbind?: boolean; probe?: boolean; review?: boolean }> = {},
 ) {
   const scope = createTriageEphemeralSharedScopeFixture();
   let release!: (response: StubHttpResponse) => void;
@@ -201,7 +210,7 @@ async function mountRegisteredFiles(
       }),
       launchInput: launchInput(),
       surfaceContext: createSurfaceContextFixture(),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(options.review ? { changedFilesReview: true } : {}),
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = typeof action === 'string' ? action : action.localId;
@@ -807,43 +816,37 @@ describe('registered GitHub detail read dispatch', () => {
     expect(producerResults).toHaveLength(1);
   });
 
-  it('opens a changed file in place to its own diff, read only when the row is opened', async () => {
-    const { detail, transport, release } = await mountRegisteredFiles();
+  it('hands every changed file to the shared review and reads one diff only when the review asks for it', async () => {
+    const { detail, transport, release } = await mountRegisteredFiles({ review: true });
     await act(async () => {
       release({
         status: 200,
-        body: [
-          {
-            ...githubChangedFile({ filename: 'src/open.ts' }),
-            additions: 1,
-            deletions: 1,
-            changes: 2,
-            patch: '@@ -1 +1 @@\n-old\n+fresh-line',
-          },
-        ],
+        body: ['open', 'second', 'third'].map((name) => ({
+          ...githubChangedFile({ filename: `src/${name}.ts` }),
+          additions: 1,
+          deletions: 1,
+          changes: 2,
+          patch: `@@ -1 +1 @@\n-old\n+${name}-line`,
+        })),
       });
     });
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('src/open.ts'),
+      expect(document.querySelector('[aria-label="Files this pull request changes"]')).not.toBeNull(),
     );
     const filesReads = () =>
       transport.requests.filter((request) => request.url.includes('/files?'))
         .length;
     const listed = filesReads();
-    expect(document.body.textContent).not.toContain('+fresh-line');
-    const row = (await detail.queryAllByRole('button')).find(
-      (target) => target.name?.includes('src/open.ts') === true,
-    );
-    if (row === undefined)
-      throw new Error('Expected the changed file row to open in place');
+    for (const name of ['open', 'second', 'third']) expect(document.body.textContent).toContain(`src/${name}.ts`);
+    expect(document.body.textContent).not.toContain('+open-line');
     await act(async () => {
-      await detail.press(row);
+      await detail.press(await detail.getByRole('button', { name: 'Open src/open.ts' }));
     });
     await vi.waitFor(async () => {
       await act(async () => {});
-      expect(document.body.textContent).toContain('+fresh-line');
+      expect(document.querySelector('[data-testid="changed-file-diff:src/open.ts"]')?.textContent).toContain('+open-line');
     });
-    expect(filesReads()).toBe(listed + 1);
+    expect(filesReads(), 'one file asked for is one read').toBe(listed + 1);
   });
 
   it('refuses a mis-bound registered producer rather than presenting its result as files', async () => {

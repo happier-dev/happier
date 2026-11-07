@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -34,7 +34,8 @@ async function mountFiles(source: 'github' | 'bitbucket') {
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
       surface: defineUiSurface((context) => <SourcePanelActionsFixture scope={scope}>
         {(source === 'github' ? renderGithub : renderBitbucket)({ ...context, launchInput: input as unknown as JsonValue })}
-      </SourcePanelActionsFixture>), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      </SourcePanelActionsFixture>), surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(source === 'github' ? { changedFilesReview: true } : {}),
       handlers: { executeAction: async ({ action, input: request, signal }) => {
         const localId = typeof action === 'string' ? action : action.localId;
         if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, request, page.context, signal);
@@ -64,18 +65,19 @@ async function mountFiles(source: 'github' | 'bitbucket') {
 }
 
 describe('public mounted source Files intents', () => {
-  it('expands GitHub Files through the agent Action and the same UI intent', async () => {
+  it('opens a GitHub file in the shared review through the agent Action and the same UI intent', async () => {
     const { page, invoke, reads, diffs } = await mountFiles('github');
     expect(reads()).toBe(1);
+    expect(diffs()).toBe(0);
     await act(async () => { expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'src/one.ts', expanded: true })).toEqual({ status: 'applied' }); });
+    await vi.waitFor(() => expect(document.body.textContent).toContain('+new'));
     expect(diffs()).toBe(1);
-    expect(document.body.textContent).toContain('+new');
-    await act(async () => { expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'src/one.ts', expanded: false })).toEqual({ status: 'applied' }); });
-    expect(document.body.textContent).not.toContain('-old');
+    // Folding belongs to the shared review: an agent's close is refused rather than claimed.
+    expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'src/one.ts', expanded: false })).toEqual({ status: 'unavailable' });
     expect(await invoke({ kind: 'setSourceItemExpanded', list: 'other', itemId: 'src/one.ts', expanded: true })).toEqual({ status: 'unavailable' });
     expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'not-loaded.ts', expanded: true })).toEqual({ status: 'unavailable' });
-    await act(async () => { await page.press(await page.getByRole('button', { name: 'src/one.ts' })); });
-    expect(diffs()).toBe(2);
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Open src/one.ts' })); });
+    await vi.waitFor(() => expect(diffs()).toBe(2));
     expect(document.body.textContent).toContain('+new');
   });
 
