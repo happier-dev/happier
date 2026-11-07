@@ -69,6 +69,12 @@ export type AppPaneDestinationDetails = Readonly<{
     pane: React.ReactNode;
     /** The pane asks to close (its close button, Escape, a tap on the overlay scrim). */
     onClose: () => void;
+    /**
+     * A companion beside the page's own content (the workflow editor's settings, agent or step
+     * options), not the detail of a list: the page never steps aside for it. When it cannot dock
+     * beside another open side pane, that pane folds to the rail while the companion shows.
+     */
+    companion?: true;
 }>;
 
 export type AppPaneScopeHostProps = Readonly<{
@@ -808,8 +814,9 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             rightOpen={presentedRightOpen}
             rightPlacement={rightOpen ? rightPlacement : 'side'}
             detailsOpen={effectiveDetailsOpen}
-            destinationOwnsDetails={destinationOwnsDetails}
-            detailsOpenedFrom={detailsOpenedFrom}
+            destinationOwnsDetails={destinationOwnsDetails && destinationDetails?.companion !== true}
+            // A companion docks beside the page it was opened from; a side pane that no longer fits folds to the rail.
+            detailsOpenedFrom={destinationDetails?.companion === true ? 'main' : detailsOpenedFrom}
             bottomOpen={bottomOpen}
             arrangement={arrangement}
             mainHidden={props.mainColumn !== undefined && mainHiddenPreference}

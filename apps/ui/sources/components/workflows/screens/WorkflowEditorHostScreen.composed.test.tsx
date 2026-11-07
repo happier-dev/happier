@@ -1038,10 +1038,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         nativeRouteBoundary.width = phone ? 390 : 1280;
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         if (phone) {
-            // The phone bar's ⋯ holds Workflow settings (07 §S8; FIN ruling 2026-11-05 on M4).
-            await screen.pressByTestIdAsync('workflow-editor-phone-more');
-            await settlePopoverLayout(screen);
-            await screen.pressByTestIdAsync('workflow-editor-phone-settings');
+            // The bar has no ⋯ of its own (FIN-DESIGN-REVIEW-1107 F14 on M4): the value rows open Workflow settings.
+            await screen.pressByTestIdAsync('workflow-editor-where-row');
         } else {
             await screen.pressByTestIdAsync('workflowEditor-companion:more');
             await settlePopoverLayout(screen);

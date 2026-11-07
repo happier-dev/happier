@@ -1330,8 +1330,8 @@ describe('workflow editor body', () => {
         paneState.detailsAvailable = false;
         const harness = await loadHarness();
         const screen = await renderBody(harness, { onRunNow: () => {} });
-        await screen.pressByTestIdAsync('workflow-editor-phone-more');
-        await screen.pressByTestIdAsync('workflow-editor-phone-settings');
+        // The bar has no ⋯ of its own (FIN-DESIGN-REVIEW-1107 F14 on M4): the value rows open Workflow settings.
+        await screen.pressByTestIdAsync('workflow-editor-where-row');
         expect(screen.visibleModals()).toEqual([expect.objectContaining({
             chrome: expect.objectContaining({ phonePresentation: 'sheet', material: 'solid' }),
         })]);

@@ -1421,7 +1421,7 @@ describe('editor workflow composer', () => {
             expect(prompts[0]?.props).toMatchObject({ value: 'Read the complete shared prompt', disabled: true });
             expect(prompts[0]?.props.onChangeText).toBeUndefined();
             expect(prompts[0]?.props.onStructuredInputMentionsChange).toBeUndefined();
-            if (width === 390) expect(screen.findByTestId('workflow-editor-phone-more')).not.toBeNull();
+            if (width === 390) expect(screen.findByTestId('workflow-editor-where-row')).not.toBeNull();
             else expect(await readCompanionIds(screen)).toContain('settings');
             expect(screen.root.findAllByType(SessionAuthoringControls).every((controls) => controls.props.disabled === true)).toBe(true);
             const menuActions = body.props.menuActions;

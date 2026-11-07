@@ -20,7 +20,6 @@ import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
 import type { PaneBuiltinAdapter } from '@/components/appShell/panes/types';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
@@ -30,6 +29,12 @@ import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/Keybo
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { useOptionalAppPaneScopeLayout } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
+import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
+import { useRunSessionModels } from '@/components/sessions/runs/useRunSessionModels';
+import { resolveSessionModelLabel } from '@/sync/domains/models/modelOptions';
+import { useSessionSelector } from '@/sync/store/hooks';
+import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
@@ -54,6 +59,7 @@ import { t, tLoose } from '@/text';
 
 import {
     firstBlockingWorkflowIssue,
+    readWorkflowBlockShape,
     resolveWorkflowExportBlockedReason,
     resolveEffectiveWorkflowStepExecution,
     resolveWorkflowIssueBlockId,
@@ -149,8 +155,6 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
  */
 export const WORKFLOW_EDITOR_PANE_SCOPE_ID = 'workflow-editor';
 const WORKFLOW_FLOW_PANE_DESTINATION_ID = 'workflow-flow';
-/** The bar ⋯ opens as the phone's bottom sheet, titled by its own name. */
-const PHONE_BAR_SHEET = Object.freeze({});
 
 /** The Agent & model chips the header shows; every field is in Workflow settings. */
 const HEADER_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
@@ -198,9 +202,24 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         marginLeft: 'auto',
     },
-    chipsLine: {
+    /**
+     * One row measured against the main column, never the window (F5, M6): beside a companion the
+     * chips keep their row and scroll sideways instead of breaking onto a second line, while undo and
+     * redo stay pinned at the row's end, never scrolled or clipped away.
+     */
+    chipsRow: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        paddingRight: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+    },
+    chipsScroll: {
+        flex: 1,
+        minWidth: 0,
+    },
+    chipsLine: {
+        flexGrow: 1,
+        flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
         // On the mark edge (owner 2026-11-06): the header's mark, these controls, the page tabs and the
@@ -530,17 +549,6 @@ const keepShownValue = (): boolean => true;
 /** Equal content keeps the previous value (and identity). */
 const sameRetainedValue = <T,>(left: T, right: T): boolean => retainDeep(left, right) === left;
 
-/** The facts the page's commands and value line read from the block list's shape. */
-function readBlockShape(draft: WorkflowEditorDraft): Readonly<{ blockIds: readonly string[]; showsWorkflowAgent: boolean }> {
-    // The header's Agent & model is the workflow default, so it shows while an Agent step uses that
-    // default (or one is set): steps that each choose their own agent leave nothing to choose here.
-    const blocks = walkWorkflowBlocks(draft.blocks);
-    const steps = blocks.filter((block) => block.kind === 'step');
-    const defaultSet = draft.defaults.agentTarget !== undefined || draft.defaults.engine !== undefined;
-    const inherits = steps.some((step) => step.execution?.agentTarget === undefined && step.execution?.engine === undefined);
-    return { blockIds: blocks.map((block) => block.id), showsWorkflowAgent: steps.length > 0 && (defaultSet || inherits) };
-}
-
 /** What a run asks the person for, in the settings' own field words; an input with a default asks nothing. */
 function readAsksSummary(draft: WorkflowEditorDraft): string {
     return draft.inputs.filter((input) => input.required && input.default === undefined && input.defaultFrom === undefined)
@@ -655,8 +663,11 @@ type ChipsLineProps = Readonly<{
 function WorkflowEditorChipsLine(props: ChipsLineProps) {
     const { testIDPrefix, openSettings } = props;
     const asksSummary = useWorkflowEditorSelector(props.draftStore, readAsksSummary);
+    const { theme } = useUnistyles();
     return (
-        <View testID={`${testIDPrefix}-chips`} style={styles.chipsLine}>
+        <View style={styles.chipsRow}>
+        <HorizontalScrollableRow contentTestID={`${testIDPrefix}-chips`} containerStyle={styles.chipsScroll} contentStyle={styles.chipsLine}
+            fadeColor={theme.colors.surface.base} indicatorColor={theme.colors.text.tertiary}>
             <View style={styles.whereChip}>
             <WorkflowProjectTargetControl
                 accountLifetime={props.accountLifetime}
@@ -713,7 +724,8 @@ function WorkflowEditorChipsLine(props: ChipsLineProps) {
                     }}
                 />
             )}
-            <WorkflowEditorHistoryIcons testIDPrefix={testIDPrefix} history={props.history} />
+        </HorizontalScrollableRow>
+        <WorkflowEditorHistoryIcons testIDPrefix={testIDPrefix} history={props.history} />
         </View>
     );
 }
@@ -783,6 +795,60 @@ function WorkflowEditorIdentity(props: Readonly<{
         </WorkspaceDestinationRow>
         </NavigationBackChromeProvider>
         </>
+    );
+}
+
+/**
+ * Reads the pane host's fit for Flow beside a details companion. When Flow was just opened beside one
+ * and the host folds it to the rail (three columns do not fit), the details companion closes so Flow
+ * shows: the newer companion replaces the older and the document never yields its column.
+ */
+function WorkflowEditorCompanionFit(props: Readonly<{
+    flowOpen: boolean;
+    foldedRef: React.MutableRefObject<boolean>;
+    requestedRef: React.MutableRefObject<boolean>;
+    onFlowFolded: () => void;
+}>) {
+    const right = useOptionalAppPaneScopeLayout()?.layout.right ?? null;
+    const folded = props.flowOpen && right === 'hidden';
+    const { foldedRef, requestedRef, onFlowFolded } = props;
+    React.useEffect(() => {
+        foldedRef.current = folded;
+        if (!requestedRef.current || !props.flowOpen) return;
+        requestedRef.current = false;
+        if (folded) onFlowFolded();
+    }, [folded, foldedRef, onFlowFolded, props.flowOpen, requestedRef]);
+    return null;
+}
+
+/**
+ * Edit with an agent's pane header (07 S22): what the pane is for, then which conversation does the
+ * editing and on which model ("{session} · {model}"), read through the Session's own name and model owners.
+ */
+function WorkflowAgentCompanionHeader(props: Readonly<{
+    sessionId: string | null;
+    serverId?: string | null;
+    actions?: React.ReactNode;
+    onClose: () => void;
+    testID: string;
+}>) {
+    const sessionId = props.sessionId ?? '';
+    const addresses = React.useMemo(() => [{ sessionId, serverId: props.serverId ?? null }], [sessionId, props.serverId]);
+    const [sessionName] = useSessionDisplayTitles(addresses);
+    const models = useRunSessionModels(props.sessionId, props.serverId);
+    const modelId = useSessionSelector(sessionId, props.serverId, (session) => session?.modelMode ?? null);
+    const modelLabel = models && modelId && modelId !== 'default'
+        ? resolveSessionModelLabel(models.agentId, models.metadata, modelId) ?? modelId : null;
+    const subtitle = props.sessionId === null ? null
+        : [sessionName, modelLabel].filter((part): part is string => typeof part === 'string' && part.length > 0).join(' · ');
+    return (
+        <PaneHeader
+            testID={props.testID}
+            title={t('workflows.authoring.edit')}
+            {...(subtitle ? { subtitle } : {})}
+            {...(props.actions === undefined ? {} : { actions: props.actions })}
+            onClose={props.onClose}
+        />
     );
 }
 
@@ -1005,7 +1071,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         pendingPromptFocusId.current = blockId;
     }, []);
 
-    const { blockIds, showsWorkflowAgent } = useWorkflowEditorSelector(draftStore, readBlockShape, sameRetainedValue);
+    const { blockIds, showsWorkflowAgent } = useWorkflowEditorSelector(draftStore, readWorkflowBlockShape, sameRetainedValue);
     /**
      * Custody of every step's live prompt document, held here rather than in the
      * recursive list that re-parents the rows. Moving a block between parents is
@@ -1179,8 +1245,19 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         if (id === 'steps' || id === 'flow') props.onChangeView(id);
     }, [props.onChangeView]);
     // Reads the step-options opener declared below at press time, never during render.
+    // Below three-column width the newer companion replaces the older (F3): a details companion folds an
+    // open Flow to the rail (the pane host's rule), and Flow chosen then closes the details companion.
+    // The pane host decides what fits; these refs carry its answer to the press that follows.
+    const flowFoldedRef = React.useRef(false);
+    const flowRequestedBesideRef = React.useRef(false);
     const selectCompanion = useEventCallback((id: string) => {
-        if (id === 'flow') { if (flowOpen) pane.closeRight(); else pane.openRight(); return; }
+        if (id === 'flow') {
+            if (flowOpen && shownCompanion !== null && flowFoldedRef.current) { setDetailsCompanion(null); return; }
+            if (flowOpen) { pane.closeRight(); return; }
+            flowRequestedBesideRef.current = shownCompanion !== null;
+            pane.openRight();
+            return;
+        }
         if (id !== 'settings' && id !== 'agent' && id !== 'step') return;
         // A phone keeps its existing presenters: the step's options sheet, the agent's own Session.
         if (compactLayout && id === 'step') {
@@ -1226,6 +1303,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     // page reveals them, so a pristine draft stays quiet.
     const inspectorBaseProps = React.useMemo(() => ({
         draftStore,
+        workflowDefinitionId: props.currentWorkflowRef ?? undefined,
         readValidation,
         revealValidation: !hasPageCommands || issuesRevealed,
         onChange,
@@ -1248,6 +1326,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         ...(props.triggersSection === undefined ? {} : { runsAutomatically: props.triggersSection }),
     }), [
         props.triggersSection,
+        props.currentWorkflowRef,
         documentEditable,
         draftStore,
         readValidation,
@@ -1527,6 +1606,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 // (DESIGN-9 N52). A page without a save line (a built-in's Duplicate) still says what to fix.
                 ...(!hasPageCommands || compactLayout ? {} : { status: saveStatusNode ?? validityNode }),
                 alwaysShowTitle: true,
+                // Beside a companion the header is measured against the main column it shares (F5):
+                // the name keeps one line, as the chips keep one row.
+                ...(headerCompact ? { titleLines: 1 as const } : {}),
                 meta: documentEditable ? props.headerMeta : undefined,
                 ...(compactLayout ? { details: saveStatusNode } : {}),
                 // A phone's page gives its width to the editable name (lab `editor-P1`: no mark); wide
@@ -1677,6 +1759,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             keyboardShouldPersistTaps="handled"
         >
             {identity}
+            <WorkflowEditorCompanionFit flowOpen={flowOpen} foldedRef={flowFoldedRef} requestedRef={flowRequestedBesideRef}
+                onFlowFolded={closeSettings} />
             {/* The header measures the pane for Back's gutter; only the document is column-capped. */}
             <View style={[styles.bodyColumn, maxWidthStyle]}>
             {props.reviewNotice}
@@ -1725,17 +1809,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             {duplicateButton}
             {saveButton}
             {runNowButton}
-            {/* The bar's own ⋯ holds the editor's actions (07 §S8: Add · Save · Run now + ⋯). The header ⋯ stays
-                the detail navigation's More, which holds navigation items only. */}
-            {!canOpenSettings ? null : <ItemRowActions
-                title={t('workflows.page.workflowActions')}
-                overflowOnly
-                overflowTriggerTestID={`${testIDPrefix}-phone-more`}
-                overflowTriggerAccessibilityLabel={t('workflows.page.workflowActions')}
-                overflowPhoneSheet={PHONE_BAR_SHEET}
-                actions={[{ id: `${testIDPrefix}-phone-settings`, title: t('workflows.page.settings'),
-                    icon: 'sliders-horizontal', onPress: () => selectNavigation('settings') }]}
-            />}
         </PagePinnedBar></RoundButtonSizeScope>
     );
 
@@ -1763,9 +1836,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             active={shownCompanion === 'agent'} composer />
     ) : null;
     const companionHeader = shownCompanion === 'agent' ? (
-        <PaneHeader
+        <WorkflowAgentCompanionHeader
             testID={`${testIDPrefix}-agent-pane-header`}
-            title={t('workflows.authoring.agent')}
+            sessionId={props.authoringSessionId ?? null}
+            serverId={props.authoringServerId}
             {...(props.authoringSessionId ? { actions: <IconButton
                 testID={`${testIDPrefix}-agent-open-session`}
                 accessibilityLabel={t('workflows.authoring.openSession')}
@@ -1807,6 +1881,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             </View>
         ),
         onClose: closeSettings,
+        companion: true,
     };
 
     return (

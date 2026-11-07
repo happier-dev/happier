@@ -62,6 +62,11 @@ export type PageHeaderProps = Readonly<{
     description?: React.ReactNode;
     /** A description set by data (a skill's own frontmatter) of any length stops at this many lines; static copy omits it. */
     descriptionLines?: number;
+    /**
+     * The editable title's resting lines (two by default). A page that shares its width with a companion
+     * pane keeps its title to one line so the header holds its height (the workflow editor, F5).
+     */
+    titleLines?: 1 | 2;
     /** Identity details under the description (an identifier to copy, a version and machine). */
     details?: React.ReactNode;
     /** Defaults to identity; column places the summary below title and actions at full content width. */
@@ -218,7 +223,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const titleNode = props.titleEditor
         // The editable title stops where the read-only one does, until the person edits it.
         ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
-            restingLines={PAGE_TITLE_MAX_LINES} />
+            restingLines={props.titleLines ?? PAGE_TITLE_MAX_LINES} />
         : props.title;
     const descriptionNode = props.descriptionEditor
         ? <InlineTextField editor={props.descriptionEditor} multiline style={stylesheet.descriptionInput} />
