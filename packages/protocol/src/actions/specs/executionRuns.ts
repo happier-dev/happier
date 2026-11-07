@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { ActionSpecSurfaceBindings, PreNormalizedActionSpec } from './definition.js';
 import { EXECUTION_RUN_INTENT_OPTIONS } from '../../execution/runs/intentPolicyMatrix.js';
 import { type ActionInputFieldHint } from '../actionInputHints.js';
@@ -301,7 +302,46 @@ export const EXECUTION_RUN_SESSION_SCOPE_HINT = {
 export const EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION =
   'Timeout only ends this observation; it does not stop, retry, or start the run. Cancellation only ends this wait.';
 
-export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
+type ExecutionRunActionSpec<
+  Id extends PreNormalizedActionSpec['id'],
+  Input extends z.ZodMiniType,
+  Output extends z.ZodMiniType,
+> = Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema' | 'surfaceBindings'> & Readonly<{
+  id: Id;
+  inputSchema: Input;
+  outputSchema: Output;
+}>;
+
+type ExecutionRunScopedInputSchema<Schema extends z.ZodMiniObject> = ReturnType<typeof z.extend<
+  Schema,
+  { sessionId: typeof ExecutionRunScopeSessionIdSchema }
+>>;
+
+// Keep per-id schema correlations without serializing every schema's implementation
+// into the inferred factory declaration. Surface-specific inputs remain distinct.
+export type ExecutionRunActionSpecs = readonly [
+  ExecutionRunActionSpec<'execution.run.start', typeof ExecutionRunStartInputSchema, typeof ExecutionRunStartResponseSchema> & Readonly<{
+    surfaceBindings: { plugin: { inputSchema: typeof ExecutionRunStartPluginInputSchema } };
+  }>,
+  ExecutionRunActionSpec<'execution.run.list', ExecutionRunScopedInputSchema<typeof ExecutionRunListRequestSchema>, typeof ExecutionRunListResponseSchema>,
+  ExecutionRunActionSpec<'execution.run.get', typeof ExecutionRunGetInputSchema, typeof ExecutionRunGetResponseSchema>,
+  ExecutionRunActionSpec<'execution.run.send', typeof DetachedExecutionRunSendInputSchema, typeof ExecutionRunSendResponseSchema>,
+  ExecutionRunActionSpec<'execution.run.ensure', typeof ExecutionRunEnsureInputSchema, typeof StrictJsonValueSchema>,
+  ExecutionRunActionSpec<'execution.run.ensure_or_start', typeof ExecutionRunEnsureOrStartInputSchema, typeof StrictJsonValueSchema>,
+  ExecutionRunActionSpec<'execution.run.stream.start', typeof ExecutionRunStreamStartInputSchema, z.ZodMiniLazy<typeof ExecutionRunTurnStreamStartResponseSchema>>,
+  ExecutionRunActionSpec<'execution.run.stream.read', typeof ExecutionRunStreamReadInputSchema, z.ZodMiniLazy<typeof ExecutionRunTurnStreamReadResponseSchema>>,
+  ExecutionRunActionSpec<'execution.run.stream.cancel', typeof ExecutionRunStreamCancelInputSchema, z.ZodMiniLazy<typeof ExecutionRunTurnStreamCancelResponseSchema>>,
+  ExecutionRunActionSpec<'execution.run.stop', typeof ExecutionRunIdInputSchema, typeof ExecutionRunStopResponseSchema>,
+  ExecutionRunActionSpec<'execution.run.cancel_turn', ExecutionRunScopedInputSchema<typeof ExecutionRunCancelTurnRequestSchema>, typeof ExecutionRunCancelTurnResponseSchema>,
+  ExecutionRunActionSpec<'execution.run.action', typeof ExecutionRunActionInputSchema, typeof StrictJsonValueSchema>,
+  ExecutionRunActionSpec<'execution.run.permission.respond', typeof ExecutionRunPermissionRespondInputSchema, z.ZodMiniObject<{ ok: z.ZodMiniLiteral<true> }, z.core.$strict>>,
+  ExecutionRunActionSpec<'execution.run.wait', typeof ExecutionRunWaitInputSchema, typeof ExecutionRunWaitResultSchema> & Readonly<{
+    surfaceBindings: { api: { inputSchema: typeof ExecutionRunWaitPublicInputSchema; outputSchema: typeof ExecutionRunWaitResultSchema } };
+  }>,
+];
+
+function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
+  return Object.freeze([
   {
     id: 'execution.run.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Start execution run',
@@ -795,4 +835,6 @@ export const EXECUTION_RUN_ACTION_SPECS = Object.freeze([
     } satisfies ActionSpecSurfaceBindings,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
 
+export const EXECUTION_RUN_ACTION_SPECS: ExecutionRunActionSpecs = lazyActionSpecArray(createExecutionRunActionSpecs);
