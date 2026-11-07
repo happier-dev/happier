@@ -121,7 +121,7 @@ vi.mock('@/sync/store/hooks', async () => {
   const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
   return createStorageModuleStub({
   useActiveServerAccountScope: () => null,
-  useAllMachines: () => [{ id: 'machine-a', active: true }],
+  useActiveMachineFacts: () => [{ id: 'machine-a', active: true }],
   useProfile: () => useProfileSpy(),
   useSettings: () => useSettingsSpy(),
   // Device-local preferences keep their defaults (the page rows read the list density).
@@ -133,7 +133,7 @@ vi.mock('@/sync/store/hooks', async () => {
 
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
   useHomeTeamCredentialModelCatalog: () => ({
-    resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true, condition: null,
+    resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(), current: true, condition: null,
   }),
 }));
 

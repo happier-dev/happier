@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -17,8 +18,11 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { t } from '@/text';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
+import type { SessionModelSourceBrowseHandoff } from './SessionModelSourceBrowseHandoff';
+import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 const { describeProviderModels, projectionRequests } = vi.hoisted(() => ({
   describeProviderModels: vi.fn(),
@@ -33,6 +37,7 @@ const rpc = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(rpc);
 
 const AGENT = 'agent:happier.agent.codex/codex';
+const CUSTOM_PROVIDER_MACHINE = '6a37defb-c9fd-46bd-8b59-5a341cf630a9';
 const GATEWAY = ProviderConnectionIdSchema.parse('pc_gateway');
 const account = createProviderSettingsAccountHarness();
 const { SelectionList } = await import('@/components/ui/selectionList/SelectionList');
@@ -65,6 +70,7 @@ function gatewayRow(modelId: string, name: string) {
 }
 
 const { SessionModelPicker } = await import('./SessionModelPicker');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { SessionModelSourceBrowseHandoffContext } = await import('./SessionModelSourceBrowseHandoff');
 const { NewSessionConnectedServicesSelectionContent } = await import('@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent');
 await loadSyncSingletonForTests();
@@ -77,6 +83,7 @@ afterEach(async () => {
   projectionRequests.length = 0;
 });
 beforeEach(async () => {
+  rpc.state.machines.push(createMachineFixture({ id: CUSTOM_PROVIDER_MACHINE, activeAt: Date.now() }));
   installBundledProviderDeclarationsRpcBoundary(rpc);
   rpc.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, request => {
     projectionRequests.push(request);
@@ -88,6 +95,74 @@ beforeEach(async () => {
 });
 
 describe('SessionModelPicker source browsing', () => {
+  it.each(['authorization', 'action'] as const)('shows the typed %s refusal instead of declaring the scoped Provider empty', async (source) => {
+    const connectionId = 'pc_ca67d5e0-7dda-481e-a394-a5351ae770b9';
+    const machineId = CUSTOM_PROVIDER_MACHINE;
+    const error = createProviderErrorV1('provider_not_enabled_on_machine', { connectionId, machineId,
+      ...(source === 'action' ? { requestId: 'custom-models-request' } : {}) });
+    describeProviderModels.mockResolvedValue(source === 'action' ? { status: 'error', error }
+      : createProviderModelProjectionFixture({ agentTargetKey: AGENT, groups: [createProviderModelProjectionGroupFixture({
+        connectionId, providerName: 'Custom Responses', connectionName: 'Custom Responses',
+        authorization: { authorized: false, error }, rows: [],
+      })] }));
+    const onSelect = vi.fn();
+    const screen = await renderScreen(<SessionModelSourceBrowseHandoffContext.Provider value={{
+      request: { agentTargetKey: AGENT, scope: { connectionId, label: 'Custom Responses' }, key: 1 }, browse: () => {},
+    }}><SessionModelPicker agentTargetKey={AGENT} nativeModels={[]} providerGroups={[]}
+      providerProjectionAuthoritative selected={null} sourceBrowse={{ machineId, serverId }} onSelect={onSelect} />
+    </SessionModelSourceBrowseHandoffContext.Provider>);
+    await flushHookEffects();
+    await waitForHomeGovernance(() => {
+      expect(projectionRequests.at(-1)?.payload).toMatchObject({ machineId, sourceConnectionId: connectionId });
+      const failure = screen.findAllByType(SurfaceStateCard).find(card => card.props.diagnosticCode === error.code);
+      expect(failure?.props.diagnosticCode).toBe('provider_not_enabled_on_machine');
+      expect(failure?.props.diagnosticDetail).toBe(source === 'action' ? 'custom-models-request' : null);
+      expect(failure?.props.action?.testID).toBe(`provider-error-action:${error.code}`);
+    });
+    expect(screen.findByTestId('model-picker-overlay-empty')).toBeNull();
+    expect(screen.findByTestId('model-picker-source-scope-back')).not.toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+  it('commits its own sign-in when a native model is picked, including the already selected model', async () => {
+    const serviceId = 'happier.agent.codex/openai-codex';
+    function Composer() {
+      const [bindings, setBindings] = React.useState<Record<string, ConnectedServicesServiceBinding>>({
+        [serviceId]: { source: 'connected', selection: 'group', groupId: 'codex-pool' },
+      });
+      const [request, setRequest] = React.useState<SessionModelSourceBrowseHandoff['request']>(null);
+      return <SessionModelSourceBrowseHandoffContext.Provider value={{
+        request,
+        browse: (agentTargetKey, scope, onSelect?: () => void) => setRequest({ agentTargetKey, scope, key: 1, onSelect }),
+      }}>
+        <NewSessionConnectedServicesSelectionContent nativeAgentTargetKey={AGENT}
+          appliedRoute={{ kind: 'native', sourceLabel: 'Codex pool', authSource: 'connected', connectedCount: 1, modelId: 'gpt-6.1-sol' }}
+          supportedServiceIds={[serviceId]} profileOptionsByServiceId={{}} groupOptionsByServiceId={{}}
+          bindingsByServiceId={bindings}
+          setBindingForService={(key, value) => setBindings(current => ({ ...current, [key]: value }))}
+          onOpenSettings={() => {}} maxHeight={420} />
+        {request ? <SessionModelPicker agentTargetKey={AGENT}
+          nativeModels={[{ value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' }]}
+          providerGroups={[]} providerProjectionAuthoritative
+          selected={{ agentTargetKey: AGENT, providerConnectionId: null, modelId: 'gpt-6.1-sol' }}
+          onSelect={() => setRequest(null)} /> : null}
+      </SessionModelSourceBrowseHandoffContext.Provider>;
+    }
+    const token = account.home.findByServerUrl('https://provider-settings-account.test')?.token;
+    if (!token) throw new Error('Expected the admitted synthetic Account credentials');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={{ token }}><Composer /></InjectedAuthProvider>);
+    const sourceList = () => screen.findAllByType(SelectionList).find(list => list.props.testID === 'new-session.connected-services.selection-list')!;
+    const nativeRow = sourceList().props.rootStep.sections.flatMap((section: { options: { id: string; onSelect: () => void }[] }) => section.options)
+      .find((option: { id: string }) => option.id.startsWith('route-source:native:'));
+    expect(sourceList().props.selectedOptionId).not.toBe(nativeRow.id);
+    await act(async () => nativeRow.onSelect());
+    expect(sourceList().props.selectedOptionId).not.toBe(nativeRow.id);
+    const modelList = screen.findAllByType(SelectionList).find(list => list.props.testID !== 'new-session.connected-services.selection-list')!;
+    const modelRow = modelList.props.rootStep.sections.flatMap((section: { options: { id: string }[] }) => section.options)[0];
+    await act(async () => modelList.props.onSelect(modelRow.id));
+    expect(screen.findByTestId('model-picker-source-scope-back')).toBeNull();
+    expect(sourceList().props.selectedOptionId).toBe(nativeRow.id);
+  });
+
   it('hands off the composer native row once for its exact Agent without changing service bindings', async () => {
     const browse = vi.fn();
     const setBindingForService = vi.fn();
@@ -119,7 +194,7 @@ describe('SessionModelPicker source browsing', () => {
     await act(async () => { nativeRows[0].onSelect(); });
     expect(browse).toHaveBeenCalledWith(nativeAgentTargetKey, {
       connectionId: null, label: t('connectedServices.authModal.nativeAuthTitle'),
-    });
+    }, expect.any(Function));
     expect(setBindingForService).not.toHaveBeenCalled();
   });
 

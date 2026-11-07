@@ -1,8 +1,10 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { act, type ReactTestInstance } from 'react-test-renderer';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -88,7 +90,7 @@ const backendCatalogEntriesState = vi.hoisted(() => ({
 const teamCredentialCatalogState = vi.hoisted(() => ({
   resources: [] as TeamCredentialResourceCatalogEntryV1[],
   teamNameById: {} as Record<string, string>,
-  currentResourceKeys: new Set<string>(),
+  resourceStatusByKey: new Map(),
 }));
 const boardFeatureState = vi.hoisted(() => ({
   enabled: false,
@@ -293,7 +295,6 @@ vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
           run: () => undefined,
           resolveSourceAvailability: () => undefined,
         },
-        resolvePrimaryHost: () => null,
         callerHostedHtmlRuntime: null,
       }
       : null
@@ -302,10 +303,10 @@ vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
   useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-  ChatHeaderView: (props: any) => {
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+  SessionPaneHeader: (props: any) => {
     chatHeaderSpy(props);
-    return React.createElement('ChatHeaderView', props, props.rightElement ?? null);
+    return React.createElement('SessionPaneHeader', props, props.rightElement ?? null);
   },
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
@@ -365,7 +366,7 @@ vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
     resources: teamCredentialCatalogState.resources,
     teamNameById: teamCredentialCatalogState.teamNameById,
     homeNameByTeamId: {},
-    currentResourceKeys: teamCredentialCatalogState.currentResourceKeys,
+    resourceStatusByKey: teamCredentialCatalogState.resourceStatusByKey,
     current: true,
     condition: null,
   }),
@@ -378,9 +379,6 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
   useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: {} }),
-}));
-vi.mock('@/agents/runtime/resumeCapabilities', () => ({
-  canResumeSessionWithOptions: () => true,
 }));
 vi.mock('@/agents/catalog/agentUniverse', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/agents/catalog/agentUniverse')>(),
@@ -553,7 +551,7 @@ function applyShellFixtures() {
   canonicalStorage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: localSettingsState.mobileWorkspaceExperienceV1 });
   const key = buildRealmQualifiedSessionCompanionPreferenceKey({ serverId: account.home.id, accountId: canonicalStorage.getState().profileScope!.accountId }, 's1');
   canonicalStorage.getState().applyLocalSettings({
-    uiMultiPanePanelsEnabled: false, acknowledgedCliVersions: {},
+    uiMultiPanePanelsEnabled: false,
     sessionCompanionPreferencesBySessionV1: key && companionPreferenceState.stored ? { [key]: companionPreferenceState.stored } : {},
   }, { persist: false });
   canonicalStorage.getState().applyAutomations(Array.from({ length: automationsState.enabledCount }, (_, index) => createAutomationDefinitionSummary({
@@ -601,7 +599,7 @@ beforeEach(async () => {
     expect(canonicalStorage.getState().profile.id).toBe('header-account');
     expect(canonicalStorage.getState().isDataReady).toBe(true);
   });
-  canonicalStorage.getState().applyLocalSettings({ appPaneScopesV1: {} }, { persist: false });
+  (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), canonicalStorage.getState().applyLocalSettings({ }, { persist: false }));
 });
 afterEach(async () => {
   await standardCleanup();
@@ -780,7 +778,7 @@ describe('SessionView header action menu visibility', () => {
     backendCatalogEntriesState.entries = [];
     teamCredentialCatalogState.resources = [];
     teamCredentialCatalogState.teamNameById = {};
-    teamCredentialCatalogState.currentResourceKeys = new Set();
+    teamCredentialCatalogState.resourceStatusByKey = new Map();
     boardFeatureState.enabled = false;
     boardFeatureState.itemCount = 0;
     boardFeatureState.enabledServerIds = null;
@@ -828,7 +826,7 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.deviceType = 'tablet';
     windowDimensionsState.width = 1440;
     const screen = await renderSessionView();
-    const header = screen.findAll((node) => (node.type as unknown) === 'ChatHeaderView')[0];
+    const header = screen.findAll((node) => (node.type as unknown) === 'SessionPaneHeader')[0];
     expect(header).toBeTruthy();
     const paneHost = screen.findAll((node) => (node.type as unknown) === 'AppPaneScopeHost')[0];
     expect(paneHost).toBeTruthy();
@@ -836,7 +834,7 @@ describe('SessionView header action menu visibility', () => {
     let ancestor = header?.parent ?? null;
     while (ancestor && (ancestor.type as unknown) !== 'AppPaneScopeHost') ancestor = ancestor.parent;
     expect(ancestor).toBe(paneHost);
-    expect(screen.findAll((node) => (node.type as unknown) === 'ChatHeaderView')).toHaveLength(1);
+    expect(screen.findAll((node) => (node.type as unknown) === 'SessionPaneHeader')).toHaveLength(1);
   });
 
   it('names who a Session reports to in the phone header too, as one Reports-to line (DA3 D15)', async () => {
@@ -947,7 +945,7 @@ describe('SessionView header action menu visibility', () => {
     expect(screen.findByTestId('session-header-background-activity-status')).toBeNull();
   });
 
-  it('routes to session automations through blur-safe navigation', async () => {
+  it('carries Automations in ⋯ instead of a header glyph', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -957,18 +955,12 @@ describe('SessionView header action menu visibility', () => {
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = true;
     automationsState.enabledCount = 1;
-    routerPushSpy.mockReset();
-    navigateWithBlurOnWebSpy.mockClear();
 
     const screen = await renderSessionView();
-    const openAutomationsButton = findPressableByAccessibilityLabel(screen, 'session.openAutomations');
 
-    expect(openAutomationsButton).toBeDefined();
-
-    pressTestInstance(openAutomationsButton, 'session.openAutomations');
-
-    expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
+    expect(findPressableByAccessibilityLabel(screen, 'session.openAutomations')).toBeUndefined();
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect((props?.extraItems ?? []).map((item: any) => item?.id)).toContain('header.openAutomations');
   });
 
   it('folds runs and automations buttons into the header action menu when the header is narrow', async () => {
@@ -1032,7 +1024,7 @@ describe('SessionView header action menu visibility', () => {
 
     expect(handled).toBe(true);
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/triggers?serverId=server-1');
+    expect(routerPushSpy.mock.calls.at(-1)?.[0]).toBe('/session/s1/triggers?serverId=server-1');
   });
 
   it('offers “When this turn finishes…” only for an exact active parent turn and preserves its identity in navigation', async () => {
@@ -1053,7 +1045,7 @@ describe('SessionView header action menu visibility', () => {
     expect(exactTurnItem?.title).toBe('automations.exactTurn.actionTitle');
     expect(props?.onSelectExtraItem?.('header.automateExactTurnCompletion')).toBe(true);
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-    expect(routerPushSpy).toHaveBeenCalledWith({
+    expect(routerPushSpy.mock.calls.at(-1)?.[0]).toEqual({
       pathname: '/session/s1/triggers',
       params: {
         sourceSessionId: 's1',
@@ -1265,9 +1257,9 @@ describe('SessionView header action menu visibility', () => {
       staleResource,
       currentWithoutConnectedServiceChoice,
     ];
-    teamCredentialCatalogState.currentResourceKeys = new Set([
-      'team-current:resource-current',
-      'team-current:resource-provider-only',
+    teamCredentialCatalogState.resourceStatusByKey = new Map([
+      ['team-current:resource-current', { kind: 'current' as const }],
+      ['team-current:resource-provider-only', { kind: 'current' as const }],
     ]);
     teamCredentialCatalogState.teamNameById = { 'team-current': 'Current Team' };
 
@@ -1391,12 +1383,7 @@ describe('SessionView header action menu visibility', () => {
     expect(ids).not.toContain('header.openRuns');
   });
 
-  it('opens active subagent work in the Agents sidebar through the accessible header Work strip', async () => {
-    // This renderer has no browser window; the real popover owns resize/scroll subscriptions.
-    vi.stubGlobal('window', {
-      addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout, clearTimeout,
-      innerWidth: 800, innerHeight: 600,
-    });
+  it('opens active subagent work in the Agents sidebar from ⋯ while the rail is not on screen', async () => {
     sessionState.session = createSessionFixture({ id: 's1', serverId: 'server-1', active: true,
       activeAt: Date.now(), metadata: { path: '/Users/tester/project', host: 'tester.local', flavor: 'claude' } });
     platformState.os = 'web';
@@ -1420,22 +1407,12 @@ describe('SessionView header action menu visibility', () => {
       },
     ];
 
-    const screen = await renderSessionView('server-1', {
-      // The platform view measurement is the boundary; popover admission and rendering stay real.
-      createNodeMock: (element) => element.type === 'View' ? {
-        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, 20, 280, 32),
-      } : null,
-    });
-    const workButton = findPressableByAccessibilityLabel(screen, 'sessionWork.strip.a11y');
-    expect(workButton?.props.role ?? workButton?.props.accessibilityRole).toBe('button');
-    expect(screen.getTextContent()).toContain('sessionWork.strip.stillWorking:1');
-    await pressTestInstanceAsync(workButton, 'header Work strip');
-    await flushHookEffects();
-    const workPopover = screen.findAll((node) => typeof node.props.onOpenInSidebar === 'function')[0];
-    expect(workPopover?.props).toMatchObject({ sessionId: 's1', serverId: 'server-1' });
-    const openInSidebar = screen.findHostByTestId('session-work-strip-open-sidebar');
-    expect(openInSidebar?.props.role ?? openInSidebar?.props.accessibilityRole).toBe('button');
-    await pressTestInstanceAsync(openInSidebar, 'Work strip open in sidebar');
+    const screen = await renderSessionView();
+    // The header carries no Work strip; ⋯ carries the Work entry with the same count the rail shows.
+    expect(findPressableByAccessibilityLabel(screen, 'sessionWork.strip.a11y')).toBeUndefined();
+    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
+    expect((props?.extraItems ?? []).map((item: any) => item?.id)).toContain('header.openSubagents');
+    await act(async () => { expect(props.onSelectExtraItem('header.openSubagents')).toBe(true); });
     expect(pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'agents' });
   });
 
@@ -1463,12 +1440,9 @@ describe('SessionView header action menu visibility', () => {
       },
     ];
 
-    const screen = await renderSessionView();
-    const workButton = findPressableByAccessibilityLabel(screen, 'sessionWork.strip.a11y');
+    await renderSessionView();
     await flushHookEffects();
 
-    expect(workButton?.props.role ?? workButton?.props.accessibilityRole).toBe('button');
-    expect(screen.getTextContent()).toContain('sessionWork.strip.stillWorking:1');
     expect(ensureSidechainMessagesLoadedSpy).not.toHaveBeenCalled();
   });
 
@@ -1526,49 +1500,19 @@ describe('SessionView header action menu visibility', () => {
     expect((props?.extraItems ?? []).map((item: any) => item?.id)).toContain('header.openBoard');
   });
 
-  it('promotes a populated Board to one accessible direct header action and opens the canonical Details tab', async () => {
+  it('keeps a populated or open Board in ⋯, never a header glyph, and opens the canonical Details tab', async () => {
     boardFeatureState.enabled = true;
     boardFeatureState.itemCount = 1;
     windowDimensionsState.width = 800;
-    const screen = await renderSessionView();
-
-    const boardButton = screen.findByTestId('session-header-board-button');
-    expect(boardButton?.props.accessibilityRole).toBe('button');
-    expect(boardButton?.props.accessibilityLabel).toBeTruthy();
-    await pressTestInstanceAsync(boardButton);
-
-    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
-    expect((props?.extraItems ?? []).map((item: any) => item?.id)).not.toContain('header.openBoard');
-    expect(pane.scopeState?.details.tabs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: 'board', kind: 'board', isPinned: true }),
-    ]));
-  });
-
-  it('folds a populated Board back into overflow when the incumbent header budget is compact', async () => {
-    boardFeatureState.enabled = true;
-    boardFeatureState.itemCount = 1;
-    windowDimensionsState.width = 420;
     const screen = await renderSessionView();
 
     expect(screen.findByTestId('session-header-board-button')).toBeNull();
     const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
     expect((props?.extraItems ?? []).map((item: any) => item?.id)).toContain('header.openBoard');
-  });
-
-  it('keeps the active Board directly reachable even while its content projection is empty', async () => {
-    boardFeatureState.enabled = true;
-    boardFeatureState.itemCount = 0;
-    paneScopeState.value = {
-      bottom: { isOpen: false, activeTabId: null, tabState: {} },
-      right: { isOpen: false },
-      details: { isOpen: true, activeTabKey: 'board', tabs: [], groups: [] },
-    };
-    windowDimensionsState.width = 800;
-    const screen = await renderSessionView();
-
-    expect(screen.findByTestId('session-header-board-button')).not.toBeNull();
-    const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
-    expect((props?.extraItems ?? []).map((item: any) => item?.id)).not.toContain('header.openBoard');
+    await act(async () => { expect(props.onSelectExtraItem('header.openBoard')).toBe(true); });
+    expect(pane.scopeState?.details.tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'board', kind: 'board', isPinned: true }),
+    ]));
   });
 
   describe('Lane 08 Companion admission', () => {

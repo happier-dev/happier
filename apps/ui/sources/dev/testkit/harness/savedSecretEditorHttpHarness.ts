@@ -3,6 +3,7 @@ import { expect } from 'vitest';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import {
     SHARED_SAVED_SECRET_ACTION_PATHS_V1,
+    SharedSavedSecretListOutputV1Schema,
     SharedSavedSecretCreateInputV1Schema,
     SharedSavedSecretGrantsSetInputV1Schema,
     SharedSavedSecretPromoteInputV1Schema,
@@ -16,11 +17,23 @@ import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/se
 import { createRootLayoutFeaturesResponse } from '../fixtures/featureFixtures';
 import { createArtifactStoreBoundary } from './artifactStoreBoundary';
 import { installRealActionExecutorModuleLoader, serveAccountHomes, type ServedHomeRequest } from './actionHomesHttpHarness';
-import { waitForHomeGovernance } from './homeGovernanceHarness';
+import { waitForHomeGovernance, type HomeGovernanceHarness } from './homeGovernanceHarness';
 
 export const savedSecretCreatePath = SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'];
 export const savedSecretGrantsPath = SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.grants.set'];
 export const savedSecretPromotePath = SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote'];
+
+/** Metadata admission and material acquisition see the same external Saved Secret resources. */
+export function installSavedSecretCatalogHttpBoundary(input: Readonly<{
+    home: HomeGovernanceHarness;
+    serverId: string;
+    resources: ReturnType<typeof SavedSecretResourceMaterialsResponseV1Schema.parse>['resources'];
+}>) {
+    const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: input.resources });
+    input.home.answer(input.serverId, '/v1/account/saved-secrets/resources/materials', { body: materials });
+    input.home.answer(input.serverId, '/v1/account/saved-secrets/resources', { body:
+        SharedSavedSecretListOutputV1Schema.parse({ resources: materials.resources.map(resource => resource.entry) }) });
+}
 
 /** External Home state only; editor, Action policy, custody, codecs and mutation owners stay real. */
 export async function serveSavedSecretEditorHomes(params: Readonly<{

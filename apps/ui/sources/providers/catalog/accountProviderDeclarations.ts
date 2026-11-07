@@ -13,32 +13,41 @@ import {
 const bundledProviderDeclarations: readonly AccountProviderDeclarationV1[] = Object.freeze(Object.values(BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS));
 
 export type ProviderDeclarationContext =
-    | Readonly<{ kind: 'account' }>
+    | Readonly<{ kind: 'account'; projection?: PluginProjectionV2 | null }>
     | Readonly<{ kind: 'machine'; projection: PluginProjectionV2 | null | undefined }>;
 
+/** The Machine projection sections every reader of a machine declaration context reads. */
+export const PROVIDER_DECLARATION_CONTEXT_SECTIONS = ['agentsById', 'familiesById.providers'] as const;
+
 /** Capture whether declarations describe Account browsing or an exact execution Machine. */
+
 export function providerDeclarationContext(machineId: string | null | undefined, projection: PluginProjectionV2 | null | undefined): ProviderDeclarationContext {
     return machineId ? { kind: 'machine', projection } : { kind: 'account' };
 }
 
 /** Admitted portable source facts only. Dynamic plugins need their current declaration authority. */
 export function readAccountProviderDeclarations(context: ProviderDeclarationContext): readonly AccountProviderDeclarationV1[] {
-    if (context.kind === 'account') return bundledProviderDeclarations;
     const projection = context.projection;
-    if (!projection) return [];
-    return Object.values(projection.familiesById.providers?.entriesById ?? {}).flatMap(entry =>
+    if (!projection) return context.kind === 'account' ? bundledProviderDeclarations : [];
+    const projected = Object.values(projection.familiesById.providers?.entriesById ?? {}).flatMap(entry =>
         entry.definition && entry.provenance ? [{ contributionKey: entry.id, definition: entry.definition, provenance: entry.provenance }] : []);
+    if (context.kind === 'machine') return projected;
+    // Account facts remain available without an execution Machine. An admitted
+    // projection supplements dynamic Providers and supplies its current definitions.
+    const declarations = new Map(bundledProviderDeclarations.map(declaration =>
+        [canonicalizeProviderContributionKeyV1(declaration.contributionKey), declaration]));
+    for (const declaration of projected) declarations.set(canonicalizeProviderContributionKeyV1(declaration.contributionKey), declaration);
+    return [...declarations.values()];
 }
 
 /** Exact declaration reads use the producer's qualified-identity index, without projecting the registry. */
 export function readAccountProviderDeclaration(contributionKey: string, context: ProviderDeclarationContext): AccountProviderDeclarationV1 | null {
-    if (context.kind === 'account') return bundledProviderDeclarations.find(declaration =>
-        areProviderContributionKeysEqualV1(declaration.contributionKey, contributionKey)) ?? null;
     const entry = context.projection?.familiesById.providers?.entriesById[canonicalizeProviderContributionKeyV1(contributionKey)];
     const definition = entry?.definition;
     return definition && entry.provenance
         ? { contributionKey: entry.id, definition, provenance: entry.provenance }
-        : null;
+        : context.kind === 'account' ? bundledProviderDeclarations.find(declaration =>
+            areProviderContributionKeysEqualV1(declaration.contributionKey, contributionKey)) ?? null : null;
 }
 
 /**
@@ -69,7 +78,7 @@ export type AccountAgentProviderDeclaration = Readonly<{
 
 /** Portable Agent fit facts, without loading an Agent runtime or asserting installation/readiness. */
 export function readAccountAgentProviderDeclarations(context: ProviderDeclarationContext): readonly AccountAgentProviderDeclaration[] {
-    if (context.kind === 'account') return Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).flatMap(declaration =>
+    if (context.kind === 'account' && !context.projection) return Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).flatMap(declaration =>
         declaration.providerRequirements ? [{
             agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: declaration.identity }),
             ...(declaration.cli?.displayName ? { name: declaration.cli.displayName } : {}),
@@ -90,7 +99,7 @@ export function resolveAccountAgentProviderRequirements(agentTargetKey: string, 
 }
 
 export function readAccountAgentProviderRequirements(agentTargetKey: string, context: ProviderDeclarationContext): AgentProviderRequirementsV1 | null {
-    const projection = context.kind === 'machine' ? context.projection : null;
+    const projection = context.projection;
     if (context.kind === 'machine' && !projection) return null;
     let target: ReturnType<typeof parseBackendTargetKeyV2>;
     try { target = parseBackendTargetKeyV2(agentTargetKey); } catch { return null; }

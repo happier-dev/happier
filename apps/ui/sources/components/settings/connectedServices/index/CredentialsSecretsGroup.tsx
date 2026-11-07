@@ -3,6 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { savedSecretAudienceSummary, savedSecretEntryKindLabel } from '@/components/secrets/savedSecretRowCopy';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -14,26 +15,6 @@ import { t } from '@/text';
 
 import { buildCredentialsSecretRoute } from '../collection/connectedServicesCollectionRoutes';
 import { presentCredentialsSecretsState, type CredentialsSecretsState } from './credentialsSecretsState';
-
-/** "Only you", or how many people and Teams can use it (the access summary the Secrets page shows). */
-export function presentSavedSecretAudience(
-  entry: SavedSecretCatalogEntryV1,
-): string {
-  const audience = entry.audience;
-  const count = audience
-    ? audience.accounts.length + audience.teams.length + audience.groups.length
-    : 0;
-  return count === 0
-    ? t('secretsSettings.accessOnlyYou')
-    : t('secretsSettings.accessRecipients', { count });
-}
-
-/** The secret's type word ("API key", "Token"); a row the Home cannot fully read may not carry one. */
-export function presentSavedSecretKind(
-  entry: SavedSecretCatalogEntryV1,
-): string | null {
-  return entry.kind ? t(`secrets.catalog.kinds.${entry.kind}`) : null;
-}
 
 /**
  * Your Saved Secrets for Credentials, read once for the rail and the overview: the ones you own (the
@@ -101,9 +82,9 @@ export const CredentialsSecretsGroup = React.memo(function CredentialsSecretsGro
           key={entry.ref}
           testID={`credentials-secret:${entry.ref}`}
           title={entry.name ?? t('secrets.catalog.unavailableName')}
-          subtitle={presentSavedSecretKind(entry) ?? undefined}
+          subtitle={savedSecretEntryKindLabel(entry) ?? undefined}
           icon={<Icon name="key" size={18} color={theme.colors.text.secondary} />}
-          detail={presentSavedSecretAudience(entry)}
+          detail={savedSecretAudienceSummary(entry)}
           onPress={() => props.onOpen(buildCredentialsSecretRoute({ ref: entry.ref }))}
         />
       ))}

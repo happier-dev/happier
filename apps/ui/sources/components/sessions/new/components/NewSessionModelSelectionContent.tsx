@@ -1,7 +1,10 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { View, type View as RNView } from 'react-native';
-import type { ProviderErrorV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import type { ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
 import type {
     DaemonProviderCurrentSelectionRecoveryV1,
     DaemonProviderModelProjectionRefreshFailureV1,
@@ -56,7 +59,7 @@ const EMPTY_HIDDEN_NATIVE_MODEL_KEYS: ReadonlySet<string> = new Set();
 
 export type NewSessionModelSelectionContentProps = Readonly<{
     presentation?: 'expanded' | 'compact';
-    modelDiscoveryFailed?: boolean;
+    modelOptionsProbe?: React.ComponentProps<typeof SessionModelPicker>['probe'];
     modelOptions: readonly NewSessionModelOption[];
     selectedModelId: ModelMode | undefined;
     selectedModelSelection?: SessionModelSelectionV1 | null;
@@ -69,13 +72,14 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
-    currentTeamCredentialResourceKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamCredentialServerId?: string | null;
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     providerProjectionAuthoritative: boolean;
     providerProjectionError?: ProviderErrorV1 | null;
     providerProjectionFailures?: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProviderProjection?: (() => Promise<void> | void) | null;
+    providerProjectionApproval?: ProviderPendingApproval | null;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys?: ReadonlySet<string>;
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
@@ -249,7 +253,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
     }>) => (
         // The wizard section header owns refresh and activity; the shared picker owns failure copy.
         <SessionModelPicker
-            probe={props.modelDiscoveryFailed ? { phase: 'idle', failed: true } : undefined}
+            probe={props.modelOptionsProbe}
             agentTargetKey={agentTargetKey ?? ''}
             declarationContext={props.declarationContext}
             nativeModels={agentTargetKey ? props.modelOptions : []}
@@ -257,12 +261,13 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             teamCredentialResources={props.teamCredentialResources}
             teamNameById={props.teamNameById}
             homeNameByTeamId={props.homeNameByTeamId}
-            currentTeamCredentialResourceKeys={props.currentTeamCredentialResourceKeys}
+            teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}
             selectedTeamCredentialModel={props.selectedTeamCredentialModel}
             providerProjectionAuthoritative={props.providerProjectionAuthoritative}
             projectionError={props.providerProjectionError}
             projectionFailures={props.providerProjectionFailures}
             retryProjection={props.retryProviderProjection}
+            projectionApproval={props.providerProjectionApproval}
             currentSelectionRecovery={props.currentSelectionRecovery}
             hiddenNativeModelKeys={props.hiddenNativeModelKeys}
             selected={selected}

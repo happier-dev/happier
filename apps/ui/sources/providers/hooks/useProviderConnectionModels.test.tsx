@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +8,9 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { OLLAMA_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/ollama/src/provider/contribution';
+import { projectProviderModelGenerationSettings } from '@happier-dev/protocol/models/descriptor';
 
 const describeProviderConnectionModels = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -16,10 +19,64 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 const account = createProviderSettingsAccountHarness();
 let serverId = '';
 let otherServerId = '';
+const machines = ['machine-a', 'machine-b'].map(id => createMachineFixture({ id, kind: 'persistent', activeAt: Date.now() }));
 
 const { useProviderConnectionModels } = await import('./useProviderConnectionModels');
+const { useFileEditorAiSuggestionSource } = await import('./useFileEditorAiSuggestionSource');
+const { FilesEditorAiSuggestionsV1Schema } = await import('@happier-dev/protocol/account/settings/accountSettings');
 
 describe('useProviderConnectionModels', () => {
+    it('reads both selected editor models from one exact catalog, with operation-specific admission and no substitution', async () => {
+        const models = OLLAMA_PROVIDER_CONTRIBUTION.catalog.staticModels.map(model => ({
+            id: model.id, source: 'static', stale: false, loadState: 'unknown', visibility: 'visible',
+            descriptor: projectProviderModelGenerationSettings(model, { maxTokens: 512 }),
+        }));
+        describeProviderConnectionModels.mockResolvedValue({ status: 'success', connectionId: 'pc_a', connectionRevision: 1,
+            manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models });
+        const inline = models.find(model => model.descriptor.inlineCompletion)!.id;
+        const next = models.find(model => model.descriptor.nextEdit)!.id;
+        const settings = { ...FilesEditorAiSuggestionsV1Schema.parse({ enabled: true, nextEditEnabled: true, connectionId: 'pc_a', modelId: inline }), nextEditModelId: next };
+        const hook = await renderHook((props: { modelId: string; nextEditModelId: string | null }) => useFileEditorAiSuggestionSource({
+            settings: { ...settings, ...props }, machineId: 'machine-a', serverId,
+        }), { initialProps: { modelId: inline, nextEditModelId: next as string | null } });
+        await flushHookEffects();
+        expect(hook.getCurrent().model?.id).toBe(inline);
+        expect(hook.getCurrent().nextEditModel?.id).toBe(next);
+        const descriptor = hook.getCurrent().nextEditModel;
+        await hook.rerender({ modelId: inline, nextEditModelId: next });
+        expect(hook.getCurrent().nextEditModel).toBe(descriptor);
+        await hook.rerender({ modelId: next, nextEditModelId: null });
+        expect(hook.getCurrent().model).toBeNull();
+        expect(hook.getCurrent().nextEditModel?.id).toBe(next);
+        await hook.rerender({ modelId: next, nextEditModelId: inline });
+        expect(hook.getCurrent().nextEditModel).toBeNull();
+        await hook.rerender({ modelId: inline, nextEditModelId: null });
+        expect(hook.getCurrent().nextEditModel).toBeNull();
+        expect(describeProviderConnectionModels).toHaveBeenCalledTimes(1);
+    });
+    it('supplies a stable exact editor model without a coding-Agent selection and retires it when disabled', async () => {
+        describeProviderConnectionModels.mockResolvedValue({
+            status: 'success', connectionId: 'pc_a', connectionRevision: 1,
+            manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent',
+            models: [{ id: 'base', source: 'static', stale: false, loadState: 'unknown', visibility: 'visible',
+                descriptor: { id: 'base', name: 'FIM base', contextWindowTokens: 32768,
+                    capabilities: { toolRoundTrips: 'unsupported' },
+                    inlineCompletion: { operationId: 'fim', tokenAccounting: 'utf8-bytes', promptOverheadTokens: 0, outputTokens: 128 } } }],
+        });
+        const settings = FilesEditorAiSuggestionsV1Schema.parse({ enabled: true, connectionId: 'pc_a', modelId: 'base' });
+        const hook = await renderHook((props: { enabled: boolean }) => useFileEditorAiSuggestionSource({
+            settings: props.enabled ? settings : { ...settings, enabled: false }, machineId: 'machine-a', serverId,
+        }), { initialProps: { enabled: true } });
+        await flushHookEffects();
+        expect(hook.getCurrent().model?.id).toBe('base');
+        const model = hook.getCurrent().model;
+        await hook.rerender({ enabled: true });
+        expect(hook.getCurrent().model).toBe(model);
+        expect(describeProviderConnectionModels).toHaveBeenCalledTimes(1);
+        await hook.rerender({ enabled: false });
+        expect(hook.getCurrent().model).toBeNull();
+        expect(describeProviderConnectionModels).toHaveBeenCalledTimes(1);
+    });
     it('settles a superseded non-replying read, retries, and cancels pending reads on blur and unmount', async () => {
         const cancelled: number[] = [];
         let invocation = 0;
@@ -89,8 +146,10 @@ describe('useProviderConnectionModels', () => {
     });
 
     beforeEach(async () => {
-        serverId = (await account.restore()).serverId;
+        // Model reads use the real own/foreign Machine admission before the mocked RPC transport.
+        serverId = (await account.restore({ machines })).serverId;
         otherServerId = await account.addHome({ name: 'Other Provider Home', serverUrl: 'https://provider-settings-other.test', accountId: 'account-a', active: false });
+        await account.publishMachines(otherServerId, machines);
     });
     afterEach(async () => {
         describeProviderConnectionModels.mockReset();
@@ -116,7 +175,7 @@ describe('useProviderConnectionModels', () => {
         expect(describeProviderConnectionModels).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            await account.restore({ accountId: 'account-b' });
+            await account.restore({ accountId: 'account-b', machines });
             await screen.update(<Harness />);
         });
 

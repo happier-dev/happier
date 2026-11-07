@@ -5,6 +5,7 @@ import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/conne
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { TeamCredentialRouteV1 } from '@happier-dev/protocol/teams';
 import { resolveSavedSecretSlotBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { t } from '@/text';
 import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc';
@@ -20,7 +21,7 @@ export type SessionRoute = Readonly<
     { kind: 'unknown' } |
     { kind: 'native'; sourceLabel: string; authSource: 'native' | 'connected' | 'mixed' | 'unknown'; connectedCount: number; modelId: string | null } |
     { kind: 'provider'; connectionId: string; sourceLabel: string | null; modelId: string; unavailable: boolean } |
-    { kind: 'team'; teamId: string; resourceId: string; deliveryMode: 'direct' | 'brokered'; sourceLabel: string | null; modelId: string }
+    { kind: 'team'; teamId: string; resourceId: string; deliveryMode: TeamCredentialRouteV1; sourceLabel: string | null; modelId: string }
 >;
 export type SessionRoutePresentationInput = Readonly<{
     phase: 'draft' | 'running'; selection: RouteSelection;
@@ -166,6 +167,12 @@ export function presentSessionRouteChip(
     };
 }
 
+export function readProviderRouteConnectionId(selection: RouteSelection): string | null {
+    return selection && 'source' in selection
+        ? selection.source === 'account_provider_connection' ? selection.providerConnectionId : null
+        : selection?.providerConnectionId ?? null;
+}
+
 export function resolveSessionRoutePresentation(input: SessionRoutePresentationInput): Readonly<{ applied: SessionRoute; pending: SessionRoute | null; reported?: SessionRoute }> {
     const resolve = (selection: RouteSelection, applied: boolean): SessionRoute => {
         if (selection && 'source' in selection && selection.source === 'team_resource') {
@@ -173,9 +180,7 @@ export function resolveSessionRoutePresentation(input: SessionRoutePresentationI
             return { kind: 'team', teamId: selection.teamId, resourceId: selection.resourceId,
                 deliveryMode: selection.deliveryMode, modelId: selection.modelId, sourceLabel: source?.displayName ?? null };
         }
-        const connectionId = selection && 'source' in selection
-            ? selection.source === 'account_provider_connection' ? selection.providerConnectionId : null
-            : selection?.providerConnectionId ?? null;
+        const connectionId = readProviderRouteConnectionId(selection);
         if (connectionId && selection) {
             const current = input.sources?.find(source => source.connectionId === connectionId);
             // A retained Session can edit its next-launch choice before the picker is demanded.

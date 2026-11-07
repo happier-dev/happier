@@ -10,8 +10,16 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 
-export type PageHeaderMenuIntent = Readonly<{ altKey?: boolean }>;
+/** The gap between a header's action controls: their finger frames split it, so neighbours never overlap. */
+export const HEADER_ACTIONS_GAP_PX = 8;
+
+export type PageHeaderMenuIntent = Readonly<{
+    altKey?: boolean;
+    /** The menu's ⋯: an operation that opens a surface (Share…) hangs it from the control the menu came from. */
+    anchor?: PopoverAnchor;
+}>;
 
 /** One rare operation in an entity page's `⋯` menu. */
 export type PageHeaderMenuAction = Readonly<{
@@ -96,10 +104,10 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
             allowEmptySelection
             header={content ? <View style={stylesheet.menuContent}>{content}</View> : undefined}
             emptyLabel={content ? null : undefined}
-            onSelect={(id) => {
+            onSelect={(id, selection) => {
                 setOpen(false);
                 return props.actions.flatMap((action) => [action, ...(action.children ?? [])])
-                    .find((action) => action.id === id)?.onSelect(altHeld ? { altKey: true } : undefined);
+                    .find((action) => action.id === id)?.onSelect({ ...(altHeld ? { altKey: true } : {}), ...(selection ? { anchor: selection.anchor } : {}) });
             }}
             placement="bottom"
             popoverAnchorAlign="end"
@@ -108,6 +116,8 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
             // Room for a checked row's title beside its check ("Don't pause this Discussion ✓") without truncating.
             maxWidthCap={280}
             showCategoryTitles={false}
+            // Grouped operations read as groups: a hairline between categories, never a heading.
+            separateCategories={new Set(props.actions.map((action) => action.category)).size > 1}
             popoverPortalWebTarget="body"
             trigger={({ toggle }) => (
                 <IconButton

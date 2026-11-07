@@ -1,8 +1,10 @@
 import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { SessionSpaceMembershipTargetV1Schema } from '@happier-dev/protocol/actions';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { nullable } from 'zod/mini';
 import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
+import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     projectPredecessorSessionDraftAuthoringFields,
@@ -110,6 +112,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
     const promptStack = Object.prototype.hasOwnProperty.call(fields, 'promptStack') ? authoring.promptStack : retainedAuthoring.promptStack;
     const instructionsDraft = readSessionInstructionsAuthoringDraft(localState?.instructionsDraft);
     const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(localState?.authoringOrigin);
+    const spaceMembership = nullable(SessionSpaceMembershipTargetV1Schema).safeParse(localState?.spaceMembership);
     const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(localState?.managedMachineSelection);
     const managedMachineAcquisition = nullable(ManagedMachineAcquisitionDraftReadSchema).safeParse(localState?.managedMachineAcquisition);
     const hasManagedTarget = (managedMachineSelection.success && managedMachineSelection.data !== null)
@@ -128,6 +131,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             ? snapshot.composer.text.value
             : '',
         ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
+        ...(spaceMembership.success ? { spaceMembership: spaceMembership.data } : {}),
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
         ...(Array.isArray(localState?.composerAttachmentSeeds) && localState.composerAttachmentSeeds.length > 0
             ? { composerAttachmentSeeds: localState.composerAttachmentSeeds }
@@ -292,6 +296,22 @@ export function writeNewSessionNameToRepository(input: Readonly<{
     const draft = readNewSessionDraftFromRepository(input);
     if (!draft) return;
     writeNewSessionAuthoringDraftToRepository({ ...input, draft: { ...draft, sessionName: input.sessionName } });
+}
+
+/**
+ * A New Bot draft's face choice rides in its creation identity, so Session birth carries it in the same metadata.
+ * `null` removes the choice (the draft's own seed and the Account's default style draw it again).
+ */
+export function writeNewSessionBotFaceToRepository(input: Readonly<{
+    scope: ServerAccountScope;
+    draftId: string;
+    botFace: SessionBotFaceV1 | null;
+}>): void {
+    const draft = readNewSessionDraftFromRepository(input);
+    if (!draft?.initialSessionFacts) return;
+    const { botFace: _previous, ...facts } = draft.initialSessionFacts;
+    writeNewSessionAuthoringDraftToRepository({ ...input, draft: { ...draft,
+        initialSessionFacts: input.botFace ? { ...facts, botFace: input.botFace } : facts } });
 }
 
 /** Lazy authoring shares the existing local draft; no Artifact write happens here. */

@@ -9,15 +9,18 @@ import { teamsUnavailableReason, type TeamsDirectoryUnavailableHome } from '@/co
 import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCatalog } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { getTeamCredentialResourceCatalogSnapshot, getTeamCredentialResourceCatalogsSelectionKey, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { providerDeclarationContext, resolveAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
+import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { useTeamsDirectory } from './useTeamsDirectory';
+import type { TeamCredentialResourceStatus, TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 
 export type HomeTeamCredentialModelCatalog = Readonly<{
     resources: readonly TeamCredentialResourceCatalogEntryV1[];
     teamNameById: Readonly<Record<string, string>>;
     homeNameByTeamId: Readonly<Record<string, string>>;
-    currentResourceKeys: ReadonlySet<string>;
+    resourceStatusByKey: TeamCredentialResourceStatusByKey;
     current: boolean;
     /** The owning directory/catalog's cold-load or failed-read condition, never inferred from emptiness. */
     condition: Pick<TeamsDirectoryUnavailableHome, 'reason' | 'retryable'> | null;
@@ -43,23 +46,28 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
     /** A mounted caller's current projection for this exact Machine; null means not admitted. */
     declarationProjection?: PluginProjectionV2 | null;
 }>): HomeTeamCredentialModelCatalog {
+    // Embed model choices come from the admitted grant/options projection, never Account Team discovery.
+    const enabled = input.enabled && !isEmbedWindowContext();
     const serverId = input.serverId?.trim() ?? '';
     const declarationState = useDaemonMergedProjectionInputs({ machineId: input.machineId, serverId,
-        enabled: input.declarationProjection === undefined && input.enabled && Boolean(input.agentTargetKey && input.machineId) });
+        enabled: input.declarationProjection === undefined && enabled && Boolean(input.agentTargetKey && input.machineId),
+        sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
     const projection = input.declarationProjection !== undefined ? input.declarationProjection
         : declarationState.phase === 'ready' ? declarationState.inputs?.pluginProjectionV2 ?? null : null;
     const declarationContext = React.useMemo(() => providerDeclarationContext(input.machineId, projection), [input.machineId, projection]);
     const requirements = React.useMemo(() =>
         resolveAccountAgentProviderRequirements(input.agentTargetKey ?? '', declarationContext),
     [input.agentTargetKey, declarationContext]);
-    const directory = useTeamsDirectory({ enabled: input.enabled && serverId !== '', serverIds: serverId ? [serverId] : [] });
+    const directory = useTeamsDirectory({ enabled: enabled && serverId !== '', serverIds: serverId ? [serverId] : [] });
     const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
     const scope = directory.scopes.find((candidate) => candidate.serverId === scopeServerId) ?? null;
     // Team loaders accept canonical Home addresses, not device-local route aliases.
-    const rows = React.useMemo(() => directory.rows.map((row) => ({ ...row,
-        address: { ...row.address, serverId: resolveServerProfileScopeIdForIdentifier(row.address.serverId) },
-    })), [directory.rows]);
-    const rowsKey = JSON.stringify(rows.map((row) => [row.address.serverId, row.address.teamId]));
+    const { rows, rowsKey } = React.useMemo(() => {
+        const rows = directory.rows.map(row => ({ ...row,
+            address: { ...row.address, serverId: resolveServerProfileScopeIdForIdentifier(row.address.serverId) },
+        }));
+        return { rows, rowsKey: JSON.stringify(rows.map(row => [row.address.serverId, row.address.teamId])) };
+    }, [directory.rows]);
     const applications = React.useMemo<readonly (ProviderBrokerApplicationBindingV1 | undefined)[]>(() => {
         if (!input.agentTargetKey) return [undefined];
         // Generic Connected Account choices do not require model compatibility.
@@ -74,60 +82,71 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             acceptedProtocols: requirements.requirements.acceptsProtocols,
         })];
     }, [input.agentTargetKey, declarationContext, requirements]);
-    const demands = React.useMemo(() => rows.flatMap(row => applications.map(application => ({ row, application }))), [rows, applications]);
-    const catalogSelections = React.useMemo(() => demands.map(({ row, application }) => ({ address: row.address, application })), [demands]);
-    const demandsKey = JSON.stringify([rowsKey, applications]);
+    const executionMachineId = input.machineId?.trim() || undefined;
+    const { demands, demandsKey } = React.useMemo(() => ({
+        demands: rows.flatMap(row => applications.map(application => ({ row, application }))),
+        demandsKey: JSON.stringify([rowsKey, applications, executionMachineId]),
+    }), [rows, rowsKey, applications, executionMachineId]);
+    const catalogSelections = React.useMemo(() => demands.map(({ row, application }) => ({ address: row.address, application, executionMachineId })), [demands, executionMachineId]);
 
     React.useEffect(() => {
-        if (!input.enabled || !scope) return;
-        const releases = demands.map(({ row, application }) => observeTeamCredentialResourceCatalog(scope, row.address, application));
+        if (!enabled || !scope) return;
+        const releases = demands.map(({ row, application }) => observeTeamCredentialResourceCatalog(scope, row.address, application, executionMachineId));
         return () => { for (const release of releases) release(); };
         // demandsKey includes every Team address and exact admitted application.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [input.enabled, demandsKey, scope?.accountId, scope?.serverId]);
+    }, [enabled, demandsKey, scope?.accountId, scope?.serverId]);
 
-    const reload = React.useCallback(async () => {
-        if (!input.enabled) return;
+    const reloadHomeCatalog = React.useCallback(async () => {
+        if (!enabled) return;
         directory.refresh();
         if (!scope) return;
-        await Promise.all(demands.map(({ row, application }) => refreshTeamCredentialResourceCatalog(scope, row.address, application)));
-    }, [directory.refresh, demands, input.enabled, scope]);
+        await Promise.all(demands.map(({ row, application }) => refreshTeamCredentialResourceCatalog(scope, row.address, application, executionMachineId)));
+    }, [directory.refresh, demands, executionMachineId, enabled, scope]);
 
+    const subscribeCatalogs = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scope, credentialCatalogs: catalogSelections }), [scope, catalogSelections]);
     const snapshotVersion = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribeCatalogs,
         () => getTeamCredentialResourceCatalogsSelectionKey(scope, catalogSelections),
         () => '',
     );
 
-    return React.useMemo(() => {
+    const discovered = React.useMemo(() => {
         const unavailable = directory.unavailableHomes.find((home) => home.serverId === serverId);
         let condition: HomeTeamCredentialModelCatalog['condition'] = unavailable
             ? { reason: unavailable.reason, retryable: unavailable.retryable }
             : null;
-        if (!input.enabled || !scope) {
+        if (!enabled || !scope) {
             return {
                 resources: EMPTY_RESOURCES,
                 teamNameById: {},
                 homeNameByTeamId: {},
-                currentResourceKeys: new Set(),
+                resourceStatusByKey: new Map<string, TeamCredentialResourceStatus>(),
                 current: false,
-                condition: input.enabled ? condition : null,
-                reload,
+                condition: enabled ? condition : null,
+                reload: reloadHomeCatalog,
             };
         }
         const resourcesByKey = new Map<string, TeamCredentialResourceCatalogEntryV1>();
         const teamNameById: Record<string, string> = {};
         const homeNameByTeamId: Record<string, string> = {};
-        const currentResourceKeys = new Set<string>();
-        const nonCurrentModelResourceKeys = new Set<string>();
+        const resourceStatusByKey = new Map<string, TeamCredentialResourceStatus>();
         let current = directory.kind !== 'loading' && !directory.partial
             && (!input.agentTargetKey || requirements.kind === 'known');
         if (directory.kind === 'loading' && !condition) condition = { reason: 'loading', retryable: false };
         for (const { row, application } of demands) {
             teamNameById[row.address.teamId] = row.team.name;
             homeNameByTeamId[row.address.teamId] = row.homeName;
-            const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, row.address, application);
+            const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, row.address, application, executionMachineId);
             const selectable = snapshot?.selectionCurrent === true;
+            const status: TeamCredentialResourceStatus = snapshot?.error
+                ? snapshot.error.kind === 'unreachable'
+                    ? { kind: 'homeUnreachable' }
+                    : { kind: 'failed', code: snapshot.error.code ?? snapshot.error.kind, reason: snapshot.error.kind }
+                : unavailable?.reason === 'offline'
+                    ? { kind: 'homeUnreachable' }
+                    : selectable ? { kind: 'current' } : { kind: 'pending' };
             if (snapshot?.status !== 'ready' || snapshot.stale) {
                 current = false;
             }
@@ -135,21 +154,25 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             else if (snapshot?.status !== 'ready' && !condition) condition = { reason: 'loading', retryable: false };
             for (const resource of snapshot?.data ?? []) {
                 const key = `${resource.teamId}:${resource.id}`;
-                if (resource.providerModels.length > 0 && !selectable) {
-                    nonCurrentModelResourceKeys.add(key);
+                const previousStatus = resourceStatusByKey.get(key);
+                if (!previousStatus || previousStatus.kind === 'current' || status.kind === 'failed' || status.kind === 'homeUnreachable') {
+                    resourceStatusByKey.set(key, status);
                 }
                 const previous = resourcesByKey.get(key);
                 if (!previous) {
                     resourcesByKey.set(key, resource);
                     continue;
                 }
-                // The selection contract does not carry an application. Keep the
-                // first declared application for each exact selectable model.
+                // Preserve application/source alternatives for the Machine's
+                // canonical resolver; gathering must not preselect one here.
                 const modelKeys = new Set<string>();
                 const providerModels = [...previous.providerModels, ...resource.providerModels].filter(model => {
                     const selection = model.selection;
                     const modelKey = JSON.stringify([selection.teamId, selection.resourceId, selection.expectedResourceRevision,
-                        selection.agentTargetKey, selection.modelId, selection.deliveryMode]);
+                        selection.agentTargetKey, selection.modelId, selection.deliveryMode,
+                        model.application.agentTargetKey, model.application.implementationIdentity.pluginId,
+                        model.application.implementationIdentity.localId, model.application.endpointTemplateId,
+                        model.application.protocol, model.sourceRevision, model.nativeSource?.providerTicket]);
                     if (modelKeys.has(modelKey)) return false;
                     modelKeys.add(modelKey);
                     return true;
@@ -161,22 +184,73 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
                     providerModels,
                 });
             }
-            if (selectable) {
-                for (const resource of snapshot.data ?? []) currentResourceKeys.add(`${resource.teamId}:${resource.id}`);
-            }
         }
-        for (const key of nonCurrentModelResourceKeys) currentResourceKeys.delete(key);
         const resources = [...resourcesByKey.values()];
         return Object.freeze({
             resources: resources.length > 0 ? Object.freeze(resources) : EMPTY_RESOURCES,
             teamNameById: Object.freeze(teamNameById),
             homeNameByTeamId: Object.freeze(homeNameByTeamId),
-            currentResourceKeys,
+            resourceStatusByKey,
             current,
             condition: current ? null : condition,
-            reload,
+            reload: reloadHomeCatalog,
         });
         // snapshotVersion is the scoped store change signal.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directory.kind, directory.partial, directory.unavailableHomes, input.enabled, input.agentTargetKey, requirements, reload, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
+    }, [directory.kind, directory.partial, directory.unavailableHomes, enabled, input.agentTargetKey, requirements, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
+
+    const needsMachineProjection = Boolean(input.agentTargetKey && executionMachineId
+        && discovered.resources.some(resource => resource.providerModels.length > 0));
+    const modelProjection = useProviderModelProjection({
+        enabled: enabled && needsMachineProjection,
+        active: discovered.current,
+        serverId: serverId || null,
+        machineId: executionMachineId ?? null,
+        agentTargetKey: input.agentTargetKey ?? null,
+        teamCredentialResources: discovered.resources,
+        teamCredentialCatalogSources: catalogSelections.map(demand =>
+            getTeamCredentialResourceCatalogSnapshot(scope, demand.address, demand.application, demand.executionMachineId)?.data),
+    });
+    const refreshModels = modelProjection.refreshWithResult;
+    const reload = React.useCallback(async () => {
+        await reloadHomeCatalog();
+        if (needsMachineProjection) await refreshModels(false);
+    }, [needsMachineProjection, refreshModels, reloadHomeCatalog]);
+
+    return React.useMemo(() => {
+        if (!needsMachineProjection) {
+            // Generic discovery is useful without a Machine, but its Home rows
+            // cannot independently select a delivery route for an Agent.
+            const resources = input.agentTargetKey
+                ? discovered.resources.map(resource => resource.providerModels.length === 0 ? resource : { ...resource, providerModels: [] })
+                : discovered.resources;
+            return { ...discovered, resources, reload };
+        }
+        const resources = modelProjection.data?.teamCredentialResources ?? discovered.resources;
+        const resolved = modelProjection.data?.teamCredentialResources !== undefined;
+        const projectionCurrent = resolved && !modelProjection.loading && modelProjection.error === null;
+        const current = discovered.current && projectionCurrent;
+        const resourceStatusByKey = new Map(discovered.resourceStatusByKey);
+        for (const resource of resources) {
+            if (resource.providerModels.length === 0) continue;
+            const key = `${resource.teamId}:${resource.id}`;
+            const discoveredStatus = resourceStatusByKey.get(key);
+            // Entitlement/Home failures retain their cause. A Machine failure
+            // says nothing about the Home's reachability.
+            if (discoveredStatus && discoveredStatus.kind !== 'current') continue;
+            resourceStatusByKey.set(key, modelProjection.error
+                ? { kind: 'failed', code: modelProjection.error.code }
+                : projectionCurrent ? { kind: 'current' } : { kind: 'pending' });
+        }
+        return {
+            ...discovered,
+            resources,
+            current,
+            resourceStatusByKey,
+            condition: modelProjection.error
+                ? teamsUnavailableReason({ kind: 'unknown', retryable: modelProjection.error.retryable, code: modelProjection.error.code })
+                : current ? null : discovered.condition ?? { reason: 'loading' as const, retryable: false },
+            reload,
+        };
+    }, [discovered, input.agentTargetKey, modelProjection.data, modelProjection.error, modelProjection.loading, needsMachineProjection, reload]);
 }

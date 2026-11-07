@@ -1,3 +1,4 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import type {
   PluginConnectedAccountAuthenticationV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type {
@@ -177,7 +178,7 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
    */
   teamResources?: readonly TeamCredentialResourceCatalogEntryV1[];
   /** Exact Home catalog currentness; stale retained resources stay visible but cannot be selected. */
-  teamResourceCurrentKeys?: ReadonlySet<string>;
+  teamResourceStatusByKey?: TeamCredentialResourceStatusByKey;
   teamNameById?: Readonly<Record<string, string>>;
 }>): readonly ConnectedAccountPurposeTargetChoice[] {
   const candidates: ConnectedAccountPurposeTargetChoice[] = [];
@@ -276,8 +277,8 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
       && sameService(resource.sourcePresentation.service, input.declaration.service)
     ))
     .flatMap((resource) => resource.connectedServiceSelections.flatMap((selection) => {
-      const resourceCurrent = input.teamResourceCurrentKeys === undefined
-        || input.teamResourceCurrentKeys.has(`${resource.teamId}:${resource.id}`);
+      const resourceCurrent = input.teamResourceStatusByKey === undefined
+        || (input.teamResourceStatusByKey.get(`${resource.teamId}:${resource.id}`)?.kind === 'current');
       if (
         selection.deliveryMode === 'direct'
         && !sameService(selection.disclosedMember.service, input.declaration.service)

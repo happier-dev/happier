@@ -133,3 +133,45 @@ describe('ProviderConnectionUsageSectionView failure recovery', () => {
         expect(refresh).not.toHaveBeenCalled();
     });
 });
+
+describe('ProviderConnectionUsageSectionView without a machine', () => {
+    async function renderUnchecked(sources: readonly (typeof keySource)[]) {
+        const presentation = presentProviderConnectionUsage({ sources, isBillingSlotBound: () => false, view: null });
+        return renderScreen(
+            <ItemList>
+                <ProviderConnectionUsageSectionView
+                    providerName="OpenRouter" presentation={presentation} refreshing={false} failed={false}
+                    refresh={null} onOpenApproval={null} isBillingKeySaved={() => false}
+                    onChooseBillingKey={vi.fn()} onChooseApiKey={vi.fn()}
+                />
+            </ItemList>,
+        );
+    }
+
+    it('leaves the missing machine to the machine section: no section when nothing here can be used', async () => {
+        const screen = await renderUnchecked([keySource]);
+        expect(screen.findByTestId('provider-connection-usage')).toBeNull();
+        expect(screen.findByTestId('provider-connection-usage:not-checked')).toBeNull();
+    });
+
+    it('keeps the billing key that needs no machine, without repeating that a machine is missing', async () => {
+        const screen = await renderUnchecked([keySource, creditSource]);
+        expect(screen.findByTestId('provider-connection-usage:billing-key:managementKey')).not.toBeNull();
+        expect(screen.findByTestId('provider-connection-usage:not-checked')).toBeNull();
+    });
+
+    it('leaves a stale grant to the switch that repairs it, instead of saying it again here', async () => {
+        const presentation = { ...presentProviderConnectionUsage({ sources: [keySource], isBillingSlotBound: () => true, view: null }),
+            connectionError: createProviderErrorV1('provider_account_grant_stale', { connectionId: 'pc_a' }) };
+        const screen = await renderScreen(
+            <ItemList>
+                <ProviderConnectionUsageSectionView
+                    providerName="OpenRouter" presentation={presentation} refreshing={false} failed={false}
+                    refresh={vi.fn()} onOpenApproval={null} isBillingKeySaved={() => true}
+                    onChooseBillingKey={vi.fn()} onChooseApiKey={vi.fn()}
+                />
+            </ItemList>,
+        );
+        expect(screen.findByTestId('provider-connection-usage:error')).toBeNull();
+    });
+});

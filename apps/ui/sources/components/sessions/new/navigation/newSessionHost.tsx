@@ -1,14 +1,16 @@
 import * as React from 'react';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import { useLocalSearchParams, useNavigation, useRouter, type HrefObject } from 'expo-router';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
 import type { ModelOption } from '@/sync/domains/models/modelOptions';
 
 import type { PermissionMode } from '@/constants/PermissionModes';
 import type { SessionSpawnNewActionExecutor } from '@/sync/ops/actions/sessionSpawnNewAction';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { SessionInstrumentStripConnectionStatus } from '@/components/sessions/agentInput/instrumentStrip/SessionInstrumentStrip';
 
 /**
  * Where the one New Session surface lives.
@@ -26,6 +28,8 @@ export type NewSessionHostParams = Readonly<Record<string, string | string[] | u
 export type NewSessionHostDraftEntry = Readonly<{ draftId: string; draftOrigin: 'ordinary' | null }>;
 
 export type NewSessionEmbeddedHost = Readonly<{
+    /** The persistent shell composer has its own presentation lifetime. */
+    kind?: 'docked';
     params: NewSessionHostParams;
     /** A contextual embed's Home, independent of the Account's globally selected Home. */
     targetServerId?: string;
@@ -33,8 +37,8 @@ export type NewSessionEmbeddedHost = Readonly<{
     setParams: (patch: Readonly<Record<string, unknown>>) => void;
     /** Opens another draft in place of the current one (start another, delete). */
     openDraft: (entry: NewSessionHostDraftEntry) => void;
-    /** The surface handed its draft to a destination (the created session). */
-    onHandedOff: (destination: Parameters<ReturnType<typeof useRouter>['push']>[0]) => void;
+    /** The surface handed its draft to a destination (the created session); `opened` when it went there. */
+    onHandedOff: (destination: Parameters<ReturnType<typeof useRouter>['push']>[0], outcome?: Readonly<{ opened: boolean }>) => void;
     /**
      * Whether the person has shown intent to use the embedded composer (focus, hover, press).
      * Until then its closed chips and pickers issue no machine RPCs.
@@ -52,6 +56,15 @@ export type NewSessionEmbeddedHost = Readonly<{
      */
     createdSessionPresentation?: 'push' | 'inPlace';
     /**
+     * What the host adds to the composer's status row: its own actions, after the draft's (Docked's
+     * close capsule).
+     */
+    statusTrailingActions?: React.ReactNode;
+    /** Replaces the empty composer's line; `null` hides it while empty and not creating. */
+    emptyComposerStatus?: SessionInstrumentStripConnectionStatus | null;
+    /** Opens a Session named by the composer's started line (Docked also folds its card as it goes). */
+    onOpenStartedSession?: (href: string) => void;
+    /**
      * A host that fixes part of the creation (the embed's new chat): the composer offers only what
      * the profile allows and hides the pickers it decides. Narrowing only; the grant enforces.
      */
@@ -63,7 +76,7 @@ export type NewSessionCreationProfile = Readonly<{
     draftScope?: ServerAccountScope;
     /** The host owns only frame-local draft custody and must not read Account drafts. */
     draftHydration?: 'local';
-    /** The host binds the machine: no machine, profile or resume picker. */
+    /** When true, the host binds the machine: no machine, profile or resume picker. */
     hostBindsMachine: true;
     /** The injected creation executor's bound target, independent of Account machine records. */
     machineId?: string;
@@ -97,6 +110,13 @@ export function NewSessionEmbeddedHostProvider(props: Readonly<{
 
 export function useNewSessionEmbeddedHost(): NewSessionEmbeddedHost | null {
     return React.useContext(NewSessionEmbeddedHostContext);
+}
+
+/** Presentation belongs to the persistent host rather than the page beneath it. */
+export function useNewSessionHostFocused(): boolean {
+    const focused = useIsFocused();
+    const host = React.useContext(NewSessionEmbeddedHostContext);
+    return host?.kind === 'docked' || focused;
 }
 
 /** The New Session params: the `/new` route's own, or the embedding host's. */
@@ -161,6 +181,8 @@ export function useNewSessionHostNavigation(): Readonly<{
     const openHostDraft = host?.openDraft;
     const onHandedOff = host?.onHandedOff;
     const presentsInPlace = host?.createdSessionPresentation === 'inPlace';
+    const dockedDraftId = host?.kind === 'docked' && typeof host.params.draftId === 'string'
+        ? host.params.draftId : null;
 
     return React.useMemo(() => {
         if (!setParams || !openHostDraft || !onHandedOff) {
@@ -181,12 +203,22 @@ export function useNewSessionHostNavigation(): Readonly<{
             ...router,
             setParams: (patch: Readonly<Record<string, unknown>>) => setParams(patch ?? {}),
             push: ((href: Parameters<RouterLike['push']>[0], options?: Parameters<RouterLike['push']>[1]) => {
+                if (dockedDraftId) {
+                    const objectHref: HrefObject | null = typeof href === 'object' ? href : null;
+                    const pickerHref = objectHref?.pathname.startsWith('/new/pick/')
+                        ? { ...objectHref, params: { ...objectHref.params, newSessionHostDraftId: dockedDraftId } }
+                        : href;
+                    // The route is unchanged; only this host's picker-return marker is added.
+                    router.push(pickerHref as Parameters<RouterLike['push']>[0], options);
+                    return;
+                }
                 // Preflight machine links must not navigate an in-place chat into the app shell.
                 if (!presentsInPlace) router.push(href, options);
             }) as RouterLike['push'],
-            replace: ((href: Parameters<RouterLike['push']>[0], options?: Parameters<RouterLike['push']>[1]) => {
-                if (!presentsInPlace) router.push(href, options);
-                onHandedOff(href);
+            replace: ((href: Parameters<RouterLike['push']>[0], options?: Parameters<RouterLike['push']>[1] & Readonly<{ opensDestination?: boolean }>) => {
+                const opened = !presentsInPlace || options?.opensDestination === true;
+                if (opened) router.push(href, options);
+                onHandedOff(href, { opened });
             }) as RouterLike['replace'],
         } as RouterLike;
         const embeddedNavigation = {
@@ -209,7 +241,7 @@ export function useNewSessionHostNavigation(): Readonly<{
             navigation: embeddedNavigation,
             openDraft: (entry: NewSessionHostDraftEntry) => openHostDraft(entry),
         };
-    }, [navigation, onHandedOff, openHostDraft, presentsInPlace, router, setParams]);
+    }, [dockedDraftId, navigation, onHandedOff, openHostDraft, presentsInPlace, router, setParams]);
 }
 
 /** Applies a `router.setParams`-style patch: `undefined` removes a key. */

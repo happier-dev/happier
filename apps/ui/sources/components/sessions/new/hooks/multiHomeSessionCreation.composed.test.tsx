@@ -1,7 +1,5 @@
-import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
@@ -10,23 +8,31 @@ import 'fake-indexeddb/auto';
 
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
-import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createExistingSessionDirectoryPreflightResult } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
-import type { SessionSpawnNewResultV1, SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import type { SessionSpawnNewResultV1} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol/sessions/authoring/index';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import type { HomeViewStateV1, ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { RPC_METHODS, DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc';
+import { readOrdinaryNewSessionDraftId, rememberOrdinaryNewSessionDraftId } from '@/sync/domains/state/newSessionTargetUiState';
 
 installTokenStorageWebPlatformMocks();
 
+// A Bot draft's face paints through Skia on native; the platform boundary is the web canvas view here, as in the
+// face picker suite, so the composed Bot draft keeps its real face owner.
+vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 // Match the nearest real screen-model fixture's native SDK boundary. This
 // hook-only journey never renders Markdown; do not fabricate reveal/parser
 // behavior if a new consumer starts using the patched SDK during the test.
@@ -54,9 +60,11 @@ const routeBoundary = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
     push: vi.fn(),
     replace: vi.fn(),
+    setOptions: vi.fn(),
 }));
 
-vi.mock('@/text', async () => createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@/text', async () => createTextModuleMock({ translate: (key, params) => key === 'errors.errorWithCode'
+    ? `${key}:${String(params?.code ?? '')}:${String(params?.message ?? '')}` : key }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: {
@@ -66,6 +74,8 @@ vi.mock('@/modal', async () => {
     } }).module;
 });
 vi.mock('expo-router', async () => {
+    const React = await import('react');
+    const { NavigationContext } = await import('@react-navigation/native');
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const router = createExpoRouterMock({
         params: () => routeBoundary.params,
@@ -75,6 +85,19 @@ vi.mock('expo-router', async () => {
     });
     return {
         ...router.module,
+        // Expo's Screen SDK boundary applies options in a layout effect. The real
+        // React Navigation descriptor below owns option cleanup on route unmount.
+        Stack: Object.assign(router.module.Stack, { Screen: function Screen({ options }: { options: Record<string, unknown> }) {
+            const navigation = React.useContext(NavigationContext);
+            const isFocused = navigation?.isFocused();
+            React.useLayoutEffect(() => {
+                if (!navigation) return;
+                routeBoundary.setOptions(options);
+                navigation.setOptions(options);
+            }, [navigation, isFocused, options]);
+            return null;
+        } }),
+        useNavigation: () => React.useContext(NavigationContext) ?? router.module.useNavigation(),
         // Each case owns a fresh route; prior picker overrides must not survive it.
         useLocalSearchParams: () => routeBoundary.params,
     };
@@ -169,7 +192,7 @@ vi.mock('socket.io-client', async () => {
                                         ? { pluginId: identity.pluginId, localId: declaration.service } : declaration.service })),
                                 capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
                             }])),
-                            actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
+                            actionsById: {}, familiesById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
                         }) } };
                     }
                     if (payload.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)) {
@@ -204,6 +227,12 @@ vi.mock('socket.io-client', async () => {
         return socket;
     } };
 });
+
+/** The composer hands AgentInput its live prompt store; the test reads the text it currently holds. */
+function composerText(composer: Readonly<{ props: { value: unknown } }>): string {
+    const value = composer.props.value;
+    return typeof value === 'string' ? value : (value as { getPrompt: () => string }).getPrompt();
+}
 
 function tokenFor(accountId: string): string {
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -265,10 +294,39 @@ let artifactHttpBoundary: ((url: string, init?: RequestInit) => Promise<Response
 // The HTTP snapshot fixture is independent of the client projection under test.
 const machineHttpSnapshots = new Map<string, readonly Machine[]>();
 
+/**
+ * An ordinary New Session entry opened now, then the sidebar Space changes: the entry keeps the Space it opened in,
+ * and the first authored edit stores it with the draft (as the authoring autosave does).
+ */
+async function captureOrdinaryEntrySpaceDraft(scope: Readonly<{ serverId: string; accountId: string }>, afterEntry: () => Promise<unknown>): Promise<string> {
+    const { useNewSessionOrganizationPlacement } = await import('../organization/useNewSessionOrganizationPlacement');
+    const { seedNewSessionDraftV1 } = await import('../newSessionDraftSeed');
+    const entry = await renderHook(() => useNewSessionOrganizationPlacement({
+        serverId: scope.serverId, executionTarget: null, directory: '', startInActiveSpace: true,
+    }));
+    try {
+        await act(async () => { await afterEntry(); });
+        const spaceMembership = entry.getCurrent().spaceMembership;
+        if (!spaceMembership) throw new Error('Expected the ordinary entry to start in the active Space');
+        const draftId = seedNewSessionDraftV1({ scope, seed: { spaceMembership } });
+        if (!draftId) throw new Error('Expected the authored ordinary draft');
+        return draftId;
+    } finally { await entry.unmount(); }
+}
+
 async function selectHomeView(state: HomeViewStateV1): Promise<void> {
     await profiles.saveHomeViewState(state);
     const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
     await updateEffectiveHomeViewState(() => state, { scope: 'tab' });
+}
+
+
+/** The draft's Instructions menu, as its composer chip opens it (owner 2026-10-30: Instructions are a setup-rail chip). */
+function renderInstructionsMenu(props: Readonly<{ agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip> }>) {
+    const chip = props.agentInputExtraActionChips?.find(candidate => candidate.key === 'new-session-instructions');
+    const content = chip?.collapsedContentPopover?.renderContent;
+    if (typeof content !== 'function') throw new Error('The draft has no Instructions chip');
+    return content({ requestClose: () => {} } as never);
 }
 
 describe('multi-Home Session creation composition', () => {
@@ -301,11 +359,7 @@ describe('multi-Home Session creation composition', () => {
         resetServerFeaturesClientForTests();
         resetMachinePoolSyncRuntimeForTests();
         await resetServerReachabilitySupervisors();
-        const {
-            CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-            MACHINE_PLAIN_DATA_KEY_MARKER,
-            encodePlainMachineStoredContent,
-        } = await import('@happier-dev/protocol');
+        const [{ CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION}, { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent}] = await Promise.all([import('@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1'), import('@happier-dev/protocol/machines/machineStoredContent')]);
         const { buildServerFeaturesResponse } = await import('@/hooks/server/serverFeaturesTestUtils');
         const { MachineAccessGrantsListResponseV1Schema } = await import('@happier-dev/protocol/machines/machineAccessV1');
         const { parseToken } = await import('@/utils/auth/parseToken');
@@ -934,9 +988,13 @@ describe('multi-Home Session creation composition', () => {
         routeBoundary.params = dataId ? { dataId } : {};
         const { storage } = await import('@/sync/domains/state/storage');
         await storage.getState().activateSettingsScope({ serverId: homeAScopeId, accountId: 'account-a' });
-        storage.getState().applySettingsLocal({ newSessionDraftEntryMode: 'alwaysFresh' });
+        storage.getState().applySettingsLocal({ newSessionDraftEntryMode: 'alwaysFresh', collectionSpacesEnabled: true, sessionSpacesEnabled: true });
         const { NewSessionScreen } = await import('../NewSessionScreen');
         const { AgentInput } = await import('@/components/sessions/agentInput');
+        const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const { createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const draftScope = { serverId: homeAScopeId, accountId: 'account-a' };
         const element = () => React.createElement(InjectedAuthProvider, { credentials: { token: homeAToken },
             children: React.createElement(NewSessionScreen, { presentation: 'embedded' }) });
         const screen = await renderScreen(element());
@@ -946,14 +1004,16 @@ describe('multi-Home Session creation composition', () => {
             expect(storage.getState().isSessionDraftsReady).toBe(false);
             expect(readAddresses).toEqual([]);
             const draftId = routeBoundary.params.draftId;
+            // Opening the ordinary entry in a Space stores nothing until the person writes.
+            if (!seeded) expect(getSessionDraftSnapshot(draftScope, { kind: 'newSession', draftId })).toBeNull();
             const composer = screen.root.findByType(AgentInput);
-            expect(composer.props.value).toBe(seeded ? 'seeded input' : '');
+            expect(composerText(composer)).toBe(seeded ? 'seeded input' : '');
             if (dataId) expect(peekTempData(dataId)).toBeNull();
             await act(async () => { composer.props.onChangeText('newer local input'); });
             await screen.update(element());
             expect(routeBoundary.params.draftId).toBe(draftId);
             expect(screen.root.findByType(AgentInput)).toBe(composer);
-            expect(screen.root.findByType(AgentInput).props.value).toBe('newer local input');
+            expect(composerText(screen.root.findByType(AgentInput))).toBe('newer local input');
             // Settle the same background repository owner that bootstrap uses;
             // unrelated core projection queues do not own this continuity check.
             const hydration = (sync as unknown as { refreshSessionDraftRepositoryForSync(): Promise<void> })
@@ -961,8 +1021,49 @@ describe('multi-Home Session creation composition', () => {
             await act(async () => { heldList.resolve(); await hydration; });
             expect(storage.getState().isSessionDraftsReady).toBe(true);
             expect(screen.root.findByType(AgentInput)).toBe(composer);
-            expect(screen.root.findByType(AgentInput).props.value).toBe('newer local input');
+            expect(composerText(screen.root.findByType(AgentInput))).toBe('newer local input');
+            // The first authored edit keeps the draft in the Space it was opened in.
+            await vi.waitFor(() => expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.spaceMembership)
+                .toEqual({ spaceId: createDefaultCollectionSpaceV1('sessionWork').id, spaceSettingsTarget: draftScope }));
         } finally { heldList.resolve(); await screen.unmount(); }
+    });
+
+    it('opens "New session here" in its Section as entry context: no stored draft until typing, then the draft keeps the Section', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000931';
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { drafts: { enabled: true } } } });
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        const draftWrites: unknown[] = [];
+        sessionHttpBoundary = async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json({ ...features,
+                capabilities: { ...features.capabilities,
+                    serverIdentity: { serverIdentityId: profiles.getActiveServerSnapshot().serverId } } });
+            if (path === '/v2/account/session-drafts/list') return Response.json({ items: [] });
+            if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
+            if (path.startsWith('/v2/account/session-drafts/')) draftWrites.push(path);
+            return coreHttp(path);
+        };
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('section-entry', { applyConnectionManager: true }));
+        routeBoundary.params = { draftId, sectionId: 'section-here', spawnServerId: homeAScopeId };
+        const { storage } = await import('@/sync/domains/state/storage');
+        await storage.getState().activateSettingsScope({ serverId: homeAScopeId, accountId: 'account-a' });
+        const { NewSessionScreen } = await import('../NewSessionScreen');
+        const { AgentInput } = await import('@/components/sessions/agentInput');
+        const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const draftScope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const element = () => React.createElement(InjectedAuthProvider, { credentials: { token: homeAToken },
+            children: React.createElement(NewSessionScreen, { presentation: 'embedded' }) });
+        const screen = await renderScreen(element());
+        try {
+            const composer = await vi.waitFor(() => screen.root.findByType(AgentInput));
+            expect(getSessionDraftSnapshot(draftScope, { kind: 'newSession', draftId })).toBeNull();
+            expect(draftWrites).toEqual([]);
+            await act(async () => { composer.props.onChangeText('typed here'); });
+            await vi.waitFor(() => expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.organizationPlacement)
+                .toEqual({ folderId: 'section-here', tagIds: [] }));
+        } finally { await screen.unmount(); }
     });
 
     it.each(['explicit', 'resumePrevious', 'resumeAbsent'] as const)('hydrates only the %s New Session before assigning or mounting its composer', async (entry) => {
@@ -997,8 +1098,8 @@ describe('multi-Home Session creation composition', () => {
         ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA(`surface-${entry}`, { applyConnectionManager: true }));
         const { storage } = await import('@/sync/domains/state/storage');
         await storage.getState().activateSettingsScope({ serverId: homeAScopeId, accountId: 'account-a' });
-        storage.getState().applySettingsLocal({ newSessionDraftEntryMode: entry === 'explicit' ? 'alwaysFresh' : 'resumePrevious',
-            newSessionOrdinaryEntryDraftId: draftId });
+        storage.getState().applySettingsLocal({ newSessionDraftEntryMode: entry === 'explicit' ? 'alwaysFresh' : 'resumePrevious' });
+        rememberOrdinaryNewSessionDraftId({ serverId: homeAScopeId, accountId: 'account-a' }, draftId);
         routeBoundary.params = entry === 'explicit' ? { draftId } : {};
         const { NewSessionScreen } = await import('../NewSessionScreen');
         const { AgentInput } = await import('@/components/sessions/agentInput');
@@ -1016,11 +1117,11 @@ describe('multi-Home Session creation composition', () => {
                 expect(routeBoundary.params.draftId).not.toBe(draftId);
             } else expect(routeBoundary.params.draftId).toBe(draftId);
             const composer = screen.root.findByType(AgentInput);
-            expect(composer.props.value).toBe(entry === 'resumeAbsent' ? '' : 'remembered remote input');
+            expect(composerText(composer)).toBe(entry === 'resumeAbsent' ? '' : 'remembered remote input');
             await act(async () => { composer.props.onChangeText('newer local input'); });
             await screen.update(element());
             expect(screen.root.findByType(AgentInput)).toBe(composer);
-            expect(screen.root.findByType(AgentInput).props.value).toBe('newer local input');
+            expect(composerText(screen.root.findByType(AgentInput))).toBe('newer local input');
             routeBoundary.params = { draftId: secondId };
             await screen.update(element());
             await vi.waitFor(() => expect(addresses).toContainEqual({ kind: 'newSession', draftId: secondId }));
@@ -1071,7 +1172,8 @@ describe('multi-Home Session creation composition', () => {
         const { getSessionDraftSnapshot, writeNewSessionDraft, flushSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
         writeNewSessionDraft({ scope, draftId, materializationIntent: 'userEdit', patch: { text: 'Describe this picture' } });
         await expect(flushSessionDraft({ scope, address })).resolves.toMatchObject({ status: 'clean' });
-        storage.getState().applySettingsLocal({ newSessionDraftEntryMode: 'resumePrevious', newSessionOrdinaryEntryDraftId: draftId });
+        storage.getState().applySettingsLocal({ newSessionDraftEntryMode: 'resumePrevious' });
+        rememberOrdinaryNewSessionDraftId(scope, draftId);
         routeBoundary.params = { draftId, draftOrigin: 'ordinary' };
         const { HubComposerSection } = await import('@/components/hub/composer/HubComposerSection');
         const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
@@ -1080,12 +1182,16 @@ describe('multi-Home Session creation composition', () => {
         const { AgentInput } = await import('@/components/sessions/agentInput');
         const { MultiTextInput } = await import('@/components/ui/forms/MultiTextInput');
         const navigation = { push: routeBoundary.push, replace: routeBoundary.replace, back: () => {} };
-        const element = (routeOpen: boolean, homeFocused = !routeOpen) => <InjectedAuthProvider credentials={{ token: homeAToken }}>
-            <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', focused: homeFocused, visible: !routeOpen, navigation }}>
-                <HubComposerSection suggestions="tiles" />
-            </DestinationInstanceContext.Provider>
-            {routeOpen ? <NewSessionScreen presentation="screen" /> : null}
-        </InjectedAuthProvider>;
+        let currentHomeFocus = true;
+        const element = (routeOpen: boolean, homeFocused = !routeOpen) => {
+            currentHomeFocus = homeFocused && !routeOpen;
+            return <InjectedAuthProvider credentials={{ token: homeAToken }}>
+                <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', focused: homeFocused, isFocused: () => currentHomeFocus, visible: !routeOpen, navigation }}>
+                    <HubComposerSection suggestions="tiles" />
+                </DestinationInstanceContext.Provider>
+                {routeOpen ? <NewSessionScreen presentation="screen" /> : null}
+            </InjectedAuthProvider>;
+        };
         const screen = await renderScreen(element(false));
         modalBoundary.confirm.mockResolvedValue(true);
         try {
@@ -1110,14 +1216,14 @@ describe('multi-Home Session creation composition', () => {
             expect(records.get(draftId)?.content).toBeNull();
             await screen.update(element(false));
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
-            expect(screen.root.findByType(AgentInput).props.value).toBe('');
+            expect(composerText(screen.root.findByType(AgentInput))).toBe('');
             expect(screen.root.findByType(AgentInput).props.attachmentRowItems).toEqual([]);
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
         } finally { await screen.unmount(); }
     });
 
     it.each(['disabled', 'waived', 'defaultApproved', 'defaultRejected', 'retargeted', 'pointerChanged'] as const)('routes the composer delete through the %s Action policy', async policy => {
-        const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol');
+        const { normalizeActionsSettingsV1} = await import('@happier-dev/protocol/actions/actionSettings');
         const { SessionDraftMutateRequestV2Schema, SessionDraftMutateResponseV2Schema } = await import('@happier-dev/protocol/drafts/sessionDraftsV2');
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
         const features = createRootLayoutFeaturesResponse({ features: { sessions: { drafts: { enabled: true } } } });
@@ -1128,13 +1234,18 @@ describe('multi-Home Session creation composition', () => {
         const heldDelete = createDeferred<void>();
         const holdDeletion = policy === 'retargeted' || policy === 'pointerChanged';
         const mutations: unknown[] = [];
+        const records = new Map<string, import('@happier-dev/protocol/drafts/sessionDraftsV2').SessionDraftRecordV2>();
         sessionHttpBoundary = async (url, init) => {
             const path = new URL(url).pathname;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json({ ...features,
                 capabilities: { ...features.capabilities,
                     serverIdentity: { serverIdentityId: profiles.getActiveServerSnapshot().serverId } } });
             if (path === '/v2/account/session-drafts/list') return Response.json({ items: [] });
-            if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
+            if (path === '/v2/account/session-drafts/read') {
+                const { address: requestedAddress } = JSON.parse(String(init?.body));
+                const record = records.get(requestedAddress.draftId);
+                return Response.json(record ? { status: record.content === null ? 'deleted' : 'present', record } : { status: 'absent' });
+            }
             if (path === '/v1/account/session-drafts/mutate' || path === '/v2/account/session-drafts/mutate') {
                 const input = SessionDraftMutateRequestV2Schema.parse(JSON.parse(String(init?.body)));
                 // A draft autosave and its later tombstone share this endpoint.
@@ -1143,10 +1254,14 @@ describe('multi-Home Session creation composition', () => {
                     mutations.push(input);
                     if (holdDeletion) await heldDelete.promise;
                 }
-                return Response.json(SessionDraftMutateResponseV2Schema.parse({ status: 'updated', record: {
+                const result = SessionDraftMutateResponseV2Schema.parse({ status: 'updated', record: {
                     address: input.address, revision: input.expectedRevision === 'absent' ? 1 : input.expectedRevision + 1,
                     createdAt: 1, updatedAt: 2, content: input.content,
-                } }));
+                } });
+                if (result.status === 'updated' && result.record.address.kind === 'newSession') {
+                    records.set(result.record.address.draftId, result.record);
+                }
+                return Response.json(result);
             }
             return coreHttp(path);
         };
@@ -1170,14 +1285,27 @@ describe('multi-Home Session creation composition', () => {
         try {
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+            let interactionSettingsPublications = 0;
+            const stopSettingsCount = storage.subscribe((current, previous) => {
+                if (current.settings !== previous.settings) {
+                    interactionSettingsPublications++;
+                }
+            });
             await act(async () => { writeNewSessionDraft({ scope, draftId, materializationIntent: 'userEdit', patch: { text: 'Keep exact composer scope' } }); });
             await vi.waitFor(() => expect(screen.findAllByType(NewSessionDraftComposerActions)).toHaveLength(1));
+            stopSettingsCount();
+            expect(interactionSettingsPublications).toBe(0);
+            // The deletion transport contract requires a remote record. Local-only
+            // drafts can disappear without a tombstone; a Settings echo is not a flush.
+            const { flushSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+            await act(async () => { await expect(flushSessionDraft({ scope, address })).resolves.toMatchObject({ status: 'clean' }); });
+            expect(records.has(draftId)).toBe(true);
             if (holdDeletion) {
                 let deletion!: Promise<void>;
                 await act(async () => { deletion = screen.findByType(NewSessionDraftComposerActions).props.onDelete(); });
                 await vi.waitFor(() => expect(mutations).toHaveLength(1));
                 await act(async () => {
-                    storage.getState().applySettingsLocal({ newSessionOrdinaryEntryDraftId: replacementDraftId });
+                    rememberOrdinaryNewSessionDraftId(scope, replacementDraftId);
                     if (policy === 'retargeted') {
                         writeNewSessionDraft({ scope, draftId: replacementDraftId, materializationIntent: 'userEdit', patch: { text: 'Replacement composer' } });
                         routeBoundary.params = { draftId: replacementDraftId, draftOrigin: 'ordinary' };
@@ -1185,10 +1313,10 @@ describe('multi-Home Session creation composition', () => {
                 });
                 if (policy === 'retargeted') await screen.update(element());
                 await act(async () => { heldDelete.resolve(); await deletion; });
-                expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBe(replacementDraftId);
+                expect(readOrdinaryNewSessionDraftId(scope)).toBe(replacementDraftId);
                 if (policy === 'retargeted') {
                     expect(routeBoundary.replace).not.toHaveBeenCalled();
-                    expect(screen.root.findByType(AgentInput).props.value).toBe('Replacement composer');
+                    expect(composerText(screen.root.findByType(AgentInput))).toBe('Replacement composer');
                 } else expect(routeBoundary.replace).toHaveBeenCalledTimes(1);
                 expect(getSessionDraftSnapshot(scope, address)).toBeNull();
                 return;
@@ -1252,16 +1380,50 @@ describe('multi-Home Session creation composition', () => {
         const screen = await renderScreen(element());
         try {
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
-            expect(screen.root.findByType(AgentInput).props.value).toBe('An ordinary question');
+            expect(composerText(screen.root.findByType(AgentInput))).toBe('An ordinary question');
             expect(screen.findAllByType(NewBotDraftHeader)).toHaveLength(0);
             routeBoundary.params = { draftId: botId };
             await screen.update(element());
-            await vi.waitFor(() => expect(screen.root.findByType(AgentInput).props.value).toBe('Look after releases'));
+            await vi.waitFor(() => expect(composerText(screen.root.findByType(AgentInput))).toBe('Look after releases'));
             expect(screen.root.findAllByType(AgentInput)).toHaveLength(1);
             expect(screen.findByType(NewBotDraftHeader).props.botCreation.nameStore.getPrompt()).toBe('Release captain');
             await act(async () => { screen.root.findByType(AgentInput).props.onChangeText('Keep the release notes current'); });
             expect(readNewSessionDraftFromRepository({ scope, draftId: botId })?.input).toBe('Keep the release notes current');
             expect(readNewSessionDraftFromRepository({ scope, draftId: firstId })?.input).toBe('An ordinary question');
+        } finally { await screen.unmount(); }
+    });
+
+    it('shows a Bot draft opened in the embedded composer under its own name, face and picker', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = url => {
+            const path = new URL(url).pathname;
+            return path === '/v1/machines' ? Response.json([]) : coreHttp(path);
+        };
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('embedded-bot-identity', { applyConnectionManager: true }));
+        const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const botId = '00000000-0000-4000-8000-000000000933';
+        const { writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        writeNewSessionDraftToRepository({ scope, draftId: botId, materializationIntent: 'seeded', draft: { selectedMachineId: null, selectedPath: null,
+            selectedProfileId: null, selectedSecretId: null, agentType: 'codex' as const, permissionMode: 'default' as const, acpSessionModeId: null, updatedAt: 1,
+            input: 'Look after releases', sessionName: 'Release captain',
+            initialSessionFacts: { bot: { kind: 'bot' }, createdAsBot: true, botFace: { seed: 'embedded-bot-seed' } } } });
+        const { NewSessionScreen } = await import('../NewSessionScreen');
+        const { AgentInput } = await import('@/components/sessions/agentInput');
+        const { NewBotDraftHeader } = await import('@/components/sessions/bots/NewBotDraftHeader');
+        const { NewSessionEmbeddedHostProvider } = await import('../navigation/newSessionHost');
+        const { useNewSessionEmbeddedHostState } = await import('../navigation/useNewSessionEmbeddedHostState');
+        // The docked composer is the real New bot entry (Bots → New bot): it opens the Bot draft in its embedded host.
+        function EmbeddedBotDraft() {
+            const { host, replaceParams } = useNewSessionEmbeddedHostState();
+            React.useEffect(() => { replaceParams({ draftId: botId }); }, [replaceParams]);
+            return <NewSessionEmbeddedHostProvider host={host}><NewSessionScreen presentation="embedded" /></NewSessionEmbeddedHostProvider>;
+        }
+        const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: homeAToken }}><EmbeddedBotDraft /></InjectedAuthProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.findAllByType(NewBotDraftHeader)).toHaveLength(1));
+            expect(screen.findByType(NewBotDraftHeader).props.botCreation.nameStore.getPrompt()).toBe('Release captain');
+            expect(screen.findByType(NewBotDraftHeader).props.botCreation.face?.seed).toBe('embedded-bot-seed');
         } finally { await screen.unmount(); }
     });
 
@@ -1321,7 +1483,7 @@ describe('multi-Home Session creation composition', () => {
         const hook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, draftId });
         const model = hook.getCurrent();
         if (model.variant !== 'simple') throw new Error('Bot creation must use the ordinary composer');
-        const screen = await renderScreen(<View>{model.botCreation?.instructions}</View>);
+        const screen = await renderScreen(<View>{renderInstructionsMenu(model.simpleProps)}</View>);
         try {
             expect(artifacts.list()).toHaveLength(0);
             expect(screen.findByTestId('new-session-instructions-attach')).not.toBeNull();
@@ -1402,7 +1564,7 @@ describe('multi-Home Session creation composition', () => {
         }), 2); });
         const model = hook.getCurrent();
         if (model.variant !== 'simple') throw new Error('Expected ordinary Bot composer');
-        const screen = await renderScreen(<View>{model.botCreation?.instructions}</View>);
+        const screen = await renderScreen(<View>{renderInstructionsMenu(model.simpleProps)}</View>);
         const { decodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
         const rowsOfKind = (kind: string) => artifacts.list().filter(row => {
             const header = decodePlainArtifactStoredContent(row.header);
@@ -1425,7 +1587,7 @@ describe('multi-Home Session creation composition', () => {
                 expect(rowsOfKind('prompt_doc.v2')).toHaveLength(1);
                 expect(readNewSessionDraftFromRepository({ scope, draftId })?.instructionsDraft).toBeNull();
                 expect(routeBoundary.push).toHaveBeenCalledTimes(1);
-                expect(screen.findByTestId('new-session-instructions.attached')).not.toBeNull();
+                expect(screen.findByTestId('new-session-instructions-detach')).not.toBeNull();
             } else {
                 expect(rowsOfKind('prompt_doc.v2')).toHaveLength(0);
                 expect(readNewSessionDraftFromRepository({ scope, draftId })?.instructionsDraft).toEqual({ title: 'Reviewed caretaker', markdown: '' });
@@ -1461,7 +1623,7 @@ describe('multi-Home Session creation composition', () => {
         const hook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, draftId });
         const model = hook.getCurrent();
         if (model.variant !== 'simple') throw new Error('Expected Bot composer');
-        const screen = await renderScreen(<View>{model.botCreation?.instructions}</View>);
+        const screen = await renderScreen(<View>{renderInstructionsMenu(model.simpleProps)}</View>);
         let creating: Promise<unknown> | undefined;
         try {
             act(() => { creating = screen.findByTestId('new-session-instructions-create')!.props.onPress(); });
@@ -1732,7 +1894,7 @@ describe('multi-Home Session creation composition', () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { buildServerFeaturesResponse } = await import('@/hooks/server/serverFeaturesTestUtils');
         await vi.waitFor(() => expect(storage.getState().settings.useEnhancedSessionWizard).toBe(true));
-        const { tryWriteServerEnabledBitInPlace, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const [{ tryWriteServerEnabledBitInPlace}, { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION}] = await Promise.all([import('@happier-dev/protocol/features/serverEnabledBit'), import('@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1')]);
         const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
         const { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema }
             = await import('@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1');
@@ -1765,6 +1927,11 @@ describe('multi-Home Session creation composition', () => {
         if (retainedTeamSelection) writeSessionDraftLocalSupplement({ scope, address: { kind: 'newSession', draftId },
             patch: { newSessionLocalState: { teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' },
                 teamId: 'runner-team', resourceId: 'runner-resource', expectedResourceRevision: 7, deliveryMode: 'brokered' }] } } });
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        if (retainedTeamSelection) expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            modelSelection: { ref: { modelId: 'gpt-5' } },
+            teamCredentialBindings: [{ teamId: 'runner-team', resourceId: 'runner-resource', expectedResourceRevision: 7 }],
+        });
         const features = buildServerFeaturesResponse();
         for (const id of ['sessions.ephemeralRunner', 'teams', 'teams.credentialResources'] as const) {
             expect(tryWriteServerEnabledBitInPlace(features, id, true)).toBe(true);
@@ -1815,6 +1982,11 @@ describe('multi-Home Session creation composition', () => {
         sessionHttpBoundary = (url, init) => {
             const parsed = new URL(url);
             observedHomePaths.add(`${parsed.pathname}${parsed.search}`);
+            // resumeSync's snapshot owner reads the active page and then the
+            // ordinary page; use the canonical empty wire for those GETs.
+            if ((init?.method ?? 'GET') === 'GET' && ['/v2/sessions', '/v2/sessions/active', '/v2/session-organization'].includes(parsed.pathname)) {
+                return createEmptyAccountBootstrapHttpResponse(parsed.pathname, init);
+            }
             if (parsed.pathname === '/v1/features' || parsed.pathname === '/v1/features/authenticated') return Response.json({ ...features,
                 capabilities: { ...features.capabilities, serverIdentity: { serverIdentityId: homeBScopeId }, accountStoredContentCompatibility: { v: 1,
                     minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
@@ -1893,7 +2065,7 @@ describe('multi-Home Session creation composition', () => {
                     await vi.waitFor(() => {
                         const model = hook.getCurrent();
                         if (model.variant !== 'wizard') throw new Error('Expected the production model selector');
-                        expect(model.wizardProps.agent.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true);
+                        expect((model.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind === 'current')).toBe(true);
                     });
                 }
             }
@@ -1905,7 +2077,7 @@ describe('multi-Home Session creation composition', () => {
                 releaseSelectionGates = () => { catalogRefreshGate = null; catalog.resolve(); };
                 const model = hook.getCurrent();
                 if (model.variant !== 'wizard') throw new Error('Expected the production model selector');
-                expect(model.wizardProps.agent.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true);
+                expect((model.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind === 'current')).toBe(true);
                 const { useExecutionRunTeamCredentialModel } = await import('@/components/sessions/runs/launcher/useExecutionRunTeamCredentialModel');
                 const run = journey === 'run-refresh-selection' ? await renderHook(() => {
                     const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({});
@@ -1916,7 +2088,7 @@ describe('multi-Home Session creation composition', () => {
                         }, actionInput, setActionInput });
                 }) : null;
                 try {
-                    if (run) await vi.waitFor(() => expect(run.getCurrent().pickerProps.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true));
+                    if (run) await vi.waitFor(() => expect((run.getCurrent().pickerProps.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind === 'current')).toBe(true));
                     let selecting!: Promise<void>;
                     await act(async () => {
                         selecting = Promise.resolve((run?.getCurrent().pickerProps.onSelectTeamCredentialModel
@@ -1940,7 +2112,7 @@ describe('multi-Home Session creation composition', () => {
                     }
                     const refreshing = hook.getCurrent();
                     if (refreshing.variant !== 'wizard') throw new Error('Expected the production model selector');
-                    expect(refreshing.wizardProps.agent.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true);
+                    expect((refreshing.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind === 'current')).toBe(true);
                     const selected = hook.getCurrent();
                     if (selected.variant !== 'wizard') throw new Error('Expected the production model selector');
                     expect(run ? run.getCurrent().selected : selected.wizardProps.agent.selectedTeamCredentialModel)
@@ -1952,7 +2124,7 @@ describe('multi-Home Session creation composition', () => {
                         if (run) expect(run.getCurrent().available).toBe(true);
                         const refreshed = hook.getCurrent();
                         if (refreshed.variant !== 'wizard') throw new Error('Expected the production model selector');
-                        expect(refreshed.wizardProps.agent.currentTeamCredentialResourceKeys?.has('runner-team:runner-resource')).toBe(true);
+                        expect((refreshed.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind === 'current')).toBe(true);
                         if (!run) expect(refreshed.wizardProps.agent.teamCredentialResources?.[0]?.displayName).toBe('Refreshed Runner model');
                     });
                 } finally { await run?.unmount(); }
@@ -1976,9 +2148,17 @@ describe('multi-Home Session creation composition', () => {
             // observing the distinct Send → preparation HTTP phase.
             await hook.rerender();
             if (sourceCase) {
+                await vi.waitFor(() => {
+                    const selected = hook.getCurrent();
+                    if (selected.variant !== 'wizard') throw new Error('Expected the production Agent selector');
+                    const retained = readNewSessionDraftFromRepository({ scope, draftId });
+                    expect(selected.wizardProps.agent.selectedTeamCredentialModel, JSON.stringify({
+                        modelSelection: retained?.modelSelection, teamCredentialBindings: retained?.teamCredentialBindings,
+                        rows: selected.wizardProps.agent.teamCredentialResources?.flatMap(resource => resource.providerModels.map(row => row.selection)),
+                    })).toEqual(entitled.resources[0]!.providerModels[0]!.selection);
+                });
                 const selected = hook.getCurrent();
                 if (selected.variant !== 'wizard') throw new Error('Expected the production Agent selector');
-                expect(selected.wizardProps.agent.selectedTeamCredentialModel).toEqual(entitled.resources[0]!.providerModels[0]!.selection);
                 if (journey === 'resume') return;
                 if (launchCase) {
                     const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
@@ -2312,7 +2492,7 @@ describe('multi-Home Session creation composition', () => {
             socketBoundary.result = { type: 'pending', outcome: 'unknown', retryWithSameCreationKey: true };
             socketBoundary.emits.mockClear();
             await act(async () => { await readProductionCreateAction(createHook.getCurrent())({ initialMessage: 'skip' }); });
-            const { SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol');
+            const { SessionSpawnNewInputV2Schema} = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
             const first = SessionSpawnNewInputV2Schema.parse(sessionSpawnCalls()[0]?.[0]?.payload?.params);
             expect(first).toMatchObject({
                 executionTarget: { serverId: homeBScopeId, machineId: 'machine-b' },
@@ -2439,7 +2619,7 @@ describe('multi-Home Session creation composition', () => {
         const { SessionAuthoringOpenResultV1Schema } = await import('@happier-dev/protocol/plugins/ui');
         const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
         const { resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
-        const { SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol');
+        const { SessionSpawnNewInputV2Schema} = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
         socketBoundary.emits.mockClear();
         const opened = await createDefaultActionExecutor().execute('session.authoring.open', {
             seed: { prompt: 'Help me update this review integration.' },
@@ -2459,7 +2639,7 @@ describe('multi-Home Session creation composition', () => {
         resetSessionDraftRepositoryForTests();
         routeBoundary.params = {};
         const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+        const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
         const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } =
             await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
         const metadata = { path: '/external/review', host: 'home-b-machine', machineId: 'machine-b', flavor: 'codex' };
@@ -2480,12 +2660,18 @@ describe('multi-Home Session creation composition', () => {
         try {
             expect(readNewSessionDraftFromRepository({ scope, draftId: acknowledgement.draftId })?.input).toBe('My edited external integration request');
             expect(socketBoundary.emits.mock.calls.filter(([request]) => request.payload?.method?.endsWith(':session.spawnNew'))).toHaveLength(0);
+            const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+            await vi.waitFor(() => expect(getConnectedAccountCatalogValue({ serverId: homeBScopeId, accountId: 'account-b' }, 'purposes')).toMatchObject({ status: 'ready', stale: false }));
             socketBoundary.result = { type: 'success', disposition: 'created', sessionId: 'external-authoring-created',
                 executionTarget: { serverId: homeBScopeId, machineId: 'machine-b' }, organizationPlacement: { folderId: null, tagIds: [] },
                 initialInput: { status: 'accepted', localId: 'external-first-turn' } };
             await act(async () => { await readProductionCreateAction(hook.getCurrent())(); });
             const spawns = socketBoundary.emits.mock.calls.filter(([request]) => request.payload?.method?.endsWith(':session.spawnNew'));
-            expect(spawns).toHaveLength(1);
+            expect(spawns, JSON.stringify({ alerts: modalBoundary.alert.mock.calls,
+                exceptions: observabilityBoundary.capture.mock.calls.map(([error]) => error instanceof Error ? error.stack : error),
+                requests: socketBoundary.fetches.mock.calls,
+                rpcMethods: socketBoundary.emits.mock.calls.map(([request]) => request.payload?.method),
+            })).toHaveLength(1);
             expect(SessionSpawnNewInputV2Schema.parse(spawns[0][0].payload.params)).toMatchObject({
                 directory: { kind: 'path', path: '/external/review' }, initialInput: { text: 'My edited external integration request' },
             });
@@ -2515,9 +2701,9 @@ describe('multi-Home Session creation composition', () => {
         const { writeNewSessionDraftToRepository, readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
         const { resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
         const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-        const { SessionCurrentProjectionRecordV1Schema, SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol');
-        const { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1, sealSessionOwnerDisplayEnvelopeV1 } =
-            await import('@happier-dev/protocol');
+        const [{ SessionCurrentProjectionRecordV1Schema}, { SessionSpawnNewInputV2Schema}] = await Promise.all([import('@happier-dev/protocol/sessions/listing/response'), import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2')]);
+        const { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1, sealSessionOwnerDisplayEnvelopeV1} =
+            await import('@happier-dev/protocol/sessions');
         const { ConnectedAccountCatalogRowReadResponseV1Schema, emptyConnectedAccountCatalogRecordV1 } =
             await import('@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1');
         const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
@@ -2818,7 +3004,7 @@ describe('multi-Home Session creation composition', () => {
         await storage.getState().activateSettingsScope({ serverId: homeAScopeId, accountId: 'account-a' });
         const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const { RunnerPreparedAuthoringV1Schema } = await import('@happier-dev/protocol/ephemeralRunner/launchManifest');
-        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+        const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
         const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1,
             SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
         const scope = { serverId: homeBScopeId, accountId: 'account-b' };
@@ -2962,6 +3148,116 @@ describe('multi-Home Session creation composition', () => {
         }
     });
 
+    it.each([false, true])('presents a typed pool refusal from Machine RPC through the production composer recovery owner (launcher retired=%s)', async (retired) => {
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA());
+        await arrangeHomeB();
+        await selectHomeView({ version: 1, activeTargetKind: 'group', activeTargetId: 'pool-homes',
+            groups: [{ id: 'pool-homes', name: 'Pool Homes', serverIds: [homeAScopeId, homeBScopeId] }] });
+        const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+        await updateEffectiveHomeViewState(() => profiles.loadHomeViewState()!, { scope: 'tab' });
+        const { ConnectedAccountCatalogRowReadResponseV1Schema } = await import('@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1');
+        const targetHome = profiles.getServerProfileById(homeBScopeId)!;
+        sessionHttpBoundary = (url) => new URL(url).origin === new URL(targetHome.serverUrl).origin
+            && new URL(url).pathname === '/v1/account/entity-rows/connected-accounts/purposes'
+            ? Response.json(ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+                content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [{
+                    purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+                    target: { kind: 'group', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool' },
+                }] } } },
+            })) : null;
+        let recoveryDraftId = crypto.randomUUID();
+        let createHook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, targetServerId: homeBScopeId, draftId: recoveryDraftId });
+        try {
+            const model = createHook.getCurrent();
+            const props = model.variant === 'simple' ? model.simpleProps : model.wizardProps.footer;
+            await act(async () => { props.promptStore.setPrompt('Continue with another connected account'); });
+            const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+            await vi.waitFor(() => expect(getConnectedAccountCatalogValue({ serverId: homeBScopeId, accountId: 'account-b' }, 'purposes'))
+                .toMatchObject({ status: 'ready', stale: false, value: { bindings: [expect.objectContaining({ target: { kind: 'group',
+                    service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool' } })] } }));
+            await flushHookEffects();
+            const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+            socketBoundary.result = SessionSpawnNewResultV1Schema.parse({
+                type: 'error', code: 'spawn_failed', retryable: false,
+                launchError: { kind: 'launch_error', code: 'no_eligible_member', message: 'No eligible pool member',
+                    connectedAccountPool: { serviceId: 'happier.agent.codex/openai-codex', excluded: [
+                        { profileId: 'needs-sign-in', reason: 'auth_invalid' }, { profileId: 'empty', reason: 'quota_exhausted' },
+                    ] } },
+            });
+            socketBoundary.emits.mockClear();
+            modalBoundary.alert.mockClear();
+            await act(async () => { await readProductionCreateAction(createHook.getCurrent())({ initialMessage: 'skip' }); });
+            const alert = modalBoundary.alert.mock.calls.at(-1);
+            expect(alert?.[1], JSON.stringify({ alerts: modalBoundary.alert.mock.calls,
+                stack: modalBoundary.alertStacks.at(-1), methods: socketBoundary.emits.mock.calls.map(([request]) => request.payload?.method),
+            })).toContain('connectedServicesPool.startUnavailable');
+            expect(alert?.[2]).toEqual(expect.arrayContaining([
+                expect.objectContaining({ text: 'connectionStatus.summary.signInAgain', onPress: expect.any(Function) }),
+                expect.objectContaining({ text: 'connectedServicesPool.useAnotherAccount', onPress: expect.any(Function) }),
+            ]));
+            expect(sessionSpawnCalls()).toHaveLength(1);
+            const { SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
+            expect(SessionSpawnNewInputV2Schema.parse(sessionSpawnCalls()[0]?.[0].payload.params)).toMatchObject({
+                executionTarget: { serverId: homeBScopeId, machineId: 'machine-b' },
+                connectedServices: { v: 2, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'pool' },
+                } },
+            });
+            const recoveryButtons = alert?.[2] as Array<{ text: string; onPress?: () => void }>;
+            await act(async () => {
+                recoveryButtons.find(button => button.text === 'connectedServicesPool.useAnotherAccount')?.onPress?.();
+                await vi.waitFor(() => expect(modalBoundary.show).toHaveBeenCalled());
+            });
+            const sheet = modalBoundary.show.mock.calls.at(-1)?.[0] as import('@/modal/types').CustomModalConfig;
+            const sheetProps = sheet.props as import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal').ConnectSheetContentProps;
+            if (retired) await createHook.unmount();
+            await act(async () => { sheetProps.onResult({ kind: 'selected', account: {
+                service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'another-account',
+            } }); });
+            await flushHookEffects();
+            if (retired) {
+                const destination = routeBoundary.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { draftId: string } } | undefined;
+                expect(destination).toMatchObject({ pathname: '/new', params: { draftId: expect.any(String) } });
+                const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+                const { buildNewSessionAuthoringDraftFromPersistedDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+                const retained = readNewSessionDraftFromRepository({ scope: { serverId: homeAScopeId, accountId: 'account-a' }, draftId: destination!.params.draftId });
+                expect(retained).toBeTruthy();
+                expect(buildNewSessionAuthoringDraftFromPersistedDraft(retained!).connectedServices?.bindingsByServiceId['happier.agent.codex/openai-codex'])
+                    .toMatchObject({ source: 'connected', profileId: 'another-account' });
+                recoveryDraftId = destination!.params.draftId;
+                createHook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, targetServerId: homeBScopeId, draftId: recoveryDraftId });
+                await flushHookEffects();
+            }
+            await act(async () => { await readProductionCreateAction(createHook.getCurrent())({ initialMessage: 'skip' }); });
+            expect(SessionSpawnNewInputV2Schema.parse(sessionSpawnCalls().at(-1)?.[0].payload.params)).toMatchObject({
+                connectedServices: { v: 2, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'another-account' },
+                } },
+            });
+            await createHook.unmount();
+            const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+            const { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionTempDataFromAuthoringDraft } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+            const { buildNewSessionConfigurationDraft } = await import('@/components/sessions/authoring/draft/sessionConfigurationSeed');
+            const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+            const selected = readNewSessionDraftFromRepository({ scope, draftId: recoveryDraftId });
+            expect(selected).toBeTruthy();
+            const authoring = buildNewSessionAuthoringDraftFromPersistedDraft(selected!);
+            expect(authoring.connectedServices?.bindingsByServiceId['happier.agent.codex/openai-codex'])
+                .toMatchObject({ source: 'connected', profileId: 'another-account' });
+            writeNewSessionDraftToRepository({ scope, draftId: recoveryDraftId,
+                draft: buildNewSessionConfigurationDraft(buildNewSessionTempDataFromAuthoringDraft({
+                    draft: { ...authoring, connectedServices: null }, machineId: 'machine-b',
+                })) });
+            createHook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, targetServerId: homeBScopeId, draftId: recoveryDraftId });
+            await flushHookEffects();
+            await act(async () => { await readProductionCreateAction(createHook.getCurrent())({ initialMessage: 'skip' }); });
+            expect(SessionSpawnNewInputV2Schema.parse(sessionSpawnCalls().at(-1)?.[0].payload.params).connectedServices)
+                .toMatchObject({ v: 2, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'pool' },
+                } });
+        } finally { await createHook.unmount(); }
+    });
+
     it('keeps typed Provider refusal and retry scoped to the selected Home', async () => {
         ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA());
         await arrangeHomeB();
@@ -2973,7 +3269,7 @@ describe('multi-Home Session creation composition', () => {
         await updateEffectiveHomeViewState(() => profiles.loadHomeViewState()!, { scope: 'tab' });
         const createHook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, targetServerId: homeBScopeId });
         try {
-            const { createProviderErrorV1, SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol');
+            const [{ createProviderErrorV1}, { SessionSpawnNewResultV1Schema}] = await Promise.all([import('@happier-dev/protocol/providers/errors'), import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1')]);
             const providerError = createProviderErrorV1('provider_not_enabled_on_machine', {
                 connectionId: 'pc_provider', machineId: 'machine-b',
             });
@@ -3014,6 +3310,175 @@ describe('multi-Home Session creation composition', () => {
         } finally {
             await createHook.unmount();
         }
+    });
+
+    it.each(['add', 'clear', 'deleted', 'cross-home'] as const)('prepares captured Space membership at the chosen Home before Session birth (%s)', async mode => {
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        resetScopedMachineTransportCacheForTests();
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA(`space-birth-${mode}`, { applyConnectionManager: true }));
+        await arrangeHomeB();
+        const catalogScope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const destination = mode === 'cross-home' ? { serverId: homeBScopeId, accountId: 'account-b' } : catalogScope;
+        const ordinaryTags = ['ordinary-label'];
+        const spaceMembership = { spaceId: 'space-a', spaceSettingsTarget: catalogScope };
+        const { CollectionSpacesV1Schema, createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const catalog = CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ ...createDefaultCollectionSpaceV1('sessionWork'),
+            id: 'space-a', name: 'Captured Space', membership: { mode: 'filter_or_manual' as const,
+                tags: [{ ...destination, tagId: 'space-tag-b' }] } },
+            { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'space-b', name: 'Later sidebar selection' }] });
+        accountHttpSettings = { collectionSpacesV1: catalog };
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.getState().applySettingsLocal({ collectionSpacesV1: mode === 'deleted' ? { v: 1, spaces: [] } : catalog });
+        const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const createdSession = createPlainSessionCurrentProjectionRecordFixture({ id: `space-birth-${mode}`,
+            metadata: { path: '/workspace/project', machineId: 'machine-b', host: 'home-b-machine' } });
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        sessionHttpBoundary = async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === `/v2/sessions/${createdSession.id}`) return Response.json({ session: createdSession });
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults,
+                id: new URL(url).origin === new URL(homeB.serverUrl).origin ? 'account-b' : 'account-a' });
+            // The existing transport fixture owns the exact-Home Machine rows and their encryption material.
+            if (path.startsWith('/v1/machines')) return null;
+            if (path !== '/v2/session-organization') return coreHttp(path) ?? createEmptyAccountBootstrapHttpResponse(path, init);
+            return Response.json({ snapshot: { schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],
+                orderEntries: [], labels: [], tagAssignments: [], tags: [{ tagId: 'space-tag-b', tagKey: 'space-tag-b',
+                    sortKey: null, display: { t: 'plain', v: { kind: 'space_membership', ...spaceMembership } },
+                    archivedAt: null, createdAt: 1, updatedAt: 1 }, ...ordinaryTags.map(tagId => ({ tagId, tagKey: tagId,
+                    sortKey: null, display: { t: 'plain', v: { label: 'Ordinary label' } },
+                    archivedAt: null, createdAt: 1, updatedAt: 1 }))] } });
+        };
+        const { selectCollectionSpace } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        if (mode === 'deleted') storage.getState().applySettingsLocal({ collectionSpacesV1: catalog });
+        expect(await selectCollectionSpace(catalogScope, 'sessionWork', 'space-a')).toBeUndefined();
+        const draftId = await captureOrdinaryEntrySpaceDraft(catalogScope, () => selectCollectionSpace(catalogScope, 'sessionWork', 'space-b'));
+        const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const seeded = readNewSessionDraftFromRepository({ scope: catalogScope, draftId: draftId! });
+        if (!seeded) throw new Error('Expected the seeded draft');
+        writeNewSessionDraftToRepository({ scope: catalogScope, draftId: draftId!,
+            draft: { ...seeded, selectedMachineId: 'machine-b', selectedPath: '/workspace/project',
+                organizationPlacement: { folderId: null, tagIds: mode === 'cross-home' ? [] : ordinaryTags } } });
+        if (mode === 'deleted') {
+            accountHttpSettings = { collectionSpacesV1: { v: 1, spaces: [] } };
+            storage.getState().applySettingsLocal({ collectionSpacesV1: { v: 1, spaces: [] } });
+        }
+        if (mode === 'cross-home') await selectHomeView({
+            version: 1, activeTargetKind: 'server', activeTargetId: homeBScopeId, groups: [],
+        });
+        const { requireSessionOrganizationMutationScope, fetchAndApplySessionOrganizationSnapshot } = await import('@/sync/ops/sessionOrganization');
+        const organizationScope = await requireSessionOrganizationMutationScope(destination.serverId);
+        await fetchAndApplySessionOrganizationSnapshot({ ...organizationScope, request: { includeTags: true } });
+        const createHook = await renderProductionCreateCaller({ activeServerId: homeAScopeId,
+            targetServerId: destination.serverId, draftId: draftId! });
+        try {
+            const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+            await act(async () => { observeMachinePresenceForTest(destination, ['machine-b']); });
+            if (destination.serverId === homeAScopeId) {
+                // Publish the real HTTP Machine key before a cleared Space skips membership preparation.
+                await act(async () => { await sync!.refreshMachinesThrottled({ staleMs: 0 }); });
+            }
+            const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+            await vi.waitFor(() => expect(getConnectedAccountCatalogValue(destination, 'purposes')).toMatchObject({ status: 'ready', stale: false }));
+            await flushHookEffects();
+            expect(createHook.getCurrent()).toMatchObject({ spaceMembership });
+            if (mode === 'clear') await act(async () => { createHook.getCurrent().setSpaceMembership!(null); });
+            await act(async () => {
+                const model = createHook.getCurrent();
+                if (model.variant !== 'simple') throw new Error('Expected the real simple composer');
+                model.simpleProps.setSessionPrompt('Work captured in Space A');
+            });
+            if (mode === 'cross-home') {
+                // Ordinary tags are chosen on the destination Home; the captured Space remains owned by A.
+                const readOrdinaryTag = () => {
+                    const model = createHook.getCurrent();
+                    const props = model.variant === 'simple' ? model.simpleProps : model.wizardProps.footer;
+                    const chip = props.agentInputExtraActionChips?.find(candidate => candidate.key === 'organization-tags');
+                    return chip?.collapsedOptionsPopover?.rootStep?.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+                        .find(option => option.id === 'ordinary-label');
+                };
+                await vi.waitFor(() => expect(readOrdinaryTag()).toBeDefined());
+                await act(async () => { readOrdinaryTag()?.onSelect?.(); });
+            }
+            socketBoundary.result = { type: 'success', disposition: 'created', sessionId: createdSession.id,
+                executionTarget: { serverId: destination.serverId, machineId: 'machine-b' },
+                organizationPlacement: { folderId: null, tagIds: mode === 'clear' ? ordinaryTags : [...ordinaryTags, 'space-tag-b'] },
+                initialInput: { status: 'notRequested' } };
+            socketBoundary.emits.mockClear();
+            await act(async () => { await readProductionCreateAction(createHook.getCurrent())({ initialMessage: 'skip' }); });
+            if (mode === 'deleted') {
+                expect(sessionSpawnCalls()).toHaveLength(0);
+                expect(readNewSessionDraftFromRepository({ scope: catalogScope, draftId: draftId! })?.spaceMembership).toEqual(spaceMembership);
+                return;
+            }
+            expect(sessionSpawnCalls(), JSON.stringify({
+                alerts: modalBoundary.alert.mock.calls,
+                exceptions: observabilityBoundary.capture.mock.calls.map(([error]) => error instanceof Error ? error.stack : error),
+                requests: socketBoundary.fetches.mock.calls,
+            })).toHaveLength(1);
+            expect(sessionSpawnCalls()[0]?.[0]).toMatchObject({ serverUrl: mode === 'cross-home' ? homeB.serverUrl : homeA.serverUrl,
+                payload: { params: { organizationPlacement: { folderId: null,
+                    tagIds: mode === 'clear' ? ordinaryTags : [...ordinaryTags, 'space-tag-b'] } } } });
+            const createdRoute = new URL(String(routeBoundary.replace.mock.calls[0]?.[0]), 'https://happier.invalid');
+            expect(createdRoute.pathname).toBe(`/session/${createdSession.id}`);
+            expect(createdRoute.searchParams.get('serverId')).toBe(destination.serverId);
+        } finally { await createHook.unmount(); }
+    });
+
+    it('prepares captured Space membership from the real temporary launch input before artifact acquisition', async () => {
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('temporary-space-capture', { applyConnectionManager: true }));
+        routeBoundary.params = {};
+        const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const spaceMembership = { spaceId: 'temporary-captured-space', spaceSettingsTarget: scope };
+        const { CollectionSpacesV1Schema, createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const catalog = CollectionSpacesV1Schema.parse({ v: 1, spaces: [
+            { ...createDefaultCollectionSpaceV1('sessionWork'), id: spaceMembership.spaceId, membership: {
+                mode: 'manual_only', tags: [{ ...scope, tagId: 'temporary-space-tag' }],
+            } },
+            { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'temporary-later-space' },
+        ] });
+        accountHttpSettings = { collectionSpacesV1: catalog };
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.getState().applySettingsLocal({ collectionSpacesV1: catalog });
+        const { SessionOrganizationSnapshotResponseSchema } = await import('@happier-dev/protocol/sessions/organization/snapshot');
+        const organization = SessionOrganizationSnapshotResponseSchema.parse({ snapshot: {
+            schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], orderEntries: [], labels: [], tagAssignments: [],
+            tags: [{ tagId: 'temporary-space-tag', tagKey: 'temporary-space-tag', sortKey: null,
+                display: { t: 'plain', v: { kind: 'space_membership', ...spaceMembership } }, archivedAt: null, createdAt: 1, updatedAt: 1 }],
+        } });
+        sessionHttpBoundary = url => new URL(url).pathname === '/v2/session-organization' ? Response.json(organization) : null;
+        const { selectCollectionSpace } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        const selectSpace = (spaceId: string) => selectCollectionSpace(scope, 'sessionWork', spaceId);
+        expect(await selectSpace(spaceMembership.spaceId)).toBeUndefined();
+        const draftId = await captureOrdinaryEntrySpaceDraft(scope, async () => {
+            expect(await selectSpace('temporary-later-space')).toBeUndefined();
+        });
+        const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const captured = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!captured) throw new Error('Expected the captured temporary draft');
+        expect(captured.spaceMembership).toEqual(spaceMembership);
+        const executionTarget = { kind: 'temporary_computer', serverId: scope.serverId,
+            artifactTarget: 'linux-x64', workspace: { kind: 'choose_on_endpoint' } } as const;
+        writeNewSessionDraftToRepository({ scope, draftId, draft: { ...captured, executionTarget,
+            selectedMachineId: null, selectedPath: null, organizationPlacement: { folderId: null, tagIds: ['temporary-ordinary-label'] } } });
+        const hook = await renderProductionCreateCaller({ activeServerId: scope.serverId, draftId });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().temporaryComputerLaunch?.scope).toEqual(scope));
+            const model = hook.getCurrent();
+            const launch = model.temporaryComputerLaunch;
+            if (!launch?.scope) throw new Error('Expected the real temporary launch input');
+            expect(launch.committedTarget).toEqual(executionTarget);
+            expect(launch.input).toMatchObject({ serverId: scope.serverId, draftId });
+            expect(model.spaceMembership).toEqual(spaceMembership);
+            const retained = readNewSessionDraftFromRepository({ scope, draftId });
+            if (!retained?.organizationPlacement) throw new Error('Expected ordinary temporary placement');
+            const { prepareNewSessionSpaceMembership } = await import('../organization/prepareNewSessionSpaceMembership');
+            await expect(prepareNewSessionSpaceMembership({ spaceMembership: model.spaceMembership,
+                organizationPlacement: retained.organizationPlacement, scope: launch.scope })).resolves.toEqual({
+                folderId: null, tagIds: ['temporary-ordinary-label', 'temporary-space-tag'],
+            });
+            expect(readNewSessionDraftFromRepository({ scope, draftId })?.spaceMembership).toEqual(spaceMembership);
+        } finally { await hook.unmount(); }
     });
 
     it('remembers a path when creation targets the hydrated settings Home', async () => {
@@ -3283,6 +3748,46 @@ describe('multi-Home Session creation composition', () => {
         } finally {
             await createHook.unmount();
         }
+    });
+
+    it('leaves a cold Machine picker for a Project without remounting it in an options loop', async () => {
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA());
+        routeBoundary.params = { serverId: homeAScopeId };
+        const { default: MachinePickerScreen } = await import('@/app/(app)/new/pick/machine');
+        const { createRootStackRouteOptions } = await import('@/components/navigation/root/rootStackRouteOptions');
+        const { BaseNavigationContainer, createNavigatorFactory, useNavigationBuilder, StackRouter } = await import('@react-navigation/native');
+        const { convertStackStateToNonModalState, findLastNonModalIndex } = await import('expo-router/build/modal/web/utils');
+        const options = createRootStackRouteOptions('auto');
+        let leavePicker: (() => void) | undefined;
+        function Navigator(props: Parameters<typeof useNavigationBuilder>[1]) {
+            const { state, descriptors, navigation, NavigationContent } = useNavigationBuilder(StackRouter, props);
+            leavePicker = () => navigation.navigate('project');
+            // These are Expo's actual web modal partitions. Crossing partitions
+            // unmounts SceneView, which clears dynamically installed options.
+            const cards = convertStackStateToNonModalState(state, descriptors, true).routes;
+            const overlays = state.routes.slice(findLastNonModalIndex(state, descriptors) + 1);
+            return <NavigationContent>
+                <View key="cards">{cards.map(route => <React.Fragment key={route.key}>{descriptors[route.key]!.render()}</React.Fragment>)}</View>
+                <View key="overlays">{overlays.map(route => <React.Fragment key={route.key}>{descriptors[route.key]!.render()}</React.Fragment>)}</View>
+            </NavigationContent>;
+        }
+        const Stack = createNavigatorFactory(Navigator)();
+        routeBoundary.setOptions.mockClear();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: homeAToken }}><BaseNavigationContainer>
+            <Stack.Navigator initialRouteName="new/pick/machine">
+                <Stack.Screen name="new/pick/machine" component={MachinePickerScreen} options={options['new/pick/machine']} />
+                <Stack.Screen name="project">{() => <View testID="project-destination" />}</Stack.Screen>
+            </Stack.Navigator>
+        </BaseNavigationContainer></InjectedAuthProvider>);
+        try {
+            const callsBeforeNavigation = routeBoundary.setOptions.mock.calls.length;
+            expect(callsBeforeNavigation).toBeGreaterThan(0);
+            await act(async () => { leavePicker!(); });
+            expect(screen.findByTestId('project-destination')).toBeTruthy();
+            // One real focus change may update chrome; it cannot remount a picker
+            // repeatedly after its modal has left the visible stack.
+            expect(routeBoundary.setOptions.mock.calls.length - callsBeforeNavigation).toBeLessThanOrEqual(1);
+        } finally { await screen.unmount(); }
     });
 
     it('normalizes a rejected route Home without accepting its Machine from another exact Home', async () => {

@@ -1,33 +1,29 @@
 import * as React from 'react';
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol/providers/detection/v1';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { ShimmerView } from '@/components/ui/feedback/ShimmerView';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
+import { CollectionLandingState } from '@/components/ui/lists/collection/CollectionLandingState';
 import { Typography } from '@/constants/Typography';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import {
     MachineAdministrationTargetSelector,
     presentMachineAdministrationTargetState,
 } from '@/components/settings/machines/MachineAdministrationTargetSelector';
-import { MachineScopedSection } from '@/components/settings/machines/MachineScopedSection';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
-import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
+import { SettingsCollectionPage } from '@/components/settings/shell/SettingsCollectionPage';
+import { SettingAnchor, SettingSection, useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { randomUUID } from '@/platform/randomUUID';
-import { PROVIDER_CONNECTION_STATUS_KEY } from '@/providers/connection/presentation';
+import { PROVIDER_CONNECTION_COLLECTION_STATUS, PROVIDER_CONNECTION_STATUS_KEY, type ProviderConnectionPresentationStatus } from '@/providers/connection/presentation';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
-import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnections, type ProviderConnectionRefreshScope } from '@/providers/hooks/useProviderConnections';
 import { useProviderCatalogCounts } from '@/providers/hooks/useProviderCatalogCounts';
 import { t } from '@/text';
@@ -41,18 +37,27 @@ import {
     ProviderFeatureAvailabilityNotice,
     useProviderFeatureAvailability,
 } from './ProviderFeatureAvailability';
-import { AddProviderMenu, newProviderRoute } from './collection/AddProviderMenu';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { openProviderAddModal } from './add/openProviderAddModal';
+import { useProviderFoundContinuation } from './collection/useProviderFoundContinuation';
 import { ProviderCollectionInvitation } from './collection/ProviderCollectionInvitation';
+import { ProviderConnectShelf, ProviderSettingsHome } from './collection/ProviderSettingsHome';
 import { PROVIDERS_SETTINGS } from './providersSettings';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
     buildProviderCollection,
-    providerConnectionDetailRoute,
+    filterProviderCollection,
+    newProviderRoute,
     type ProviderCollectionConnectionRow,
     type ProviderCollectionFoundRow,
 } from './collection/providerCollectionModel';
-import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionViewSwitch, type CollectionView } from '@/components/ui/lists/collection/CollectionViewSwitch';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
+import { CollectionStatusLine } from '@/components/ui/lists/collection/CollectionStatusGlyph';
+import { useSettingsColumnFilter } from '@/components/settings/shell/useSettingsColumnFilter';
+import { providerColumnAdapter, providerConnectionColumnFacts, providerFoundColumnFacts } from './collection/providerColumnAdapter';
+import { useClaimProviderCollectionPane } from './ProviderSettingsLayout';
 
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
@@ -67,12 +72,10 @@ function candidatePort(candidate: ProviderDiscoveryCandidateV1): string {
 
 /** One status line; quiet about health unless something needs the user. */
 function resolveConnectionRowSubtitle(row: ProviderCollectionConnectionRow): string {
-    if (row.trouble || row.off) return t(PROVIDER_CONNECTION_STATUS_KEY[row.status]);
-    // A gateway is set up where its subscriptions live; this list opens the same page.
-    if (row.gateway) return t('settingsProvidersCollection.gateway.managedFromConnectedServices');
-    const modelCount = row.catalogCount === null ? null : t('settingsProvidersCollection.modelsShown', row.catalogCount);
-    // Healthy is quiet: what it is ("API key · 2 models"), never "Not checked" for an untested row.
-    return [row.provenance, row.keySaved ? t('settingsProviders.authoring.apiKey') : null, modelCount].filter(Boolean).join(' · ');
+    // A gateway is set up where its subscriptions live (its group says so once); it has no key or provenance of its own.
+    if (row.gateway) return row.needsAccount ? t('settingsProvidersCollection.gateway.needsAccountStatus') : '';
+    // Healthy is quiet: the connection's provenance and credential kind, never an untested status.
+    return [row.provenance, row.keySaved ? t('settingsProviders.authoring.apiKey') : null].filter(Boolean).join(' · ');
 }
 
 /**
@@ -81,12 +84,13 @@ function resolveConnectionRowSubtitle(row: ProviderCollectionConnectionRow): str
  * detail; `page` is the same list as the page where no rail shows. Selection comes from the route.
  */
 export const ProviderConnectionsSettingsScreen = React.memo(function ProviderConnectionsSettingsScreen(props: Readonly<{
-    variant?: 'rail' | 'page';
+    variant?: 'rail' | 'page' | 'home';
     active?: boolean;
     selectedConnectionId?: string | null;
 }>) {
     const variant = props.variant ?? 'page';
     const rail = variant === 'rail';
+    const home = variant === 'home';
     const active = props.active ?? true;
     const router = useRouter();
     const pathname = usePathname().replace(/\/+$/, '');
@@ -94,7 +98,7 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const localDiscoveryEnabled = useFeatureEnabled('providers.localDiscovery');
     const providerTarget = useProviderSettingsTarget();
-    const { machineId, machineRows, resolveCurrentTarget, accountServerId: serverId, accountAddressAvailable } = providerTarget;
+    const { machineId, machineRows, accountServerId: serverId, accountAddressAvailable } = providerTarget;
     const teamCredentialResourcesEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn',
         serverId: serverId ?? undefined,
@@ -124,79 +128,55 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
     const refreshConnections = React.useCallback(async (scope?: ProviderConnectionRefreshScope): Promise<void> => {
         await refresh(scope);
     }, [refresh]);
-    const mutation = useProviderConnectionMutation({ resolveTarget: resolveCurrentTarget, serverId,
-        initiatingLifetime: accountAddressAvailable ? undefined : null, refresh: refreshConnections });
+    const { mutation, selectionError: discoverySelectionError, connectDetectedCandidate, startLocalInstallation } = useProviderFoundContinuation({
+        target: providerTarget, refresh: refreshConnections, navigate,
+    });
     const [searchQuery, setSearchQuery] = React.useState('');
-    const [discoverySelectionError, setDiscoverySelectionError] = React.useState<ProviderErrorV1 | null>(null);
-    const collection = React.useMemo(() => buildProviderCollection({
-        data, query: searchQuery, localDiscoveryEnabled, catalogCounts, declarationContext,
-    }), [catalogCounts, data, declarationContext, localDiscoveryEnabled, searchQuery]);
+    // Search revealing a local-server setting opens the view that holds it.
+    const localRevealRequested = useSettingRevealRequested([PROVIDERS_SETTINGS.settings.local]);
+    const [railView, setRailView] = React.useState<CollectionView>(localRevealRequested ? 'found' : 'all');
+    React.useEffect(() => { if (localRevealRequested) setRailView('found'); }, [localRevealRequested]);
+    const heldCollection = React.useMemo(() => buildProviderCollection({
+        data, query: '', localDiscoveryEnabled, catalogCounts, declarationContext,
+    }), [catalogCounts, data, declarationContext, localDiscoveryEnabled]);
+    const collection = React.useMemo(() => filterProviderCollection(heldCollection, searchQuery), [heldCollection, searchQuery]);
+    const filterFacts = React.useMemo(() => [
+        ...heldCollection.connections.map(row => providerConnectionColumnFacts(row, resolveConnectionRowSubtitle(row))),
+        ...heldCollection.found.map(row => providerFoundColumnFacts(row, null)),
+    ], [heldCollection]);
+    const filterFields = React.useMemo(() => {
+        const sourceNames = new Map<string, string>();
+        for (const connection of data?.connections ?? []) {
+            if (connection.contributionKey) sourceNames.set(connection.contributionKey, connection.providerName);
+        }
+        for (const row of heldCollection.found) {
+            const source = row.kind === 'candidate' ? row.candidate : row.installation;
+            sourceNames.set(source.contributionKey, source.providerName);
+        }
+        return {
+            status: { label: t('sessionsList.filtersStatus'),
+                valueLabel: (value: string) => {
+                    const key = PROVIDER_CONNECTION_STATUS_KEY[value as ProviderConnectionPresentationStatus];
+                    return key ? t(key) : value;
+                } },
+            source: { label: t('sessionsList.filtersSource'), valueLabel: (value: string) => sourceNames.get(value) ?? value },
+        };
+    }, [heldCollection.found, data]);
+    const filter = useSettingsColumnFilter({ column: 'providers', presented: active && !home,
+        search: { value: searchQuery, set: setSearchQuery },
+        testIDPrefix: 'settings-providers', adapter: providerColumnAdapter, fields: filterFields, facts: filterFacts });
+    const shownConnections = React.useMemo(() => collection.connections.filter(row => filter.matches(row.connectionId)),
+        [collection.connections, filter.matches]);
+    const shownFound = React.useMemo(() => collection.found.filter(row => filter.matches(row.key)),
+        [collection.found, filter.matches]);
     const searchable = collection.total > SEARCH_THRESHOLD || searchQuery.trim().length > 0;
-    const noMatches = collection.total > 0 && collection.connections.length === 0 && collection.found.length === 0;
+    const noMatches = collection.total > 0 && shownConnections.length === 0 && shownFound.length === 0;
     const machineLabel = machineId
         ? machineRows.find((row) => row.target.machineId === machineId)?.displayName ?? null
         : null;
     const foundTitle = machineLabel
         ? t('settingsProvidersCollection.onMachine', { machine: machineLabel })
         : t('settingsProvidersCollection.foundOnThisMachine');
-
-    const connectDetectedCandidate = React.useCallback(async (candidate: ProviderDiscoveryCandidateV1) => {
-        if (!machineId) return;
-        setDiscoverySelectionError(null);
-        const candidateId = candidate.candidateId;
-        if (!candidateId) {
-            setDiscoverySelectionError(createProviderErrorV1('provider_authorization_changed', {
-                machineId,
-                ...(candidate.connection.status === 'matched'
-                    ? { connectionId: candidate.connection.connectionId }
-                    : {}),
-            }));
-            return;
-        }
-        const openAuthoringDraft = (displayName: string | null) => {
-            const params: Array<readonly [string, string]> = [
-                ['candidateId', candidateId],
-            ];
-            if (displayName) params.push(['displayName', displayName]);
-            const queryString = params
-                .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-                .join('&');
-            navigate(`${newProviderRoute(candidate.contributionKey)}&${queryString}`);
-        };
-        if (candidate.connection.status === 'requires_named_connection') {
-            openAuthoringDraft(t('settingsProviders.local.defaultConnectionName', { provider: candidate.providerName }));
-            return;
-        }
-        const connectionId = candidate.connection.status === 'matched'
-            ? candidate.connection.connectionId
-            : `pc_${randomUUID()}`;
-        const result = await mutation.run({
-            action: 'enableDetected', machineId, connectionId,
-            candidateId,
-            displayName: null,
-            savedSecretId: null,
-        }, `detected:${candidate.contributionKey}:${candidate.normalizedEndpointUrl}`);
-        if (result?.status === 'error' && result.error.code === 'provider_secret_missing') {
-            if (candidate.connection.status === 'matched') {
-                navigate(providerConnectionDetailRoute(candidate.connection.connectionId));
-            } else {
-                openAuthoringDraft(null);
-            }
-            mutation.clearError();
-        }
-    }, [machineId, mutation, navigate]);
-
-    const startLocalInstallation = React.useCallback(async (installation: Readonly<{
-        contributionKey: string;
-    }>) => {
-        if (!machineId) return;
-        await mutation.run({
-            action: 'startLocal',
-            machineId,
-            connectionId: `pc_${randomUUID()}`,
-            contributionKey: installation.contributionKey,
-        }, `start:${installation.contributionKey}`);
-    }, [machineId, mutation]);
 
     const openTeamResource = React.useCallback((resource: Readonly<{ teamId: string; id: string }>) => {
         if (!serverId) return;
@@ -208,26 +188,30 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
 
     const renderConnectionRow = (row: ProviderCollectionConnectionRow) => {
         const selected = row.connectionId === props.selectedConnectionId;
+        const status = PROVIDER_CONNECTION_COLLECTION_STATUS[row.status];
         return (
             <Item
+                rowRole="catalogRow"
                 key={row.connectionId}
                 testID={`settings-provider-connection:${row.connectionId}`}
                 title={row.title}
-                subtitle={resolveConnectionRowSubtitle(row)}
-                subtitleLeading={row.trouble ? (
-                    <View testID={`settings-provider-connection-trouble:${row.connectionId}`} style={collectionListStyles.troubleDot} />
-                ) : undefined}
+                titleMeta={row.catalogCount === null ? undefined : t('settingsProvidersCollection.modelsSaved', row.catalogCount)}
+                // A state other than healthy leads line 2 in words (lab t:providers), before the connection's provenance.
+                subtitle={status ? <CollectionStatusLine status={status}
+                    label={t(PROVIDER_CONNECTION_STATUS_KEY[row.status])}
+                    description={resolveConnectionRowSubtitle(row)}
+                    testID={`settings-provider-connection-status:${row.connectionId}`} /> : resolveConnectionRowSubtitle(row)}
                 icon={(
-                    <HappierCollectionListMark dimmed={row.off}>
+                    <HappierCollectionListMark rowRole="catalogRow" dimmed={row.off}>
                         <ProviderIcon contributionKey={row.contributionKey} icon={row.icon} size={20} color={theme.colors.text.secondary} />
                     </HappierCollectionListMark>
                 )}
                 titleStyle={row.off ? collectionListStyles.dimmedTitle : undefined}
                 selected={rail ? selected : undefined}
                 accessibilityCurrent={rail && selected ? 'page' : undefined}
-                density={rail ? 'compact' : undefined}
-                showChevron={!rail}
-                pressableStyle={rail ? collectionListStyles.row : undefined}
+                density="compact"
+                showChevron={false}
+                pressableStyle={collectionListStyles.row}
                 onPress={() => navigate(row.detailRoute)}
             />
         );
@@ -242,14 +226,15 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                 : t('settingsProviders.local.possibleAtPort', { provider: candidate.providerName, port: candidatePort(candidate) });
             return (
                 <Item
+                    rowRole="catalogRow"
                     key={row.key}
                     testID={`settings-provider-found:${row.key}`}
                     title={row.title}
                     subtitle={evidenceLabel}
-                    icon={<HappierCollectionListMark><ProviderIcon contributionKey={candidate.contributionKey} icon={row.icon} size={20} color={theme.colors.text.secondary} /></HappierCollectionListMark>}
+                    icon={<HappierCollectionListMark rowRole="catalogRow"><ProviderIcon contributionKey={candidate.contributionKey} icon={row.icon} size={20} color={theme.colors.text.secondary} /></HappierCollectionListMark>}
                     mode="info"
-                    density={rail ? 'compact' : undefined}
-                    pressableStyle={rail ? collectionListStyles.row : undefined}
+                    density="compact"
+                    pressableStyle={collectionListStyles.row}
                     showChevron={false}
                     rightElement={pending ? <ActivitySpinner size="small" /> : (
                         <RoundButton
@@ -266,19 +251,22 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
             );
         }
         const installation = row.installation;
+        // Its state leads line 2 in words, as its found peers' evidence does; Start, when offered, is the row's action.
+        const status = <CollectionStatusLine status="off"
+            label={installation.status === 'app_running_server_off'
+                ? t('settingsProviders.local.appRunningServerOff') : t('settingsProviders.local.installedNotRunning')}
+            testID={`settings-provider-found-status:${row.key}`} />;
         return (
             <Item
+                rowRole="catalogRow"
                 key={row.key}
                 testID={`settings-provider-found:${row.key}`}
                 title={row.title}
-                subtitle={installation.status === 'app_running_server_off'
-                    ? t('settingsProviders.local.appRunningServerOff')
-                    : t('settingsProviders.local.installedNotRunning')}
-                subtitleLeading={<View style={collectionListStyles.troubleDot} />}
+                subtitle={status}
                 icon={<HappierCollectionListMark><ProviderIcon contributionKey={installation.contributionKey} icon={row.icon} size={20} color={theme.colors.text.secondary} /></HappierCollectionListMark>}
                 mode="info"
-                density={rail ? 'compact' : undefined}
-                pressableStyle={rail ? collectionListStyles.row : undefined}
+                density="compact"
+                pressableStyle={collectionListStyles.row}
                 showChevron={false}
                 rightElement={installation.managedStartAvailable ? (
                     pending ? <ActivitySpinner size="small" /> : (
@@ -297,6 +285,38 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
         );
     };
 
+    // A home row (lab `cr` crProv): mark · name · its key and models · On or Off, opening the provider.
+    const renderHomeConnectionRow = (row: ProviderCollectionConnectionRow) => {
+        const status = PROVIDER_CONNECTION_COLLECTION_STATUS[row.status];
+        const facts = [
+            resolveConnectionRowSubtitle(row) || null,
+            row.catalogCount === null ? null : t('settingsProvidersCollection.modelsSaved', row.catalogCount),
+        ].filter(Boolean).join(' · ');
+        return (
+            <Item
+                key={row.connectionId}
+                testID={`settings-provider-connection:${row.connectionId}`}
+                title={row.title}
+                // On or Off is the row's one trailing word; only trouble takes over the fact line, in words.
+                subtitle={status && row.trouble ? <CollectionStatusLine status={status}
+                    label={t(PROVIDER_CONNECTION_STATUS_KEY[row.status])}
+                    description={facts}
+                    testID={`settings-provider-connection-status:${row.connectionId}`} />
+                    // A gateway with no account behind it needs the person: the amber sign-in voice, then its fix.
+                    : row.needsAccount ? <CollectionStatusLine status="signIn"
+                        label={t('common.off')}
+                        description={t('settingsProvidersCollection.gateway.needsAccountStatus')}
+                        testID={`settings-provider-connection-status:${row.connectionId}`} />
+                    : facts || undefined}
+                icon={<ProviderIcon contributionKey={row.contributionKey} icon={row.icon} size={20} color={theme.colors.text.secondary} />}
+                detail={row.trouble || row.needsAccount ? undefined : row.off ? t('common.off') : t('common.on')}
+                onPress={() => navigate(row.detailRoute)}
+            />
+        );
+    };
+    const homeProviders = shownConnections.filter(row => !row.gateway);
+    const homeHasGateways = shownConnections.some(row => row.gateway);
+
     const failure = error || mutation.error || discoverySelectionError ? (() => {
         const providerFailure = mutation.error
             ? { error: mutation.error, retry: mutation.retry, reviewCurrentState: refreshConnections }
@@ -305,7 +325,7 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                 : { error: discoverySelectionError };
         return (
             <ProviderErrorItems
-                size={rail ? 'line' : undefined}
+                size="line"
                 error={providerFailure.error}
                 retry={providerFailure.retry}
                 reviewCurrentState={'reviewCurrentState' in providerFailure
@@ -323,13 +343,18 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
     const machineState = providerTarget.selection.state;
     const firstLoad = !availabilityPresentation && loading && !data;
     const empty = !availabilityPresentation && data !== null && collection.total === 0;
+    // A revealed page owns its controls; populated homes retain the column's single filter owner.
+    useClaimProviderCollectionPane(rail ? null : !home || Boolean(availabilityPresentation) || empty || (!data && Boolean(error) && !loading));
     const draftOpen = pathname === NEW_PROVIDER_ROUTE;
+    const openAdd = () => { openProviderAddModal({ onAdd: navigate }); };
     const addMenu = (
-        <AddProviderMenu
-            available={data?.available ?? []}
-            disabled={Boolean(availabilityPresentation)}
-            onAdd={navigate}
-        />
+        <SettingAnchor setting={PROVIDERS_SETTINGS.settings.add}>
+            <SettingAnchor setting={PROVIDERS_SETTINGS.settings.custom}>
+                <IconButton testID="settings-providers-add" iconName="plus" variant="plain"
+                    accessibilityLabel={t('settingsProvidersCollection.addProvider')}
+                    disabled={Boolean(availabilityPresentation)} onPress={openAdd} />
+            </SettingAnchor>
+        </SettingAnchor>
     );
     const search = {
         testID: 'settings-providers-search',
@@ -338,62 +363,99 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
         placeholder: t('settingsProviders.searchPlaceholder'),
     };
 
+    // Two views of one column (P8 `sfcols:provFound`): the providers you added, and the model servers found
+    // on your machines, behind the shared view switch instead of a section mixed into the list.
+    const foundViewAvailable = collection.found.length > 0 || localScopeShown || Boolean(machineError);
+    const showFound = foundViewAvailable && railView === 'found';
+    const shownCount = showFound ? shownFound.length : shownConnections.length;
+    const filters = foundViewAvailable ? {
+        targetCount: Math.max(collection.total, 1),
+        content: (
+            <CollectionViewSwitch
+                view={showFound ? 'found' : 'all'}
+                foundCount={collection.found.length}
+                foundLabel={foundTitle}
+                onChange={setRailView}
+                testIDPrefix="settings-providers-view"
+            />
+        ),
+    } : null;
+    // The column's rows, one list for the rail and for a phone's page.
+    const rows = showFound ? (
+        <SettingAnchor setting={PROVIDERS_SETTINGS.settings.local}>
+            <>
+                {shownFound.map(renderFoundRow)}
+                {machineError ? <ProviderErrorItems size="line" error={machineError} retry={refreshConnections} /> : null}
+                {localScopeShown && machineState.kind !== 'online' ? (
+                    <ProviderRailLocalScope selection={providerTarget.selection} first />
+                ) : null}
+                {failure}
+            </>
+        </SettingAnchor>
+    ) : (
+        <>
+            {draftOpen ? <ProviderDraftRow /> : null}
+            {/* Beside the rail the detail pane says what is missing and leads to it; a phone's page says it here. */}
+            {!rail && notice ? notice : null}
+            {firstLoad ? <ProviderRailSkeleton /> : null}
+            {empty && !draftOpen ? <Item mode="info" title={t('settingsProviders.emptyTitle')} /> : null}
+            {noMatches ? <Item mode="info" title={t('settingsProviders.searchEmptyTitle')} /> : null}
+            <SettingAnchor setting={PROVIDERS_SETTINGS.settings.connections}>
+                <>{shownConnections.filter(row => !row.gateway).map(renderConnectionRow)}</>
+            </SettingAnchor>
+            {shownConnections.some(row => row.gateway) ? (
+                <CollectionListGroupLabel
+                    title={t('settingsProvidersCollection.gateway.railGroup')}
+                    count={shownConnections.filter(row => row.gateway).length}
+                    first={!draftOpen && shownConnections.every(row => row.gateway)}
+                />
+            ) : null}
+            {shownConnections.filter(row => row.gateway).map(renderConnectionRow)}
+            {!rail && shownConnections.some(row => row.gateway) ? (
+                <Item
+                    testID="settings-providers-gateway-note"
+                    mode="info"
+                    title={t('settingsProvidersCollection.gateway.managedFromConnectedServices')}
+                    titleStyle={styles.railScopeText}
+                    titleLines={0}
+                    density="compact"
+                    pressableStyle={collectionListStyles.row}
+                    showChevron={false}
+                />
+            ) : null}
+            <TeamCredentialCatalogSettingsGroup
+                variant="rail"
+                title={t('teams.credentials.providedByTeams')}
+                sourceKind="provider"
+                catalog={teamCredentialCatalog}
+                onRetry={teamCredentialCatalog.reload}
+                onOpen={openTeamResource}
+            />
+            {failure}
+        </>
+    );
+
     if (rail) {
         return (
             <CollectionList
                 testID="settings-providers-screen"
                 title={t('settingsProviders.title')}
-                count={data ? collection.total : null}
-                headerAction={addMenu}
-                search={searchable ? search : null}
+                count={data ? shownCount : null}
+                headerAction={collection.total > 0 && !searchable ? <>{filter.filterButton}{addMenu}</> : addMenu}
+                strip={filter.tokenRow}
+                search={searchable ? { ...search, trailing: filter.filterButton, anchorRef: filter.searchAnchorRef } : null}
+                filters={filters}
             >
-                {draftOpen ? <ProviderDraftRow /> : null}
-                {/* No notice here: beside the rail, the detail pane says what is missing and leads to it. */}
-                {firstLoad ? <ProviderRailSkeleton /> : null}
-                {empty && !draftOpen ? <Item mode="info" title={t('settingsProviders.emptyTitle')} /> : null}
-                {noMatches ? <Item mode="info" title={t('settingsProviders.searchEmptyTitle')} /> : null}
-                {collection.connections.filter(row => !row.gateway).map(renderConnectionRow)}
-                {collection.connections.some(row => row.gateway) ? (
-                    <CollectionListGroupLabel
-                        title={t('settingsProvidersCollection.gateway.railGroup')}
-                        count={collection.connections.filter(row => row.gateway).length}
-                        first={!draftOpen && collection.connections.every(row => row.gateway)}
-                    />
-                ) : null}
-                {collection.connections.filter(row => row.gateway).map(renderConnectionRow)}
-                {collection.found.length > 0 ? (
-                    <CollectionListGroupLabel title={foundTitle} count={collection.found.length} first={collection.connections.length === 0} />
-                ) : null}
-                {collection.found.map(renderFoundRow)}
-                {machineError ? <ProviderErrorItems size="line" error={machineError} retry={refreshConnections} /> : null}
-                {localScopeShown && machineState.kind !== 'online' ? (
-                    <ProviderRailLocalScope
-                        selection={providerTarget.selection}
-                        first={collection.connections.length === 0 && !draftOpen}
-                    />
-                ) : null}
-                <TeamCredentialCatalogSettingsGroup
-                    variant="rail"
-                    title={t('teams.credentials.providedByTeams')}
-                    sourceKind="provider"
-                    catalog={teamCredentialCatalog}
-                    onRetry={teamCredentialCatalog.reload}
-                    onOpen={openTeamResource}
-                />
-                {failure}
+                <CollectionIndexRow testID="settings-providers-all"
+                    selected={pathname === PROVIDERS_COLLECTION_ROUTE}
+                    onPress={() => { setRailView('all'); navigate('/(app)/settings/providers'); }} />
+                {rows}
+                {filter.editorOverlay}
             </CollectionList>
         );
     }
 
-    const teamResources = (
-        <TeamCredentialCatalogSettingsGroup
-            title={t('teams.credentials.providedByTeams')}
-            sourceKind="provider"
-            catalog={teamCredentialCatalog}
-            onRetry={teamCredentialCatalog.reload}
-            onOpen={openTeamResource}
-        />
-    );
+    if (home && firstLoad) return <CollectionLandingState testID="settings-providers-loading" kind="loading" title={t('common.loading')} />;
 
     // Nothing to list: the same invitation as beside the rail (lab PI1p), owning the page.
     if (empty) {
@@ -401,101 +463,119 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
             <ItemList testID="settings-providers-screen" containerStyle={styles.centeredPane}>
                 <SettingSection section={PROVIDERS_SETTINGS.sectionRefs.connections}
                     answersFor={[PROVIDERS_SETTINGS.sectionRefs.local]}>
-                    <ProviderCollectionInvitation available={data?.available ?? []} onAdd={navigate} />
+                    <ProviderCollectionInvitation available={data?.available ?? []} onAdd={openAdd} />
                 </SettingSection>
-                {teamResources}
+                <TeamCredentialCatalogSettingsGroup
+                    title={t('teams.credentials.providedByTeams')}
+                    sourceKind="provider"
+                    catalog={teamCredentialCatalog}
+                    onRetry={teamCredentialCatalog.reload}
+                    onOpen={openTeamResource}
+                />
                 {failure ? <ItemGroup>{failure}</ItemGroup> : null}
             </ItemList>
         );
     }
 
-    return (
-        <ItemList testID="settings-providers-screen">
-            <SettingsPageHeader
-                testID="settings-providers-header"
-                description={t('settingsProvidersCollection.description')}
-                actions={(
-                    <View style={styles.headerActions}>
-                        {/* Without a section that carries the machine scope, it stays reachable here. */}
-                        {localScopeShown || machineState.kind !== 'online' ? null : (
-                            <MachineAdministrationTargetSelector
-                                selection={providerTarget.selection}
-                                presentation="chip"
-                                testIDPrefix="settings.providers.administration.target"
+    // Beside the column, the root is a home (lab t:providers, S30 §6.2): purpose, the page's Add, the existing
+    // connected/found sections and the providers to connect. A notice or a failure keeps the page below.
+    if (home && data && !notice && !failure) {
+        return (
+            <ProviderSettingsHome
+                available={data.available}
+                targetChip={localScopeShown ? (
+                    <MachineAdministrationTargetSelector
+                        selection={providerTarget.selection}
+                        presentation="chip"
+                        testIDPrefix="settings.providers.administration.target"
+                    />
+                ) : null}
+                onAdd={openAdd}
+                onConnect={(contributionKey) => navigate(newProviderRoute(contributionKey))}
+            >
+                <SettingSection section={PROVIDERS_SETTINGS.sectionRefs.connections}
+                    answersFor={[PROVIDERS_SETTINGS.sectionRefs.local]}>
+                    {/* The overview (lab crProv-home): each provider with its state, then gateways, then what Teams share. */}
+                    {homeProviders.length > 0 ? (
+                        <ItemGroup
+                            testID="settings-providers-home.providers"
+                            title={t('settingsProviders.configuredTitle')}
+                            description={t('settingsProviders.configuredFooter')}
+                        >
+                            {homeProviders.map(renderHomeConnectionRow)}
+                        </ItemGroup>
+                    ) : null}
+                </SettingSection>
+                {homeHasGateways ? (
+                    <ItemGroup
+                        testID="settings-providers-home.gateways"
+                        title={t('settingsProvidersCollection.gateway.railGroup')}
+                        description={t('settingsProvidersCollection.gatewaysDescription')}
+                        // Gateways are set up where their accounts live: the section leads there, once.
+                        action={(
+                            <SectionActionButton
+                                testID="settings-providers-home.gateways.credentials"
+                                destination
+                                title={t('settingsProvidersCollection.openCredentials')}
+                                onPress={() => navigate('/(app)/settings/connected-services')}
                             />
                         )}
-                        {addMenu}
-                    </View>
-                )}
-            />
-            {searchable ? (
-                <CompactSearchField
-                    testID={search.testID}
-                    value={search.value}
-                    onChangeText={search.onChangeText}
-                    placeholder={search.placeholder}
-                    placement="page"
+                    >
+                        {/* The column names them; here each says its state and what it needs (lab crProv-home). */}
+                        {shownConnections.filter(row => row.gateway).map(renderHomeConnectionRow)}
+                    </ItemGroup>
+                ) : null}
+                <TeamCredentialCatalogSettingsGroup
+                    title={t('teams.credentials.providedByTeams')}
+                    sourceKind="provider"
+                    catalog={teamCredentialCatalog}
+                    onRetry={teamCredentialCatalog.reload}
+                    onOpen={openTeamResource}
                 />
-            ) : null}
+            </ProviderSettingsHome>
+        );
+    }
+
+    // A phone's page is the rail's own list under a large title with its count (lab sfcols:provP). The
+    // machine chip says which machine "On machines" reads, so it stays reachable where no rail shows.
+    return (
+        <SettingsCollectionPage
+            testID="settings-providers-page"
+            headerTestID="settings-providers-header"
+            count={data ? shownCount : null}
+            actions={(
+                <View style={styles.headerActions}>
+                    {localScopeShown ? (
+                        <MachineAdministrationTargetSelector
+                            selection={providerTarget.selection}
+                            presentation="chip"
+                            testIDPrefix="settings.providers.administration.target"
+                        />
+                    ) : null}
+                    {!home && collection.total > 0 && !searchable ? filter.filterButton : null}
+                    {addMenu}
+                </View>
+            )}
+        >
             <SettingSection section={PROVIDERS_SETTINGS.sectionRefs.connections}
                 answersFor={[PROVIDERS_SETTINGS.sectionRefs.local]}>
-            {notice ? <ItemGroup>{notice}</ItemGroup> : null}
-            {firstLoad ? <ItemGroup><ProviderRailSkeleton /></ItemGroup> : null}
-            {noMatches ? <ItemGroup><Item mode="info" title={t('settingsProviders.searchEmptyTitle')} subtitle={t('settingsProviders.searchEmptyDescription')} /></ItemGroup> : null}
-            {collection.connections.some(row => !row.gateway) ? (
-                <SettingAnchor setting={PROVIDERS_SETTINGS.settings.connections}>
-                {/* The page header already says what the list is (lab PI2p): the list follows it untitled. */}
-                <ItemGroup>
-                    {collection.connections.filter(row => !row.gateway).map(renderConnectionRow)}
-                </ItemGroup>
-                </SettingAnchor>
-            ) : null}
-            {/* Gateways keep their own titled group, as in the rail (lab PI2p). */}
-            {collection.connections.some(row => row.gateway) ? (
-                <ItemGroup title={t('settingsProvidersCollection.gateway.railGroup')}>
-                    {collection.connections.filter(row => row.gateway).map(renderConnectionRow)}
-                </ItemGroup>
-            ) : null}
+                <CollectionList
+                    testID="settings-providers-screen"
+                    strip={home ? null : filter.tokenRow}
+                    search={!home && searchable ? { ...search, trailing: filter.filterButton, anchorRef: filter.searchAnchorRef } : null}
+                    filters={filters}
+                    scrollContent={<>{rows}{home ? null : filter.editorOverlay}</>}
+                />
             </SettingSection>
-            {!localScopeShown && !availabilityPresentation && machineState.kind !== 'online' ? (
-                // Only runtime augmentation needs a computer; Account catalog controls remain above.
-                <MachineScopedSection
-                    title={t('settingsProvidersCollection.onThisComputerTitle')}
-                    selection={providerTarget.selection}
-                    unselectedInvitation={t('settingsProviders.noMachineDescription')}
-                    testIDPrefix="settings.providers.administration.target"
-                >
-                    {null}
-                </MachineScopedSection>
+            {/* Where no home stands beside a rail, the page still invites the providers to connect (lab tp:providers). */}
+            {data && data.available.length > 0 && !showFound && !noMatches ? (
+                <ProviderConnectShelf
+                    available={data.available}
+                    onAdd={openAdd}
+                    onConnect={(contributionKey) => navigate(newProviderRoute(contributionKey))}
+                />
             ) : null}
-            {localScopeShown ? (
-                <SettingSection section={PROVIDERS_SETTINGS.sectionRefs.local}>
-                <SettingAnchor setting={PROVIDERS_SETTINGS.settings.local}>
-                <MachineScopedSection
-                    title={presentLocalScopeTitle(machineState)}
-                    description={machineState.kind === 'online' && collection.found.length > 0
-                        ? t('settingsProviders.local.footer')
-                        : undefined}
-                    selection={providerTarget.selection}
-                    unselectedInvitation={t('settingsProvidersCollection.localNoComputer')}
-                    offlineDetail={t('settingsProvidersCollection.localOfflineDetail')}
-                    testIDPrefix="settings.providers.administration.target"
-                >
-                    {machineError ? <ProviderErrorItems error={machineError} retry={refreshConnections} />
-                        : collection.found.length > 0 ? collection.found.map(renderFoundRow) : (
-                        <EmptyState
-                            testID="settings-providers-local-none"
-                            layout="line"
-                            title={t('settingsProvidersCollection.localNoneFound')}
-                        />
-                    )}
-                </MachineScopedSection>
-                </SettingAnchor>
-                </SettingSection>
-            ) : null}
-            {teamResources}
-            {failure ? <ItemGroup>{failure}</ItemGroup> : null}
-        </ItemList>
+        </SettingsCollectionPage>
     );
 });
 
@@ -545,6 +625,7 @@ const ProviderDraftRow = React.memo(function ProviderDraftRow() {
     const { theme } = useUnistyles();
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID="settings-providers-draft"
             titles={providerDraftTitle}
             placeholder={t('settingsProvidersCollection.newTitle')}
@@ -556,12 +637,8 @@ const ProviderDraftRow = React.memo(function ProviderDraftRow() {
 /** First load: rows the size of the real ones, so nothing moves when they arrive. */
 function ProviderRailSkeleton() {
     return (
-        <View testID="settings-providers-skeleton" style={styles.skeleton}>
-            {[0, 1, 2].map((index) => (
-                <ShimmerView key={index} style={styles.skeletonRow}>
-                    <View style={styles.skeletonFill} />
-                </ShimmerView>
-            ))}
+        <View testID="settings-providers-skeleton">
+            <CollectionSkeletonRows count={3} rowRole="catalogRow" />
         </View>
     );
 }
@@ -579,18 +656,5 @@ const styles = StyleSheet.create((theme) => ({
     railScopeText: {
         ...Typography.default(),
         color: theme.colors.text.secondary,
-    },
-    skeleton: {
-        gap: theme.space.s6,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s6,
-    },
-    skeletonRow: {
-        borderRadius: 8,
-    },
-    skeletonFill: {
-        height: 44,
-        borderRadius: 8,
-        backgroundColor: theme.colors.surface.elevated,
     },
 }));

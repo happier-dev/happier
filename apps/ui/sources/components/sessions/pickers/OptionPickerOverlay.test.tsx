@@ -7,7 +7,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { SelectionList } from '@/components/ui/selectionList';
+import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,6 +47,35 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 });
 
 describe('OptionPickerOverlay', () => {
+  it('keeps resource recovery rows distinct from Automatic without selecting a model', async () => {
+    const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+    const recovered: string[] = [];
+    const onSelect = vi.fn();
+    const screen = await renderScreen(<OptionPickerOverlay
+      title="Model" options={[]} selectedValue={null} getValueKey={() => 'automatic'}
+      emptyText="Empty" canEnterCustomValue={false} onSelect={onSelect}
+      sections={[
+        { id: 'native', options: [{ value: null, label: 'Automatic' }] },
+        ...['first', 'second'].map(id => ({ id, options: [{ value: null, label: id,
+          onActivate: () => { recovered.push(id); } }] })),
+        { id: 'disabled', options: [{ value: null, label: 'Disabled', disabled: true }] },
+      ]}
+    />);
+    const list = screen.findByType(SelectionList);
+    const rows: readonly SelectionListOption[] = list.props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) =>
+      section.kind === 'static' ? section.options : []);
+    expect(rows.map(row => row.label)).toEqual(['Automatic', 'first', 'second', 'Disabled']);
+    expect(new Set(rows.map(row => row.id)).size).toBe(4);
+    expect(list.props.selectedOptionId).toBe(rows[0]!.id);
+    await act(async () => {
+      for (const row of rows.slice(1)) list.props.onSelect(row.id);
+    });
+    expect(recovered).toEqual(['first', 'second']);
+    expect(onSelect).not.toHaveBeenCalled();
+    await act(async () => list.props.onSelect(rows[0]!.id));
+    expect(onSelect).toHaveBeenCalledWith(null);
+  });
+
   it('does not rebuild unrelated descriptors when one selected control changes', async () => {
     const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
     const { Switch } = await import('@/components/ui/forms/Switch');
@@ -1116,6 +1145,28 @@ describe('OptionPickerOverlay', () => {
     expect(settled.getTextContent()).not.toContain(
       'modelPickerOverlay.loadingModelsA11y',
     );
+  });
+
+  it('gives a failed probe one voice with its Retry in the popover too, never a bare note', async () => {
+    const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+    const onRefresh = vi.fn();
+    const screen = await renderScreen(
+      <OptionPickerOverlay
+        title="Model"
+        options={[{ value: 'default', label: 'Default' }]}
+        selectedValue="default"
+        emptyText="empty"
+        canEnterCustomValue={false}
+        probe={{ phase: 'idle', failed: true, refreshErrorMessage: 'Codex could not list models', onRefresh }}
+        onSelect={() => {}}
+      />,
+    );
+    const retry = screen.findAll(node => node.props.accessibilityLabel === 'common.retry'
+      && typeof node.props.onPress === 'function')[0];
+    expect(retry).toBeDefined();
+    await act(async () => { await retry!.props.onPress(); });
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(screen.getTextContent().split('Codex could not list models')).toHaveLength(2);
   });
 
   it('renders a loading hint when the probe is loading and only the default option is available', async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   QualifiedConnectedAccountGroupV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 
@@ -391,7 +391,7 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
         serviceTitle: 'Acme Gateway',
         resolveAuthentication,
         teamResources: [catalogEntry()],
-        teamResourceCurrentKeys: new Set(),
+        teamResourceStatusByKey: new Map(),
         teamNameById: { 'team-acme': 'Acme' },
       });
       expect(choices.filter((choice) => choice.kind === 'unavailable')).toHaveLength(2);

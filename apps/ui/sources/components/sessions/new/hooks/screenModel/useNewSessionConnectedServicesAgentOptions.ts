@@ -65,7 +65,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     providerSettings?: ConnectedServicesParams['providerSettings'];
     providerProjection?: ConnectedServicesParams['providerProjection'];
     modelRouteTeamSources?: ConnectedServicesParams['modelRouteTeamSources'];
-    teamCredentialResourceCurrentKeys?: ConnectedServicesParams['teamCredentialResourceCurrentKeys'];
+    teamCredentialResourceStatusByKey?: ConnectedServicesParams['teamCredentialResourceStatusByKey'];
     teamNameById?: ConnectedServicesParams['teamNameById'];
     applyTeamCredentialPolicy?: ConnectedServicesParams['applyTeamCredentialPolicy'];
     setBackendNewSessionOptionStateByTargetKey: React.Dispatch<React.SetStateAction<BackendNewSessionOptionStateByTargetKey>>;
@@ -83,6 +83,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     connectedServicesModelProbeCacheIdentity: NewSessionConnectedServicesResult['connectedServicesModelProbeCacheIdentity'];
     connectedAccountDefaultsStatus: NewSessionConnectedServicesResult['connectedAccountDefaultsStatus'];
     requireConnectedAccountDefaultsReady: NewSessionConnectedServicesResult['requireConnectedAccountDefaultsReady'];
+    presentConnectedAccountPoolFailure: NewSessionConnectedServicesResult['presentConnectedAccountPoolFailure'];
     agentNewSessionOptions: Record<string, unknown> | null;
     selectedCredentialMachineAgent: NewSessionConnectedServicesResult['selectedCredentialMachineAgent'];
     connectedServicesRecoveryAction: NewSessionConnectedServicesResult['connectedServicesRecoveryAction'];
@@ -107,7 +108,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     }, [params.selectedBackendTargetKey]);
 
     const { connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady,
-        connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
+        connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip, presentConnectedAccountPoolFailure,
         selectedCredentialMachineAgent, connectedServicesRecoveryAction, routePresentation, nativeSourceLabel, requesterSignInPurposes } = useNewSessionConnectedServices({
         modelSelection: params.modelSelection,
         providerSources: params.providerSources,
@@ -126,7 +127,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         targetServerId: params.targetServerId,
         sourceMachineId: selectedMachineId,
         teamCredentialResources: params.teamCredentialResources,
-        teamCredentialResourceCurrentKeys: params.teamCredentialResourceCurrentKeys,
+        teamCredentialResourceStatusByKey: params.teamCredentialResourceStatusByKey,
         teamNameById: params.teamNameById,
         router: params.router,
         setAgentOptionStateForCurrentAgent,
@@ -159,6 +160,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
         connectedAccountDefaultsStatus,
         requireConnectedAccountDefaultsReady,
         agentNewSessionOptions,
+        presentConnectedAccountPoolFailure,
         selectedCredentialMachineAgent,
         connectedServicesRecoveryAction,
     };

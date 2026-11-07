@@ -65,3 +65,31 @@ describe('Saved Secret Used by presentation', () => {
         expect(savedSecretUsedByCopy(reference!)).toEqual({ title: 'My work credential', subtitle: 'Connected account' });
     });
 });
+
+describe('Saved Secret list row summary', () => {
+    const base = {
+        ref: 'happier:shared-secret:v1:a', source: 'shared_resource', relationship: 'owner', name: 'Deploy key', kind: 'token',
+        encryptionMode: 'e2ee', owner: null, accessSources: [], audience: { accounts: [], teams: [], groups: [] },
+        ownerAccountId: 'owner-a', revision: 1, materialStatus: 'ready',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+    } as const;
+
+    it('says only what sets a secret apart: never the encryption and "only you" every sibling shares', async () => {
+        const { savedSecretOwnedRowSummary } = await import('./savedSecretRowCopy');
+        const { t } = await import('@/text');
+        const summary = savedSecretOwnedRowSummary(base as never);
+        expect(summary).toBe(t('secrets.catalog.kinds.token'));
+        expect(summary).not.toContain(t('secretsSettings.storageE2ee'));
+        expect(summary).not.toContain(t('secretsSettings.accessOnlyYou'));
+    });
+
+    it('names who else can use it, a passkey from its storage fact, and the vault a linked value lives in', async () => {
+        const { savedSecretOwnedRowSummary } = await import('./savedSecretRowCopy');
+        const { t } = await import('@/text');
+        expect(savedSecretOwnedRowSummary({ ...base, audience: { accounts: [{ accountId: 'b' }], teams: [], groups: [] } } as never))
+            .toContain(t('secretsSettings.accessRecipients', { count: 1 }));
+        expect(savedSecretOwnedRowSummary({ ...base, kind: 'other', storage: { kind: 'passkey' } } as never)).toBe(t('secretsSettings.kindPasskey'));
+        expect(savedSecretOwnedRowSummary({ ...base, storage: { kind: 'external', provider: { pluginId: 'p', localId: 'op' }, providerLabel: '1Password' } } as never))
+            .toContain(t('secretsSettings.storageLinkedTo', { provider: '1Password' }));
+    });
+});

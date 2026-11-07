@@ -1,6 +1,13 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { projectAgentProviderBrokerApplications } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
+import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 
 import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture, createProviderSettingsAccountHarness,
     createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -10,6 +17,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const { describeProviderModels, projectionRequests } = vi.hoisted(() => ({
@@ -49,6 +57,195 @@ beforeEach(async () => {
 });
 
 describe('useProviderModelProjection', () => {
+    describe.each(['projection', 'connection-list'] as const)('%s query retention', kind => {
+        type QueryProps = { connectionId: string; active?: boolean };
+        type QueryData = ReturnType<typeof useProviderModelProjection>['data'] | ReturnType<typeof useProviderConnectionModels>['models'];
+        const useRead: (props: QueryProps) => QueryData = kind === 'projection'
+            ? function useProjectionQuery(props: QueryProps) {
+                return useProviderModelProjection({ enabled: true, machineId: 'machine-a', serverId, active: props.active,
+                    agentTargetKey: 'agent:happier.agent.codex/codex', sourceConnectionId: props.connectionId }).data;
+            }
+            : function useConnectionListQuery(props: QueryProps) {
+                const { models } = useProviderConnectionModels({ enabled: true, machineId: 'machine-a', serverId, ...props });
+                return models.length ? models : null;
+            };
+        beforeEach(() => {
+            describeProviderModels.mockResolvedValue(projection(['pc_result']));
+            rpc.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODELS, request => ({ status: 'success', connectionId: (request.payload as { connectionId: string }).connectionId,
+                connectionRevision: 1, manualModelPolicy: 'allowed', modelLoadAction: 'descriptor_absent',
+                models: [{ id: 'model-a', source: 'probe', stale: false, loadState: 'unknown', visibility: 'visible' }] }));
+        });
+
+        it('releases superseded query snapshots as one mounted reader changes A to B to C', async () => {
+            const reader = await renderHook(useRead, { initialProps: { connectionId: 'pc_a' } });
+            await flushHookEffects();
+            expect(reader.getCurrent()).not.toBeNull();
+            await reader.rerender({ connectionId: 'pc_b' });
+            await flushHookEffects();
+            expect(reader.getCurrent()).not.toBeNull();
+            await reader.rerender({ connectionId: 'pc_c' });
+            await flushHookEffects();
+            const current = reader.getCurrent();
+            expect(current).not.toBeNull();
+            for (const connectionId of ['pc_a', 'pc_b', 'pc_c']) {
+                const retained = await renderHook(useRead, { initialProps: { connectionId, active: false } });
+                expect(retained.getCurrent()).toBe(connectionId === 'pc_c' ? current : null);
+                await retained.unmount();
+            }
+        });
+
+        it('keeps another observer’s old query and retains it when that observer unmounts', async () => {
+            const reader = await renderHook(useRead, { initialProps: { connectionId: 'pc_a' } });
+            await flushHookEffects();
+            const peer = await renderHook(useRead, { initialProps: { connectionId: 'pc_a' } });
+            await flushHookEffects();
+            const previous = peer.getCurrent();
+            expect(previous).not.toBeNull();
+            await reader.rerender({ connectionId: 'pc_b' });
+            await flushHookEffects();
+            expect(peer.getCurrent()).toBe(previous);
+            await peer.unmount();
+            const reopened = await renderHook(useRead, { initialProps: { connectionId: 'pc_a', active: false } });
+            expect(reopened.getCurrent()).toBe(previous);
+        });
+    });
+
+    it('renders the existing delivery owner batch from Home discovery and never falls back when an older Machine omits it', async () => {
+        await account.reset();
+        serverId = (await account.restore({ features: createRootLayoutFeaturesResponse({ features: {
+            providers: { enabled: true }, teams: { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } },
+        } }) })).serverId;
+        const { readAccountAgentProviderRequirements, readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const requirements = readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' })!;
+        const declarations = readAccountProviderDeclarations({ kind: 'account' });
+        const applications = projectAgentProviderBrokerApplications({ agentTargetKey, acceptedProtocols: requirements.acceptsProtocols,
+            providers: declarations.flatMap(declaration => {
+                const parsed = parseProviderContributionIdentityV1(declaration.contributionKey);
+                return parsed ? [{ identity: parsed.identity, definition: declaration.definition }] : [];
+            }) });
+        const application = applications[0]!;
+        expect(application).toBeDefined();
+        const declaration = declarations.find(candidate => {
+            const parsed = parseProviderContributionIdentityV1(candidate.contributionKey);
+            return parsed?.identity.pluginId === application.implementationIdentity.pluginId
+                && parsed.identity.localId === application.implementationIdentity.localId;
+        })!;
+        const declarationProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, providerRequirements: requirements } },
+            familiesById: { providers: { family: 'providers', entriesById: { [declaration.contributionKey]: {
+                id: declaration.contributionKey, pluginId: application.implementationIdentity.pluginId,
+                provenance: declaration.provenance, sourceKind: 'path', definition: declaration.definition,
+            } } } },
+        });
+        const rawBasis = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared', teamId: 'team-1', displayName: 'Gateway', resourceRevision: 1,
+            deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] }, allowedRoutes: ['vendor-native', 'brokered'],
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
+            sourcePresentation: { kind: 'provider', provider: { identity: application.implementationIdentity, definitionRevision: 1 } },
+            providerModels: [{ descriptor: { id: 'model-a', name: 'Shared model' }, sourceRevision: 'source-1', application, availability: 'available',
+                selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'shared', expectedResourceRevision: 1,
+                    deliveryMode: 'brokered', agentTargetKey, modelId: 'model-a' } }],
+        });
+        const firstRow = rawBasis.providerModels[0]!;
+        const raw = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...rawBasis, providerModels: [
+            firstRow,
+            { ...firstRow, application: { ...application, endpointTemplateId: `${application.endpointTemplateId}-alternate` } },
+            { ...firstRow, sourceRevision: 'source-2', nativeSource: { providerTicket: 'u'.repeat(43) } },
+        ] });
+        const resolved = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...raw,
+            providerModels: raw.providerModels.slice(0, 1).map(row => ({ ...row, selection: { ...row.selection, deliveryMode: 'vendor-native' },
+                nativeSource: { providerTicket: 't'.repeat(43) } })),
+        });
+        account.home.answer(serverId, '/v1/teams/list', { body: { items: [teamSummaryFixture()], nextCursor: null } });
+        account.home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', { body: { resources: [raw], nextCursor: null, failures: [] } });
+        describeProviderModels.mockResolvedValue({ ...projection(), teamCredentialResources: [resolved] });
+        const { useHomeTeamCredentialModelCatalog } = await import('@/hooks/teams/useHomeTeamCredentialModelCatalog');
+        const hook = await renderHook(() => useHomeTeamCredentialModelCatalog({ serverId, enabled: true, machineId: 'machine-a',
+            agentTargetKey, declarationProjection }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().current).toBe(true));
+        expect(hook.getCurrent().resources[0]?.providerModels.map(row => row.selection.deliveryMode)).toEqual(['vendor-native']);
+        expect(projectionRequests).toHaveLength(1);
+        expect.soft(projectionRequests[0]?.payload).toMatchObject({ teamCredentialResources: [raw] });
+        expect(account.home.requestsFor('/v1/teams/credential-resources/entitled/discover').every(request =>
+            typeof request.input === 'object' && request.input !== null && 'executionMachineId' in request.input && request.input.executionMachineId === 'machine-a')).toBe(true);
+        let finishProjection!: (value: unknown) => void;
+        describeProviderModels.mockImplementationOnce(() => new Promise(resolve => { finishProjection = resolve; }));
+        let refreshing!: Promise<void>;
+        await act(async () => { refreshing = hook.getCurrent().reload(); });
+        await waitForHomeGovernance(() => expect(projectionRequests).toHaveLength(2));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().current).toBe(false));
+        expect(hook.getCurrent().resources).toEqual([resolved]);
+        expect.soft(hook.getCurrent().resourceStatusByKey?.get('team-1:shared')).toEqual({ kind: 'pending' });
+        await act(async () => { finishProjection({ ...projection(), teamCredentialResources: [resolved] }); await refreshing; });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().current).toBe(true));
+        describeProviderModels.mockResolvedValue(projection());
+        await act(async () => { await hook.getCurrent().reload(); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().current).toBe(false));
+        expect(hook.getCurrent().resources).toEqual([resolved]);
+        expect(hook.getCurrent().resourceStatusByKey?.get('team-1:shared')).toMatchObject({
+            kind: 'failed', code: 'provider_rpc_response_invalid',
+        });
+        describeProviderModels.mockResolvedValue({ ...projection(), teamCredentialResources: [resolved] });
+        account.home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', {
+            body: { resources: [], nextCursor: null, failures: [{ teamId: 'team-1', error: 'team_authentication_policy_unavailable' }] },
+        });
+        await act(async () => { await hook.getCurrent().reload(); });
+        expect(hook.getCurrent().resourceStatusByKey?.get('team-1:shared')).toMatchObject({
+            kind: 'failed', code: 'team_authentication_policy_unavailable',
+        });
+        account.home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', { dispatchThenFail: true });
+        await act(async () => { await hook.getCurrent().reload(); });
+        expect(hook.getCurrent().resourceStatusByKey?.get('team-1:shared')).toEqual({ kind: 'homeUnreachable' });
+        account.home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', {
+            body: { resources: [], nextCursor: null, failures: [] },
+        });
+        await act(async () => { await hook.getCurrent().reload(); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().current).toBe(true));
+        expect(hook.getCurrent().resources).toEqual([]);
+        expect(hook.getCurrent().resourceStatusByKey?.size).toBe(0);
+    });
+
+    it('projects a gathered Team catalog once on the exact execution Machine and withdraws it on target change', async () => {
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource-1', teamId: 'team-1', displayName: 'Shared', resourceRevision: 1,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            providerModels: [], connectedServiceSelections: [],
+            sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.service.test', localId: 'chat' } } });
+        const resources = Array.from({ length: 400 }, (_, index) => ({ ...resource, id: `resource-${index}` }));
+        describeProviderModels.mockResolvedValue({ ...projection(), teamCredentialResources: resources });
+        const rendered = await renderHook((props: { machineId: string; active: boolean }) => useProviderModelProjection({
+            enabled: true, ...props, serverId, agentTargetKey: 'agent:happier.agent.codex/codex', teamCredentialResources: resources,
+        }), { initialProps: { machineId: 'machine-a', active: true } });
+        await flushHookEffects();
+        expect(projectionRequests).toHaveLength(1);
+        expect(projectionRequests[0]?.payload).toMatchObject({ teamCredentialResources: resources });
+        expect(rendered.getCurrent().data?.teamCredentialResources).toEqual(resources);
+        const stringify = JSON.stringify;
+        let catalogSerializations = 0;
+        const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args: Parameters<typeof stringify>) => {
+            const result = stringify(...args);
+            if (result?.includes('resource-399')) catalogSerializations += 1;
+            return result;
+        });
+        try {
+            await rendered.rerender({ machineId: 'machine-a', active: true });
+            expect(catalogSerializations).toBe(0);
+        } finally { serialization.mockRestore(); }
+        await rendered.rerender({ machineId: 'machine-a', active: false });
+        await flushHookEffects();
+        expect(projectionRequests).toHaveLength(1);
+        await rendered.rerender({ machineId: 'machine-b', active: true });
+        await flushHookEffects();
+        expect(projectionRequests).toHaveLength(2);
+        expect(rendered.getCurrent().data?.teamCredentialResources).toEqual(resources);
+        expect(projectionRequests.at(-1)?.payload).toMatchObject({ teamCredentialResources: resources });
+        describeProviderModels.mockResolvedValue(projection());
+        await act(async () => { await rendered.getCurrent().refresh(); });
+        expect(rendered.getCurrent().error?.code).toBe('provider_rpc_response_invalid');
+        expect(rendered.getCurrent().data?.teamCredentialResources).toEqual(resources);
+    });
+
     it('shares connection-model list demand and retains its distinct policy facts across reopen and failed refresh', async () => {
         const firstResult = { status: 'success' as const, connectionId: 'pc_a', connectionRevision: 2,
             manualModelPolicy: 'allowed' as const, modelLoadAction: 'descriptor_absent' as const,
@@ -132,6 +329,52 @@ describe('useProviderModelProjection', () => {
         expect(reopenedWhileRefreshing.loading).toBe(true);
         expect(projectionRequests).toHaveLength(3);
         expect(reopened.getCurrent().data?.groups[0]?.connectionId).toBe('pc_revalidated');
+    });
+
+    describe('a refresh held for approval', () => {
+        const input = () => ({ enabled: true, machineId: 'machine-a', serverId,
+            agentTargetKey: 'agent:happier.agent.codex/codex' });
+        async function holdRefresh() {
+            await account.reset();
+            serverId = (await account.restore({ serverIdentityId: 'srv_a', currentAccount: true })).serverId;
+            await installOwnMachineApprovalReplayBoundary({ harness: account.home, serverId, accountId: 'account-a', machineId: 'machine-a' });
+            await account.home.requireUiApproval(serverId, 'providers.models.refresh');
+            describeProviderModels.mockResolvedValue(projection([]));
+            const hook = await renderHook(() => useProviderModelProjection(input()));
+            await flushHookEffects();
+            describeProviderModels.mockResolvedValue(projection(['pc_after_approval']));
+            let settled = false;
+            await act(async () => { void hook.getCurrent().refresh().then(() => { settled = true; }); });
+            await waitForHomeGovernance(() => expect(account.home.artifacts(serverId).list()).toHaveLength(1));
+            const artifactId = account.home.artifacts(serverId).list()[0]!.id;
+            return { hook, artifactId, settled: () => settled };
+        }
+
+        it('exposes the approval while pending, then shows the approved rows without a second refresh', async () => {
+            const { hook, artifactId } = await holdRefresh();
+            await waitForHomeGovernance(() => expect(hook.getCurrent().pendingApproval?.artifactId).toBe(artifactId));
+            expect(hook.getCurrent().pendingApproval).toEqual({ artifactId,
+                href: `/inbox/approvals/${artifactId}?serverId=${encodeURIComponent(serverId)}` });
+            expect(hook.getCurrent().loading).toBe(true);
+            expect(hook.getCurrent().data?.groups ?? []).toEqual([]);
+            const before = projectionRequests.filter(request => (request.payload as { forceRefresh?: boolean }).forceRefresh).length;
+            await expect(decideApprovalAsInbox('srv_a', artifactId, 'approve')).resolves.toMatchObject({ ok: true });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().data?.groups[0]?.connectionId).toBe('pc_after_approval'));
+            expect(hook.getCurrent().pendingApproval).toBeNull();
+            expect(hook.getCurrent().loading).toBe(false);
+            expect(projectionRequests.filter(request => (request.payload as { forceRefresh?: boolean }).forceRefresh))
+                .toHaveLength(before + 1);
+        });
+
+        it('settles a rejection as the person\'s own decision, with no rows and no failure', async () => {
+            const { hook, artifactId } = await holdRefresh();
+            await expect(decideApprovalAsInbox('srv_a', artifactId, 'reject')).resolves.toMatchObject({ ok: true });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().pendingApproval).toBeNull());
+            // A declined approval is neither a Provider failure nor an empty verdict: nothing ran, nothing failed.
+            expect(hook.getCurrent().loading).toBe(false);
+            expect(hook.getCurrent().error).toBeNull();
+            expect(hook.getCurrent().data?.groups ?? []).toEqual([]);
+        });
     });
 
     it('withdraws cached display results on same-Account credential replacement while closed', async () => {
@@ -331,13 +574,47 @@ describe('useProviderModelProjection', () => {
         expect(describeProviderModels).toHaveBeenNthCalledWith(2, expect.objectContaining({ machineId: 'machine-b' }));
     });
 
-    it('does no RPC work when disabled or no target machine exists', async () => {
-        const rendered = await renderHook(() => useProviderModelProjection({
-            enabled: false, machineId: null, serverId: null, agentTargetKey: 'agent:happier.agent.codex/codex',
-        }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(describeProviderModels).not.toHaveBeenCalled();
-        expect(rendered.getCurrent()).toMatchObject({ data: null, loading: false, status: 'disabled' });
+    it('does no credential or RPC work until model projection is enabled', async () => {
+        const [{ TokenStorage }, { getServerProfileById }] = await Promise.all([
+            import('@/auth/storage/tokenStorage'), import('@/sync/domains/server/serverProfiles'),
+        ]);
+        const serverUrl = getServerProfileById(serverId)!.serverUrl;
+        const credentialCallsites = new Map<string, number>();
+        const readCredentials = TokenStorage.getCredentialsForServerUrl;
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation((...args) => {
+            if (args[0] === serverUrl && args[1]?.storageReadFailure === 'surface') {
+                const frames = (new Error().stack ?? '').split('\n').flatMap((line) => {
+                    const source = line.match(/\/(?:apps\/ui\/)?sources\/([A-Za-z0-9_./-]+\.[cm]?[jt]sx?:\d+:\d+)/);
+                    if (!source) return [];
+                    const functionName = line.match(/^\s*at\s+([A-Za-z0-9_.$<>]+)\s+\(/)?.[1] ?? '<anonymous>';
+                    return [`${functionName} sources/${source[1]}`];
+                }).join(' ← ') || '<source frames unavailable>';
+                credentialCallsites.set(frames, (credentialCallsites.get(frames) ?? 0) + 1);
+            }
+            return readCredentials(...args);
+        });
+        const targetCredentialReads = () => credentials.mock.calls.filter(([url, options]) => (
+            url === serverUrl && options?.storageReadFailure === 'surface'
+        )).length;
+        describeProviderModels.mockResolvedValue(projection());
+        const rendered = await renderHook((enabled: boolean) => useProviderModelProjection({
+            enabled, machineId: 'machine-a', serverId, agentTargetKey: 'agent:happier.agent.codex/codex',
+        }), { initialProps: false });
+        try {
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(describeProviderModels).not.toHaveBeenCalled();
+            expect(rendered.getCurrent()).toMatchObject({ data: null, loading: false, status: 'disabled' });
+            expect.soft(targetCredentialReads(), JSON.stringify([...credentialCallsites].map(([frames, count]) => ({ frames, count })))).toBe(0);
+            await rendered.rerender(true);
+            await waitForHomeGovernance(() => expect(rendered.getCurrent()).toMatchObject({ status: 'success', data: projection() }));
+            expect(targetCredentialReads()).toBeGreaterThan(0);
+            const boundReads = targetCredentialReads();
+            const completedRequests = projectionRequests.length;
+            await rendered.rerender(false);
+            expect(rendered.getCurrent()).toMatchObject({ data: null, loading: false, status: 'disabled' });
+            expect(targetCredentialReads()).toBe(boundReads);
+            expect(projectionRequests).toHaveLength(completedRequests);
+        } finally { await rendered.unmount(); credentials.mockRestore(); }
     });
 
     it('exposes a first-load typed error without treating the projection as authoritative', async () => {

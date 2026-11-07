@@ -3,7 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 import { applyProviderDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
-import { providerDeclarationContext, readAccountProviderDeclarations, readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, readAccountProviderDeclarations, readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readProviderCatalogForMutationInContext,
   writeProviderCatalogAndPublishInContext } from '@/sync/api/account/apiProviderCatalog';
@@ -33,8 +33,9 @@ export function createUiProviderActionExecuteV1(account: LazyActionAccountContex
     rpc: ({ machineId, method, request, context, operationTimeoutMs }) => withActionAccountRequestSignal(account, context.signal, async signal => {
       // Personal discovery on a granted worker needs the requester's Account
       // custody. Own workers and Team compatibility retain their raw RPC path.
-      if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
-        && request.input.teamCredentialResources === undefined && !context.externalActionCredential
+      if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh'
+        || request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list')
+        && (!('teamCredentialResources' in request.input) || request.input.teamCredentialResources === undefined) && !context.externalActionCredential
         && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization) {
         if (!context.actionRequestId) throw createRpcCallError({ error: 'admission_unavailable', errorCode: 'admission_unavailable' });
         const execution = await executeOriginalAccountMachineAction({ account, machineId,
@@ -72,7 +73,7 @@ export function createUiProviderActionExecuteV1(account: LazyActionAccountContex
         // require the invocation's explicitly addressed Machine authority.
         if (!machineId) return null;
         const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId: account.serverId,
-          accountLifetime: account.accountLifetime, signal: context.signal });
+          accountLifetime: account.accountLifetime, signal: context.signal, sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
         context.signal?.throwIfAborted(); account.assertCurrent();
         return inputs?.pluginProjectionV2 ?? null;
       };

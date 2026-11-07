@@ -4,18 +4,22 @@ import { t, type TranslationKey } from '@/text';
 import type { SessionConnectedServiceAuthSwitchErrorCode } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import type { RenderHookOptions } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storageStore';
+import type { IModal } from '@/modal';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { deriveSessionIntentionalRestartSignals, resolveSessionIntentionalRestartRecoveryEvidenceAtMs, type SessionIntentionalRestartSourceEvent } from './sessionIntentionalRestartSignal';
 import {
     CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
-    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-    AccountProfileSchema,
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import {
+    AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import {
     type PluginProjectedAgentConnectedAccountPurposeV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { act } from 'react-test-renderer';
 import {
     createConnectedAccountDescriptorProjectionLoadingState,
@@ -29,6 +33,14 @@ const setSessionConnectedServiceAuthBindingMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
+const modalShowMock = vi.hoisted(() => vi.fn((_config: Parameters<IModal['show']>[0]) => 'connect-sheet'));
+
+function expectConnectSheet(service: { pluginId: string; localId: string }, accountId?: string, anchor?: import('@/components/ui/popover/_types').PopoverAnchor) {
+    expect(modalShowMock).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
+        request: { scope: null, service, ...(accountId ? { intent: 'reconnect', account: { service, accountId } } : {}), ...(anchor ? { anchor } : {}) },
+    }) }));
+}
+
 
 // The draft repository imports Sync before file setup; install its external
 // Socket boundary before those imports through the canonical harness.
@@ -316,6 +328,7 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
         spies: {
+            show: modalShowMock,
             alert: (...args) => modalAlertMock(...args),
             confirm: (...args) => modalConfirmMock(...args),
         },
@@ -418,6 +431,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         modalConfirmMock.mockReset();
         modalConfirmMock.mockResolvedValue(true);
         routerPushMock.mockClear();
+        modalShowMock.mockClear();
         seedClaudeProfile();
     });
 
@@ -445,6 +459,29 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             expect(before).toEqual([]);
             await hook.rerender({ path: '/second' });
             expect(hook.getCurrent().statusBadges).toBe(before);
+        } finally { await hook.unmount(); }
+    });
+
+    it('retains the auth chip when the Account profile republishes with equal connected accounts', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        const base = createSessionFixture({ id: 'chip-producer' });
+        const session = { ...base, metadata: { ...base.metadata!, flavor: 'codex', path: '/first' } };
+        const settings = { connectedServicesDefaultProfileByServiceId: {} };
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            applyBinding: setSessionConnectedServiceAuthBindingMock,
+            sessionId: session.id, agentId: 'codex', machineId: 'machine-1',
+            sessionConfiguration: session, sessionMetadata: session.metadata, connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+            settings, switchingDisabledReason: null,
+        }));
+        try {
+            const before = hook.getCurrent().connectedServicesAuthChip;
+            expect(before).not.toBeNull();
+            // A profile refresh restamps the profile; its connected accounts are unchanged.
+            await act(async () => {
+                const profile = storage.getState().profile;
+                storage.getState().applyProfile({ ...profile, timestamp: profile.timestamp + 1 });
+            });
+            expect(hook.getCurrent().connectedServicesAuthChip).toBe(before);
         } finally { await hook.unmount(); }
     });
 
@@ -564,7 +601,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             sessionId: 'session-1', agentId: 'codex', machineId: 'machine-1', connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
             armedContinuationAgent: { agentId: 'claude', agentIdentity: consumer, connectedAccounts: [{ purpose: 'primary', service }] },
             teamCredentialResources: availability === 'missing' ? [] : [resource],
-            teamCredentialResourceCurrentKeys: new Set(availability === 'available' ? ['team-1:resource-1'] : []),
+            teamCredentialResourceStatusByKey: new Map((availability === 'available' ? ['team-1:resource-1'] : []).map(key => [key, { kind: 'current' as const }])),
             teamNameById: { 'team-1': 'Acme' }, sessionMetadata: {}, switchingDisabledReason: null,
             settings: {
                 connectedServicesDefaultProfileByServiceId: {},
@@ -1398,7 +1435,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledTimes(2);
 
         connectedAccountsButton.onPress();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services');
+        expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
+        expect(routerPushMock).not.toHaveBeenCalledWith('/(app)/settings/connected-services');
     });
 
     it('keeps a generic partial-application badge when only legacy partial state is available', async () => {
@@ -1700,7 +1738,12 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
 
         expect(modalAlertMock).not.toHaveBeenCalled();
-        expect(routerPushMock).toHaveBeenCalledWith(expectedRoute);
+        if (expectedRoute === '/(app)/settings/connected-services/provider-state-sharing') {
+            expect(routerPushMock.mock.calls.map(([route]) => route)).toContain(expectedRoute);
+        } else {
+            expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
+            expect(routerPushMock).not.toHaveBeenCalled();
+        }
         expect((hook.getCurrent() as { actionableState?: unknown }).actionableState).toEqual(expectedState);
     });
 
@@ -1756,14 +1799,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             await Promise.resolve();
         });
 
-        expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
-            params: {
-                pluginId: 'happier.agent.codex',
-                localId: 'openai-codex',
-                accountId: 'happier',
-            },
-        });
+        expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' }, 'happier');
         expect((hook.getCurrent() as { actionableState?: unknown }).actionableState).toEqual({
             kind: 'reconnect_profile',
             profileId: 'happier',
@@ -1955,18 +1991,12 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         ]);
 
         alertButtons.find((button) => button.text === 'connectedServices.title')?.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services');
+        expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
+        expect(routerPushMock).not.toHaveBeenCalledWith('/(app)/settings/connected-services');
         alertButtons.find((button) => button.text === 'connectedServices.providerStateSharing.title')?.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services/provider-state-sharing');
+        expect(routerPushMock.mock.calls.map(([route]) => route)).toContain('/(app)/settings/connected-services/provider-state-sharing');
         alertButtons.find((button) => button.text === 'connectedServices.detail.actions.reconnect')?.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
-            params: {
-                pluginId: 'happier.agent.codex',
-                localId: 'openai-codex',
-                accountId: 'happier',
-            },
-        });
+        expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' }, 'happier');
 
         modalAlertMock.mockClear();
         hook.getCurrent().statusBadges[0]?.onPress?.();
@@ -2066,18 +2096,12 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             expect.objectContaining({ text: 'common.cancel', onPress: expect.any(Function) }),
         ]);
         alertButtons.find((button) => button.text === 'connectedServices.title')?.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services');
+        expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
+        expect(routerPushMock).not.toHaveBeenCalledWith('/(app)/settings/connected-services');
         alertButtons.find((button) => button.text === 'connectedServices.providerStateSharing.title')?.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/connected-services/provider-state-sharing');
+        expect(routerPushMock.mock.calls.map(([route]) => route)).toContain('/(app)/settings/connected-services/provider-state-sharing');
         alertButtons.find((button) => button.text === 'connectedServices.detail.actions.reconnect')?.onPress?.();
-        expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
-            params: {
-                pluginId: 'happier.agent.codex',
-                localId: 'openai-codex',
-                accountId: 'happier',
-            },
-        });
+        expectConnectSheet({ pluginId: 'happier.agent.codex', localId: 'openai-codex' }, 'happier');
         await act(async () => {
             alertButtons.find((button) => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress?.();
             await Promise.resolve();
@@ -2301,17 +2325,26 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         const popoverRenderer = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
         if (typeof popoverRenderer !== 'function') throw new Error('Expected renderContent');
         const content = popoverRenderer({ requestClose, maxHeight: 320 }) as {
-            props: { onOpenSettings: (serviceId: string) => void };
+            props: { onOpenSettings: (serviceId: string, anchor?: import('@/components/ui/popover/_types').PopoverAnchor) => void };
         };
-        content.props.onOpenSettings(CLAUDE_SERVICE_KEY);
+        const anchor = { kind: 'rect', rect: { left: 30, top: 40, width: 24, height: 24 } } as const;
+        content.props.onOpenSettings(CLAUDE_SERVICE_KEY, anchor);
 
         expect(requestClose).toHaveBeenCalledOnce();
-        expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/connect',
-            params: {
-                service: CLAUDE_SERVICE_KEY,
-            },
+        expectConnectSheet({ pluginId: 'happier.agent.claude', localId: 'anthropic' }, undefined, anchor);
+        expect(routerPushMock).not.toHaveBeenCalled();
+        const modalProps = modalShowMock.mock.calls.at(-1)?.[0].props;
+        if (typeof modalProps?.onResult !== 'function') throw new Error('Expected the sheet result boundary');
+        await act(async () => {
+            modalProps.onResult({ kind: 'selected', account: {
+                service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work',
+            } });
         });
+        expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledWith(expect.objectContaining({
+            bindings: expect.objectContaining({ v: 2, bindingsByServiceId: expect.objectContaining({
+                [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+            }) }),
+        }));
     });
 
     it('passes current Team Connected Service witnesses through the existing-session picker and V2 switch payload', async () => {
@@ -2614,6 +2647,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                     kind: 'token',
                     displayName: 'Work',
                 }),
+                v4Account({ pluginId: 'happier.agent.claude', localId: 'anthropic',
+                    accountId: 'backup', kind: 'token', displayName: 'Backup' }),
                 v4Account({
                     pluginId: 'happier.agent.claude',
                     localId: 'claude-subscription',
@@ -2637,6 +2672,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 updatedAt: 0,
                 members: [
                     { v: 1, connectedAccountId: 'work', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
+                    { v: 1, connectedAccountId: 'backup', priority: 90, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
                 ],
             }],
             connectedServiceCredentialRevisionsV1: [],
@@ -2727,6 +2763,18 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
 
         expect(hook.getCurrent().statusBadges).toEqual([]);
+
+        await hook.rerender({ sessionActive: true, sessionMetadata: {
+            connectedServices: { v: 2, bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: {
+                source: 'connected', selection: 'group', groupId: 'team',
+                profileId: 'work', appliedProfileId: 'backup',
+            } } },
+        } });
+        expect(renderChipPopover(hook).bindingsByServiceId[CLAUDE_SERVICE_KEY])
+            .toMatchObject({ groupId: 'team', appliedProfileId: 'backup' });
+        expect(hook.getCurrent().nativeSourceLabel).toContain('Backup');
+        // A new runtime observation updates presentation; it cannot initiate a switch.
+        expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledOnce();
     });
 
     it('exposes manual and daemon restart signals as shared restart state', async () => {
@@ -2900,70 +2948,93 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         ]);
     });
 
-    it('bounds a timed-out restart when no matching binding evidence arrives', async () => {
+    it.each(['failed', 'terminal'] as const)('settles a timed-out restart on typed %s evidence without scheduling timers', async (outcome) => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         vi.useFakeTimers();
+        vi.setSystemTime(1_000);
         try {
-            setSessionConnectedServiceAuthBindingMock.mockRejectedValueOnce(
-                Object.assign(new Error('RPC timeout'), { rpcErrorCode: 'timeout' }),
-            );
-            const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
-
-            const hook = await renderHook(() =>
-                useSessionConnectedServicesAuthSwitch({
+            setSessionConnectedServiceAuthBindingMock.mockImplementationOnce(async () => {
+                // The daemon can commit its failure before the request times out locally.
+                vi.setSystemTime(2_000);
+                throw Object.assign(new Error('RPC timeout'), { rpcErrorCode: 'timeout' });
+            });
+            type HookProps = Readonly<{ events: readonly SessionIntentionalRestartSourceEvent[] }>;
+            const hook = await renderHook((props: HookProps) => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
-                    sessionId: 'session-1',
-                    agentId: 'claude',
-                    machineId: 'machine-1',
-                    serverId: 'server-1',
-                    connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
-                    sessionMetadata: {
-                        connectedServices: {
-                            v: 1,
-                            bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } },
-                        },
-                    },
-                    settings: {
-                        connectedServicesDefaultProfileByServiceId: {},
-                    },
-                    switchingDisabledReason: null,
-                    sessionActive: false,
-                }),
-            );
-
+                sessionId: 'session-1', agentId: 'claude', machineId: 'machine-1', serverId: 'server-1',
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+                sessionMetadata: { connectedServices: { v: 1, bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } } } },
+                settings: { connectedServicesDefaultProfileByServiceId: {} },
+                switchingDisabledReason: null, sessionActive: false,
+                intentionalRestartSignals: deriveSessionIntentionalRestartSignals({ runtimeIssue: null, events: props.events }),
+            }), { initialProps: { events: [] } });
             const props = renderChipPopover(hook);
             await act(async () => {
-                props.setBindingForService(CLAUDE_SERVICE_KEY, {
-                    source: 'connected',
-                    selection: 'profile',
-                    profileId: 'work',
-                });
-                await Promise.resolve();
-                await Promise.resolve();
+                props.setBindingForService(CLAUDE_SERVICE_KEY, { source: 'connected', selection: 'profile', profileId: 'work' });
             });
-
-            expect(hook.getCurrent().statusBadges).toEqual([
-                expect.objectContaining({
-                    key: 'connected-services-auth-switch-restarting',
-                }),
-            ]);
-
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(60_000);
-            });
-
+            expect(hook.getCurrent().restartState?.status).toBe('restarting');
+            expect(vi.getTimerCount()).toBe(0);
+            // Elapsed time is not failure evidence; there must be no guessing wakeups.
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(hook.getCurrent().restartState?.status).toBe('restarting');
+            expect(vi.getTimerCount()).toBe(0);
+            await hook.rerender({ events: [{ createdAtMs: 1_500, event: {
+                type: 'connected-service-account-switch-attempt', ok: false, action: 'restart_requested',
+                attemptedContinuityMode: 'restart', outcome,
+            } }] });
+            expect(hook.getCurrent().restartState?.status).toBe('failed');
+            expect(hook.getCurrent().statusBadges).toEqual([expect.objectContaining({ key: 'connected-services-auth-switch-retry' })]);
+            expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label).not.toContain('Work');
             expect(modalAlertMock).not.toHaveBeenCalled();
-            expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
-                .not.toContain('Work');
-            expect(hook.getCurrent().statusBadges).toEqual([
-                expect.objectContaining({
-                    key: 'connected-services-auth-switch-retry',
-                    testID: 'session-connected-services-auth-switch-retry-status',
-                    tone: 'warning',
-                }),
-            ]);
-        } finally {
-            vi.useRealTimers();
-        }
+            expect(vi.getTimerCount()).toBe(0);
+            await hook.unmount();
+        } finally { vi.useRealTimers(); }
+    });
+
+    it.each([
+        { activeAt: 2_500 },
+        { latestReadyEventAt: 2_500 },
+        { latestTurnStatus: 'completed', latestTurnStatusObservedAt: 2_500 },
+    ])('consumes typed recovery after restart failure without timers: %j', async (evidence) => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        try {
+            const nativeMetadata = { connectedServices: { v: 1, bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'native' } } } };
+            const connectedMetadata = { connectedServices: { v: 1, bindingsByServiceId: {
+                [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+            } } };
+            type HookProps = Readonly<{
+                events: readonly SessionIntentionalRestartSourceEvent[];
+                recoveryEvidenceAtMs: number | null;
+                sessionMetadata: unknown;
+            }>;
+            const hook = await renderHook((props: HookProps) => useSessionConnectedServicesAuthSwitch({
+                applyBinding: setSessionConnectedServiceAuthBindingMock,
+                sessionId: 'session-1', agentId: 'claude', machineId: 'machine-1', serverId: 'server-1',
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS, sessionMetadata: props.sessionMetadata,
+                settings: { connectedServicesDefaultProfileByServiceId: {} },
+                switchingDisabledReason: null, sessionActive: false,
+                intentionalRestartSignals: deriveSessionIntentionalRestartSignals({ runtimeIssue: null, events: props.events }),
+                intentionalRestartRecoveryEvidenceAtMs: props.recoveryEvidenceAtMs,
+            }), { initialProps: { events: [], recoveryEvidenceAtMs: null, sessionMetadata: nativeMetadata } });
+            await act(async () => {
+                renderChipPopover(hook).setBindingForService(CLAUDE_SERVICE_KEY, { source: 'connected', selection: 'profile', profileId: 'work' });
+            });
+            expect(hook.getCurrent().restartState?.status).toBe('restarting');
+            expect(vi.getTimerCount()).toBe(0);
+            const events: readonly SessionIntentionalRestartSourceEvent[] = [{ createdAtMs: 2_000, event: {
+                type: 'connected-service-account-switch-attempt', ok: false, action: 'restart_requested',
+                attemptedContinuityMode: 'restart', outcome: 'failed',
+            } }];
+            await hook.rerender({ events, recoveryEvidenceAtMs: 999, sessionMetadata: nativeMetadata });
+            expect(hook.getCurrent().restartState?.status).toBe('failed');
+            await hook.rerender({ events, recoveryEvidenceAtMs: resolveSessionIntentionalRestartRecoveryEvidenceAtMs(evidence), sessionMetadata: connectedMetadata });
+            expect(hook.getCurrent().restartState).toBeNull();
+            expect(hook.getCurrent().statusBadges).toEqual([]);
+            expect(vi.getTimerCount()).toBe(0);
+            await hook.unmount();
+        } finally { vi.useRealTimers(); }
     });
 
     it('clears retry state when late authoritative evidence applies the requested binding', async () => {
@@ -3028,9 +3099,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 await Promise.resolve();
             });
 
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(60_000);
-            });
+            await hook.rerender({ sessionActive: true, sessionMetadata: nativeSessionMetadata });
             expect(hook.getCurrent().statusBadges).toEqual([
                 expect.objectContaining({
                     key: 'connected-services-auth-switch-retry',

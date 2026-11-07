@@ -7,14 +7,43 @@ import { TeamCredentialCatalogSettingsGroup } from './TeamCredentialCatalogSetti
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { t } from '@/text';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { Item } from '@/components/ui/lists/Item';
 
 afterEach(standardCleanup);
 
 describe('TeamCredentialCatalogSettingsGroup', () => {
+    it('keeps unverified catalog evidence separate from available resource readiness', async () => {
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: 'resource', teamId: 'team', displayName: 'Team models', resourceRevision: 1,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            sourcePresentation: { kind: 'provider', provider: {
+                identity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, definitionRevision: 1,
+            } },
+            providerModels: [{ selection: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team',
+                expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5.5' },
+                descriptor: { id: 'gpt-5.5', name: 'GPT-5.5' }, sourceRevision: 'source-v1', availability: 'available',
+                application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+                    implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                    endpointTemplateId: 'responses', protocol: 'openai-responses' },
+                confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
+            }],
+        });
+        const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup title="Team models" sourceKind="provider"
+            catalog={{ resources: [resource], teamNameById: { team: 'Acme' }, homeNameByTeamId: {},
+                resourceStatusByKey: new Map([['team:resource', { kind: 'current' as const }]]), current: true, condition: null, reload: async () => undefined }}
+            onOpen={() => undefined} />);
+        const row = screen.findAllByType(Item).find(item => item.props.testID === 'team-credential-catalog-resource:team:resource');
+        expect(screen.getTextContent()).toContain(t('settingsProviders.status.notChecked'));
+        expect(row?.props.accessibilityLabel).toContain(t('settingsProviders.status.notChecked'));
+        expect(row?.props.disabled).toBe(false);
+    });
+
     it('keeps the rail heading a name and explains a cold catalog failure beside one retry', async () => {
         const onRetry = vi.fn();
         const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup title="Provided by Teams" variant="rail" sourceKind="provider"
-            catalog={{ resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: false,
+            catalog={{ resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(), current: false,
                 condition: { reason: 'offline', retryable: true }, reload: async () => undefined }}
             onRetry={onRetry} onOpen={() => undefined} />);
         expect(screen.findAllByType(CollectionListGroupLabel)[0]?.props.title).toBe('Provided by Teams');
@@ -29,7 +58,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
     });
 
     it('withholds an unknown zero during loading and keeps a confirmed empty catalog absent', async () => {
-        const catalog = { resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set<string>(),
+        const catalog = { resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(),
             current: false, condition: { reason: 'loading' as const, retryable: false }, reload: async () => undefined };
         const screen = await renderScreen(<TeamCredentialCatalogSettingsGroup title="Provided by Teams" variant="rail" sourceKind="provider"
             catalog={catalog} onOpen={() => undefined} />);
@@ -69,7 +98,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
                     resources: [provider, provider, connected],
                     teamNameById: { 'team-1': 'Acme' },
                     homeNameByTeamId: { 'team-1': 'Home A' },
-                    currentResourceKeys: new Set(['team-1:resource-provider', 'team-1:resource-connected']),
+                    resourceStatusByKey: new Map([['team-1:resource-provider', { kind: 'current' as const }], ['team-1:resource-connected', { kind: 'current' as const }]]),
                     current: true,
                     condition: null,
                     reload: async () => undefined,
@@ -104,7 +133,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
                 sourceKind="provider"
                 catalog={{
                     resources: [resource], teamNameById: { 'team-1': 'Acme' },
-                    homeNameByTeamId: { 'team-1': 'Home A' }, currentResourceKeys: new Set(), current: false, condition: { reason: 'offline', retryable: true },
+                    homeNameByTeamId: { 'team-1': 'Home A' }, resourceStatusByKey: new Map(), current: false, condition: { reason: 'offline', retryable: true },
                     reload: async () => undefined,
                 }}
                 onRetry={onRetry}
@@ -126,7 +155,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
                 title="Provided by Teams"
                 sourceKind="provider"
                 catalog={{
-                    resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: false, condition: { reason: 'offline', retryable: true },
+                    resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(), current: false, condition: { reason: 'offline', retryable: true },
                     reload: async () => undefined,
                 }}
                 onRetry={onRetry}
@@ -146,7 +175,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
                 title="Shared with you"
                 sourceKind="connected_service"
                 catalog={{
-                    resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: false, condition: null,
+                    resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(), current: false, condition: null,
                     reload: async () => undefined,
                 }}
                 onRetry={() => undefined}
@@ -175,7 +204,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
                 sourceKind="provider"
                 catalog={{
                     resources: [resource], teamNameById: { 'team-1': 'Acme' }, homeNameByTeamId: { 'team-1': 'Home A' },
-                    currentResourceKeys: new Set(['team-1:resource-provider']), current: false, condition: null,
+                    resourceStatusByKey: new Map([['team-1:resource-provider', { kind: 'current' as const }]]), current: false, condition: null,
                     reload: async () => undefined,
                 }}
                 onOpen={onOpen}

@@ -367,7 +367,7 @@ describe('useTeamsDirectory', () => {
                 nativeModels: [], providerGroups: [], providerProjectionAuthoritative: true,
                 selected: null, onSelect, onSelectTeamCredentialModel: onSelect,
                 teamCredentialResources: current.selected.resources,
-                currentTeamCredentialResourceKeys: current.selected.currentResourceKeys,
+                teamCredentialResourceStatusByKey: current.selected.resourceStatusByKey,
             });
         }
         const screen = await renderScreen(React.createElement(CatalogPicker, { agentTargetKey: codex }));
@@ -435,7 +435,7 @@ describe('useTeamsDirectory', () => {
                 expect(screen.findByTestId(optionId)?.props.disabled).not.toBe(true);
             };
             expectSelectable();
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:generic-only')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')?.kind === 'current')).toBe(true);
             // A pending reread is not a refused catalog. Keep the exact offered
             // model selectable until the Home answers, including a wake that
             // arrives while this refresh is in flight.
@@ -443,9 +443,9 @@ describe('useTeamsDirectory', () => {
             respondAfter = refreshAnswer.promise;
             let refreshing!: Promise<void>;
             await act(async () => { refreshing = rendered.getCurrent().selected.reload(); });
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:shared')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(true);
             await act(async () => { publishHomeAccountChange(serverId); });
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:shared')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(true);
             respondAfter = undefined;
             await act(async () => { refreshAnswer.resolve(); await refreshing; });
             await waitForHomeGovernance(() => expect(rendered.getCurrent().selected.current).toBe(true));
@@ -455,15 +455,15 @@ describe('useTeamsDirectory', () => {
                 expect(invalidateTeamCredentialResourceCatalog({ serverId: canonicalServerId, accountId: 'account' },
                     { serverId: canonicalServerId, teamId: 'team-1' }, model!.application)).toBe(true);
             });
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:shared')).toBe(false);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(false);
             await act(async () => { await rendered.getCurrent().selected.reload(); });
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:shared')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(true);
             applicationFailureStatus = 503;
             await act(async () => { await rendered.getCurrent().selected.reload(); });
             expect(rendered.getCurrent().selected.current).toBe(false);
             expect(models()).toEqual(['shared-model']);
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:shared')).toBe(true);
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:generic-only')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')?.kind === 'current')).toBe(true);
             expectSelectable();
             await screen.pressByTestIdAsync(optionId);
             expect(onSelect).toHaveBeenLastCalledWith(model.selection);
@@ -477,7 +477,7 @@ describe('useTeamsDirectory', () => {
             await waitForHomeGovernance(() => expect(rendered.getCurrent().selected.current).toBe(true));
             applicationUnreachable = true;
             await act(async () => { await rendered.getCurrent().selected.reload(); });
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:shared')).toBe(false);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:shared')?.kind === 'current')).toBe(false);
             expect(screen.findByTestId(optionId)?.props.disabled).toBe(true);
             onSelect.mockClear();
             await screen.pressByTestIdAsync(optionId);
@@ -503,7 +503,7 @@ describe('useTeamsDirectory', () => {
                 ?.connectedServiceSelections).toEqual([
                 { source: 'team_resource', resourceId: 'generic-only', deliveryMode: 'brokered' },
             ]);
-            expect(rendered.getCurrent().selected.currentResourceKeys.has('team-1:generic-only')).toBe(true);
+            expect((rendered.getCurrent().selected.resourceStatusByKey.get('team-1:generic-only')?.kind === 'current')).toBe(true);
         } finally {
             await rendered.unmount();
             resetRuntimeFetch();

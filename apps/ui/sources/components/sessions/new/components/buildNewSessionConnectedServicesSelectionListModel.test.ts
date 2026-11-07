@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { GestureResponderEvent } from 'react-native';
 import { buildConnectedServiceAccountGroupOptionsByServiceId } from '../modules/connectedServicesNewSessionBindings';
+import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import {
     buildNewSessionConnectedServicesSelectionListModel,
@@ -50,6 +52,46 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('shows the same exhausted weekly quota and reset for a connected account and its pool without changing selection', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+        const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+            v: 1, serviceId: 'anthropic', profileId: 'work', fetchedAt: Date.now(), staleAfterMs: 60_000,
+            planLabel: null, accountLabel: null, meters: [{ meterId: 'weekly', label: 'Weekly',
+                used: 100, limit: 100, remainingPct: 0, unit: 'requests', utilizationPct: 100,
+                resetsAt: Date.now() + 3600_000, status: 'ok', details: {}, windowDurationMs: 604800_000 }],
+        });
+        const model = buildModel({ quotaSnapshotsByKey: { 'anthropic/work': snapshot,
+            'anthropic/signed-out': { ...snapshot, profileId: 'signed-out', meters: snapshot.meters.map(meter => ({ ...meter, remainingPct: 100 })) } },
+            profileOptionsByServiceId: { anthropic: [{ profileId: 'work', status: 'connected' }, { profileId: 'signed-out', status: 'needs_reauth' }] },
+            groupOptionsByServiceId: { anthropic: [{ groupId: 'pool', label: 'Pool', status: 'ready',
+                activeProfileId: 'work', memberProfileIds: ['work', 'signed-out'], enabledMemberCount: 2, autoSwitch: true }] },
+        });
+        const rows = firstStaticSection(model).options;
+        const account = rows.find(row => row.id === createConnectedServiceOptionId('anthropic', 'work'))!;
+        const pool = rows.find(row => row.id === createConnectedServiceGroupOptionId('anthropic', 'pool'))!;
+        expect(account.subtitle).toContain('0%');
+        expect(pool.subtitle).toContain('0%');
+        expect(account.subtitle).toContain('1h');
+        expect(pool.subtitle).toContain('1h');
+        expect(account.disabled).toBe(false);
+        expect(pool.disabled).toBe(false);
+        vi.restoreAllMocks();
+    });
+    it('opens Connect from the control used for an empty or signed-out service', () => {
+        const onOpenSettings = vi.fn();
+        const trigger = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 24, height: 24 }) };
+        // Only currentTarget crosses this platform press boundary; domain selection does not read other fields.
+        const event = { currentTarget: trigger } as unknown as GestureResponderEvent;
+        const model = buildModel({ profileOptionsByServiceId: { anthropic: [{ profileId: 'work', status: 'needs_reauth' }] }, onOpenSettings });
+        const rows = firstStaticSection(model).options;
+        for (const id of [createReauthServiceOptionId('anthropic', 'work'), 'connected-service:anthropic:connect']) {
+            const row = rows.find(candidate => candidate.id === id);
+            expect(row).toBeDefined();
+            row?.onSelect?.(event);
+            expect(onOpenSettings).toHaveBeenLastCalledWith('anthropic', { kind: 'view', ref: { current: trigger } });
+        }
+    });
+
     it('leads each row with what it is and marks the current choice with a trailing check (RT1)', () => {
         const model = buildModel({
             profileOptionsByServiceId: {
@@ -100,6 +142,17 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         nativeRows[0]?.onSelect?.();
         expect(onBrowse).toHaveBeenCalledOnce();
         expect(setBindingForService).not.toHaveBeenCalled();
+    });
+
+    it('keeps a native source choice disabled when its auth owner refuses a service change', () => {
+        const model = buildModel({
+            supportedServiceIds: ['anthropic', 'anthropic-api-key'],
+            bindingsByServiceId: { anthropic: { source: 'connected', profileId: 'work' } },
+            nativeRoute: { agentTargetKey: 'agent:happier.agent.claude/claude', active: false, onBrowse: vi.fn() },
+            resolveOptionAvailability: ({ serviceId, binding }) => serviceId === 'anthropic' && binding.source === 'native'
+                ? { disabled: true } : {},
+        });
+        expect(firstStaticSection(model).options[0].disabled).toBe(true);
     });
 
     it('does not check dormant native credentials while a Provider route is applied', () => {
@@ -205,6 +258,28 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         const providerRouteRows = providerRoute.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
         expect(providerRouteRows.filter(option => option.label === 'Brokered pool')).toHaveLength(1);
         expect(providerRouteRows.filter(isSelectedRow)).toEqual([]);
+
+        // Applied route identity remains authoritative even before the Agent's
+        // native browse descriptor is available, including a retained missing binding.
+        for (const resourceId of ['account-resource', 'resource-gone']) {
+            const applied = buildModel({
+                supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {},
+                bindingsByServiceId: { 'service.plugin/mail': { source: 'team_resource', resourceId, deliveryMode: 'brokered' } },
+                teamCredentialResources: resources,
+                appliedTeamRoute: { teamId: 'team-1', resourceId: 'pool-resource', deliveryMode: 'brokered' },
+            });
+            const appliedRows = firstStaticSection(applied).options;
+            const expectedId = createTeamResourceServiceOptionId(resources[1]!.connectedServiceSelections[0]!);
+            expect(appliedRows.filter(isSelectedRow).map(row => row.id)).toEqual([expectedId]);
+            expect(applied.selectedOptionId).toBe(expectedId);
+        }
+        const missingApplied = buildModel({
+            supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {}, bindingsByServiceId: {},
+            teamCredentialResources: resources,
+            appliedTeamRoute: { teamId: 'team-1', resourceId: 'resource-gone', deliveryMode: 'brokered' },
+        });
+        expect(firstStaticSection(missingApplied).options.filter(isSelectedRow)).toEqual([]);
+        expect(missingApplied.selectedOptionId).toBeNull();
     });
 
     it('writes the exact recipient-safe Team resource witness selected in New Session', () => {
@@ -228,7 +303,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
                 id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail',
                 resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
                 mayBroker: false, mayReceiveDirect: true,
-                directMaterialState: 'current', sessionUsePolicy: 'personal_allowed',
+                directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
                 providerModels: [],
                 sourcePresentation: {
                     kind: 'connected_service',
@@ -243,6 +318,10 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             candidate.id === createTeamResourceServiceOptionId(selection)
         ));
         expect(option).toMatchObject({ label: 'Shared mail' });
+        // Disclosure stays on the choice even when first delivery was already recorded.
+        expect(option?.subtitle).toContain('teams.credentials.directUse.ownerVisibility');
+        expect(option?.subtitle).toContain('teams.credentials.directUse.sharedUserVisibility');
+        expect(setBindingForService).not.toHaveBeenCalled();
         option?.onSelect?.();
         expect(setBindingForService).toHaveBeenCalledWith('service.plugin/mail', selection);
     });
@@ -315,7 +394,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             bindingsByServiceId: {},
             includeNativeAuthOption: false,
             teamCredentialResources: [resource],
-            teamCredentialResourceCurrentKeys: new Set(),
+            teamCredentialResourceStatusByKey: new Map(),
             teamNameById: { 'team-1': 'Acme' },
             onRecoverTeamCredentialResource: recover,
         });
@@ -591,7 +670,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             rightAccessory: 'needs-reauth',
         }));
         expect(setBindingForService).not.toHaveBeenCalled();
-        expect(onOpenSettings).toHaveBeenCalledWith('anthropic');
+        expect(onOpenSettings).toHaveBeenCalledWith('anthropic', undefined);
     });
 
     it('keeps retryable refresh-failure profiles selectable instead of routing them to reconnect', () => {
@@ -639,7 +718,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
 
         expect(setBindingForService).not.toHaveBeenCalled();
         expect(onOpenSettings).not.toHaveBeenCalled();
-        expect(onReconnectProfile).toHaveBeenCalledWith('anthropic', 'work');
+        expect(onReconnectProfile).toHaveBeenCalledWith('anthropic', 'work', undefined);
     });
 
     it('shows unsupported connected account kinds as action-required setup guidance rows', () => {
@@ -669,7 +748,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             rightAccessory: 'needs-reauth',
         }));
         expect(setBindingForService).not.toHaveBeenCalled();
-        expect(onOpenSettings).toHaveBeenCalledWith('anthropic');
+        expect(onOpenSettings).toHaveBeenCalledWith('anthropic', undefined);
     });
 
     it('adds quota accessories to connected account rows', () => {

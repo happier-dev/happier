@@ -44,8 +44,16 @@ import { CollectionFilterButton } from './CollectionFilterButton';
 const EDITOR_WIDTH_PX = 356;
 const EDITOR_MAX_HEIGHT_PX = 520;
 const EDGE_PADDING = { horizontal: 8, vertical: 8 } as const;
-/** Under a search field the editor takes the field's width, up to {@link EDITOR_WIDTH_PX} (lab `sfcols:mcpFilter`). */
-const FIELD_WIDTH_PORTAL = { ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, matchAnchorWidth: true } as const;
+/**
+ * Under a search field the editor takes the field's width, up to {@link EDITOR_WIDTH_PX} (lab `sfcols:mcpFilter`),
+ * and hangs from the field's end, where its filter button sits: a wide page field keeps the editor at its
+ * trigger rather than at the far start of the field (TASTE-S4060 D20).
+ */
+const FIELD_WIDTH_PORTAL = {
+  ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
+  matchAnchorWidth: true,
+  anchorAlign: 'end',
+} as const;
 
 function sameCondition(
   a: CollectionConditionRow,

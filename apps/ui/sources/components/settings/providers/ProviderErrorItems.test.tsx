@@ -9,6 +9,9 @@ const push = vi.hoisted(() => vi.fn());
 installSettingsViewCommonModuleMocks({
     router: async () => ({ useRouter: () => ({ push }) }),
 });
+const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
+const { resolvePressTriggerAnchor } = await import('@/components/ui/popover/resolvePointerMenuAnchor');
+const { Modal } = await import('@/modal');
 const state = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
     screen.findAll((node) => typeof node.props.title === 'string' && node.props.testID?.startsWith('provider-error:') && 'kind' in node.props)[0];
 const recovery = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
@@ -17,6 +20,26 @@ const recovery = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
 describe('ProviderErrorItems', () => {
     afterEach(standardCleanup);
     beforeEach(() => push.mockReset());
+
+    it.each(['rows', 'line'] as const)('anchors the key sheet to its %s recovery trigger', async (presentation) => {
+        const { ProviderErrorItems } = await import('./ProviderErrorItems');
+        // Modal presentation is the boundary; recovery dispatch and anchor resolution remain real.
+        const show = vi.spyOn(Modal, 'show').mockReturnValue('recovery-key-sheet');
+        try {
+            const screen = await renderScreen(<ProviderErrorItems presentation={presentation}
+                error={{ v: 1, code: 'provider_secret_missing', retryable: false, action: 'add_secret' }}
+                configureSecret={(event?: unknown) => {
+                    void presentConnectSheet({ service: { kind: 'key' }, anchor: resolvePressTriggerAnchor(event) });
+                }} />);
+            const trigger = { measureInWindow: (_callback: unknown) => undefined };
+            const button = recovery(screen);
+            if (!button) throw new Error('Missing key recovery trigger');
+            await React.act(async () => { await button.props.onPress({ currentTarget: trigger }); });
+            expect(show.mock.calls.at(-1)?.[0]).toMatchObject({ props: { request: {
+                anchor: { kind: 'view', ref: { current: trigger } },
+            } } });
+        } finally { show.mockRestore(); }
+    });
 
     it('renders and dispatches the exact typed recovery action', async () => {
         const { ProviderErrorItems } = await import('./ProviderErrorItems');
@@ -87,7 +110,6 @@ describe('ProviderErrorItems', () => {
         }} retry={retry} />);
 
         expect(state(screen)?.props).toMatchObject({
-            title: 'settingsProviders.errors.sourceUnavailableTitle',
             action: { label: 'settingsProviders.errors.actions.retry' },
         });
         await React.act(async () => { await recovery(screen)?.props.onPress?.(); });
@@ -170,6 +192,16 @@ describe('ProviderErrorItems', () => {
             await Promise.resolve();
         });
         expect(retry).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the request identity and the shared cause code in the card\'s Details, not in its words', async () => {
+        const { ProviderErrorItems } = await import('./ProviderErrorItems');
+        const screen = await renderScreen(<ProviderErrorItems error={{
+            v: 1, code: 'provider_rpc_response_invalid', retryable: true, action: 'retry', machineId: 'machine-a',
+            requestId: 'req_7f3a',
+        }} retry={vi.fn()} />);
+        expect(state(screen)?.props).toMatchObject({ diagnosticCode: 'provider_rpc_response_invalid', diagnosticDetail: 'req_7f3a' });
+        expect(state(screen)?.props.title).not.toContain('req_7f3a');
     });
 
     it('renders an invalid RPC response without claiming that the Provider endpoint is unreachable', async () => {

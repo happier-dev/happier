@@ -15,11 +15,13 @@ import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentI
 let AgentInputChipPickerPopover: typeof import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover').AgentInputChipPickerPopover;
 
 import type {
-  AgentExecutionTargetV1,
+  AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type {
   PluginProjectedAgentConnectedAccountPurposeV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 /**
  * The shared authoring controls are controlled and inert: values in, one
@@ -108,13 +110,13 @@ const connectedServicesContentProps = vi.hoisted(() => ({
 // decides it — stay real.
 const teamCredentialCatalog = vi.hoisted(() => ({
   resources: [] as Array<Record<string, unknown>>,
-  currentResourceKeys: new Set<string>(),
+  resourceStatusByKey: new Map(),
   teamNameById: {} as Record<string, string>,
 }));
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
   useHomeTeamCredentialModelCatalog: () => ({
     resources: teamCredentialCatalog.resources,
-    currentResourceKeys: teamCredentialCatalog.currentResourceKeys,
+    resourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
     teamNameById: teamCredentialCatalog.teamNameById,
     homeNameByTeamId: {},
     current: true,
@@ -402,7 +404,7 @@ describe('SessionAuthoringControls', () => {
     // the field must still be visible as unavailable — a missing chip reads
     // as "this step has no MCP setting", which is a different claim.
     const { screen } = await renderControls({
-      fields: ['capabilitySelection'],
+      fields: ['capabilitySelection', 'approvalProfileId'],
     });
 
     expect(
@@ -410,6 +412,7 @@ describe('SessionAuthoringControls', () => {
         'session-authoring-control-capabilitySelection-unavailable',
       ),
     ).toBeTruthy();
+    expect(screen.findByTestId('session-authoring-control-approvalProfileId-unavailable')).toBeTruthy();
     await screen.unmount();
   });
 
@@ -418,12 +421,14 @@ describe('SessionAuthoringControls', () => {
     // decision this step has; an "Unavailable" row for it is noise (Step options, DESIGN-ACCEPT-3).
     const { screen } = await renderControls({
       presentation: 'fields',
-      fields: ['windowsTerminalWindowName', 'windowsRemoteSessionConsole', 'capabilitySelection', 'profileId'],
+      fields: ['windowsTerminalWindowName', 'windowsRemoteSessionConsole', 'capabilitySelection', 'approvalProfileId', 'profileId'],
       facts: { targetIsWindows: false, profilesEnabled: false, profiles: [] },
     });
     expect(screen.findByTestId('session-authoring-control-windowsTerminalWindowName-row')).toBeNull();
     expect(screen.findByTestId('session-authoring-control-windowsRemoteSessionConsole-row')).toBeNull();
-    expect(screen.findByTestId('session-authoring-control-capabilitySelection-unavailable')).toBeTruthy();
+    // A control this host never supplies is not a decision this form has (owner 2026-11-06).
+    expect(screen.findByTestId('session-authoring-control-capabilitySelection-row')).toBeNull();
+    expect(screen.findByTestId('session-authoring-control-approvalProfileId-row')).toBeNull();
     expect(screen.findByTestId('session-authoring-control-profileId-unavailable')).toBeTruthy();
     await screen.unmount();
   });
@@ -540,6 +545,20 @@ describe('SessionAuthoringControls', () => {
     });
     expect(fields.onChangeField).toHaveBeenCalledWith('permissionMode', 'yolo');
     await fields.screen.unmount();
+  });
+
+  it('says once that the Agent comes first instead of listing each Agent-owned field as unavailable', async () => {
+    const { screen } = await renderControls({
+      presentation: 'fields',
+      fields: ['permissionMode', 'transcriptStorage'],
+      values: {},
+    });
+    // No Agent chosen: its fields have nothing to answer yet, so the form says what to do once.
+    expect(screen.findByTestId('session-authoring-control-permissionMode-row')).toBeNull();
+    expect(screen.findByTestId('session-authoring-control-transcriptStorage-row')).toBeNull();
+    expect(screen.findByTestId('session-authoring-control-requires-agent')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('newSession.chooseAgentFirst');
+    await screen.unmount();
   });
 
   it('authors the unattended tool policy: other tools ask or deny, and the allowed list as typed', async () => {
@@ -724,7 +743,7 @@ describe('SessionAuthoringControls', () => {
       connectedServiceSelections: [],
     });
     teamCredentialCatalog.resources = [teamResource, staleResource];
-    teamCredentialCatalog.currentResourceKeys = new Set(['team-1:res-1']);
+    teamCredentialCatalog.resourceStatusByKey = new Map([['team-1:res-1', { kind: 'current' as const }]]);
     teamCredentialCatalog.teamNameById = { 'team-1': 'Platform' };
 
     const { screen, onChangeField } = await renderControls({
@@ -760,8 +779,8 @@ describe('SessionAuthoringControls', () => {
       connectedServicesContentProps.value?.teamCredentialResources,
     ).toEqual([teamResource, staleResource]);
     expect(
-      connectedServicesContentProps.value?.teamCredentialResourceCurrentKeys,
-    ).toEqual(new Set(['team-1:res-1']));
+      connectedServicesContentProps.value?.teamCredentialResourceStatusByKey,
+    ).toEqual(new Map([['team-1:res-1', { kind: 'current' }]]));
     expect(connectedServicesContentProps.value?.teamNameById).toEqual({
       'team-1': 'Platform',
     });
@@ -1270,9 +1289,7 @@ describe('SessionAuthoringControls', () => {
    * pointer floor of a desktop web environment.
    */
   it('keeps the chip and the window-name input at their design height, never the touch target', async () => {
-    const { resolveMinimumInteractiveTargetSize } =
-      await import('@/components/ui/interactiveTargetSize');
-    const target = resolveMinimumInteractiveTargetSize('ios');
+    const target = resolveHappierMinimumInteractiveTargetSize('ios');
     const { screen } = await renderControls({
       fields: ['permissionMode', 'windowsTerminalWindowName'],
       facts: { agentTargets: [directCapableClaude()], targetIsWindows: true },

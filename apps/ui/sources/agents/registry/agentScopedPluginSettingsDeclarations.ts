@@ -74,6 +74,9 @@ export function resolveAgentScopedPluginSettingPresentation(params: Readonly<{
     });
 }
 
+/** The projection sections `resolveAgentScopedPluginSettingsDeclarations` reads. */
+export const AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS = ['agentsById', 'settingsById'] as const;
+
 /** Select the exact Settings declarations owned by one qualified Agent entry. */
 export function resolveAgentScopedPluginSettingsDeclarations(params: Readonly<{
     agentId: string | null | undefined;

@@ -4,18 +4,21 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 
 import type {
-  AgentConnectedAccountPurposeTeamResourceDefault,
-  PluginContributionIdentityV1,
-  PluginLocalizedStringV2,
+  AgentConnectedAccountPurposeTeamResourceDefault} from '@happier-dev/protocol/account/settings/connected-services';
+import type {
+  PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
+  PluginLocalizedStringV2} from '@happier-dev/protocol/plugins/contributions/public-types';
+import type {
   QualifiedConnectedAccountPurposeBindingTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 
 import {
   SELECTION_LIST_MODAL_CARD_SCROLL,
-  SELECTION_LIST_MODAL_MAX_HEIGHT,
   SelectionList,
   resolveSelectionListModalHeightBehavior,
   type SelectionListStep,
+    SELECTION_LIST_MODAL_MAX_HEIGHT,
 } from '@/components/ui/selectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
@@ -172,10 +175,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
    */
   teamCredentialCatalog?: Pick<
     HomeTeamCredentialModelCatalog,
-    'resources' | 'teamNameById' | 'currentResourceKeys'
+    'resources' | 'teamNameById' | 'resourceStatusByKey'
   >;
+  /** The consumer stores one exact account, never a pool: offer accounts only. */
   accountsOnly?: boolean;
-
 }>) {
   const profile = useProfile();
   const { present } = useConnectedAccountIdentityPrivacy();
@@ -237,7 +240,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     presentIdentity: present,
     resolveAuthentication: service => getConnectedAccountAuthentication(service, registry),
     teamResources,
-    teamResourceCurrentKeys: teamCatalog?.currentResourceKeys,
+    teamResourceStatusByKey: teamCatalog?.resourceStatusByKey,
     ...(teamCatalog ? { teamNameById: teamCatalog.teamNameById } : {}),
   }), [
     accounts,
@@ -246,7 +249,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     teamCatalog,
     effectiveAccountTransport,
     present,
-    props.declaration,
+    props.declaration.purpose,
+    props.declaration.service.pluginId,
+    props.declaration.service.localId,
+    props.declaration.required,
     props.value,
     props.teamResourceValue,
     props.noneLabel,
@@ -389,7 +395,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     () => (pageField ? resolveFieldBoxColors(theme, selected?.presentation.unavailableReasonCode === 'targetMissing' ? 'invalid' : 'idle') : undefined),
     [pageField, selected?.presentation.unavailableReasonCode, theme],
   );
-  const subtitle = triggerStatus ?? selected?.presentation.summaryLabel ?? props.description;
+  const statusSubtitle = triggerStatus ?? selected?.presentation.summaryLabel ?? props.description;
+  // The field already says what the row's status says (the unset prompt, a disabled reason); the row does not repeat it.
+  const subtitle = fieldColors && statusSubtitle === triggerDetail ? props.description : statusSubtitle;
   // What repairs a saved target that cannot serve (D14) reads as needing the user.
   const subtitleNeedsYou = Boolean(selected?.presentation.unavailableReason) && subtitle === triggerStatus;
   return (

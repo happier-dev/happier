@@ -4,7 +4,7 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllSessionListRenderables, useSetting, useSettingMutable, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -18,11 +18,11 @@ import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAc
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
-import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
 import { useHomeViewSelectionSettings } from '@/hooks/server/useHomeViewSelectionSettings';
 import { useMachinePoolSelection } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
@@ -78,16 +78,13 @@ function useMachinePickerScreenOptions(params: Readonly<{
             onActionPress={params.onRefresh}
         />
     ), [params.isRefreshing, params.onRefresh, params.theme.colors.chrome.header.foreground, params.theme.colors.text.secondary, params.title]);
-    const presentation = useNewSessionPickerRoutePresentation();
-
     return React.useMemo(() => ({
         headerShown: true,
         title: params.title,
         headerTitle,
         headerBackTitle: t('common.back'),
-        presentation,
         headerLeft,
-    }), [headerLeft, headerTitle, params.title, presentation]);
+    }), [headerLeft, headerTitle, params.title]);
 }
 
 export function useMachinePickerScreenModel() {
@@ -95,6 +92,7 @@ export function useMachinePickerScreenModel() {
     const reachabilityRevision = useMachineReachabilityRevision();
     const { theme } = useUnistyles();
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
@@ -127,7 +125,7 @@ export function useMachinePickerScreenModel() {
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
     const settings = React.useMemo(() => ({ ...accountSettings, ...homeViewSelectionSettings }), [accountSettings, homeViewSelectionSettings]);
     const activeServerSource = useNewSessionActiveServerSource();
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const sessions = useAllSessionListRenderables();
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
@@ -224,7 +222,7 @@ export function useMachinePickerScreenModel() {
         createTemporaryComputerCreatorDependencies({
             teamCredentialServerId: selectedServerId,
             teamCredentialResources: pickerTeamCredentialCatalog.resources,
-            currentTeamCredentialResourceKeys: pickerTeamCredentialCatalog.currentResourceKeys,
+            teamCredentialResourceStatusByKey: pickerTeamCredentialCatalog.resourceStatusByKey,
             // The picker never launches, so it holds no model selection. Only the
             // Agent/artifact/broker intersection decides whether the row is real.
             selectedTeamCredentialModel: null,
@@ -236,7 +234,7 @@ export function useMachinePickerScreenModel() {
             projectedAgentsById: {},
             installedPluginPackagesById: {},
         })
-    ), [pickerTeamCredentialCatalog.currentResourceKeys, pickerTeamCredentialCatalog.resources, selectedServerId]);
+    ), [pickerTeamCredentialCatalog.resourceStatusByKey, pickerTeamCredentialCatalog.resources, selectedServerId]);
     const temporaryComputerAvailability = useTemporaryComputerAvailability({
         serverId: selectedServerId,
         accountScope: selectedAccountScope,
@@ -367,6 +365,7 @@ export function useMachinePickerScreenModel() {
                 path: undefined,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
                 machineId,
@@ -377,7 +376,7 @@ export function useMachinePickerScreenModel() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [activeServerId, currentRouteParams, navigation, params.dataId, pickerFallbackHref, router, selectedServerId]);
+    }, [returnToHost, activeServerId, currentRouteParams, navigation, params.dataId, pickerFallbackHref, router, selectedServerId]);
 
     const poolSelection = useMachinePoolSelection({
         requestKey: typeof params.draftId === 'string' ? params.draftId : '',
@@ -418,6 +417,7 @@ export function useMachinePickerScreenModel() {
                 spawnServerId: selectedServerId,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 machineId: undefined,
                 machinePoolId: undefined,
@@ -427,7 +427,7 @@ export function useMachinePickerScreenModel() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [currentRouteParams, navigation, pickerFallbackHref, poolSelection.cancelPendingSelection, router, selectedServerId]);
+    }, [returnToHost, currentRouteParams, navigation, pickerFallbackHref, poolSelection.cancelPendingSelection, router, selectedServerId]);
 
     const handleSelectMachine = React.useCallback((machine: typeof machines[0] & { serverId?: string }) => {
         poolSelection.cancelPendingSelection();
@@ -435,16 +435,17 @@ export function useMachinePickerScreenModel() {
         commitExactMachine(machine.id, machineServerId || selectedServerId || activeServerId);
     }, [activeServerId, commitExactMachine, poolSelection.cancelPendingSelection, selectedServerId]);
 
-    const handleSelectManagedMachine = React.useCallback((draft: ManagedMachineSelectionDraft) => {
+    const handleSelectManagedMachine = React.useCallback((draft: ManagedMachineSelectionDraft, options?: NewSessionData['managedMachineUseOptions']) => {
         if (!selectedServerId || draft.selection.homeId !== targetServerProfile?.serverIdentityId) return;
         poolSelection.cancelPendingSelection();
-        const returnMode = setNewSessionPickerReturnParams({ navigation, router, managedMachineSelection: draft,
+        const returnMode = setNewSessionPickerReturnParams({ navigation, router, managedMachineSelection: draft, managedMachineUseOptions: options,
             routeParams: { machineId: undefined, machinePoolId: undefined, spawnServerId: selectedServerId },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: { machineId: undefined, machinePoolId: undefined, spawnServerId: selectedServerId },
         });
         if (returnMode === 'dispatch') safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
-    }, [currentRouteParams, navigation, pickerFallbackHref, poolSelection.cancelPendingSelection, router, selectedServerId, targetServerProfile]);
+    }, [returnToHost, currentRouteParams, navigation, pickerFallbackHref, poolSelection.cancelPendingSelection, router, selectedServerId, targetServerProfile]);
 
     const handleBack = React.useCallback(() => {
         poolSelection.cancelPendingSelection();

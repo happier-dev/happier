@@ -20,7 +20,7 @@ export type ExecutionRunTeamCredentialModel = Readonly<{
     /** The picker, only when a Team offers models for the chosen Agent (or one is chosen). */
     picker: React.ReactNode;
     pickerProps: Pick<SessionModelPickerProps, 'teamCredentialResources' | 'teamNameById' | 'homeNameByTeamId'
-        | 'currentTeamCredentialResourceKeys' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel'>;
+        | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel'>;
 }>;
 
 /**
@@ -66,12 +66,12 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
     const available = React.useMemo(() => {
         if (!selected) return true;
         if (!catalog.current) return false;
-        if (!catalog.currentResourceKeys.has(`${selected.teamId}:${selected.resourceId}`)) return false;
+        if (!(catalog.resourceStatusByKey.get(`${selected.teamId}:${selected.resourceId}`)?.kind === 'current')) return false;
         const resource = catalog.resources.find((candidate) => (
             candidate.id === selected.resourceId && candidate.teamId === selected.teamId
         ));
         return resource ? resourceHasAvailableTeamCredentialProviderModel(resource, selected) : false;
-    }, [catalog.current, catalog.currentResourceKeys, catalog.resources, selected]);
+    }, [catalog.current, catalog.resourceStatusByKey, catalog.resources, selected]);
 
     // A model belongs to the Agent it was chosen for; choosing another Agent drops it.
     React.useEffect(() => {
@@ -90,7 +90,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
         const resourceKey = `${selection.teamId}:${selection.resourceId}`;
         // The catalog owns picker eligibility separately from launch freshness.
         // An advisory reread must not discard an already offered model choice.
-        const isStillOffered = () => catalogRef.current.currentResourceKeys.has(resourceKey)
+        const isStillOffered = () => (catalogRef.current.resourceStatusByKey.get(resourceKey)?.kind === 'current')
             && catalogRef.current.resources.some((resource) => (
                 resource.teamId === selection.teamId
                 && resource.id === selection.resourceId
@@ -102,7 +102,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
             && resource.resourceRevision === selection.expectedResourceRevision
         ));
         if (!selectedResource
-            || !catalog.currentResourceKeys.has(resourceKey)
+            || !(catalog.resourceStatusByKey.get(resourceKey)?.kind === 'current')
             || !resourceHasAvailableTeamCredentialProviderModel(selectedResource, selection)) return;
         const outcome = await coordinate({
             resource: selectedResource,
@@ -143,7 +143,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
             delete next.modelSelection;
             return next;
         });
-    }, [catalog.currentResourceKeys, catalog.resources, coordinate, onSelectionChange, sessionId, setActionInput]);
+    }, [catalog.resourceStatusByKey, catalog.resources, coordinate, onSelectionChange, sessionId, setActionInput]);
 
     const onSelectNonTeamModel = React.useCallback((selection: unknown) => {
         if (selection !== null) return;
@@ -162,10 +162,10 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
         teamCredentialResources: catalog.resources,
         teamNameById: catalog.teamNameById,
         homeNameByTeamId: catalog.homeNameByTeamId,
-        currentTeamCredentialResourceKeys: catalog.currentResourceKeys,
+        teamCredentialResourceStatusByKey: catalog.resourceStatusByKey,
         selectedTeamCredentialModel: displayedSelection,
         onSelectTeamCredentialModel,
-    }), [catalog.resources, catalog.teamNameById, catalog.homeNameByTeamId, catalog.currentResourceKeys, displayedSelection, onSelectTeamCredentialModel]);
+    }), [catalog.resources, catalog.teamNameById, catalog.homeNameByTeamId, catalog.resourceStatusByKey, displayedSelection, onSelectTeamCredentialModel]);
     const picker = selectedAgentTargetKey && (catalog.resources.length > 0 || selected) ? (
         <SessionModelPicker
             agentTargetKey={selectedAgentTargetKey}

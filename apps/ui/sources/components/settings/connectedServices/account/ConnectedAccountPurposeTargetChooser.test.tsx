@@ -5,7 +5,7 @@ import { View } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen as renderBaseScreen } from '@/dev/testkit';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -300,7 +300,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       teamCredentialCatalog={{
         resources: [resource],
         teamNameById: { 'team-acme': 'Acme' },
-        currentResourceKeys: new Set(['team-acme:resource-pool']),
+        resourceStatusByKey: new Map([['team-acme:resource-pool', { kind: 'current' as const }]]),
       }}
     />);
     await act(async () => {
@@ -434,8 +434,8 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
 
     expect(findItemByTestId(screen, 'provider-connection-managed-purpose-chooser:legacy')?.props).toEqual(
       expect.objectContaining({
-        subtitle: 'This server cannot show connected-account targets yet',
-        detail: 'This server cannot show connected-account targets yet',
+        subtitle: t('connectedServices.purposeTargets.legacyUnavailable'),
+        detail: t('connectedServices.purposeTargets.legacyUnavailable'),
       }),
     );
 
@@ -621,6 +621,42 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     expect(row().props.subtitle).toBe(t('connectedServices.purposeTargets.poolEmpty'));
     await act(async () => { row().props.onPress(); });
     expect(latestPurposeTargetModalConfig().props.rootStep.sections[0].options.length).toBeGreaterThan(0);
+  });
+
+  it('offers accounts only, and asks for an account, when its consumer stores one exact account', async () => {
+    const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+    const service = { pluginId: 'acme.managed.provider', localId: 'gateway' };
+    const testID = 'relay-access:credential:tunnel.manage';
+    const render = (accountsOnly: boolean) => (
+      <ConnectedAccountPurposeTargetChooser testID={testID} localizedTextPluginId="acme.provider.author"
+        declaration={{ purpose: 'tunnel.manage', service, required: true }}
+        value={null} onChange={vi.fn()} accountsOnly={accountsOnly} />
+    );
+    seedAccountProfile();
+    const screen = await renderBaseScreen(<View />);
+    await act(async () => {
+      storage.setState({ profile: { ...storage.getState().profile,
+        connectedAccountGroupsV4: [{
+          v: 1, ref: { service, groupId: 'work' }, incarnation: 'row-work', displayName: 'Work pool',
+          policy: { v: 1, strategy: 'expiry_first', autoSwitch: true },
+          activeConnectedAccountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af', generation: 1, runtimeStateRevision: 1,
+          state: { status: 'ready' }, createdAt: 1, updatedAt: 1,
+          members: [{ v: 1, connectedAccountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af', priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }],
+        }] } as never });
+      screen.tree.update(render(false));
+    });
+    const row = () => findItemByTestId(screen, testID)!;
+    const offeredLabels = async () => {
+      await act(async () => { row().props.onPress(); });
+      return latestPurposeTargetModalConfig().props.rootStep.sections[0].options.map((option) => option.label);
+    };
+    expect(await offeredLabels()).toEqual(expect.arrayContaining(['Personal OpenAI', 'Work pool']));
+
+    await act(async () => { screen.tree.update(render(true)); });
+    expect(row().props.subtitle).toBe(t('connectedServices.purposeTargets.requiredAccountPrompt'));
+    const accountsOnly = await offeredLabels();
+    expect(accountsOnly).toContain('Personal OpenAI');
+    expect(accountsOnly).not.toContain('Work pool');
   });
 
   it('names an unset optional purpose in words, from the consumer when it knows what unset means', async () => {

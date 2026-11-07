@@ -33,6 +33,43 @@ export function savedSecretUsedByCopy(reference: AccountSettingsSavedSecretRefer
     return name ? { title: name, subtitle: kind } : { title: kind, subtitle: '' };
 }
 
+/**
+ * A resource's type, read from the catalog's value-free storage fact: a transferred passkey is saved with the
+ * generic kind, so its storage says what it is. Content is never opened to label a row.
+ */
+export function savedSecretEntryKindLabel(entry: SavedSecretCatalogEntryV1): string | null {
+    if (entry.storage?.kind === 'passkey') return t('secretsSettings.kindPasskey');
+    return entry.kind ? t(`secrets.catalog.kinds.${entry.kind}`) : null;
+}
+
+/** Where a vault-linked value lives, named by its admitted declaration; null for a value Happier stores. */
+export function savedSecretLinkedStorageLabel(entry: SavedSecretCatalogEntryV1): string | null {
+    if (entry.storage?.kind !== 'external') return null;
+    const provider = entry.storage.providerLabel ?? null;
+    return provider ? t('secretsSettings.storageLinkedTo', { provider }) : t('secretsSettings.storageLinked');
+}
+
+/** "Only you", or how many people and Teams can use it beside you. */
+export function savedSecretAudienceSummary(entry: SavedSecretCatalogEntryV1): string {
+    const audience = entry.audience;
+    const count = audience ? audience.accounts.length + audience.teams.length + audience.groups.length : 0;
+    return count === 0 ? t('secretsSettings.accessOnlyYou') : t('secretsSettings.accessRecipients', { count });
+}
+
+/**
+ * One of your secrets in a list: its type, where a linked value lives, and who else can use it. How Happier
+ * stores it and "only you" are what every sibling shares, so the list says them once, not on each row.
+ */
+export function savedSecretOwnedRowSummary(entry: SavedSecretCatalogEntryV1): string {
+    const audience = entry.audience;
+    const shared = Boolean(audience && audience.accounts.length + audience.teams.length + audience.groups.length > 0);
+    return [
+        savedSecretEntryKindLabel(entry),
+        savedSecretLinkedStorageLabel(entry),
+        shared ? savedSecretAudienceSummary(entry) : null,
+    ].filter((part): part is string => Boolean(part)).join(' · ');
+}
+
 /** The material status of a shared secret, in the owner's or recipient's words. */
 export function sharedSecretStatusLabel(status: SavedSecretCatalogEntryV1['materialStatus']): string {
     switch (status) {

@@ -1,13 +1,19 @@
 import type {
     ComposerAttachmentDraftV1,
-    ComposerRefV1,
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
+    ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type {
     ComposerSnapshotV1,
-    ComposerTransactionResultV1,
-    MentionRefV1,
-    ComposerAttachmentViewV1,
+    ComposerTransactionResultV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
+    MentionRefV1} from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import type {
     SessionDirectoryIntentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
+import type { NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PromptPickerOpenRequest } from '@/components/sessions/agentInput/commandMenu/promptPickerActionPort';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 
@@ -16,6 +22,7 @@ import type {
     AgentInputComposerDecoration,
     AgentInputComposerInputLock,
     AgentInputExtraActionChip,
+    AgentInputStatusRegion,
 } from '@/components/sessions/agentInput/agentInputContracts';
 import {
     isNewSessionComposerAttachmentSeedAdmitted,
@@ -112,7 +119,8 @@ export type NewSessionComposerDocument = Readonly<{
     /** Bound by the mounted New Session input; never a global focus registry. */
     onComposerFocusChange: (focused: boolean) => void;
     onComposerFocusRequestChange: (request: (() => void) | null) => void;
-    onPromptPickerOpenRequestChange: (request: (() => boolean) | null) => void;
+    onComposerBlurRequestChange: (request: (() => void) | null) => void;
+    onPromptPickerOpenRequestChange: (request: PromptPickerOpenRequest | null) => void;
     /** The existing transfer controller binds its OS picker after this document owner mounts. */
     bindAttachmentPicker?: (request: () => boolean) => () => void;
     bindPickedAttachments?: (port: ComposerPickedAttachmentsPort) => () => void;
@@ -139,6 +147,7 @@ export type NewSessionComposerDocument = Readonly<{
     extraActionChips: readonly AgentInputExtraActionChip[];
     beforeComposer: React.ReactNode;
     afterComposer: React.ReactNode;
+    statusRegions: readonly AgentInputStatusRegion[];
     /** Reads the live target only while this exact projection scope remains current. */
     readCurrentExecutionTarget?: () => Readonly<{ serverId: string; machineId: string }> | null;
     captureSubmissionSnapshot: (inputTextOverride?: string) => ComposerSnapshotV1 | null;
@@ -169,6 +178,18 @@ function sameDocumentState(
  * its Composer document owner is canonical; the prompt store mirrors live input for
  * the mounted control rather than becoming another persistence writer.
  */
+/**
+ * The New Session composer's one authoring rule: a submitted draft and an
+ * edit-and-submit lock both freeze the text and attachments. The snapshot,
+ * the attachment row, and the mounted input all read this.
+ */
+export function isNewSessionComposerEditable(input: Readonly<{
+    isSubmitting: boolean;
+    inputLock: AgentInputComposerInputLock | null | undefined;
+}>): boolean {
+    return !input.isSubmitting && input.inputLock?.mode !== 'editAndSubmit';
+}
+
 export function useNewSessionComposerDocument(params: Readonly<{
     /** Required by the routed New Session owner; optional only for isolated legacy harnesses. */
     draftId?: string;
@@ -200,6 +221,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
     canSubmitRef: React.RefObject<boolean>;
     isSubmitting: boolean;
     setDirectoryIntent?: (intent: SessionDirectoryIntentV1) => void;
+    applyModelIntent?: (intent: NewSessionDraftModelIntent) => Promise<boolean>;
     isPresented?: boolean;
 }>): NewSessionComposerDocument {
     const layoutPresented = useLayoutPresentationActive();
@@ -236,7 +258,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
     }> | null>(null);
     const composerActionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
-    const promptPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
+    const composerBlurRequestRef = React.useRef<(() => void) | null>(null);
+    const promptPickerOpenRequestRef = React.useRef<PromptPickerOpenRequest | null>(null);
     const attachmentPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
     const pickedAttachmentsRef = React.useRef<ComposerPickedAttachmentsPort | null>(null);
     const bindPickedAttachments = React.useCallback((port: ComposerPickedAttachmentsPort) => {
@@ -286,14 +309,17 @@ export function useNewSessionComposerDocument(params: Readonly<{
     });
     const documentOwnerRef = React.useRef<Readonly<{
         key: string;
+        lifetime: typeof composerAccountLifetime;
         owner: ReturnType<typeof createNewSessionComposerDocumentOwner>;
     }> | null>(null);
-    if (documentOwnerRef.current?.key !== documentOwnerKey) {
+    if (documentOwnerRef.current?.key !== documentOwnerKey || documentOwnerRef.current?.lifetime !== composerAccountLifetime) {
         documentOwnerRef.current = {
             key: documentOwnerKey,
+            lifetime: composerAccountLifetime,
             owner: draftScope
                 ? createNewSessionComposerDocumentOwner({
                     scope: draftScope,
+                    ...(composerAccountLifetime ? { scopeLifetime: composerAccountLifetime } : {}),
                     ref,
                     isCurrent: () => isCurrentCallbackRef.current(),
                 })
@@ -404,7 +430,10 @@ export function useNewSessionComposerDocument(params: Readonly<{
     const onComposerFocusRequestChange = React.useCallback((request: (() => void) | null) => {
         composerFocusRequestRef.current = request;
     }, []);
-    const onPromptPickerOpenRequestChange = React.useCallback((request: (() => boolean) | null) => {
+    const onComposerBlurRequestChange = React.useCallback((request: (() => void) | null) => {
+        composerBlurRequestRef.current = request;
+    }, []);
+    const onPromptPickerOpenRequestChange = React.useCallback((request: PromptPickerOpenRequest | null) => {
         promptPickerOpenRequestRef.current = request;
     }, []);
     const onComposerInputFlushRequestChange = React.useCallback((request: (() => void) | null) => {
@@ -519,7 +548,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         // Readiness gates submission, not authoring. In particular an
         // unavailable seeded attachment must remain removable so the user can
         // clear the canonical placeholder and its pending seed custody.
-        const editable = !isSubmittingRef.current && inputLock?.mode !== 'editAndSubmit';
+        const editable = isNewSessionComposerEditable({ isSubmitting: isSubmittingRef.current, inputLock });
         const submittable = canSubmit && inputLock === null;
         return {
             revision: documentOwner.read().revision,
@@ -616,6 +645,13 @@ export function useNewSessionComposerDocument(params: Readonly<{
             params.setDirectoryIntent(intent);
             return true;
         },
+        applyNewSessionModelIntent: async (intent, expectedScope) => {
+            if (!params.applyModelIntent || !readSnapshot().state.editable) return false;
+            const ownerScope = readScope();
+            if (expectedScope?.serverId && (!ownerScope || !areServerProfileIdentifiersEquivalent(ownerScope.serverId, expectedScope.serverId))) return false;
+            if (expectedScope?.accountId && ownerScope?.accountId !== expectedScope.accountId) return false;
+            return await params.applyModelIntent(intent);
+        },
         commitDocument,
         createAttachmentInstanceId: randomUUID,
         setComposerDecorations: composerInputEffects.setComposerDecorations,
@@ -638,7 +674,14 @@ export function useNewSessionComposerDocument(params: Readonly<{
             focus();
             return true;
         },
+        blurComposer: () => {
+            const blur = composerBlurRequestRef.current;
+            if (!blur) return false;
+            blur();
+            return true;
+        },
         openPromptPicker: () => promptPickerOpenRequestRef.current?.() ?? false,
+        readPromptPicker: () => promptPickerOpenRequestRef.current?.read() ?? null,
         openAttachmentPicker: () => attachmentPickerOpenRequestRef.current?.() ?? false,
     } satisfies ComposerPresentationTarget);
 
@@ -820,9 +863,10 @@ export function useNewSessionComposerDocument(params: Readonly<{
     ), [readSnapshot]);
 
     const clearAcceptedSnapshot = React.useCallback((snapshot: ComposerSnapshotV1): boolean => {
-        if (!mountedRef.current || !composerRefsV1Equal(refRef.current, snapshot.ref)) return false;
+        if (!composerRefsV1Equal(refRef.current, snapshot.ref)) return false;
         const currentness = submissionCurrentnessRef.current.get(snapshot);
         if (!currentness || !documentOwner.clearAccepted(currentness).changed) return false;
+        if (!mountedRef.current) return true;
         const next = documentOwner.read().document;
         suppressPromptNotificationRef.current = true;
         try {
@@ -902,8 +946,10 @@ export function useNewSessionComposerDocument(params: Readonly<{
         attachments: [...attachmentViews, ...pendingAttachmentViews],
         // Mirrors this scope's `ComposerSnapshotV1.state.editable`: readiness
         // only gates submit, so an unavailable pending seed remains removable.
-        ...(!isSubmittingRef.current
-            && composerInputEffects.composerInputLock?.mode !== 'editAndSubmit'
+        ...(isNewSessionComposerEditable({
+            isSubmitting: isSubmittingRef.current,
+            inputLock: composerInputEffects.composerInputLock,
+        })
             ? { onRemove: removeAttachment }
             : {}),
         entriesById: params.composerAttachmentEntriesById ?? undefined,
@@ -931,6 +977,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         onStructuredInputMentionsChange,
         onComposerFocusChange,
         onComposerFocusRequestChange,
+        onComposerBlurRequestChange,
         onPromptPickerOpenRequestChange,
         bindAttachmentPicker,
         bindPickedAttachments,
@@ -945,6 +992,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         extraActionChips: composerPluginPresentation.extraActionChips,
         beforeComposer: composerPluginPresentation.beforeComposer,
         afterComposer: composerPluginPresentation.afterComposer,
+        statusRegions: composerPluginPresentation.statusRegions,
         readCurrentExecutionTarget,
         captureSubmissionSnapshot,
         clearAcceptedSnapshot,
@@ -960,12 +1008,14 @@ export function useNewSessionComposerDocument(params: Readonly<{
         composerPluginPresentation.afterComposer,
         composerPluginPresentation.beforeComposer,
         composerPluginPresentation.extraActionChips,
+        composerPluginPresentation.statusRegions,
         composerPluginPresentation.scopeSignal,
         documentState.attachments,
         documentState.mentions,
         onComposerActionBarLayoutChange,
         onComposerFocusChange,
         onComposerFocusRequestChange,
+        onComposerBlurRequestChange,
         onPromptPickerOpenRequestChange,
         bindAttachmentPicker,
         bindPickedAttachments,

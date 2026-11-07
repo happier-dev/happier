@@ -1,4 +1,6 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -9,10 +11,11 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
-import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
+import { useConnectedServiceQuotaBadgeState } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
+import type { ConnectedServiceQuotaProfileRefInput } from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { StatusPill } from '@/components/ui/selectionList/accessories/StatusPill';
-import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
+import { SelectionList, resolvePopoverSelectionListHeightBehavior, type SelectionListHeightBehavior } from '@/components/ui/selectionList';
 import { resolvePopoverHeightStyle } from '@/components/ui/popover';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { t } from '@/text';
@@ -41,7 +44,7 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
-    teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
@@ -53,11 +56,11 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
         optionId: string;
         binding: ConnectedServicesServiceBinding;
     }>) => Readonly<{ disabled?: boolean; subtitle?: string }>;
-    onReconnectProfile?: (serviceId: string, profileId: string) => void;
+    onReconnectProfile?: (serviceId: string, profileId: string, anchor?: PopoverAnchor) => void;
     // Widened to carry the service: the builder already invokes it with the
     // serviceId, and modal hosts (default-auth picker) route per service.
     // Existing `() => void` callers stay assignable.
-    onOpenSettings: (serviceId: string) => void;
+    onOpenSettings: (serviceId: string, anchor?: PopoverAnchor) => void;
     /**
      * Leads the list while a route or model change is armed for the running session's next message
      * (D15); the list keeps the height left over.
@@ -72,6 +75,8 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     /** Close the hosting surface (popover/modal) — e.g. Escape inside the list. */
     requestClose?: () => void;
     maxHeight: number;
+    /** A card-modal host keeps the card to its rows (`resolveSelectionListModalHeightBehavior`); popovers keep theirs. */
+    heightBehavior?: SelectionListHeightBehavior;
 }>;
 
 const ROW_KIND_ICON = {
@@ -105,15 +110,6 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const sourceBrowse = React.useContext(SessionModelSourceBrowseHandoffContext)?.browse;
     const nativeAgentTargetKey = props.nativeAgentTargetKey ?? props.routeSources?.agentTargetKey;
-    const nativeRoute = React.useMemo(() => nativeAgentTargetKey ? {
-        agentTargetKey: nativeAgentTargetKey,
-        active: props.appliedRoute?.kind === 'native',
-        onBrowse: sourceBrowse ? () => sourceBrowse(nativeAgentTargetKey, {
-            connectionId: null,
-            label: t('connectedServices.authModal.nativeAuthTitle'),
-        }) : undefined,
-    } : undefined, [nativeAgentTargetKey, props.appliedRoute?.kind, props.bindingsByServiceId, sourceBrowse]);
-
     const appliedTeamRoute = React.useMemo(() => props.appliedRoute?.kind === 'team'
         ? { teamId: props.appliedRoute.teamId, resourceId: props.appliedRoute.resourceId, deliveryMode: props.appliedRoute.deliveryMode }
         : undefined, [props.appliedRoute]);
@@ -127,20 +123,21 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     }, [connectedServicesRegistry]);
 
     const requestedProfiles = React.useMemo(() => {
-        const next: Array<{ serviceId: string; profileId: string }> = [];
+        const next: ConnectedServiceQuotaProfileRefInput[] = [];
         for (const serviceId of props.supportedServiceIds) {
+            const service = parseQualifiedPluginContributionKey(serviceId);
             const options = props.profileOptionsByServiceId[serviceId] ?? [];
             for (const option of options) {
                 if (!isConnectedServiceProfileOptionSelectable(option)) continue;
                 const profileId = option.profileId.trim();
                 if (!profileId) continue;
-                next.push({ serviceId, profileId });
+                next.push(service ? { ref: { service, accountId: profileId } } : { serviceId, profileId });
             }
         }
         return next;
     }, [props.profileOptionsByServiceId, props.supportedServiceIds]);
 
-    const quotaBadgesByKey = useConnectedServiceQuotaBadges(requestedProfiles, { fetchPolicy: 'cache_only' });
+    const { badgesByKey: quotaBadgesByKey, snapshotsByKey: quotaSnapshotsByKey } = useConnectedServiceQuotaBadgeState(requestedProfiles, { fetchPolicy: 'cache_only' });
 
     // The row handlers are BEHAVIOUR, not data, so they are held in a ref and
     // invoked through stable wrappers instead of being memo dependencies.
@@ -173,11 +170,21 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding) => {
         handlersRef.current.setBindingForService(serviceId, binding);
     }, []);
-    const openSettings = React.useCallback((serviceId: string) => {
-        handlersRef.current.onOpenSettings(serviceId);
+    const nativeRoute = React.useMemo(() => nativeAgentTargetKey ? {
+        agentTargetKey: nativeAgentTargetKey,
+        active: props.appliedRoute?.kind === 'native',
+        onBrowse: sourceBrowse ? () => sourceBrowse(nativeAgentTargetKey, {
+            connectionId: null,
+            label: t('connectedServices.authModal.nativeAuthTitle'),
+        }, () => {
+            for (const serviceId of props.supportedServiceIds) setBindingForService(serviceId, { source: 'native' });
+        }) : undefined,
+    } : undefined, [nativeAgentTargetKey, props.appliedRoute?.kind, props.bindingsByServiceId, props.supportedServiceIds, setBindingForService, sourceBrowse]);
+    const openSettings = React.useCallback((serviceId: string, anchor?: PopoverAnchor) => {
+        handlersRef.current.onOpenSettings(serviceId, anchor);
     }, []);
-    const reconnectProfileHandler = React.useCallback((serviceId: string, profileId: string) => {
-        handlersRef.current.onReconnectProfile?.(serviceId, profileId);
+    const reconnectProfileHandler = React.useCallback((serviceId: string, profileId: string, anchor?: PopoverAnchor) => {
+        handlersRef.current.onReconnectProfile?.(serviceId, profileId, anchor);
     }, []);
     // Presence (not identity) of the reconnect handler is a real render input:
     // without one the builder routes the reauth row to the settings action.
@@ -199,7 +206,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             bindingsByServiceId: props.bindingsByServiceId,
             bindingsKnown: props.bindingsKnown,
             teamCredentialResources: props.teamCredentialResources,
-            teamCredentialResourceCurrentKeys: props.teamCredentialResourceCurrentKeys,
+            teamCredentialResourceStatusByKey: props.teamCredentialResourceStatusByKey,
             teamNameById: props.teamNameById,
             onRecoverTeamCredentialResource: recoverTeamCredentialResource,
             defaultProfileIdByServiceId: props.defaultProfileIdByServiceId,
@@ -208,6 +215,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             appliedTeamRoute,
             allowDefaultProfileFallback: props.allowDefaultProfileFallback,
             quotaBadgesByKey,
+            quotaSnapshotsByKey,
             setBindingForService,
             onOpenSettings: openSettings,
             translate: t,
@@ -237,7 +245,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.includeNativeAuthOption,
         props.profileOptionsByServiceId,
         props.teamCredentialResources,
-        props.teamCredentialResourceCurrentKeys,
+        props.teamCredentialResourceStatusByKey,
         props.teamNameById,
         // Kept as a dependency on purpose: unlike the handlers above, these two
         // are INVOKED during the build and their results are baked into every
@@ -247,6 +255,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.resolveOptionAvailability,
         props.supportedServiceIds,
         quotaBadgesByKey,
+        quotaSnapshotsByKey,
         reconnectProfile,
         recoverTeamCredentialResource,
         resolveServiceTitle,
@@ -282,7 +291,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
                 selectedOptionId={listModel.selectedOptionId}
                 optionPresentation="menu"
                 maxHeight={listMaxHeight}
-                heightBehavior={resolvePopoverSelectionListHeightBehavior()}
+                heightBehavior={props.heightBehavior ?? resolvePopoverSelectionListHeightBehavior()}
                 keyboardHintsEnabled={false}
                 onRequestClose={props.requestClose ?? (() => {})}
                 onSelect={() => {}}

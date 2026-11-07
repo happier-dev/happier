@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { CollectionDraftTitleScope, useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -10,17 +10,19 @@ import {
     createProviderSettingsHarness,
     createProviderSettingsAccountHarness,
     installProviderSettingsRpcBoundary,
+    installBundledProviderDeclarationsRpcBoundary,
     installProviderConnectionsCatalogHttpBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { renderInCollectionLayout } from '@/dev/testkit/render/renderInCollectionLayout';
+import { measureMountedCollections, renderInCollectionLayout } from '@/dev/testkit/render/renderInCollectionLayout';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { act } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerTeamCredentialDiscoveryForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
-import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams';
+import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
@@ -38,6 +40,7 @@ import {
     buildCustomProviderTemplate,
     createCustomProviderDraft,
 } from '@/providers/authoring/state';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 function providerErrorState(screen: Awaited<ReturnType<typeof renderScreen>>, code?: string) {
     return screen.findAll((node) => (code ? node.props.testID === `provider-error:${code}`
@@ -53,7 +56,7 @@ const state = vi.hoisted(() => ({
         resources: [] as Array<Record<string, unknown>>,
         teamNameById: {} as Record<string, string>,
         homeNameByTeamId: {} as Record<string, string>,
-        currentResourceKeys: new Set<string>(),
+        resourceStatusByKey: new Map(),
         current: true,
         condition: null,
     },
@@ -70,6 +73,9 @@ const navigationState = vi.hoisted(() => ({
     focusListeners: new Set<() => void>(),
 }));
 const providerHarness = createProviderSettingsHarness();
+const providerConnectionReads = () => providerHarness.state.requests.filter(
+    request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
+);
 installProviderSettingsRpcBoundary(providerHarness);
 const account = createProviderSettingsAccountHarness();
 let machine = createMachineFixture({ id: 'machine-a', kind: 'persistent', activeAt: Date.now(), metadata: {
@@ -121,6 +127,11 @@ installSettingsViewCommonModuleMocks({
     storage: 'real',
 });
 
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal);
+});
+
 vi.mock('@react-navigation/native', async () => {
     const ReactModule = await import('react');
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
@@ -156,15 +167,44 @@ function findComposite(screen: Awaited<ReturnType<typeof renderScreen>>, testID:
 await loadSyncSingletonForTests();
 // Install transport leaves before loading the screen; cold compilation is collection work.
 await import('./ProviderConnectionsSettingsScreen');
-const [{ Item }, { Switch }, { ShimmerView }] = await Promise.all([
+await import('@/app/(app)/settings/providers/new');
+const [{ Item }, { Switch }] = await Promise.all([
     import('@/components/ui/lists/Item'), import('@/components/ui/forms/Switch'),
-    import('@/components/ui/feedback/ShimmerView'),
 ]);
 
 function DraftTitlePublisher(props: Readonly<{ title: string }>) {
     const titles = useCollectionDraftTitle();
     React.useEffect(() => { titles.publish(props.title); }, [props.title, titles]);
     return null;
+}
+
+/** The modal portal is a platform boundary; its real shared body and domain hooks remain mounted. */
+async function openProviderPicker(screen: Awaited<ReturnType<typeof renderScreen>>, trigger = 'settings-providers-add') {
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.show).mockClear();
+    await screen.pressByTestIdAsync(trigger);
+    expect(Modal.show).toHaveBeenCalled();
+    const opened = vi.mocked(Modal.show).mock.calls.at(-1)![0];
+    const onClose = vi.fn();
+    const modal = await renderScreen(React.createElement(opened.component, { ...opened.props, onClose }));
+    const { CapabilityAddModalBody } = await import('@/components/capabilities/add/CapabilityAddModal');
+    const config = () => modal.findByType(CapabilityAddModalBody).props.config;
+    await waitForHomeGovernance(() => expect(config().catalog.items.length).toBeGreaterThan(0));
+    await measureMountedCollections(modal);
+    const select = async (key: string) => {
+        const collection = modal.findAll(node => node.props.testID === 'providers.add:collection'
+            && typeof node.props.model?.actions?.open === 'function')[0]!;
+        await React.act(async () => collection.props.model.actions.open(key));
+    };
+    return { modal, config, select, onClose };
+}
+
+/** A phone's page lists found model servers behind the shared "On machines" view, as the rail does. */
+async function showFound(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    await waitForHomeGovernance(() => expect(providerConnectionReads().length).toBeGreaterThan(0));
+    await flushHookEffects();
+    const found = screen.findAll((node) => node.props?.testID === 'settings-providers-view:found' && typeof node.props.onPress === 'function')[0];
+    if (found) await React.act(async () => { found.props.onPress(); });
 }
 
 describe('ProviderConnectionsSettingsScreen', () => {
@@ -174,7 +214,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         vi.unstubAllGlobals();
         await account.reset();
     });
-    beforeEach(async () => {
+    beforeEach(async ({ task }) => {
         providerHarness.reset();
         machine = createMachineFixture({ ...machine, activeAt: Date.now() });
 
@@ -189,7 +229,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         navigationState.focused = true;
         navigationState.focusListeners.clear();
         state.teamCredentialCatalog = {
-            resources: [], teamNameById: {}, homeNameByTeamId: {}, currentResourceKeys: new Set(), current: true, condition: null,
+            resources: [], teamNameById: {}, homeNameByTeamId: {}, resourceStatusByKey: new Map(), current: true, condition: null,
         };
         state.describeReply = {
             loading: false, error: null,
@@ -206,7 +246,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
                 }],
             }),
         };
-        await account.restore({ serverIdentityId: 'srv_provider_list', machines: [machine], waivedActions: [
+        await account.restore({ serverIdentityId: 'srv_provider_list', machines: [machine], waivedActions: task.name.startsWith('reviews a detected Provider') ? [] : [
             'providers.connections.enable_detected', 'providers.connections.start_local',
         ], features: createRootLayoutFeaturesResponse({ features: {
             providers: { enabled: true, localDiscovery: { enabled: true }, localModelManagement: { enabled: true } },
@@ -251,14 +291,15 @@ describe('ProviderConnectionsSettingsScreen', () => {
                 },
             }],
             teamNameById: { 'team-1': 'Acme' }, homeNameByTeamId: { 'team-1': 'Home A' },
-            currentResourceKeys: new Set(['team-1:resource-1']), current: true, condition: null,
+            resourceStatusByKey: new Map([['team-1:resource-1', { kind: 'current' as const }]]), current: true, condition: null,
         };
-        const teams = bindHomeDomainActionHttpRequestV1('teams.list', { v: 1, scope: 'member', archived: 'active', cursor: null });
-        account.home.answer(account.serverId, teams.path, { body: { items: [teamSummaryFixture({ name: 'Acme' })], nextCursor: null } });
-        const catalog = bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId: 'team-1' });
-        account.home.answer(account.serverId, catalog.path, { body: TeamCredentialResourceEntitledPageV1Schema.parse({
-            resources: state.teamCredentialCatalog.resources, nextCursor: null,
-        }) });
+        const teams = bindHomeDomainActionHttpRequestV1('teams.list', { v: 1, scope: 'member', archived: 'active',
+            limit: TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1, cursor: null });
+        account.home.answer(account.serverId, teams.path, { body: { items: [teamSummaryFixture({ name: 'Acme',
+            capabilities: teamCapabilitiesFixture({}) })], nextCursor: null } });
+        answerTeamCredentialDiscoveryForTests(account.home, account.serverId, () => TeamCredentialResourceDiscoveryPageV1Schema.parse({
+            resources: state.teamCredentialCatalog.resources, nextCursor: null, failures: [],
+        }));
         await account.publishFeatures(account.serverId, createRootLayoutFeaturesResponse({ features: {
             providers: { enabled: true }, teams: { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } },
         } }));
@@ -268,6 +309,15 @@ describe('ProviderConnectionsSettingsScreen', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-catalog-resource:team-1:resource-1')).not.toBeNull());
         await screen.pressByTestIdAsync('team-credential-catalog-resource:team-1:resource-1');
         expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${account.serverId}/team-1/credentials/resource-1`);
+    });
+
+    it("a phone's page is the rail's own list under its title: compact rows without chevrons and the count beside the title (lab sfcols:provP)", async () => {
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
+        expect(findConnectionRow(screen, 'pc_a')?.props).toMatchObject({ density: 'compact', showChevron: false });
+        const header = screen.findAll((node) => node.props?.testID === 'settings-providers-header' && node.props.titleAccessory !== undefined)[0];
+        expect(header?.props.titleAccessory).toBeTruthy();
     });
 
     it('renders the configured connection supplied by the shared Provider RPC boundary', async () => {
@@ -288,10 +338,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
             titles: screen.findAllByType(Item).map(item => item.props.title),
             requests: providerHarness.state.requests,
         }).toMatchObject({ titles: expect.arrayContaining(['Boundary connection']) }));
-        expect(providerHarness.state.requests).not.toHaveLength(0);
-        expect(providerHarness.state.requests.map((request) => request.method)).toEqual([
-            RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
-        ]);
+        expect(providerConnectionReads()).toHaveLength(1);
         expect(screen.findAllByType(Item).map((item) => item.props.title))
             .toContain('Boundary connection');
     });
@@ -299,6 +346,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
     it('replaces the retained daemon projection each time the index regains focus', async () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         expect(screen.findAllByType(Item).map((item) => item.props.title)).toContain('Acme');
 
         const query = state.describeReply as {
@@ -308,7 +356,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         await screen.update(<ProviderConnectionsSettingsScreen active={false} />);
         await screen.update(<ProviderConnectionsSettingsScreen active />);
 
-        expect(screen.findAllByType(Item).map((item) => item.props.title)).not.toContain('Acme');
+        await waitForHomeGovernance(() => expect(screen.findAllByType(Item).map((item) => item.props.title)).not.toContain('Acme'));
 
         query.data = createProviderConnectionsDescribeFixture({
             connections: [createProviderConnectionViewFixture({
@@ -320,8 +368,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
         await screen.update(<ProviderConnectionsSettingsScreen active={false} />);
         await screen.update(<ProviderConnectionsSettingsScreen active />);
 
-        expect(screen.findAllByType(Item).map((item) => item.props.title))
-            .toContain('Returned connection');
+        await waitForHomeGovernance(() => expect(screen.findAllByType(Item).map((item) => item.props.title))
+            .toContain('Returned connection'));
     });
 
     it('pauses the collection focus return until Back reaches the collection route', async () => {
@@ -338,14 +386,26 @@ describe('ProviderConnectionsSettingsScreen', () => {
             documentElement: {},
             getElementById: () => null,
             querySelectorAll: () => activeElement ? [activeElement] : [],
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
         });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         // A connection row, then the "+" menu's catalog provider and custom endpoint.
         const entries = [
-            { testID: 'settings-provider-connection:pc_a', open: () => findConnectionRow(screen, 'pc_a')?.props.onPress?.() },
-            { testID: 'settings-providers-add', open: () => findComposite(screen, 'settings-providers-add-menu', 'onSelect')?.props.onSelect?.('catalog:plugin/other') },
-            { testID: 'settings-providers-add', open: () => findComposite(screen, 'settings-providers-add-menu', 'onSelect')?.props.onSelect?.('custom') },
+            { testID: 'settings-provider-connection:pc_a', open: async () => { findConnectionRow(screen, 'pc_a')?.props.onPress?.(); } },
+            { testID: 'settings-providers-add', open: async () => {
+                const picker = await openProviderPicker(screen);
+                await picker.select(picker.config().catalog.itemKey(picker.config().catalog.items[0]));
+                await picker.modal.pressByTestIdAsync('providers.add:primary');
+                await picker.modal.unmount();
+            } },
+            { testID: 'settings-providers-add', open: async () => {
+                const picker = await openProviderPicker(screen);
+                await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
+                await picker.modal.unmount();
+            } },
         ];
 
         for (const { testID, open } of entries) {
@@ -356,9 +416,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
                 getAttribute: (name: string) => name === 'data-testid' ? testID : null,
             };
 
-            React.act(() => {
-                open();
-            });
+            await open();
 
             expect(focus).not.toHaveBeenCalled();
 
@@ -375,7 +433,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(routerPush).toHaveBeenNthCalledWith(1, '/(app)/settings/providers/pc_a');
         expect(routerPush).toHaveBeenNthCalledWith(
             2,
-            '/(app)/settings/providers/new?contributionKey=plugin%2Fother',
+            expect.stringMatching(/^\/\(app\)\/settings\/providers\/new\?contributionKey=/),
         );
         expect(routerPush).toHaveBeenNthCalledWith(3, '/(app)/settings/providers/new');
     });
@@ -420,20 +478,277 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(providerHarness.state.requests).toHaveLength(0);
     });
 
-    it('lists configured connections and offers available providers from the add menu', async () => {
+    it('invites the providers to connect on a phone\'s page, the same shelf the wide home shows', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const { projectAvailableProviderContributionsV1 } = await import('@happier-dev/protocol/providers/connections/sourceFactsV1');
+        const query = state.describeReply as { data: ReturnType<typeof createProviderConnectionsDescribeFixture> };
+        query.data = createProviderConnectionsDescribeFixture({ ...query.data, available: projectAvailableProviderContributionsV1({
+            connections: [], definitions: readAccountProviderDeclarations({ kind: 'account' }),
+        }) });
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const page = await renderScreen(<ProviderConnectionsSettingsScreen variant="page" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(page, 'pc_a')).not.toBeNull());
+        expect(page.findByTestId('settings-providers-home.shelf')).not.toBeNull();
+        await measureMountedCollections(page);
+        const connect = page.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('settings-providers-home.connect.'))[0];
+        expect(connect).toBeDefined();
+        const press = connect!.findAll(node => typeof node.props.onPress === 'function')[0]!;
+        await act(async () => { press.props.onPress(); });
+        expect(routerPush).toHaveBeenCalled();
+    });
+
+    it('reads as the overview on the wide home: your providers, each with its state (lab crProv-home)', async () => {
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const home = await renderScreen(<ProviderConnectionsSettingsScreen variant="home" />);
+        await waitForHomeGovernance(() => expect(home.findByTestId('settings-providers-home')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(home.findByTestId('settings-providers-home.providers')).not.toBeNull());
+        const row = findConnectionRow(home, 'pc_a');
+        expect(row).not.toBeNull();
+        // Its state is the row's trailing word (On or Off), or the trouble in words on its line.
+        expect(row?.props.detail ?? row?.props.subtitle).toBeDefined();
+    });
+
+    it('says why a gateway is off on the home when no account stands behind it, and offers a few providers then Browse all', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const { projectAvailableProviderContributionsV1 } = await import('@happier-dev/protocol/providers/connections/sourceFactsV1');
+        const { INVITATION_MARK_COUNT } = await import('./collection/ProviderCollectionInvitation');
+        const { CollectionStatusLine } = await import('@/components/ui/lists/collection/CollectionStatusGlyph');
+        const query = state.describeReply as { data: ReturnType<typeof createProviderConnectionsDescribeFixture> };
+        const available = projectAvailableProviderContributionsV1({ connections: [], definitions: readAccountProviderDeclarations({ kind: 'account' }) });
+        query.data = createProviderConnectionsDescribeFixture({ ...query.data, available, connections: [
+            ...query.data.connections,
+            createProviderConnectionViewFixture({
+                connectionId: 'pc_gateway', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+                deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null }, managedLocalOption: null,
+                authorizationError: createProviderErrorV1('provider_connection_invalid', { connectionId: 'pc_gateway', reason: 'managed_purpose_bindings_missing' }),
+            }),
+        ] });
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const home = await renderScreen(<ProviderConnectionsSettingsScreen variant="home" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(home, 'pc_gateway')).not.toBeNull());
+        const line = home.findAllByType(CollectionStatusLine).find(node => node.props.testID === 'settings-provider-connection-status:pc_gateway');
+        expect(line?.props).toMatchObject({ status: 'signIn', label: 'common.off', description: 'settingsProvidersCollection.gateway.needsAccountStatus' });
+        // A few providers to start with, then Browse all with how many more.
+        const offered = home.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('settings-providers-home.row.')
+            && typeof node.props.title === 'string');
+        expect(offered.length).toBe(Math.min(INVITATION_MARK_COUNT, available.length));
+        if (available.length > INVITATION_MARK_COUNT) {
+            const browse = home.findAllByType(Item).find(item => item.props.testID === 'settings-providers-home.browse-all');
+            expect(browse?.props.subtitle).toBe(`tools.common.more(count=${available.length - INVITATION_MARK_COUNT})`);
+        }
+    });
+
+    it('opens the shared Provider Add body from the header', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const { projectAvailableProviderContributionsV1 } = await import('@happier-dev/protocol/providers/connections/sourceFactsV1');
+        const query = state.describeReply as { data: ReturnType<typeof createProviderConnectionsDescribeFixture> };
+        query.data = createProviderConnectionsDescribeFixture({ ...query.data, available: projectAvailableProviderContributionsV1({
+            connections: [], definitions: readAccountProviderDeclarations({ kind: 'account' }),
+        }) });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(React.createElement(ProviderConnectionsSettingsScreen));
-        const titles = screen.findAllByType(Item).map((item) => item.props.title);
-        expect(titles).toContain('Acme');
-        // Available providers are what you can add, not rows of the collection.
-        expect(titles).not.toContain('Other');
-        const acme = screen.findAllByType(Item).find((item) => item.props.title === 'Acme');
-        // No admitted Account catalog means no model count, even when a machine reports three.
-        expect(acme?.props.subtitle).toBe('');
-        expect(acme?.props.subtitleLeading).toBeUndefined();
-        const menuItems = findComposite(screen, 'settings-providers-add-menu', 'items')?.props.items as Array<{ id: string; title: string; subtitle?: string }>;
-        expect(menuItems.map((item) => item.id)).toEqual(['custom', 'catalog:plugin/other']);
-        expect(menuItems[1]?.subtitle).toContain('settingsProviders.compatibility.experimental');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-add')).not.toBeNull());
+        const picker = await openProviderPicker(screen);
+        const selected = picker.config().catalog.items[0];
+        await picker.select(picker.config().catalog.itemKey(selected));
+        expect(run).not.toHaveBeenCalled();
+        expect(providerHarness.state.requests.filter(request => [
+            RPC_METHODS.DAEMON_PROVIDERS_PROBE, RPC_METHODS.DAEMON_PROVIDERS_MODELS,
+            RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD,
+            RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
+        ].includes(request.method as never))).toEqual([]);
+        expect(providerHarness.state.requests.every(request => request.machineId === 'machine-a'
+            && areServerProfileIdentifiersEquivalent(request.serverId, account.serverId))).toBe(true);
+        expect(providerConnectionReads().filter(request => Boolean((request.payload as { authoringPreview?: unknown }).authoringPreview))).toEqual([]);
+        await picker.modal.pressByTestIdAsync('providers.add:primary');
+        const href = routerPush.mock.calls.at(-1)![0] as string;
+        navigationState.params = Object.fromEntries(new URLSearchParams(href.split('?')[1]));
+        const { NewProviderConnectionRoute } = await import('@/app/(app)/settings/providers/new');
+        const authoring = await renderScreen(<NewProviderConnectionRoute />);
+        const { BuiltInProviderAuthoringView } = await import('./authoring/BuiltInProviderAuthoringView');
+        await waitForHomeGovernance(() => expect(authoring.findByType(BuiltInProviderAuthoringView).props).toMatchObject({
+            contributionKey: navigationState.params.contributionKey, providerName: selected.provider.name,
+        }));
+        expect(authoring.findByTestId('settings-provider-authoring-built-in')).not.toBeNull();
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('projects declared Provider details without probing during Add browsing', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(row => row.definition.id === 'deepseek')!;
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        const picker = await openProviderPicker(screen);
+        const selected = picker.config().catalog.items.find((row: { kind: string; provider?: { contributionKey: string } }) =>
+            row.kind === 'contribution' && row.provider?.contributionKey === declaration.contributionKey);
+        expect(selected?.detail).toMatchObject({
+            auth: { kind: 'apiKey', required: true, keyUrl: declaration.definition.credential!.keyUrl },
+            models: declaration.definition.catalog,
+            source: { contributionKey: declaration.contributionKey, provenance: declaration.provenance,
+                websiteUrl: declaration.definition.websiteUrl },
+            nextStep: { kind: 'apiKey' },
+        });
+        expect(selected.detail.source).not.toHaveProperty('version');
+        expect(selected.detail.worksWith).toEqual(expect.arrayContaining([
+            expect.objectContaining({ agentTargetKey: 'agent:happier.agent.claude/claude',
+                compatibility: expect.objectContaining({ status: 'experimental', selectedProtocol: 'anthropic' }) }),
+        ]));
+        expect(selected.detail.worksWith.some((agent: { agentTargetKey: string }) => agent.agentTargetKey === 'agent:happier.agent.codex/codex')).toBe(false);
+        await picker.select(picker.config().catalog.itemKey(selected));
+        expect(providerHarness.state.requests.filter(request => [RPC_METHODS.DAEMON_PROVIDERS_PROBE,
+            RPC_METHODS.DAEMON_PROVIDERS_MODELS, RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD,
+            RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE].includes(request.method as never))).toEqual([]);
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('groups found Machine Providers before declared model providers in Add', async () => {
+        const query = state.describeReply as { data: { discoveryCandidates: unknown[] } };
+        query.data.discoveryCandidates = [{
+            // The bundled Ollama declaration, so the found row's details can name what it needs.
+            v: 1, machineId: 'machine-a', contributionKey: 'happier.provider.ollama/ollama', providerName: 'Ollama',
+            endpointTemplateId: 'native', normalizedEndpointUrl: 'http://127.0.0.1:22434',
+            candidateId: 'discovery-candidate:v1:grouped', evidence: { kind: 'attributed_listener' },
+            ownership: 'adopted', connection: { status: 'requires_named_connection' },
+        }];
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        const picker = await openProviderPicker(screen);
+        await waitForHomeGovernance(() => expect(picker.config().catalog.items.some((row: { kind: string }) => row.kind === 'found')).toBe(true));
+        const catalog = picker.config().catalog;
+        expect(catalog.groups).toEqual([
+            expect.objectContaining({ key: 'found', itemKeys: catalog.items.filter((row: { kind: string }) => row.kind === 'found').map(catalog.itemKey) }),
+            expect.objectContaining({ key: 'providers', itemKeys: catalog.items.filter((row: { kind: string }) => row.kind === 'contribution').map(catalog.itemKey) }),
+        ]);
+        expect(catalog.items[0].kind).toBe('found');
+        // A found server's details say what that provider needs, works with and holds, as its catalog row's do.
+        const details = await renderScreen(<>{picker.config().renderDetail(catalog.items[0])}</>);
+        const key = catalog.itemKey(catalog.items[0]);
+        expect(details.findByTestId(`providers.add:detail:${key}:needs`)).not.toBeNull();
+        expect(details.findByTestId(`providers.add:detail:${key}:works-with`)).not.toBeNull();
+    });
+
+    it('reviews a detected Provider with the selected Machine, declared models and unchecked availability', async () => {
+        // This case retains the Action's default person confirmation in beforeEach.
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const candidate = {
+            v: 1 as const, machineId: machine.id, contributionKey: 'happier.provider.ollama/ollama', providerName: 'Ollama',
+            endpointTemplateId: 'native', normalizedEndpointUrl: 'http://127.0.0.1:11434',
+            candidateId: 'discovery-candidate:v1:review', evidence: { kind: 'attributed_listener' as const },
+            ownership: 'adopted' as const, connection: { status: 'enable_default' as const },
+        };
+        const query = state.describeReply as { data: ReturnType<typeof createProviderConnectionsDescribeFixture> };
+        query.data = createProviderConnectionsDescribeFixture({ ...query.data, discoveryCandidates: [candidate] });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear().mockResolvedValue(false);
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        const picker = await openProviderPicker(screen);
+        await waitForHomeGovernance(() => expect(picker.config().catalog.items.some((row: { kind: string }) => row.kind === 'found')).toBe(true));
+        const found = picker.config().catalog.items.find((row: { kind: string }) => row.kind === 'found');
+        await picker.select(found.key);
+        const readsBeforeReview = providerConnectionReads().length;
+        await picker.modal.pressByTestIdAsync('providers.add:primary');
+        expect(Modal.confirm).toHaveBeenCalled();
+        const [reviewTitle, reviewBody] = vi.mocked(Modal.confirm).mock.calls.at(-1)!;
+        const { t } = await import('@/text');
+        expect(reviewTitle).toContain('Ollama');
+        expect(reviewTitle).not.toContain(t('common.unavailable'));
+        expect(reviewBody).toContain('Mac');
+        const { readAccountProviderDeclaration } = await import('@/providers/catalog/accountProviderDeclarations');
+        const declaration = readAccountProviderDeclaration(candidate.contributionKey, { kind: 'account' })!;
+        const models = 'staticModels' in declaration.definition.catalog ? declaration.definition.catalog.staticModels : [];
+        expect(models.length).toBeGreaterThan(0);
+        const detailModels = picker.modal.findAllByType(Item).map(item => item.props.subtitle).filter(Boolean).join(' ');
+        for (const model of models) {
+            expect(reviewBody).toContain(model.name);
+            expect(detailModels).toContain(model.name);
+        }
+        expect(reviewBody).toContain(t('settingsProviders.status.notChecked'));
+        expect(providerConnectionReads()).toHaveLength(readsBeforeReview);
+        expect(run).not.toHaveBeenCalled();
+        expect(picker.onClose).not.toHaveBeenCalled();
+    });
+
+    it('closes the Provider picker after successful detected Connect withdraws its found row', async () => {
+        const query = state.describeReply as { data: ReturnType<typeof createProviderConnectionsDescribeFixture> };
+        query.data = createProviderConnectionsDescribeFixture({ ...query.data, discoveryCandidates: [{
+            v: 1, machineId: machine.id, contributionKey: 'happier.provider.ollama/ollama', providerName: 'Ollama',
+            endpointTemplateId: 'native', normalizedEndpointUrl: 'http://127.0.0.1:11434',
+            candidateId: 'discovery-candidate:v1:completion', evidence: { kind: 'attributed_listener' },
+            ownership: 'adopted', connection: { status: 'enable_default' },
+        }] });
+        run.mockImplementationOnce((request: { connectionId: string }) => {
+            query.data = createProviderConnectionsDescribeFixture({ ...query.data, discoveryCandidates: [] });
+            return { status: 'success', action: 'enableDetected',
+                connection: createProviderConnectionViewFixture({ connectionId: request.connectionId }) };
+        });
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        const picker = await openProviderPicker(screen);
+        await waitForHomeGovernance(() => expect(picker.config().catalog.items.some((row: { kind: string }) => row.kind === 'found')).toBe(true));
+        const found = picker.config().catalog.items.find((row: { kind: string }) => row.kind === 'found');
+        await picker.select(found.key);
+        await picker.modal.pressByTestIdAsync('providers.add:primary');
+        expect(run).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(picker.config().catalog.items.every((row: { kind: string }) => row.kind !== 'found')).toBe(true));
+        expect(picker.onClose).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the shared Provider picker for invitation and Custom before real Custom authoring', async () => {
+        const query = state.describeReply as { data: { connections: unknown[] } };
+        query.data.connections = [];
+        await account.publishMachines(account.serverId, []);
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-invitation-add')).not.toBeNull());
+        for (const trigger of ['settings-providers-invitation-add', 'settings-providers-invitation-custom']) {
+            const picker = await openProviderPicker(screen, trigger);
+            expect(run).not.toHaveBeenCalled();
+            await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
+            expect(routerPush).toHaveBeenLastCalledWith('/(app)/settings/providers/new');
+            await picker.modal.unmount();
+        }
+        navigationState.params = {};
+        const { NewProviderConnectionRoute } = await import('@/app/(app)/settings/providers/new');
+        const authoring = await renderScreen(<NewProviderConnectionRoute />);
+        expect(authoring.findByTestId('settings-provider-authoring')).not.toBeNull();
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('refuses retired Account and stale Machine picks from the shared Provider body', async () => {
+        const query = state.describeReply as { data: { discoveryCandidates: unknown[] } };
+        query.data.discoveryCandidates = [{
+            v: 1, machineId: 'machine-a', contributionKey: 'plugin/ollama', providerName: 'Ollama',
+            endpointTemplateId: 'native', normalizedEndpointUrl: 'http://127.0.0.1:22434',
+            candidateId: 'discovery-candidate:v1:retired', evidence: { kind: 'attributed_listener' },
+            ownership: 'adopted', connection: { status: 'requires_named_connection' },
+        }];
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        const picker = await openProviderPicker(screen);
+        await waitForHomeGovernance(() => expect(picker.config().catalog.items.some((row: { kind: string }) => row.kind === 'found')).toBe(true));
+        const found = picker.config().catalog.items.find((row: { kind: string }) => row.kind === 'found');
+        const contribution = picker.config().catalog.items.find((row: { kind: string }) => row.kind === 'contribution');
+        const continueFound = picker.config().detailFooter(found).primary.onPress;
+        const continueContribution = picker.config().detailFooter(contribution).primary.onPress;
+        await React.act(async () => {
+            await account.publishMachines(account.serverId, [machine, createMachineFixture({ ...machine, id: 'machine-b' })]);
+            await account.selectMachine(account.serverId, 'machine-b');
+        });
+        await React.act(async () => { await continueFound(); });
+        expect(run).not.toHaveBeenCalled();
+        expect(routerPush).not.toHaveBeenCalled();
+        await React.act(async () => { await account.restore({ accountId: 'account-b', machines: [machine] }); });
+        await React.act(async () => { await continueContribution(); });
+        expect(routerPush).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
     });
 
     it('shows Account shown and total catalog counts in the rail without a machine', async () => {
@@ -513,8 +828,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
         await waitForHomeGovernance(() =>
             expect(findConnectionRow(screen, connection.id)).not.toBeNull(),
         );
-        expect(findConnectionRow(screen, connection.id)?.props.subtitle).toBe(
-            'settingsProvidersCollection.modelsShown(shown=1,total=2)',
+        expect(findConnectionRow(screen, connection.id)?.props.titleMeta).toBe(
+            'settingsProvidersCollection.modelsSaved(shown=1,total=2)',
         );
         expect(
             findConnectionRow(screen, connection.id)?.props.subtitleLeading,
@@ -522,17 +837,88 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(providerHarness.state.requests).toHaveLength(0);
     });
 
-    it('marks a connection that needs the user with a status line and a trouble dot', async () => {
+    it.each([
+        { health: 'unreachable', status: 'failed', label: 'unreachable' },
+        { health: 'partial', status: 'review', label: 'partial' },
+        { health: 'available', status: null, label: 'available' },
+        { health: 'not_checked', status: null, label: 'notChecked' },
+        { health: 'available', status: 'off', label: 'disabled', disabled: true },
+        { health: 'available', status: 'review', label: 'sourceUnavailable', sourceUnavailable: true },
+    ])('projects $label through the shared configuration status slot without guessing health', async ({ health, status, label, disabled, sourceUnavailable }) => {
         const query = state.describeReply as { data: { connections: Array<Record<string, unknown>> } };
         query.data.connections[0] = {
             ...query.data.connections[0],
-            runtime: { health: 'unreachable', modelCount: 3, checkedAt: 1, endpoints: [] },
+            runtime: { health, modelCount: 3, checkedAt: 1, endpoints: [] },
+            ...(disabled ? { grants: { accountEnabled: false, enabledMachineIds: [] } } : {}),
+            ...(sourceUnavailable ? { sourceStatus: 'unavailable' } : {}),
         };
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         const acme = findConnectionRow(screen, 'pc_a');
-        expect(acme?.props.subtitle).toBe('settingsProviders.status.unreachable');
-        expect(acme?.props.subtitleLeading).toBeTruthy();
+        expect(acme?.props.subtitleLeading).toBeUndefined();
+        if (status === null) {
+            expect(acme?.props.subtitle).toBe('');
+            expect(screen.findByTestId('settings-provider-connection-status:pc_a')).toBeNull();
+        } else {
+            expect(screen.findAll(node => node.props.testID === 'settings-provider-connection-status:pc_a'
+                && node.props.status === status)).toHaveLength(1);
+            // The state is said in words on the row (line 2 leads with it), never only by a glyph and its tooltip.
+            expect(screen.getTextContent()).toContain(`settingsProviders.status.${label}`);
+        }
+    });
+
+    it.each(['rail', 'page'] as const)('narrows the real %s Providers column by held Source and Status without another read', async variant => {
+        state.describeReply = { data: createProviderConnectionsDescribeFixture({ connections: [
+            createProviderConnectionViewFixture({ connectionId: 'pc_acme', contributionKey: 'plugin/acme',
+                displayName: 'Personal', providerName: 'Acme', role: 'named', displayNameMode: 'custom',
+                runtime: { health: 'available', modelCount: 3, checkedAt: 1, endpoints: [] } }),
+            createProviderConnectionViewFixture({ connectionId: 'pc_other', contributionKey: 'plugin/other',
+                displayName: 'Other', providerName: 'Other',
+                runtime: { health: 'unreachable', modelCount: 0, checkedAt: 1, endpoints: [] } }),
+            ...Array.from({ length: 6 }, (_, index) => createProviderConnectionViewFixture({
+                connectionId: `pc_extra_${index}`, contributionKey: 'plugin/acme', providerName: 'Acme',
+                displayName: `Extra ${index}`, role: 'named', displayNameMode: 'custom',
+            })),
+        ], localInstallations: [{ v: 1, machineId: 'machine-a', contributionKey: 'plugin/other',
+            providerName: 'Other', status: 'installed_not_running', managedStartAvailable: false }] }) };
+        // Browser positioning is the boundary; the shared editor, adapter and matcher stay real.
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen variant={variant} />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_other')).not.toBeNull());
+        const reads = providerConnectionReads().length;
+        await React.act(async () => { findComposite(screen, 'settings-providers-search', 'onChangeText')!.props.onChangeText('Personal'); });
+        expect(findConnectionRow(screen, 'pc_other')).toBeNull();
+        await screen.pressByTestIdAsync('settings-providers-filter-open');
+        const editor = () => screen.findAll(node => node.props.testID === 'settings-providers-editor' && node.props.model !== undefined)[0]!;
+        expect(editor().props.model.availableFields.find((field: { id: string }) => field.id === 'source').valueOptions)
+            .toEqual(expect.arrayContaining([{ value: 'plugin/acme', label: 'Acme' }, { value: 'plugin/other', label: 'Other' }]));
+        // Search narrows visible rows, not the admitted corpus that supplies condition choices/counts.
+        await React.act(async () => { findComposite(screen, 'settings-providers-search', 'onChangeText')!.props.onChangeText(''); });
+        await React.act(async () => { editor().props.onChange({ type: 'add', condition: {
+            fieldId: 'source', operator: 'is', values: ['plugin/other'],
+        } }); });
+        expect(findConnectionRow(screen, 'pc_acme')).toBeNull();
+        expect(findConnectionRow(screen, 'pc_other')).not.toBeNull();
+        await showFound(screen);
+        expect(screen.findByTestId('settings-provider-found:installation:plugin/other')).not.toBeNull();
+        await React.act(async () => { editor().props.onChange({ type: 'add', condition: {
+            fieldId: 'status', operator: 'is', values: ['unreachable'],
+        } }); });
+        // Found installations have no connection health: a status condition must not guess it.
+        expect(screen.findByTestId('settings-provider-found:installation:plugin/other')).toBeNull();
+        expect(editor().props.result).toMatchObject({ matchedCount: 1, coverage: 'partial' });
+        await screen.pressByTestIdAsync('settings-providers-view:all');
+        expect(findConnectionRow(screen, 'pc_other')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-providers-filter-token:source');
+        expect(findConnectionRow(screen, 'pc_acme')).toBeNull();
+        expect(findConnectionRow(screen, 'pc_other')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-providers-filter-token:status');
+        expect(findConnectionRow(screen, 'pc_acme')).not.toBeNull();
+        expect(providerConnectionReads()).toHaveLength(reads);
+        await React.act(async () => { findConnectionRow(screen, 'pc_other')?.props.onPress(); });
+        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/pc_other');
     });
 
     it('keeps an untested healthy row quiet: how it signs in, never "Not checked" (P3)', async () => {
@@ -554,6 +940,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const screen = await renderScreen(
             <ProviderConnectionsSettingsScreen variant="rail" />,
         );
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         const acme = findConnectionRow(screen, 'pc_a');
         expect(acme?.props.subtitle).toContain(
             'settingsProviders.authoring.apiKey',
@@ -567,6 +954,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
     it('selects the route connection in the rail and searches only a collection too long to scan', async () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const small = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" selectedConnectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(small, 'pc_a')).not.toBeNull());
         expect(findConnectionRow(small, 'pc_a')?.props.selected).toBe(true);
         expect(small.findByTestId('settings-providers-search')).toBeNull();
 
@@ -579,6 +967,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
             providerName: index === 0 ? 'Acme' : `Provider ${index}`,
         }));
         const large = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" selectedConnectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(large, 'pc_3')).not.toBeNull());
         await React.act(async () => { large.changeTextByTestId('settings-providers-search', 'provider 3'); });
         expect(findConnectionRow(large, 'pc_a')).toBeNull();
         expect(large.findAllByType(Item).map((item) => item.props.title)).toContain('Provider 3');
@@ -587,6 +976,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
     });
 
     it('groups admitted gateways in the Providers rail without relabeling an ordinary managed source', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
         const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
         state.describeReply = { data: createProviderConnectionsDescribeFixture({ connections: [
             createProviderConnectionViewFixture({ connectionId: 'pc_gateway', displayName: 'Subscriptions',
@@ -600,30 +990,29 @@ describe('ProviderConnectionsSettingsScreen', () => {
         ] }) };
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" selectedConnectionId="pc_gateway" />);
-        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_gateway')).not.toBeNull());
-        expect(screen.findAllByType(CollectionListGroupLabel).map(node => ({ title: node.props.title, count: node.props.count })))
-            .toContainEqual({ title: 'settingsProvidersCollection.gateway.railGroup', count: 1 });
+        await waitForHomeGovernance(() => expect(screen.findAllByType(CollectionListGroupLabel)
+            .map(node => ({ title: node.props.title, count: node.props.count })))
+            .toContainEqual({ title: 'settingsProvidersCollection.gateway.railGroup', count: 1 }));
         expect(findConnectionRow(screen, 'pc_gateway')?.props.selected).toBe(true);
-        expect(findConnectionRow(screen, 'pc_gateway')?.props.subtitle).toBe('settingsProvidersCollection.gateway.managedFromConnectedServices');
+        // Said once for the group, never on a row (it truncated at rail width).
+        expect(findConnectionRow(screen, 'pc_gateway')?.props.subtitle).not.toBe('settingsProvidersCollection.gateway.managedFromConnectedServices');
         expect(findConnectionRow(screen, 'pc_local')?.props.subtitle).not.toBe('settingsProvidersCollection.gateway.managedFromConnectedServices');
+        // Beside the home, the home's Gateways section says where they are managed; the rail does not repeat it.
+        expect(screen.getTextContent()).not.toContain('settingsProvidersCollection.gateway.managedFromConnectedServices');
 
-        // Where no rail shows, the page keeps the same grouping: gateways in their own titled group.
-        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+        // Where no rail shows, the page is the rail's own list: gateways keep their own titled group.
         const page = await renderScreen(<ProviderConnectionsSettingsScreen variant="page" />);
         await waitForHomeGovernance(() => expect(findConnectionRow(page, 'pc_gateway')).not.toBeNull());
-        const groupRows = page.findAllByType(ItemGroup).map(group => ({
-            title: group.props.title ?? null,
-            rows: [...new Set(group.findAll(node => typeof node.props?.testID === 'string'
-                && node.props.testID.startsWith('settings-provider-connection:')).map(node => node.props.testID as string))],
-        }));
-        expect(groupRows.find(group => group.title === 'settingsProvidersCollection.gateway.railGroup')?.rows)
-            .toEqual(['settings-provider-connection:pc_gateway']);
-        expect(groupRows.find(group => group.title === null)?.rows).not.toContain('settings-provider-connection:pc_gateway');
+        expect(page.findAllByType(CollectionListGroupLabel).map(node => ({ title: node.props.title, count: node.props.count })))
+            .toContainEqual({ title: 'settingsProvidersCollection.gateway.railGroup', count: 1 });
+        // A phone's page has no home beside it, so it says once where gateways are managed.
+        expect(page.getTextContent().split('settingsProvidersCollection.gateway.managedFromConnectedServices')).toHaveLength(2);
     });
 
     it('does not leave a dirty editor when another connection is selected until its guard permits navigation', async () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         const decision = vi.fn<() => Promise<'keepEditing' | 'discard'>>(async () => 'keepEditing');
         setActiveUnsavedChangesGuard({
             isDirtyRef: { current: true },
@@ -646,13 +1035,15 @@ describe('ProviderConnectionsSettingsScreen', () => {
             screen.tree.update(<ProviderConnectionsSettingsScreen active />);
             await flushHookEffects();
         });
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         expect(screen.findAllByType(Item).map((item) => item.props.title)).toContain('Acme');
-        expect(providerHarness.state.requests.map((request) => request.method)).toEqual([
-            RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
-        ]);
+        expect(providerConnectionReads()).toHaveLength(1);
         await screen.update(<ProviderConnectionsSettingsScreen active={false} />);
+        const hiddenRequests = providerHarness.state.requests.length;
+        await React.act(async () => { await flushHookEffects(); });
+        expect(providerHarness.state.requests).toHaveLength(hiddenRequests);
         await screen.update(<ProviderConnectionsSettingsScreen active />);
-        expect(providerHarness.state.requests).toHaveLength(2);
+        await waitForHomeGovernance(() => expect(providerConnectionReads()).toHaveLength(2));
     });
 
     it('preserves the route editor and collection selection when its measured panes resize', async () => {
@@ -668,6 +1059,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         };
         expect(providerHarness.state.requests).toHaveLength(0);
         await resize(1200);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         expect(findConnectionRow(screen, 'pc_a')?.props.selected).toBe(true);
         await React.act(async () => {
             screen.findByTestId('provider-draft')?.props.onChangeText('Unsubmitted endpoint');
@@ -738,6 +1130,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
             screen.findByTestId('settings-providers-layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200 } } });
             await flushHookEffects();
         });
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         expect(findConnectionRow(screen, 'pc_a')).not.toBeNull();
         await React.act(async () => {
             navigationState.focused = false;
@@ -745,15 +1138,16 @@ describe('ProviderConnectionsSettingsScreen', () => {
         });
         expect(findConnectionRow(screen, 'pc_a')).not.toBeNull();
         const readsBeforeTargetChange = providerHarness.state.requests.length;
+        const connectionReadsBeforeTargetChange = providerConnectionReads().length;
         await React.act(async () => { await account.selectMachine(account.serverId, 'machine-b'); });
         expect(providerHarness.state.requests).toHaveLength(readsBeforeTargetChange);
         await React.act(async () => {
             navigationState.focused = true;
             for (const listener of navigationState.focusListeners) listener();
         });
-        expect(findConnectionRow(screen, 'pc_a')).not.toBeNull();
-        expect(providerHarness.state.requests).toHaveLength(readsBeforeTargetChange + 1);
-        expect(providerHarness.state.requests.at(-1)?.machineId).toBe('machine-b');
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(providerConnectionReads()).toHaveLength(connectionReadsBeforeTargetChange + 1));
+        expect(providerConnectionReads().at(-1)?.machineId).toBe('machine-b');
         expect(navigationState.navigatorMounts).toBe(1);
     });
 
@@ -765,7 +1159,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(providerHarness.state.requests).toHaveLength(0);
     });
 
-    it('lands a wide collection on the last visited connection, else the first', async () => {
+    it('keeps the wide home reachable and opens an explicit connection before returning to All', async () => {
         const query = state.describeReply as { data: { connections: Array<Record<string, unknown>> } };
         const exemplar = query.data.connections[0]!;
         query.data.connections = [
@@ -773,14 +1167,29 @@ describe('ProviderConnectionsSettingsScreen', () => {
             { ...exemplar, connectionId: 'pc_b', displayName: 'Beta', providerName: 'Beta' },
         ];
         const { ProviderSettingsIndex } = await import('./ProviderSettingsIndex');
-        const { recordProviderCollectionVisit } = await import('./collection/providerCollectionModel');
-        const landing = async () => {
-            const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
-            return screen.findAllByType('Redirect')[0]?.props.href;
-        };
-        expect(await landing()).toBe('/(app)/settings/providers/pc_a');
-        recordProviderCollectionVisit('pc_b');
-        expect(await landing()).toBe('/(app)/settings/providers/pc_b');
+        const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
+        expect(screen.findAllByType('Redirect')).toHaveLength(0);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-home')).not.toBeNull());
+        const picker = await openProviderPicker(screen);
+        const admittedKeys = picker.config().catalog.items.map(picker.config().catalog.itemKey);
+        expect(admittedKeys).not.toContain('contribution:plugin/other');
+        expect(admittedKeys).toContain('contribution:happier.provider.openrouter/openrouter');
+        await picker.select('contribution:happier.provider.openrouter/openrouter');
+        await picker.modal.pressByTestIdAsync('providers.add:primary');
+        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new?contributionKey=happier.provider.openrouter%2Fopenrouter');
+        await picker.modal.unmount();
+        expect(providerConnectionReads().every(request => request.machineId === 'machine-a'
+            && areServerProfileIdentifiersEquivalent(request.serverId, account.serverId))).toBe(true);
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        await screen.update(<ProviderConnectionsSettingsScreen variant="rail" />);
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('settings-provider-connection:pc_b')).not.toBeNull());
+        await screen.pressByTestIdAsync('settings-provider-connection:pc_b');
+        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/pc_b');
+        navigationState.pathname = '/settings/providers/pc_b';
+        await screen.update(<ProviderConnectionsSettingsScreen variant="rail" selectedConnectionId="pc_b" />);
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('settings-providers-all')).not.toBeNull());
+        await screen.pressByTestIdAsync('settings-providers-all');
+        expect(routerReplace).toHaveBeenCalledWith('/(app)/settings/providers');
     });
 
     it('invites a wide collection with nothing to select to add its first provider', async () => {
@@ -789,9 +1198,10 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const { ProviderSettingsIndex } = await import('./ProviderSettingsIndex');
         const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
         expect(screen.findAllByType('Redirect')).toHaveLength(0);
-        expect(screen.findByTestId('settings-providers-invitation')).not.toBeNull();
-        await screen.pressByTestIdAsync('settings-providers-invitation-custom');
-        expect(routerReplace).toHaveBeenCalledWith('/(app)/settings/providers/new');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-invitation')).not.toBeNull());
+        const picker = await openProviderPicker(screen, 'settings-providers-invitation-custom');
+        await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
+        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
     });
 
     it.each(['page', 'landing'] as const)('offers guarded Account authoring in the no-machine %s presentation', async (presentation) => {
@@ -806,12 +1216,13 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const authoringId = 'settings-providers-invitation-custom';
         await waitForHomeGovernance(() => expect(screen.findHostByTestId(authoringId)).not.toBeNull());
         setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision: async () => 'keepEditing', tag: 'provider-prerequisite-test' });
-        await screen.pressByTestIdAsync(authoringId);
+        const picker = await openProviderPicker(screen, authoringId);
+        await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
         expect(routerPush).not.toHaveBeenCalled();
         expect(routerReplace).not.toHaveBeenCalled();
         clearActiveUnsavedChangesGuard();
-        await screen.pressByTestIdAsync(authoringId);
-        expect(presentation === 'landing' ? routerReplace : routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
+        await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
+        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
         expect(providerHarness.state.requests).toHaveLength(0);
     });
 
@@ -839,13 +1250,13 @@ describe('ProviderConnectionsSettingsScreen', () => {
         await React.act(async () => { await retry?.onPress?.(); });
         await flushHookEffects();
         expect(describeReads()).toBe(readsBefore + 1);
-        expect(screen.findAllByType('Redirect')[0]?.props.href).toBe('/(app)/settings/providers/pc_a');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-home')).not.toBeNull());
     });
 
-    it('keeps landing on the last-known connection when a later read fails', async () => {
+    it('keeps the Overview when a later read fails', async () => {
         const { ProviderSettingsIndex } = await import('./ProviderSettingsIndex');
         const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'split');
-        expect(screen.findAllByType('Redirect')[0]?.props.href).toBe('/(app)/settings/providers/pc_a');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-home')).not.toBeNull());
 
         (state.describeReply as { error: ReturnType<typeof createProviderErrorV1> | null }).error =
             createProviderErrorV1('provider_endpoint_unavailable', { machineId: 'machine-a' });
@@ -858,8 +1269,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
             for (const listener of navigationState.focusListeners) listener();
         });
         await flushHookEffects();
-        // The error does not replace the collection it already knows: it still lands on the connection.
-        expect(screen.findAllByType('Redirect')[0]?.props.href).toBe('/(app)/settings/providers/pc_a');
+        // The error does not replace what it already knows.
+        expect(screen.findByTestId('settings-providers-home')).not.toBeNull();
         expect(screen.findAllByType(Item).map((item) => item.props.title))
             .not.toContain('settingsProviders.errors.unreachableTitle');
     });
@@ -902,6 +1313,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
 
+        await showFound(screen);
         await React.act(async () => { await findConnectAction(screen, 'Ollama')?.props.onPress?.(); });
         await waitForHomeGovernance(() => expect(providerErrorState(screen)?.props.action).toBeDefined());
         const retry = providerErrorState(screen)?.props.action;
@@ -926,6 +1338,8 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
         const erroring = state.describeReply as { error: ReturnType<typeof createProviderErrorV1> | null };
+        await showFound(screen);
+        await waitForHomeGovernance(() => expect(findConnectAction(screen, 'Ollama')).toBeDefined());
         erroring.error = createProviderErrorV1('provider_endpoint_unavailable', {
             machineId: 'machine-a',
         });
@@ -961,6 +1375,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
         const titles = () => screen.findAllByType(Item).map((item) => item.props.title);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-search')).not.toBeNull());
         await React.act(async () => { screen.changeTextByTestId('settings-providers-search', 'not-a-provider'); });
         expect(titles()).toContain('settingsProviders.searchEmptyTitle');
         expect(titles()).not.toContain('settingsProviders.emptyTitle');
@@ -972,14 +1387,14 @@ describe('ProviderConnectionsSettingsScreen', () => {
         expect(titles()).toContain('settingsProviders.searchEmptyTitle');
     });
 
-    it('uses three skeleton rows for first load and an honest configured empty state', async () => {
+    it('shows first-load skeletons until the configured empty state is known', async () => {
         const firstRead = createDeferred<void>();
         account.home.answer(account.serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, { body: {
             status: 'present', revision: 1, content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 },
         }, respondAfter: firstRead.promise });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const loading = await renderScreen(<ProviderConnectionsSettingsScreen />);
-        expect(loading.findAllByType(ShimmerView)).toHaveLength(3);
+        expect(loading.findByTestId('settings-providers-skeleton')).not.toBeNull();
 
         state.describeReply = {
             loading: false, error: null,
@@ -987,7 +1402,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         };
         await React.act(async () => { firstRead.resolve(); await flushHookEffects(); });
         await waitForHomeGovernance(() => expect(loading.findByTestId('settings-providers-invitation')).not.toBeNull());
-        expect(loading.findAllByType(ShimmerView)).toHaveLength(0);
+        expect(loading.findByTestId('settings-providers-skeleton')).toBeNull();
     });
 
     it('invites a narrow collection with nothing to list the same way as a wide one (lab PI1p)', async () => {
@@ -997,11 +1412,12 @@ describe('ProviderConnectionsSettingsScreen', () => {
         const screen = await renderInCollectionLayout(<ProviderSettingsIndex />, 'stacked');
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-providers-invitation')).not.toBeNull());
         expect(screen.findAllByType(Item).map((item) => item.props.title)).not.toContain('settingsProviders.emptyTitle');
-        await screen.pressByTestIdAsync('settings-providers-invitation-custom');
+        const picker = await openProviderPicker(screen, 'settings-providers-invitation-custom');
+        await picker.modal.pressByTestIdAsync('providers.add:mode:custom');
         expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/new');
     });
 
-    it('retains configured rows and renders an actionable typed error after a transport refresh failure', async () => {
+    it('retains Account rows while the Found view retries a typed Machine refresh failure', async () => {
         installProviderConnectionsCatalogHttpBoundary({ home: account.home, serverId: account.serverId,
             catalog: ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
                 connections: [ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_a', source: { kind: 'custom', template: buildCustomProviderTemplate({
@@ -1017,15 +1433,22 @@ describe('ProviderConnectionsSettingsScreen', () => {
         });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
-        query.error = createProviderErrorV1('provider_endpoint_unavailable', {
+        query.error = createProviderErrorV1('provider_endpoint_unreachable', {
             machineId: 'machine-a',
         });
         await screen.update(<ProviderConnectionsSettingsScreen active={false} />);
         await screen.update(<ProviderConnectionsSettingsScreen active />);
 
         expect(screen.findAllByType(Item).map((item) => item.props.title)).toContain('Acme');
-        expect(providerErrorState(screen)?.props.title).toBe('settingsProviders.errors.unreachableTitle');
+        // Account connections remain usable; the optional Machine failure belongs to its Found view.
+        await showFound(screen);
+        await waitForHomeGovernance(() => expect(providerErrorState(screen)?.props.title).toBe('settingsProviders.errors.unreachableTitle'));
         expect(providerErrorState(screen)?.props.action.label).toBe('settingsProviders.errors.actions.retry');
+        query.error = null;
+        await screen.pressByTestIdAsync('provider-error-action:provider_endpoint_unreachable');
+        await waitForHomeGovernance(() => expect(providerErrorState(screen)).toBeUndefined());
+        await screen.pressByTestIdAsync('settings-providers-view:all');
+        expect(findConnectionRow(screen, 'pc_a')).not.toBeNull();
     });
 
     it('renders an attributed local candidate only when local discovery is enabled', async () => {
@@ -1039,12 +1462,14 @@ describe('ProviderConnectionsSettingsScreen', () => {
         }];
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const shown = await renderScreen(React.createElement(ProviderConnectionsSettingsScreen));
+        await showFound(shown);
         expect(shown.findAllByType(Item).map((item) => item.props.title)).toContain('Ollama');
 
         await account.publishFeatures(account.serverId, createRootLayoutFeaturesResponse({ features: {
             providers: { enabled: true, localDiscovery: { enabled: false } },
         } }));
         const hidden = await renderScreen(React.createElement(ProviderConnectionsSettingsScreen));
+        await showFound(hidden);
         expect(hidden.findAllByType(Item).filter((item) => item.props.title === 'Ollama')).toHaveLength(0);
     });
 
@@ -1059,6 +1484,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         }));
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await showFound(screen);
         const labels = screen.findAllByType(Item)
             .filter((item) => item.props.title === 'Ollama')
             .map((item) => item.props.rightElement.props.accessibilityLabel);
@@ -1080,6 +1506,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         }];
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
         const acmeRows = screen.findAllByType(Item).filter((item) => item.props.title === 'Acme');
 
         expect(acmeRows.map((item) => item.props.testID)).toEqual(['settings-provider-connection:pc_a']);
@@ -1097,6 +1524,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         }];
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(React.createElement(ProviderConnectionsSettingsScreen));
+        await showFound(screen);
         await React.act(async () => {
             await findConnectAction(screen, 'Ollama')?.props.onPress?.();
         });
@@ -1122,6 +1550,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         }];
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await showFound(screen);
         await React.act(async () => { await findConnectAction(screen, 'Ollama')?.props.onPress?.(); });
 
         expect(run).not.toHaveBeenCalled();
@@ -1140,9 +1569,13 @@ describe('ProviderConnectionsSettingsScreen', () => {
         }];
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
-        await React.act(async () => {
-            await findConnectAction(screen, 'Ollama')?.props.onPress?.();
-        });
+        const picker = await openProviderPicker(screen);
+        const candidate = () => picker.config().catalog.items.find((row: { kind: string; found?: { candidate?: { candidateId?: string } } }) =>
+            row.kind === 'found' && row.found?.candidate?.candidateId === 'discovery-candidate:v1:named');
+        await waitForHomeGovernance(() => expect(candidate()).toBeDefined());
+        await picker.select(candidate().key);
+        expect(run).not.toHaveBeenCalled();
+        await picker.modal.pressByTestIdAsync('providers.add:primary');
 
         expect(run).not.toHaveBeenCalled();
         expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(
@@ -1169,6 +1602,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await showFound(screen);
         await React.act(async () => {
             await findConnectAction(screen, 'Ollama')?.props.onPress?.();
         });
@@ -1187,12 +1621,33 @@ describe('ProviderConnectionsSettingsScreen', () => {
         ];
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(React.createElement(ProviderConnectionsSettingsScreen));
+        await showFound(screen);
         const rows = screen.findAllByType(Item);
-        expect(rows.find((row) => row.props.title === 'Ollama')?.props.subtitle)
-            .toBe('settingsProviders.local.installedNotRunning');
-        expect(rows.find((row) => row.props.title === 'LM Studio')?.props.subtitle)
-            .toBe('settingsProviders.local.appRunningServerOff');
-        expect(rows.filter((row) => row.props.title === 'Ollama')[0]?.props.rightElement).toBeUndefined();
+        for (const [title, label] of [['Ollama', 'settingsProviders.local.installedNotRunning'],
+            ['LM Studio', 'settingsProviders.local.appRunningServerOff']]) {
+            const row = rows.find(row => row.props.title === title);
+            // The state leads line 2 in words; the row's end stays free for its action.
+            expect(row?.props.subtitle?.props).toMatchObject({ status: 'off', label });
+            expect(row?.props.subtitleLeading).toBeUndefined();
+            expect(row?.props.rightElement).toBeUndefined();
+        }
+    });
+
+    it('counts only the Provider rows listed by the selected collection view', async () => {
+        const query = state.describeReply as { data: { localInstallations: unknown[] } };
+        query.data.localInstallations = [
+            { v: 1, machineId: 'machine-a', contributionKey: 'plugin/ollama', providerName: 'Ollama', status: 'installed_not_running', managedStartAvailable: false },
+            { v: 1, machineId: 'machine-a', contributionKey: 'plugin/lmstudio', providerName: 'LM Studio', status: 'app_running_server_off', managedStartAvailable: false },
+        ];
+        const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
+        const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+        const screen = await renderScreen(<ProviderConnectionsSettingsScreen variant="rail" />);
+        await waitForHomeGovernance(() => expect(findConnectionRow(screen, 'pc_a')).not.toBeNull());
+        expect(screen.findByType(CollectionList).props.count).toBe(1);
+        await showFound(screen);
+        await waitForHomeGovernance(() => expect(screen.findAllByType(Item).map(row => row.props.title)).toContain('Ollama'));
+        expect(findConnectionRow(screen, 'pc_a')).toBeNull();
+        expect(screen.findByType(CollectionList).props.count).toBe(2);
     });
 
     it('deduplicates discovery and installation rows sharing one canonical contribution key', async () => {
@@ -1211,6 +1666,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
 
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await showFound(screen);
         expect(screen.findAllByType(Item).filter((item) => item.props.title === 'Ollama')).toHaveLength(1);
     });
 
@@ -1223,11 +1679,15 @@ describe('ProviderConnectionsSettingsScreen', () => {
         run.mockResolvedValueOnce({ status: 'success', action: 'startLocal', contributionKey: 'plugin/ollama', phase: 'detecting' });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(React.createElement(ProviderConnectionsSettingsScreen));
+        await showFound(screen);
         const rows = screen.findAllByType(Item);
         const startButton = rows.find((row) => row.props.title === 'Ollama')?.props.rightElement;
 
         expect(startButton).toBeTruthy();
-        expect(rows.find((row) => row.props.title === 'LM Studio')?.props.rightElement).toBeUndefined();
+        expect(screen.findByTestId('settings-provider-found-start:installation:plugin/lmstudio')).toBeNull();
+        expect(rows.find(row => row.props.title === 'LM Studio')?.props.subtitle.props).toMatchObject({
+            status: 'off', label: 'settingsProviders.local.installedNotRunning',
+        });
         await React.act(async () => {
             await startButton.props.onPress?.();
         });
@@ -1249,6 +1709,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         run.mockReturnValueOnce(deferred.promise);
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await showFound(screen);
         const startButton = screen.findAllByType(Item)
             .find((row) => row.props.title === 'Ollama')?.props.rightElement;
         let startPromise!: Promise<void>;
@@ -1284,6 +1745,7 @@ describe('ProviderConnectionsSettingsScreen', () => {
         });
         const { ProviderConnectionsSettingsScreen } = await import('./ProviderConnectionsSettingsScreen');
         const screen = await renderScreen(<ProviderConnectionsSettingsScreen />);
+        await showFound(screen);
         const startButton = screen.findAllByType(Item)
             .find((row) => row.props.title === 'Ollama')?.props.rightElement;
 

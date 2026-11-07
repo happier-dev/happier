@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { HEADER_ACTIONS_GAP_PX } from '@/components/ui/layout/PageHeaderEntityParts';
+import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -39,16 +41,12 @@ export function ProviderSavedSecretControl(props: Readonly<{
     );
 }
 
-/** The outcome of the header's Test, on the header's details line; a failure reads as one. */
+/** The outcome of Test as the row's one status line (`RowStatusLine`): quiet when it worked, a failure reads as one. */
 export function ProviderProbeResult(props: Readonly<{ testID: string; text: string; failed: boolean }>) {
     return (
-        <Text
-            testID={props.testID}
-            accessibilityLiveRegion="polite"
-            style={[stylesheet.probeResult, props.failed ? stylesheet.probeFailed : null]}
-        >
-            {props.text}
-        </Text>
+        <View accessibilityLiveRegion="polite">
+            <RowStatusLine testID={props.testID} text={props.text} tone={props.failed ? 'bad' : 'quiet'} numberOfLines={2} />
+        </View>
     );
 }
 
@@ -73,13 +71,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     headerActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s10,
-    },
-    probeResult: {
-        ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
-    },
-    probeFailed: {
-        color: theme.colors.state.danger.foreground,
+        gap: HEADER_ACTIONS_GAP_PX,
     },
 }));

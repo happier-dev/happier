@@ -1,13 +1,27 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type GestureResponderEvent } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationHeaderActions } from '@/components/ui/layout/NavigationHeaderActions';
+import { HEADER_ACTIONS_GAP_PX } from '@/components/ui/layout/PageHeaderEntityParts';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import {
+    CollectionDraftRow,
+    CollectionList,
+    CollectionListGroupLabel,
+    CollectionNavigationRow,
+    CollectionSkeletonRows,
+    collectionListStyles,
+} from '@/components/ui/lists/collection/CollectionList';
+import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { CollectionStatusGlyph } from '@/components/ui/lists/collection/CollectionStatusGlyph';
+import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useConnectedAccountIdentityPrivacy, type ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
@@ -20,8 +34,14 @@ import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/ho
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
+import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServicesGatewaysUnavailableLine, useConnectedServicesGatewaysUnavailable } from '../index/ConnectedServicesGatewaysGroup';
-import { presentProviderError } from '@/providers/connection/errorPresentation';
 
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { ConnectedAccountPrivacyToggle } from '../usage/ConnectedAccountPrivacyToggle';
@@ -36,20 +56,33 @@ import { useConnectedServicesIndex, type ConnectedServicesGatewayRow } from '../
 import {
     CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE,
     CONNECTED_SERVICES_COLLECTION_ROUTE,
+    CONNECTED_SERVICES_OVERVIEW_ROUTE,
+    buildCredentialsSecretRoute,
     resolveConnectedServicesSelection,
     type ConnectedServicesSelection,
 } from './connectedServicesCollectionRoutes';
 import { NewPoolMenu, selectNewPoolServices } from './NewPoolMenu';
+import { ConnectedServicesAddMenu } from './ConnectedServicesAddMenu';
+import { connectedAccountColumnFacts, connectedServicesColumnAdapter } from './connectedServicesColumnAdapter';
+import { useSettingsColumnFilter } from '@/components/settings/shell/useSettingsColumnFilter';
+import { resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
+import type { ConnectedServiceCredentialHealthStatusV1, ConnectedServiceCredentialRefreshFailureKindV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { presentNewConnectedAccountDraftTitle } from '../setup/connectMoreBlocks';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { useCredentialsSecrets } from '../index/CredentialsSecretsGroup';
+import { savedSecretOwnedRowSummary, sharedSecretRowStatus, sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
+import type { CredentialsSecretsState } from '../index/credentialsSecretsState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 /** The rail offers search once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 6;
-/** A disclosed account sits one step in from its service. */
-const ACCOUNT_INDENT_PX = 26;
+/** The add's 16 px glyph reaches the height of its 32 px row, and no further: the first row is directly beneath. */
+const GROUP_ADD_VERTICAL_REACH = { top: 8, bottom: 8 } as const;
 
 /** What an account row shows at its end: the tightest limit, a stale clock, or that it needs you. */
 export type ConnectedServicesRailAccountMeta =
     | Readonly<{ kind: 'usage'; tightestPct: number; stale: boolean }>
-    | Readonly<{ kind: 'signedOut' }>
+    | Readonly<{ kind: 'signedOut'; statusReason?: ConnectedServiceCredentialRefreshFailureKindV1 }>
     | Readonly<{ kind: 'key' }>
     | Readonly<{ kind: 'none' }>;
 
@@ -60,27 +93,39 @@ export type ConnectedServicesRailViewProps = Readonly<{
     present: ConnectedAccountIdentityPresenter;
     identitiesHidden: boolean;
     onSetIdentitiesHidden: (hidden: boolean) => void;
-    /** "+" in the head: connect a service (the index's set-up blocks open on the catalog). */
-    onConnect: () => void;
+    /** "+" in the head when no menu is supplied: connect a service. */
+    onConnect: (anchor?: PopoverAnchor) => void;
+    settled?: Readonly<{ serviceKey: string; content: React.ReactNode }> | null;
+    /** "+" in the head as the grouped, searchable menu of what can be added (P8-R3); it renders its trigger. */
+    renderConnect?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
     onOpenIndex: () => void;
     onOpenService: (sheet: ConnectedServicesIndexSheet) => void;
+    onOpenNpmProfiles?: () => void;
     onOpenAccount: (sheet: ConnectedServicesIndexSheet, accountId: string) => void;
+    /** A service row's "+": add another account of that service (its draft beside the rail). */
+    onAddAccount?: (sheet: ConnectedServicesIndexSheet, anchor?: PopoverAnchor) => void;
+    /** Saved Secrets you own, under their own group (Q2: a service's key appears only under its service). */
+    secrets?: Readonly<{ entries: readonly SavedSecretCatalogEntryV1[]; state: CredentialsSecretsState; onRetry: () => void }>;
+    onOpenSecret?: (ref: string) => void;
+    /** "+" on Secrets: the create form in a popover under it (owner 10-31); it renders its trigger. */
+    renderNewSecret?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
     onOpenPool: (sheet: ConnectedServicesIndexSheet, groupId: string) => void;
     /** "+" on Pools (a menu of services when there are several); absent when no service can hold one. */
     renderNewPool?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
     onOpenAgentSignIn: () => void;
+    /** The phone's collection list (it is the page, lab `s2svc:listP`): a row out to All services at the foot. */
+    onOpenOverview?: (() => void) | null;
+    /** `page`: the list is the phone's page under the navigation bar; `rail` (default): the column beside a detail. */
+    variant?: 'rail' | 'page';
     /** Gateways that draw on these subscriptions; each opens its one page (shared with Providers). */
     gateways?: readonly ConnectedServicesGatewayRow[];
     /** The Account catalog is still loading: the group holds one quiet row in its place. */
     gatewaysLoading?: boolean;
     onOpenGateway?: (gateway: ConnectedServicesGatewayRow) => void;
-    /** With no gateway yet, the group offers one quiet row that creates it and opens it. */
+    /** "+" on Gateways: opens a gateway draft beside the list; only its explicit Create writes the Account. */
     onAddGateway?: () => void;
-    addingGateway?: boolean;
-    /** Why the last attempt did not finish, told on the row itself. */
-    addGatewayError?: string | null;
-    /** An approval the first gateway waits on; it takes the add row's place. */
-    gatewayApproval?: React.ReactNode;
+    /** "+" on Gateways when several contributions qualify: the add menu of gateways; it renders its trigger. */
+    renderAddGateway?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
     /** The gateways cannot be read: the group keeps its place and says so, with Retry (D19). */
     gatewaysUnavailable?: Readonly<{ diagnosticCode: string; onRetry: () => void }> | null;
     /** Live rows read their own usage; a fixture preview passes it. */
@@ -88,7 +133,7 @@ export type ConnectedServicesRailViewProps = Readonly<{
 }>;
 
 function isSignedOut(account: ConnectedServicesIndexAccount): boolean {
-    return normalizeConnectedServiceCredentialHealthStatus(account.status) === 'needs_reauth';
+    return parseDisplayableCredentialHealthStatus(account.status) === 'needs_reauth';
 }
 
 /**
@@ -99,258 +144,562 @@ function isSignedOut(account: ConnectedServicesIndexAccount): boolean {
 export const ConnectedServicesRailView = React.memo(function ConnectedServicesRailView(props: ConnectedServicesRailViewProps) {
     const { theme } = useUnistyles();
     const { model, selection, present, labelsByKey } = props;
+    // Only declared Agent usage places a service under Agent sign-in; unknown accounts stay visible with tools.
     const agentSheets = model.sheets.filter((sheet) => sheet.section === 'agents');
-    const toolSheets = model.sheets.filter((sheet) => sheet.section === 'tools');
     const pooled = agentSheets.flatMap((sheet) => sheet.pools.map((pool) => ({ sheet, pool })));
     const accountCount = model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
+    const page = props.variant === 'page';
 
+    const draftTitles = useCollectionDraftTitle();
     const [query, setQuery] = React.useState('');
     const searchable = accountCount > SEARCH_THRESHOLD;
     const needle = searchable ? query.trim().toLowerCase() : '';
-    // Services open by default when they hold several accounts; the open account's service always does.
+    // Filters count accounts; service headings group those accounts without adding another result.
+    const columnFacts = React.useMemo(() => model.sheets.flatMap((sheet) =>
+        sheet.accounts.map((account) => connectedAccountColumnFacts({ sheet, account, labelsByKey, present })),
+    ), [labelsByKey, model.sheets, present]);
+    const serviceLabels = React.useMemo(() => new Map(model.sheets.map((sheet) => [sheet.serviceKey, sheet.label])), [model.sheets]);
+    const filterFields = React.useMemo(() => ({
+        service: { label: t('sessionsList.filtersService'), valueLabel: (serviceKey: string) => serviceLabels.get(serviceKey) ?? serviceKey },
+        // A filter value is a short noun (a chip in a narrow column): the row's sentence keeps its "will retry".
+        status: { label: t('sessionsList.filtersStatus'),
+            valueLabel: (status: string) => status === 'refresh_failed_retryable' ? t('connectedServices.pools.behavior.switchOn.refreshFailure')
+                : resolveConnectedAccountCredentialStatusLabel(status as ConnectedServiceCredentialHealthStatusV1) },
+    }), [serviceLabels]);
+    const columnFilter = useSettingsColumnFilter({
+        column: 'connected-services',
+        testIDPrefix: 'connected-services-rail',
+        adapter: connectedServicesColumnAdapter,
+        fields: filterFields,
+        facts: columnFacts,
+    });
+    const matchesFilter = columnFilter.matches;
+    const narrowed = needle !== '' || columnFilter.active;
+    const npmProfilesVisible = Boolean(props.onOpenNpmProfiles) && !columnFilter.active
+        && (!needle || t('settingsPlugins.registriesTitle').toLowerCase().includes(needle));
+    // Services are open by default (owner 10-31); a person folds one in place. The open account's service and
+    // a service being drafted into stay open.
     const [toggled, setToggled] = React.useState<ReadonlySet<string>>(() => new Set());
-    const selectedServiceKey = selection.kind === 'account' || selection.kind === 'pool' || selection.kind === 'service'
-        ? selection.serviceKey
-        : null;
+    const selectedServiceKey = 'serviceKey' in selection ? selection.serviceKey : null;
+    const draftServiceKey = selection.kind === 'accountDraft' || selection.kind === 'poolDraft' ? selection.serviceKey : null;
     const isExpanded = (sheet: ConnectedServicesIndexSheet) => {
-        if (needle) return true;
-        const byDefault = sheet.accounts.length > 1 || sheet.serviceKey === selectedServiceKey;
-        return toggled.has(sheet.serviceKey) ? !byDefault : byDefault;
+        if (sheet.serviceKey === draftServiceKey) return true;
+        if (narrowed) return true;
+        if (sheet.serviceKey === selectedServiceKey && selection.kind === 'account') return true;
+        return !toggled.has(sheet.serviceKey);
     };
     const toggle = (serviceKey: string) => setToggled((current) => {
+        if (serviceKey === draftServiceKey) return current;
         const next = new Set(current);
         if (next.has(serviceKey)) next.delete(serviceKey); else next.add(serviceKey);
         return next;
     });
 
-    const renderService = (sheet: ConnectedServicesIndexSheet, expandable: boolean) => {
-        const rows = sheet.accounts
+    // A draft for a service with nothing added yet (its first API key): the service is not a sheet, so it is
+    // listed here only while drafting, open on its draft row, in the group it belongs to (lab `s2svc:key`).
+    const draftOnlyService = selection.kind === 'accountDraft' && !model.sheets.some((sheet) => sheet.serviceKey === draftServiceKey)
+        ? model.connectable.find((service) => service.serviceKey === draftServiceKey) ?? null
+        : null;
+    const renderDraftOnlyService = (section: 'agents' | 'tools') => draftOnlyService?.section === section ? (
+        <React.Fragment key={draftOnlyService.serviceKey}>
+            <CollectionNavigationRow
+                rowRole="item"
+                testID={`connected-services-rail:service:${draftOnlyService.serviceKey}`}
+                surface="page"
+                title={draftOnlyService.label}
+                icon={<ConnectedServiceMark legacyServiceId={draftOnlyService.entry?.legacyServiceId ?? null} pluginId={draftOnlyService.service.pluginId} size="column" />}
+                disclosure={{ expanded: true }}
+                count={null}
+                selected={false}
+                onPress={() => toggle(draftOnlyService.serviceKey)}
+            />
+            <CollectionDraftRow
+                rowRole="item"
+                testID={`connected-services-rail:account-draft:${draftOnlyService.serviceKey}`}
+                titles={draftTitles}
+                placeholder={presentNewConnectedAccountDraftTitle(draftOnlyService)}
+                child
+            />
+        </React.Fragment>
+    ) : null;
+
+    // Every "+" (a group's, a service row's) draws just its glyph, so all of them end on the rows' one trailing
+    // edge with the percentages, key marks and counts beneath (owner 10-31); the hit area still reaches the target.
+    const groupAdd = (testID: string, label: string, onPress: React.ComponentProps<typeof IconButton>['onPress']) => (
+        <IconButton
+            testID={testID}
+            iconName="plus"
+            size={16}
+            iconSize={16}
+            // A group's add sits in its label row with the first row directly beneath: its hit area stays in the row.
+            interactiveTargetEdgesPx={GROUP_ADD_VERTICAL_REACH}
+            accessibilityLabel={label}
+            tooltip={label}
+            variant="plain"
+            onPress={onPress}
+        />
+    );
+
+    // Headings and rows consume the same filtered projection; a hidden service cannot
+    // leave an empty group behind or require a second identity/search pass.
+    const visibleServices = model.sheets.map((sheet) => ({
+        sheet,
+        rows: sheet.accounts
             .map((account) => ({ account, presentation: presentConnectedServicesIndexAccount(sheet, account, labelsByKey, present) }))
             .filter(({ presentation }) => !needle
                 || presentation.title.toLowerCase().includes(needle)
                 || (presentation.identityLabel ?? '').toLowerCase().includes(needle)
-                || sheet.label.toLowerCase().includes(needle));
-        if (needle && rows.length === 0) return null;
-        const open = expandable && isExpanded(sheet);
-        const trouble = !open && sheet.accounts.some(isSignedOut);
+                || sheet.label.toLowerCase().includes(needle))
+            .filter(({ account }) => matchesFilter(`${sheet.serviceKey}:${account.accountId}`)),
+    })).filter(({ sheet, rows }) => !narrowed || rows.length > 0
+        || (sheet.serviceKey === draftServiceKey && selection.kind === 'accountDraft'));
+    const visibleAgentServices = visibleServices.filter(({ sheet }) => sheet.section === 'agents');
+    const visibleToolServices = visibleServices.filter(({ sheet }) => sheet.section !== 'agents');
+
+    const renderService = ({ sheet, rows }: typeof visibleServices[number], expandable: boolean, withContext: boolean) => {
+        const drafting = sheet.serviceKey === draftServiceKey && selection.kind === 'accountDraft';
+        const open = (expandable || drafting) && isExpanded(sheet);
+        // A folded service speaks for its accounts once: the strongest state they hold (P8 rollup).
+        const signedOut = sheet.accounts.filter(isSignedOut).length;
+        const rollup = !open && signedOut > 0 ? (
+            <CollectionStatusGlyph
+                status="signIn"
+                label={t('connectedServicesCollection.railRollupSignIn', { count: signedOut })}
+                testID={`connected-services-rail:service-rollup:${sheet.serviceKey}`}
+            />
+        ) : null;
         const serviceSelected = selection.kind === 'service' && selection.serviceKey === sheet.serviceKey;
-        const caret = expandable ? (
-            <Icon name={open ? 'caret-down' : 'caret-right'} size={12} color={theme.colors.text.tertiary} />
-        ) : <View style={styles.caretSpace} />;
         return (
             <React.Fragment key={sheet.serviceKey}>
-                <Item
+                <CollectionNavigationRow
+                    rowRole="item"
                     testID={`connected-services-rail:service:${sheet.serviceKey}`}
+                    surface="page"
                     title={sheet.label}
-                    leftElement={(
-                        <View style={styles.serviceLead}>
-                            {caret}
-                            <ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} size="inline" />
-                        </View>
-                    )}
-                    rightElement={(
-                        <View style={styles.meta}>
-                            {trouble ? <View style={[styles.dot, { backgroundColor: theme.colors.state.warning.foreground }]} /> : null}
-                            <Text style={styles.count}>{String(sheet.accounts.length)}</Text>
-                        </View>
-                    )}
-                    accessibilityExpanded={expandable ? open : undefined}
+                    icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} pluginId={sheet.service.pluginId} size="column" />}
+                    disclosure={expandable || drafting ? { expanded: open } : null}
+                    status={rollup}
+                    count={sheet.accounts.length > 0 ? sheet.accounts.length : null}
                     selected={serviceSelected}
-                    density="compact"
-                    showChevron={false}
-                    pressableStyle={collectionListStyles.row}
-                    onPress={() => (expandable ? toggle(sheet.serviceKey) : props.onOpenService(sheet))}
+                    // Another account of this service, from where its accounts are listed (owner 10-30: always shown;
+                    // its draft says what it needs when no machine can run the sign-in yet).
+                    rightElement={props.onAddAccount ? groupAdd(
+                        `connected-services-rail:service:${sheet.serviceKey}:add`,
+                        t('connectedServicesCollection.addServiceAccount', { service: sheet.label }),
+                        (event) => props.onAddAccount?.(sheet, resolvePressTriggerAnchor(event)),
+                    ) : undefined}
+                    onPress={() => (expandable || drafting ? toggle(sheet.serviceKey) : props.onOpenService(sheet))}
                 />
+                {open && drafting ? (
+                    <CollectionDraftRow
+                        rowRole="item"
+                        testID={`connected-services-rail:account-draft:${sheet.serviceKey}`}
+                        titles={draftTitles}
+                        placeholder={presentNewConnectedAccountDraftTitle(sheet)}
+                        child
+                    />
+                ) : null}
                 {open ? rows.map(({ account, presentation }) => {
                     const selected = selection.kind === 'account'
                         && selection.serviceKey === sheet.serviceKey
                         && selection.accountId === account.accountId;
-                    const inUse = sheet.rolesByAccountId[account.accountId]?.pools.some((pool) => pool.inUse) === true;
+                    // Every account reads the same way (owner 10-31): its email, then its name and plan. A tool
+                    // with no email keeps its own identity beside its name.
+                    const context = presentation.listName
+                        ?? (withContext && presentation.identityLabel && presentation.identityLabel !== presentation.title
+                            ? presentation.identityLabel
+                            : null);
                     return (
-                        <Item
+                        <RailAccountRow
                             key={account.accountId}
                             testID={`connected-services-rail:account:${sheet.serviceKey}:${account.accountId}`}
-                            title={presentation.title}
-                            accessibilityLabel={t('connectedServicesCollection.railAccountLabel', { service: sheet.label, account: presentation.title })}
-                            rightElement={(
-                                <View style={styles.meta}>
-                                    {inUse ? (
-                                        <View accessibilityLabel={t('connectedServicesCollection.inUse')}>
-                                            <Icon name="stack" size={12} color={theme.colors.text.tertiary} />
-                                        </View>
-                                    ) : null}
-                                    {props.renderAccountMeta
-                                        ? props.renderAccountMeta(sheet, account)
-                                        : <LiveAccountMeta sheet={sheet} account={account} />}
-                                </View>
-                            )}
+                            sheet={sheet}
+                            account={account}
+                            title={presentation.listTitle}
+                            context={context}
+                            accessibilityLabel={t('connectedServicesCollection.railAccountLabel', { service: sheet.label, account: presentation.listTitle })}
+                            meta={props.renderAccountMeta ? props.renderAccountMeta(sheet, account) : undefined}
                             selected={selected}
-                            density="compact"
-                            showChevron={false}
-                            pressableStyle={collectionListStyles.row}
-                            style={{ paddingLeft: ACCOUNT_INDENT_PX }}
                             onPress={() => props.onOpenAccount(sheet, account.accountId)}
                         />
                     );
                 }) : null}
+                {props.settled?.serviceKey === sheet.serviceKey ? props.settled.content : null}
             </React.Fragment>
         );
     };
 
-    const header = (
-        <View style={styles.headerActions}>
-            <ConnectedAccountPrivacyToggle
-                testID="connected-services-rail:privacy"
-                hidden={props.identitiesHidden}
-                onChange={props.onSetIdentitiesHidden}
-            />
+    // On the phone page the navigation bar names the parent and holds the "+" (lab `s2svc:listP`); the
+    // privacy eye becomes a checked row of the bar's menu. Beside a detail they stay in the list's head.
+    const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
+    const barOwnsActions = page && chromeShowsTitle;
+    // "+" opens the add menu (or connects a service when no menu is supplied). In the bar it sits beside the
+    // page's folded menu, and their finger frames split the bar's action gap.
+    const { renderConnect, onConnect, identitiesHidden, onSetIdentitiesHidden } = props;
+    const connect = React.useMemo(() => {
+        const trigger = (onPress: () => void) => (
             <IconButton
                 testID="connected-services-rail:connect"
                 iconName="plus"
                 accessibilityLabel={t('connectedServicesCollection.connectService')}
                 tooltip={t('connectedServicesCollection.connectService')}
                 variant="plain"
-                onPress={props.onConnect}
+                interactiveTargetGapPx={barOwnsActions ? HEADER_ACTIONS_GAP_PX : undefined}
+                onPress={onPress}
             />
+        );
+        return renderConnect ? renderConnect(trigger) : trigger((event?: GestureResponderEvent) => onConnect(resolvePressTriggerAnchor(event)));
+    }, [barOwnsActions, onConnect, renderConnect]);
+    const barPrivacy = React.useMemo(() => barOwnsActions ? (
+        <ToolbarButton
+            testID="connected-services-rail:privacy"
+            label={t('sidebarFooter.hideAccountIdentities')}
+            active={identitiesHidden}
+            onPress={() => { void onSetIdentitiesHidden(!identitiesHidden); }}
+        />
+    ) : null, [barOwnsActions, identitiesHidden, onSetIdentitiesHidden]);
+    const filterInHead = accountCount > 0 && !searchable;
+    const header = barOwnsActions && !filterInHead ? undefined : (
+        <View style={styles.headerActions}>
+            {filterInHead ? columnFilter.filterButton : null}
+            {barOwnsActions ? null : (
+                <>
+                    <ConnectedAccountPrivacyToggle
+                        testID="connected-services-rail:privacy"
+                        hidden={identitiesHidden}
+                        onChange={onSetIdentitiesHidden}
+                    />
+                    {connect}
+                </>
+            )}
         </View>
     );
 
-    return (
-        <CollectionList
-            testID="connected-services-rail"
-            title={t('settings.connectedServices')}
-            headerAction={header}
-            search={searchable ? {
-                value: query,
-                onChangeText: setQuery,
-                placeholder: t('connectedServicesCollection.searchAccounts'),
-            } : null}
-            footer={(
+    const visibleSecrets = (props.secrets?.entries ?? []).filter((entry) => !needle || (entry.name ?? '').toLowerCase().includes(needle));
+    // A condition on services and accounts leaves gateways out; a pool stays with its service's matching accounts.
+    const visibleGateways = columnFilter.active ? [] : (props.gateways ?? []).filter((gateway) => !needle || gateway.title.toLowerCase().includes(needle));
+    const visiblePooled = pooled.filter(({ sheet, pool }) => (!needle
+        || presentConnectedServicesIndexPool(sheet, pool, labelsByKey).toLowerCase().includes(needle)
+        || sheet.label.toLowerCase().includes(needle))
+        && (!columnFilter.active || sheet.accounts.some((account) => matchesFilter(`${sheet.serviceKey}:${account.accountId}`))));
+    const poolDraftSheet = selection.kind === 'poolDraft'
+        ? agentSheets.find((sheet) => sheet.serviceKey === selection.serviceKey) ?? null
+        : null;
+
+    // The way out to the settings of what the column lists. On the phone page it ends the scrolling
+    // list (a pinned footer would sit under the floating tab bar), with All services before it.
+    const wayOut = (
+        <>
+            {props.onOpenOverview ? (
                 <Item
-                    testID="connected-services-rail:agent-sign-in"
-                    title={t('connectedServicesCollection.agentSignInTitle')}
-                    icon={<Icon name="sparkle" size={18} color={theme.colors.text.secondary} />}
-                    selected={selection.kind === 'agentSignIn'}
+                    testID="connected-services-rail:overview"
+                    title={t('connectedServicesCollection.overviewRow')}
+                    icon={<Icon name="squares-four" size={18} color={theme.colors.text.secondary} />}
                     density="compact"
                     showChevron
                     pressableStyle={collectionListStyles.row}
-                    onPress={props.onOpenAgentSignIn}
+                    onPress={props.onOpenOverview}
+                />
+            ) : null}
+            <Item
+                testID="connected-services-rail:agent-sign-in"
+                title={t('connectedServicesCollection.agentSignInTitle')}
+                icon={<Icon name="sparkle" size={18} color={theme.colors.text.secondary} />}
+                selected={selection.kind === 'agentSignIn'}
+                density="compact"
+                showChevron
+                pressableStyle={collectionListStyles.row}
+                onPress={props.onOpenAgentSignIn}
+            />
+        </>
+    );
+    // The phone's navigation bar already names the page (accepted refinement of the lab's large title).
+
+    return (
+        <>
+        {barOwnsActions ? <NavigationHeaderActions primary={null} actions={barPrivacy} trailing={connect} /> : null}
+        <CollectionList
+            testID="connected-services-rail"
+            title={t('connectedServicesCollection.indexTitle')}
+            count={accountCount > 0 ? accountCount : undefined}
+            headerAction={header}
+            strip={columnFilter.tokenRow}
+            search={searchable ? {
+                value: query,
+                onChangeText: setQuery,
+                placeholder: t('connectedServicesCollection.searchCredentials'),
+                trailing: columnFilter.filterButton,
+                anchorRef: columnFilter.searchAnchorRef,
+            } : null}
+            footer={page ? null : wayOut}
+        >
+            {/* Beside a detail, the way back to the overview leads the column (lab `cr` aRail), as on Providers. */}
+            {page ? null : (
+                <CollectionIndexRow
+                    testID="connected-services-rail:overview-row"
+                    selected={selection.kind === 'index'}
+                    onPress={props.onOpenIndex}
                 />
             )}
-        >
-            {agentSheets.length > 0 ? (
+            {visibleAgentServices.length > 0 || draftOnlyService?.section === 'agents' ? (
                 <>
-                    <CollectionListGroupLabel title={t('connectedServicesCollection.servicesGroup')} first />
-                    {agentSheets.map((sheet) => renderService(sheet, sheet.accounts.length > 0))}
+                    {/* Open lists show their rows, so the label adds no count (owner 11-01); it is the first group under the
+                        header block (the index row closes that block), so it takes the first group's air. */}
+                    <CollectionListGroupLabel title={t('connectedServicesCollection.agentSignInGroup')} first />
+                    {visibleAgentServices.map((service) => renderService(service, service.sheet.accounts.length > 0, false))}
+                    {renderDraftOnlyService('agents')}
                 </>
             ) : (
-                <Text style={styles.quiet}>{t('connectedServicesCollection.railEmpty')}</Text>
+                !narrowed ? <Text style={styles.quiet}>{t('connectedServicesCollection.railEmpty')}</Text> : null
             )}
-            {pooled.length > 0 || props.renderNewPool ? (
+            {(visiblePooled.length > 0 || poolDraftSheet || (!narrowed && props.renderNewPool)) ? (
                 <>
                     <CollectionListGroupLabel
                         title={t('connectedServicesCollection.poolsGroup')}
                         trailing={props.renderNewPool ? props.renderNewPool((onPress) => (
-                            <IconButton
-                                testID="connected-services-rail:new-pool"
-                                iconName="plus"
-                                size={24}
-                                accessibilityLabel={t('connectedServicesCollection.newPool')}
-                                tooltip={t('connectedServicesCollection.newPool')}
-                                variant="plain"
-                                onPress={onPress}
-                            />
+                            groupAdd('connected-services-rail:new-pool', t('connectedServicesCollection.newPool'), onPress)
                         )) : undefined}
                     />
-                    {pooled.map(({ sheet, pool }) => {
+                    {poolDraftSheet ? (
+                        <CollectionDraftRow
+                            rowRole="item"
+                            testID={`connected-services-rail:pool-draft:${poolDraftSheet.serviceKey}`}
+                            titles={draftTitles}
+                            placeholder={t('connectedServicesCollection.newPoolDraft', { service: poolDraftSheet.label })}
+                            mark={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
+                        />
+                    ) : null}
+                    {visiblePooled.map(({ sheet, pool }) => {
                         const active = pool.activeConnectedAccountId
                             ? sheet.accounts.find((account) => account.accountId === pool.activeConnectedAccountId) ?? null
                             : null;
                         const activeTitle = active ? presentConnectedServicesIndexAccount(sheet, active, labelsByKey, present).title : null;
                         return (
-                            <Item
+                            <CollectionNavigationRow
                                 key={`${sheet.serviceKey}:${pool.ref.groupId}`}
                                 testID={`connected-services-rail:pool:${sheet.serviceKey}:${pool.ref.groupId}`}
+                                surface="page"
                                 title={presentConnectedServicesIndexPool(sheet, pool, labelsByKey)}
+                                subtitle={activeTitle
+                                    ? t('connectedServicesCollection.railPoolUsing', { service: sheet.label, account: activeTitle })
+                                    : sheet.label}
                                 icon={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
-                                detail={activeTitle ?? undefined}
+                                count={pool.members.length > 0 ? pool.members.length : null}
                                 selected={selection.kind === 'pool' && selection.serviceKey === sheet.serviceKey && selection.groupId === pool.ref.groupId}
-                                density="compact"
-                                showChevron={false}
-                                pressableStyle={collectionListStyles.row}
                                 onPress={() => props.onOpenPool(sheet, pool.ref.groupId)}
                             />
                         );
                     })}
                 </>
             ) : null}
-            {(props.gateways && (props.gateways.length > 0 || props.onAddGateway || props.gatewayApproval)) || props.gatewaysLoading || props.gatewaysUnavailable ? (
+            {!columnFilter.active && (visibleGateways.length > 0 || selection.kind === 'gatewayDraft'
+                || (!needle && (props.onAddGateway || props.renderAddGateway || props.gatewaysLoading || props.gatewaysUnavailable))) ? (
                 <>
-                    <CollectionListGroupLabel title={t('settingsProvidersCollection.gateway.railGroup')} />
-                    {props.gatewayApproval ?? null}
-                    {props.gatewaysLoading && !props.gatewayApproval && !props.gateways?.length ? (
-                        <Item
-                            testID="connected-services-rail:gateways-loading"
-                            title={t('common.loading')}
-                            titleStyle={{ color: theme.colors.text.tertiary }}
-                            icon={<Icon name="path" size={16} color={theme.colors.text.tertiary} />}
-                            density="compact"
-                            showChevron={false}
-                            disabled
-                            pressableStyle={collectionListStyles.row}
+                    <CollectionListGroupLabel
+                        title={t('settingsProvidersCollection.gateway.railGroup')}
+                        trailing={props.renderAddGateway
+                            ? props.renderAddGateway((onPress) => groupAdd('connected-services-rail:add-gateway', t('settingsProvidersCollection.gateway.addGateway'), onPress))
+                            : props.onAddGateway
+                                ? groupAdd('connected-services-rail:add-gateway', t('settingsProvidersCollection.gateway.addGateway'), props.onAddGateway)
+                                : undefined}
+                    />
+                    {selection.kind === 'gatewayDraft' ? (
+                        <CollectionDraftRow
+                            rowRole="item"
+                            testID="connected-services-rail:gateway-draft"
+                            titles={draftTitles}
+                            placeholder={t('connectedServicesCollection.newGatewayDraft')}
+                            mark={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
                         />
                     ) : null}
-                    {props.gatewaysUnavailable && !props.gateways?.length && !props.gatewayApproval ? (
+                    {props.gatewaysLoading && !props.gateways?.length ? (
+                        <View testID="connected-services-rail:gateways-loading"><CollectionSkeletonRows count={1} /></View>
+                    ) : null}
+                    {props.gatewaysUnavailable && !props.gateways?.length ? (
                         <ConnectedServicesGatewaysUnavailableLine testID="connected-services-rail:gateways-unavailable"
                             unavailable={props.gatewaysUnavailable} />
                     ) : null}
-                    {props.onAddGateway && !props.gateways?.length && !needle && !props.gatewayApproval ? (
-                        <Item
-                            testID="connected-services-rail:add-gateway"
-                            title={t('settingsProvidersCollection.gateway.addGateway')}
-                            titleStyle={{ color: theme.colors.text.secondary }}
-                            subtitle={props.addGatewayError ?? undefined}
-                            subtitleStyle={props.addGatewayError ? { color: theme.colors.state.danger.foreground } : undefined}
-                            icon={<Icon name="plus" size={16} color={theme.colors.text.secondary} />}
-                            density="compact"
-                            showChevron={false}
-                            loading={props.addingGateway}
-                            disabled={props.addingGateway}
-                            pressableStyle={collectionListStyles.row}
-                            onPress={props.onAddGateway}
-                        />
-                    ) : null}
-                    {(props.gateways ?? []).filter((gateway) => !needle || gateway.title.toLowerCase().includes(needle)).map((gateway) => (
-                        <Item
+                    {visibleGateways.map((gateway) => (
+                        <CollectionNavigationRow
                             key={gateway.connectionId}
                             testID={`connected-services-rail:gateway:${gateway.connectionId}`}
+                            surface="page"
                             title={gateway.title}
                             subtitle={gateway.summary}
                             icon={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
-                            density="compact"
-                            showChevron={false}
-                            pressableStyle={collectionListStyles.row}
+                            selected={selection.kind === 'gateway' && selection.connectionId === gateway.connectionId}
                             onPress={() => props.onOpenGateway?.(gateway)}
                         />
                     ))}
                 </>
             ) : null}
-            {toolSheets.length > 0 ? (
+            {visibleToolServices.length > 0 || draftOnlyService?.section === 'tools' || npmProfilesVisible ? (
                 <>
                     <CollectionListGroupLabel title={t('connectedServicesSettings.codeAndToolsTitle')} />
-                    {toolSheets.map((sheet) => renderService(sheet, sheet.accounts.length > 0))}
+                    {visibleToolServices.map((service) => renderService(service, service.sheet.accounts.length > 0, true))}
+                    {renderDraftOnlyService('tools')}
+                    {npmProfilesVisible ? (
+                        <CollectionNavigationRow
+                            rowRole="item"
+                            testID="connected-services-rail:npm-registry-profiles"
+                            surface="page"
+                            title={t('settingsPlugins.registriesTitle')}
+                            icon={<Icon name="package" size={16} color={theme.colors.text.secondary} />}
+                            selected={false}
+                            onPress={() => props.onOpenNpmProfiles?.()}
+                        />
+                    ) : null}
                 </>
             ) : null}
+            {props.secrets && !columnFilter.active && (!needle || visibleSecrets.length > 0 || selection.kind === 'secretDraft') ? (
+                <>
+                    <CollectionListGroupLabel
+                        title={t('connectedServicesCollection.secretsGroup')}
+                        trailing={props.renderNewSecret ? props.renderNewSecret((onPress) => groupAdd('connected-services-rail:new-secret', t('connectedServicesCollection.newSecret'), onPress)) : undefined}
+                    />
+                    {selection.kind === 'secretDraft' ? (
+                        <CollectionDraftRow
+                            rowRole="item"
+                            testID="connected-services-rail:secret-draft"
+                            titles={draftTitles}
+                            placeholder={t('connectedServicesCollection.newSecret')}
+                            mark={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
+                        />
+                    ) : null}
+                    {props.secrets.state === 'loading' ? (
+                        <View testID="connected-services-rail:secrets-loading"><CollectionSkeletonRows count={2} /></View>
+                    ) : props.secrets.state === 'failed' ? (
+                        <View style={collectionListStyles.stateLine}>
+                            <SurfaceStateCard
+                                testID="connected-services-rail:secrets-failed"
+                                kind="warning"
+                                size="line"
+                                title={t('secretsSettings.staleTitle')}
+                                action={{ label: t('common.retry'), onPress: props.secrets.onRetry }}
+                            />
+                        </View>
+                    ) : null}
+                    {visibleSecrets.map((entry) => (
+                        <CollectionNavigationRow
+                            key={entry.ref}
+                            testID={`connected-services-rail:secret:${entry.ref}`}
+                            surface="page"
+                            title={entry.name ?? t('secrets.catalog.unavailableName')}
+                            subtitle={savedSecretOwnedRowSummary(entry)}
+                            status={secretRowStatus(entry)}
+                            icon={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
+                            selected={selection.kind === 'secret' && selection.ref === entry.ref}
+                            onPress={() => props.onOpenSecret?.(entry.ref)}
+                        />
+                    ))}
+                </>
+            ) : null}
+            {page ? (
+                <>
+                    <CollectionListGroupLabel title={t('common.more')} />
+                    {wayOut}
+                </>
+            ) : null}
+            {columnFilter.editorOverlay}
         </CollectionList>
+        </>
     );
 });
+
+/**
+ * An account in the rail: its service's mark (owner 10-31), its email, and its name and plan beneath. A
+ * subscription reads its plan and tightest limit from its one shared usage store; others show what they hold.
+ */
+const RailAccountRow = React.memo(function RailAccountRow(props: Readonly<{
+    testID: string;
+    sheet: ConnectedServicesIndexSheet;
+    account: ConnectedServicesIndexAccount;
+    title: string;
+    context: string | null;
+    accessibilityLabel: string;
+    /** A fixture's end slot; live rows read their own. */
+    meta?: React.ReactNode;
+    selected: boolean;
+    onPress: () => void;
+}>) {
+    const live = props.meta === undefined && !isSignedOut(props.account) && props.account.kind === 'qualified' && props.account.profile.kind !== 'token';
+    return live && props.account.kind === 'qualified'
+        ? <QualifiedRailAccountRow {...props} account={props.account} />
+        : <RailAccountRowView {...props} plan={null} status={props.meta !== undefined ? props.meta : <LiveAccountMeta sheet={props.sheet} account={props.account} />} />;
+});
+
+const QualifiedRailAccountRow = React.memo(function QualifiedRailAccountRow(props: React.ComponentProps<typeof RailAccountRow> & Readonly<{
+    account: Extract<ConnectedServicesIndexAccount, { kind: 'qualified' }>;
+}>) {
+    const quota = useQualifiedConnectedAccountQuota(props.account.profile.ref);
+    const snapshot = quota.snapshot;
+    const tightest = snapshot ? deriveAccountCapacityPct(snapshot.meters.flatMap((meter) => (
+        meter.status === 'unavailable' || meter.remainingPct === null || meter.remainingPct === undefined
+            ? []
+            : [{ remainingPct: meter.remainingPct }]
+    ))) : null;
+    const status = tightest !== null && snapshot
+        ? <RailAccountMeta meta={{ kind: 'usage', tightestPct: tightest, stale: Date.now() - snapshot.fetchedAt > snapshot.staleAfterMs }} />
+        : null;
+    return <RailAccountRowView {...props} plan={snapshot?.planLabel ?? null} status={status} />;
+});
+
+function RailAccountRowView(props: Readonly<{
+    testID: string;
+    sheet: ConnectedServicesIndexSheet;
+    title: string;
+    context: string | null;
+    plan: string | null;
+    accessibilityLabel: string;
+    status: React.ReactNode;
+    selected: boolean;
+    onPress: () => void;
+}>) {
+    const subtitle = [props.context, props.plan].filter(Boolean).join(' · ');
+    return (
+        <CollectionNavigationRow
+            testID={props.testID}
+            surface="page"
+            child
+            title={props.title}
+            subtitle={subtitle || undefined}
+            icon={<ConnectedServiceMark legacyServiceId={props.sheet.legacyServiceId} pluginId={props.sheet.service.pluginId} size="column" />}
+            accessibilityLabel={props.accessibilityLabel}
+            status={props.status}
+            selected={props.selected}
+            onPress={props.onPress}
+        />
+    );
+}
+
+/** A troubled secret's glyph in its row's status slot, the word in its tooltip; a ready secret is quiet. */
+function secretRowStatus(entry: SavedSecretCatalogEntryV1): React.ReactNode {
+    const status = sharedSecretRowStatus(entry.materialStatus);
+    return status ? <CollectionStatusGlyph status={status} label={sharedSecretStatusLabel(entry.materialStatus)} /> : undefined;
+}
+
+/** The Secrets group's "+" and the create popover anchored under it. */
+function NewSecretPopoverTrigger(props: Readonly<{
+    renderTrigger: (onPress: () => void) => React.ReactElement;
+    onCreated: (ref: string) => void;
+}>) {
+    // "New secret" is the one Connect sheet for a key with no purpose, hanging from this "+" (owner 10-31).
+    const anchorRef = React.useRef<View>(null);
+    const { onCreated } = props;
+    const open = React.useCallback(() => {
+        fireAndForget(presentConnectSheet({ service: { kind: 'key' }, anchor: { kind: 'view', ref: anchorRef } }).then((result) => {
+            if (result.kind !== 'dismissed') onCreated(result.secretRef);
+        }), { tag: 'ConnectedServicesRail.newSecret' });
+    }, [onCreated]);
+    return <View ref={anchorRef} collapsable={false}>{props.renderTrigger(open)}</View>;
+}
 
 /** An account's tightest limit, read by the row that shows it (one shared snapshot store per account). */
 const LiveAccountMeta = React.memo(function LiveAccountMeta(props: Readonly<{
     sheet: ConnectedServicesIndexSheet;
     account: ConnectedServicesIndexAccount;
 }>) {
-    if (isSignedOut(props.account)) return <RailAccountMeta meta={{ kind: 'signedOut' }} />;
+    if (isSignedOut(props.account)) return <RailAccountMeta meta={{ kind: 'signedOut', statusReason: props.account.kind === 'qualified' ? props.account.profile.statusReason : undefined }} />;
     if (props.account.kind !== 'qualified') return null;
     if (props.account.profile.kind === 'token') return <RailAccountMeta meta={{ kind: 'key' }} />;
     return <QualifiedAccountMeta account={props.account} />;
@@ -371,39 +720,43 @@ const QualifiedAccountMeta = React.memo(function QualifiedAccountMeta(props: Rea
     return <RailAccountMeta meta={{ kind: 'usage', tightestPct: tightest, stale }} />;
 });
 
-/** The row end's glyphs: "42%" in its tone (a clock when stale), ⚠ when signed out, "key" for keys. */
+/** The row end's status slot: "42%" in its tone (the stale glyph when old), the sign-in glyph when signed out, "key" for keys. */
 export const RailAccountMeta = React.memo(function RailAccountMeta(props: Readonly<{ meta: ConnectedServicesRailAccountMeta }>) {
     const { theme } = useUnistyles();
     const { meta } = props;
     if (meta.kind === 'none') return null;
     if (meta.kind === 'signedOut') {
-        return (
-            <View accessibilityLabel={t('connectedServicesSettings.needsSignIn')}>
-                <Icon name="warning" size={13} color={theme.colors.state.warning.foreground} />
-            </View>
-        );
+        return <CollectionStatusGlyph status="signIn" label={resolveConnectedAccountCredentialStatusLabel('needs_reauth', meta.statusReason)} />;
     }
     if (meta.kind === 'key') return <Text style={styles.count}>{t('connectedServicesCollection.railKey')}</Text>;
     const tone = resolveQuotaTone(meta.tightestPct);
     const color = tone === 'danger'
-        ? theme.colors.state.danger.foreground
-        : tone === 'warning' ? theme.colors.state.warning.foreground : theme.colors.text.tertiary;
+        ? theme.colors.state.danger.textForeground
+        : tone === 'warning' ? theme.colors.state.warning.textForeground : theme.colors.text.tertiary;
     return (
         <View style={styles.meta}>
-            {meta.stale ? <Icon name="clock" size={12} color={theme.colors.text.tertiary} /> : null}
+            {meta.stale ? <CollectionStatusGlyph status="stale" label={t('connectedServicesCollection.railUsageStale')} /> : null}
             <Text style={[styles.count, { color }]}>{`${Math.round(meta.tightestPct)}%`}</Text>
         </View>
     );
 });
 
 /** The rail beside the collection's detail; it reads while the Connected services navigator is focused. */
-export const ConnectedServicesRail = React.memo(function ConnectedServicesRail() {
+export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(props: Readonly<{
+    /** `page`: the list is the phone's Connected services page; it pushes each entity and All services. */
+    variant?: 'rail' | 'page';
+}>) {
     const router = useRouter();
+    const scope = useActiveServerAccountScope();
     const pathname = usePathname();
     const params = useGlobalSearchParams();
     const { theme } = useUnistyles();
     const providersEnabled = useFeatureEnabled('providers');
-    const { indexModel, gateways, gatewaysLoading, addGateway, addingGateway, addGatewayError, gatewayApproval, gatewayUnavailable, retryGateways } = useConnectedServicesIndex({ agents: 'cached', gateways: providersEnabled });
+    const { indexModel, agentEntries, appShellProjection, registryReadFailure, gateways, gatewaysLoading, addGateway, gatewayUnavailable, retryGateways, gatewayContributionChoice, gatewayCountsByContributionKey } = useConnectedServicesIndex({ agents: 'load', gateways: providersEnabled });
+    const [settled, setSettled] = React.useState<QualifiedConnectedAccountRef | null>(null);
+    const onConnected = React.useCallback((account: QualifiedConnectedAccountRef) => setSettled(account), []);
+    const gatewayFacts = React.useMemo(() => ({ gateways, addGateway, gatewayContributionChoice, gatewayCountsByContributionKey }),
+        [addGateway, gatewayContributionChoice, gatewayCountsByContributionKey, gateways]);
     const gatewaysUnavailable = useConnectedServicesGatewaysUnavailable(gatewayUnavailable, retryGateways);
     const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const privacy = useConnectedAccountIdentityPrivacy({ mutation: true });
@@ -411,12 +764,34 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
     const onDetail = selection.kind !== 'index';
     const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
     const newPoolServices = React.useMemo(() => selectNewPoolServices(indexModel), [indexModel]);
+    // Saved Secrets, folded into Credentials: the overview's own reading and state (names and access only).
+    const { owned: ownedSecrets, state: secretsState, retry: retrySecrets } = useCredentialsSecrets();
+    const secrets = React.useMemo(() => ({ entries: ownedSecrets, state: secretsState, onRetry: retrySecrets }),
+        [ownedSecrets, retrySecrets, secretsState]);
 
-    const open = React.useCallback((href: Parameters<typeof router.push>[0], tag: string) => {
+    const open = React.useCallback((href: Parameters<typeof router.push>[0] | null, tag: string) => {
+        if (!href) return;
         // Beside a detail, choosing another entity replaces the shown detail instead of stacking history.
         const result = runGuardedNavigation(() => (onDetail ? router.replace(href) : router.push(href)));
         if (result !== true) fireAndForget(result, { tag });
     }, [onDetail, router]);
+
+    // Stable while the menu's facts are, so the phone's navigation bar is not re-published per render.
+    const onConnect = React.useCallback((anchor?: PopoverAnchor) => {
+        fireAndForget(presentConnectSheet({ scope, ...(anchor ? { anchor } : {}) }).then(result => {
+            if (result.kind !== 'dismissed') onConnected(result.account);
+        }), { tag: 'ConnectedServicesRail.connect' });
+    }, [onConnected, scope]);
+    const renderConnect = React.useCallback((renderTrigger: (onPress: () => void) => React.ReactElement) => (
+        <ConnectedServicesAddMenu
+            model={indexModel}
+            gatewayFacts={gatewayFacts}
+            registryReadFailure={registryReadFailure}
+            onOpen={(href) => open(href as never, 'ConnectedServicesRail.add')}
+            renderTrigger={renderTrigger}
+            onConnected={onConnected}
+        />
+    ), [gatewayFacts, indexModel, onConnected, open, registryReadFailure]);
 
     return (
         <>
@@ -428,44 +803,64 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
             present={privacy.present}
             identitiesHidden={privacy.hidden}
             onSetIdentitiesHidden={privacy.setHidden}
-            onConnect={() => open({ pathname: CONNECTED_SERVICES_COLLECTION_ROUTE, params: { connect: '1' } }, 'ConnectedServicesRail.connect')}
+            onConnect={onConnect}
+            settled={settled ? {
+                serviceKey: buildQualifiedPluginContributionKey(settled.service),
+                content: <ConnectedAccountSettled account={settled} model={indexModel} agents={agentEntries}
+                    machineId={appShellProjection.machineId ?? undefined} onDismiss={() => setSettled(null)} />,
+            } : null}
+            renderConnect={renderConnect}
             onOpenIndex={() => open(CONNECTED_SERVICES_COLLECTION_ROUTE, 'ConnectedServicesRail.index')}
             onOpenService={(sheet) => open(buildConnectedAccountSettingsRoute(sheet.service), 'ConnectedServicesRail.service')}
+            onOpenNpmProfiles={() => {
+                fireAndForget(presentConnectSheet({ scope, service: { kind: 'npm-registry-profile' } }), {
+                    tag: 'ConnectedServicesRail.openNpmProfiles',
+                });
+            }}
             onOpenAccount={(sheet, accountId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'account', accountId }), 'ConnectedServicesRail.account')}
+            onAddAccount={(sheet, anchor?: PopoverAnchor) => {
+                fireAndForget(presentConnectSheet({ scope, intent: 'add', service: sheet.service, ...(anchor ? { anchor } : {}) }).then(result => {
+                    if (result.kind !== 'dismissed') onConnected(result.account);
+                }), {
+                    tag: 'ConnectedServicesRail.addAccount',
+                });
+            }}
+            secrets={secrets}
+            onOpenSecret={(ref) => open(buildCredentialsSecretRoute({ ref }) as never, 'ConnectedServicesRail.secret')}
+            renderNewSecret={(renderTrigger) => (
+                <NewSecretPopoverTrigger
+                    renderTrigger={renderTrigger}
+                    onCreated={(ref) => open(buildCredentialsSecretRoute({ ref }) as never, 'ConnectedServicesRail.createdSecret')}
+                />
+            )}
             onOpenPool={(sheet, groupId) => open(buildConnectedAccountSettingsRoute(sheet.service, { kind: 'group', groupId }), 'ConnectedServicesRail.pool')}
             onOpenAgentSignIn={() => open(CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE, 'ConnectedServicesRail.agentSignIn')}
+            variant={props.variant}
+            onOpenOverview={props.variant === 'page' ? () => open(CONNECTED_SERVICES_OVERVIEW_ROUTE as never, 'ConnectedServicesRail.overview') : null}
             gateways={gateways ?? undefined}
             gatewaysLoading={gatewaysLoading}
             gatewaysUnavailable={gatewaysUnavailable}
             onOpenGateway={(gateway) => {
-                // The gateway's page lives with Providers; it is entered, not swapped into this pane.
-                const result = runGuardedNavigation(() => router.push(gateway.detailRoute as never));
-                if (result !== true) fireAndForget(result, { tag: 'ConnectedServicesRail.gateway' });
+                open(gateway.detailRoute as never, 'ConnectedServicesRail.gateway');
             }}
-            addingGateway={addingGateway}
-            gatewayApproval={gatewayApproval ? (
-                // The rail's own compact row for the page notice: the sentence and its button cannot share a rail row.
-                <Item
-                    testID="connected-services-rail-gateway-approval-pending"
-                    title={t('settingsProvidersCollection.approvalPendingTitle')}
-                    subtitle={t('settingsProvidersCollection.openApproval')}
-                    icon={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
-                    density="compact"
-                    showChevron={false}
-                    pressableStyle={collectionListStyles.row}
-                    // Keeps this rail, and the create waiting on the approval, mounted (as the page notice does).
-                    onPress={() => router.pushRetainingCurrent(gatewayApproval.href)}
-                />
-            ) : null}
-            addGatewayError={addGatewayError ? t(presentProviderError(addGatewayError).descriptionKey) : null}
             onAddGateway={addGateway ? () => {
-                // Creates the gateway, then opens its page like any other gateway row.
+                // Open the shared authoring body. Only its explicit Create writes the Account.
                 fireAndForget(addGateway().then((route) => {
                     if (!route) return;
                     const result = runGuardedNavigation(() => router.push(route as never));
                     if (result !== true) fireAndForget(result, { tag: 'ConnectedServicesRail.addGateway.open' });
                 }), { tag: 'ConnectedServicesRail.addGateway' });
             } : undefined}
+            renderAddGateway={gatewayContributionChoice.status === 'choice_required' && addGateway ? (renderTrigger) => (
+                <ConnectedServicesAddMenu
+                    testID="connected-services-rail:add-gateway-menu"
+                    model={indexModel}
+                    gatewayFacts={gatewayFacts}
+                    only="gateways"
+                    onOpen={(href) => open(href as never, 'ConnectedServicesRail.addGateway.choose')}
+                    renderTrigger={renderTrigger}
+                />
+            ) : null}
             renderNewPool={accountGroupsEnabled && newPoolServices.length > 0 ? (renderTrigger) => (
                 <NewPoolMenu
                     testID="connected-services-rail:new-pool-menu"
@@ -485,23 +880,10 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s2,
     },
-    serviceLead: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-    },
-    caretSpace: {
-        width: 12,
-    },
     meta: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
-    },
-    dot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
     },
     count: {
         ...Typography.variant('meta'),

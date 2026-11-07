@@ -40,7 +40,7 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
     reviewAndRestart?: () => void | Promise<void>;
     reviewConnection?: () => void | Promise<void>;
     reviewCurrentState?: () => void | Promise<void>;
-    configureSecret?: () => void | Promise<void>;
+    configureSecret?: (event?: unknown) => void | Promise<void>;
     enableOnMachine?: () => void | Promise<void>;
 }>) {
     const router = useRouter();
@@ -68,7 +68,7 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
         : presentation.severity === 'warning'
             ? theme.colors.state.warning.foreground
             : theme.colors.text.secondary;
-    const runRecovery = async () => {
+    const runRecovery = async (event?: unknown) => {
         if (!typedError.success || recoveryInFlightRef.current) return;
         recoveryInFlightRef.current = true;
         setRecoveryPending(true);
@@ -81,7 +81,7 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
                 reviewAndRestart: props.reviewAndRestart,
                 reviewConnection: props.reviewConnection,
                 reviewCurrentState: props.reviewCurrentState,
-                configureSecret: props.configureSecret,
+                configureSecret: props.configureSecret ? () => props.configureSecret?.(event) : undefined,
                 enableOnMachine: props.enableOnMachine,
             });
         } catch {
@@ -109,7 +109,7 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
                     label: actionTitle,
                     iconName: actionPresentation?.titleKey === 'settingsProviders.errors.actions.retry' ? 'arrow-clockwise' : 'caret-right',
                     disabled: recoveryPending,
-                    onPress: () => void runRecovery(),
+                    onPress: (event) => void runRecovery(event),
                 } : undefined}
             />
         );
@@ -123,7 +123,9 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
         kind={presentation.severity === 'danger' ? 'error' : presentation.severity === 'warning' ? 'warning' : 'unavailable'}
         title={t(presentation.titleKey)}
         reason={t(presentation.descriptionKey)}
-        diagnosticCode={code}
+        // Details names the shared Action cause when one exists, and the request to quote to support.
+        diagnosticCode={presentation.context.failureCause?.errorCode ?? code}
+        diagnosticDetail={presentation.context.requestId ?? null}
         accessibilitySemantics="status"
         action={actionPresentation && typedError.success ? {
             testID: `provider-error-action:${code}`,

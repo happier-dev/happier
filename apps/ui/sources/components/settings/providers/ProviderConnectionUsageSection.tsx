@@ -150,7 +150,9 @@ export const ProviderConnectionUsageSectionView = React.memo(function ProviderCo
     const testID = 'provider-connection-usage';
     const retry = props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined;
     const withTestID = (action: SurfaceStateAction | undefined, id: string) => action ? { ...action, testID: `${id}:action` } : undefined;
-    const connectionError = presentation.connectionError ? presentProviderError(presentation.connectionError) : null;
+    // A stale Account or Machine grant is said once, by the switch that repairs it (Availability or Machines).
+    const presentedConnectionError = presentation.connectionError ? presentProviderError(presentation.connectionError) : null;
+    const connectionError = presentedConnectionError?.scope ? null : presentedConnectionError;
     // A failure the person fixes by choosing a key (the provider's typed recovery action) leads to that key's
     // picker, the writer its row uses; Retry stays for every other failure, since it cannot supply a key.
     const keyRecovery = (error: ProviderErrorV1, billingSlotId: string | null): SurfaceStateAction | undefined => {
@@ -166,6 +168,13 @@ export const ProviderConnectionUsageSectionView = React.memo(function ProviderCo
     // One Retry refreshes every source: it sits on the first failure that no key picker answers.
     const retryOwnerIndex = sourceFailures.findIndex(({ recovery }) => !recovery);
     const connectionRecovery = presentation.connectionError ? keyRecovery(presentation.connectionError, null) : undefined;
+    // Without a machine nothing can be checked; the machine section says so once, with its picker. Usage keeps
+    // only what needs no machine (a billing key), and stays away when there is none.
+    const awaitingMachine = !props.refresh && !presentation.checked && !props.refreshing && !props.failed
+        && !connectionError && !presentation.unsupported;
+    if (awaitingMachine && presentation.groups.length === 0 && sourceFailures.length === 0 && presentation.billingSlots.length === 0) {
+        return null;
+    }
     return (
         <ItemGroup
             testID={testID}
@@ -222,10 +231,9 @@ export const ProviderConnectionUsageSectionView = React.memo(function ProviderCo
             ) : presentation.unsupported ? (
                 <SurfaceStateCard testID={`${testID}:unsupported`} size="line" kind="empty"
                     title={t('settingsProvidersCollection.usage.unsupported')} />
-            ) : !presentation.checked && !props.refreshing ? (
+            ) : !presentation.checked && !props.refreshing && props.refresh ? (
                 <SurfaceStateCard testID={`${testID}:not-checked`} size="line" kind="empty"
-                    title={props.refresh ? t('settingsProvidersCollection.usage.notChecked')
-                        : t('settingsProvidersCollection.usage.needsMachine')} />
+                    title={t('settingsProvidersCollection.usage.notChecked')} />
             ) : null}
             {presentation.billingSlots.map((slot) => {
                 const saved = props.isBillingKeySaved(slot.slotId);

@@ -2,6 +2,7 @@ import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 import type { CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 
 export type ProviderConnectionPresentationStatus =
+    | 'loading'
     | 'available'
     | 'partial'
     | 'notChecked'
@@ -11,6 +12,7 @@ export type ProviderConnectionPresentationStatus =
     | 'sourceUnavailable';
 
 export const PROVIDER_CONNECTION_STATUS_VARIANT = Object.freeze({
+    loading: 'neutral',
     available: 'success',
     partial: 'warning',
     notChecked: 'neutral',
@@ -21,6 +23,7 @@ export const PROVIDER_CONNECTION_STATUS_VARIANT = Object.freeze({
 } as const satisfies Record<ProviderConnectionPresentationStatus, 'success' | 'warning' | 'danger' | 'neutral'>);
 
 export const PROVIDER_CONNECTION_STATUS_KEY = Object.freeze({
+    loading: 'common.loading',
     available: 'settingsProviders.status.available',
     partial: 'settingsProviders.status.partial',
     notChecked: 'settingsProviders.status.notChecked',
@@ -32,6 +35,7 @@ export const PROVIDER_CONNECTION_STATUS_KEY = Object.freeze({
 
 /** Configuration columns draw this state in their shared icon-only slot; health stays domain-owned. */
 export const PROVIDER_CONNECTION_COLLECTION_STATUS = Object.freeze({
+    loading: null,
     available: null,
     partial: 'review',
     notChecked: null,
@@ -68,7 +72,9 @@ export function presentProviderConnection(connection: DaemonProviderConnectionVi
     // Connection-wide controls admit Account access or clear all grants. The
     // inspected machine's effective access and on-demand process are separate facts.
     const enabled = connection.grants.accountEnabled || connection.grants.enabledMachineIds.length > 0;
-    const status: ProviderConnectionPresentationStatus = connection.sourceStatus === 'unavailable'
+    const status: ProviderConnectionPresentationStatus = connection.sourceStatus === 'loading'
+        ? 'loading'
+        : connection.sourceStatus === 'unavailable'
         ? 'sourceUnavailable'
         : connection.authorizationError?.code === 'provider_endpoint_unreachable'
             ? 'unreachable'
@@ -88,5 +94,29 @@ export function presentProviderConnection(connection: DaemonProviderConnectionVi
         subtitle: identity.subtitle,
         enabled,
         status,
+    };
+}
+
+/** Detail-only check facts; collection rows need only the summary above. */
+export function presentProviderConnectionDetail(connection: DaemonProviderConnectionViewV1):
+    ReturnType<typeof presentProviderConnection> & Readonly<{
+        lastCheck: Readonly<{
+            checkedAt: number;
+            errorCode: DaemonProviderConnectionViewV1['runtime']['endpoints'][number]['errorCode'];
+            status: ProviderConnectionPresentationStatus;
+            failed: boolean;
+        }> | null;
+    }> {
+    const presentation = presentProviderConnection(connection);
+    return {
+        ...presentation,
+        lastCheck: connection.runtime.health !== 'not_checked' && connection.runtime.checkedAt !== null
+            ? {
+                checkedAt: connection.runtime.checkedAt,
+                errorCode: connection.runtime.endpoints.find(endpoint => endpoint.errorCode)?.errorCode ?? null,
+                status: connection.runtime.health === 'available' ? 'available' : presentation.status,
+                failed: connection.runtime.health !== 'available',
+            }
+            : null,
     };
 }

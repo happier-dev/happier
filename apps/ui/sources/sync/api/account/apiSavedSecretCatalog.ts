@@ -3,7 +3,7 @@ import {
     type SavedSecretResourceMaterialV1,
     type SavedSecretCatalogEntryV1,
 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -97,6 +97,7 @@ export async function captureSavedSecretReferenceRevisionsInContext(
     input: Readonly<{
         references: readonly string[];
         savedSecretRevisions?: readonly SavedSecretReferenceRevisionProof[];
+        selectedSecrets?: readonly SharedSavedSecretReferenceSelectionV1[];
         pendingResourceIds?: readonly string[];
         signal?: AbortSignal;
     }>,
@@ -113,6 +114,13 @@ export async function captureSavedSecretReferenceRevisionsInContext(
         return parsed.resourceId;
     });
     const pendingIds = new Set(input.pendingResourceIds ?? []);
+    const selections = new Map<string, number>();
+    for (const selection of input.selectedSecrets ?? []) {
+        if (!references.includes(selection.ref) || selections.has(selection.ref) && selections.get(selection.ref) !== selection.resourceRevision) {
+            throw new Error('saved-secret-unavailable');
+        }
+        selections.set(selection.ref, selection.resourceRevision);
+    }
     if (input.savedSecretRevisions !== undefined) {
         const proofs = new Map(input.savedSecretRevisions.map(proof => [proof.resourceId, proof]));
         if (proofs.size !== input.savedSecretRevisions.length
@@ -122,14 +130,19 @@ export async function captureSavedSecretReferenceRevisionsInContext(
             throw new Error('saved-secret-unavailable');
         }
         context.assertCurrent();
-        return { referencedSavedSecretIds: references, savedSecretRevisions: resourceIds.map(id => proofs.get(id)!) };
+        return { referencedSavedSecretIds: references, savedSecretRevisions: resourceIds.map((id, index) => ({
+            resourceId: id, expectedRevision: selections.get(references[index]!) ?? proofs.get(id)!.expectedRevision,
+        })) };
     }
     const existingRefs = references.filter((_, index) => !pendingIds.has(resourceIds[index]!));
-    const read = existingRefs.length ? await readSavedSecretReferencesInContext(context, existingRefs, input.signal)
-        : { ok: true as const, values: new Map<string, Readonly<{ value: string; revision: number }>>() };
-    if (!read.ok) throw new Error(read.reason === 'changed' ? 'account-changed' : 'saved-secret-unavailable');
+    const read = existingRefs.length ? await readSavedSecretCatalogMetadataInContext(context, input.signal)
+        : { ok: true as const, resources: [] };
+    if (!read.ok) throw new Error('saved-secret-unavailable');
+    const entries = new Map(read.resources.flatMap(entry => 'ref' in entry ? [[entry.ref, entry] as const] : []));
+    if (existingRefs.some(ref => { const entry = entries.get(ref); return !entry || !entry.capabilities.use
+        || entry.materialStatus !== 'ready' || entry.revision === null; })) throw new Error('saved-secret-unavailable');
     const savedSecretRevisions = resourceIds.map((resourceId, index) => ({ resourceId,
-        expectedRevision: pendingIds.has(resourceId) ? 1 : read.values.get(references[index]!)!.revision }));
+        expectedRevision: pendingIds.has(resourceId) ? 1 : selections.get(references[index]!) ?? entries.get(references[index]!)!.revision! }));
     context.assertCurrent();
     return { referencedSavedSecretIds: references, savedSecretRevisions };
 }
@@ -145,6 +158,17 @@ export async function readSavedSecretReferenceInContext(
     if (!read.ok) return read;
     const material = read.values.get(reference)!;
     return { ok: true, value: material.value, revision: material.revision };
+}
+
+/** A reviewed copy needs source metadata as well as material, under the same exact-use admission. */
+export async function readSavedSecretMaterialInContext(
+    context: SavedSecretReferenceAccountContext,
+    reference: string,
+    options: Readonly<{ expectedRevision: number; signal?: AbortSignal }>,
+): Promise<Readonly<{ ok: true }> & SavedSecretReferenceMaterial | Extract<SavedSecretReferenceReadResult, { ok: false }>> {
+    const read = await readSavedSecretReferencesInContext(context, [reference], options.signal,
+        { expectedRevision: options.expectedRevision });
+    return read.ok ? { ok: true, ...read.values.get(reference)! } : read;
 }
 
 export async function readSavedSecretReferencesInContext(

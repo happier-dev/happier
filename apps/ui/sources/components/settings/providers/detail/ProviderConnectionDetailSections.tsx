@@ -8,12 +8,15 @@ import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureIt
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { EndpointHeadersEditor } from '@happier-dev/plugin-ui';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { endpointHeadersCopy } from '../endpointHeadersCopy';
 import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { presentProviderCompatibilityReasons } from '@/providers/connection/compatibilityReasonPresentation';
 import { endpointProtocolLabel } from '@/providers/connection/endpointProtocolLabel';
 import type { ProviderModelPickerVisibility } from '@/providers/hooks/useProviderModelPickerVisibility';
-import { t } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 
 type CompatibilitySummary = DaemonProviderConnectionViewV1['compatibility'][number];
 type Endpoint = DaemonProviderConnectionViewV1['endpoints'][number];
@@ -52,11 +55,24 @@ const COMPATIBILITY_ORDER: Readonly<Record<CompatibilitySummary['status'], numbe
     verified: 0, experimental: 1, incompatible: 2,
 };
 
-/** What a row adds to its pill: its reasons, else the consequence of an experimental pairing. */
-function compatibilityDetail(summary: CompatibilitySummary): string | undefined {
-    const reasons = presentProviderCompatibilityReasons(summary.reasons).map((reason) => t(reason.descriptionKey));
+/**
+ * What a row adds to its pill: the reasons that set it apart, else the consequence of an experimental pairing.
+ * A reason the section already states (`said`) is not repeated; a row left with nothing new says nothing.
+ */
+function compatibilityDetail(summary: CompatibilitySummary, said: ReadonlySet<TranslationKeyNoParams> = new Set()): string | undefined {
+    const all = presentProviderCompatibilityReasons(summary.reasons);
+    const reasons = all.filter((reason) => !said.has(reason.descriptionKey)).map((reason) => t(reason.descriptionKey));
     if (reasons.length > 0) return reasons.join(' · ');
+    if (all.length > 0) return undefined;
     return summary.status === 'experimental' ? t('settingsProviders.compatibility.experimentalDescription') : undefined;
+}
+
+/** The reasons every usable agent shares: said once in the section description instead of under each agent. */
+function sharedCompatibilityReasons(summaries: readonly CompatibilitySummary[]): readonly TranslationKeyNoParams[] {
+    if (summaries.length < 2) return [];
+    const [first, ...rest] = summaries.map((summary) =>
+        new Set(presentProviderCompatibilityReasons(summary.reasons).map((reason) => reason.descriptionKey)));
+    return [...(first ?? [])].filter((key) => rest.every((keys) => keys.has(key)));
 }
 
 /**
@@ -65,20 +81,28 @@ function compatibilityDetail(summary: CompatibilitySummary): string | undefined 
  */
 export function ProviderCompatibilitySection(props: Readonly<{
     summaries: readonly CompatibilitySummary[];
+    onReview?: (agentTargetKey: string) => void;
 }>): React.ReactElement | null {
     if (props.summaries.length === 0) return null;
     const usable = props.summaries
         .filter((summary) => summary.status !== 'incompatible')
         .sort((a, b) => COMPATIBILITY_ORDER[a.status] - COMPATIBILITY_ORDER[b.status]);
     const incompatible = props.summaries.filter((summary) => summary.status === 'incompatible');
+    const shared = sharedCompatibilityReasons(usable);
+    const said = new Set(shared);
     return (
-        <ItemGroup title={t('settingsProviders.compatibility.title')} description={t('settingsProviders.compatibility.footer')}>
+        <ItemGroup
+            title={t('settingsProviders.compatibility.title')}
+            description={[t('settingsProviders.compatibility.footer'), ...shared.map((key) => t(key))].join(' ')}
+        >
             {usable.map((summary) => (
                 <Item
                     key={summary.agentTargetKey}
-                    mode="info"
+                    mode={summary.status === 'experimental' && props.onReview ? undefined : 'info'}
                     title={summary.agentName}
-                    subtitle={compatibilityDetail(summary)}
+                    subtitle={compatibilityDetail(summary, said)}
+                    onPress={summary.status === 'experimental' && props.onReview
+                        ? () => props.onReview?.(summary.agentTargetKey) : undefined}
                     rightElement={<StatusPill
                         chrome="plain"
                         variant={summary.status === 'verified' ? 'success' : 'warning'}
@@ -93,8 +117,8 @@ export function ProviderCompatibilitySection(props: Readonly<{
                 <CountedDisclosureItem
                     testID="provider-connection-compatibility-incompatible"
                     title={t('settingsProviders.compatibility.incompatible')}
+                    // One quiet line, its count alone, so the agents that can use it lead; names open on demand.
                     count={incompatible.length}
-                    subtitle={incompatible.map((summary) => summary.agentName).join(', ')}
                 >
                     {incompatible.map((summary) => (
                         <Item
@@ -126,23 +150,45 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
         scope: 'account' | 'machine';
         reset?: boolean;
     }>) => void;
+    /** A header-only change at one layer; it never carries (or pins) an address. */
+    onSetHeaders: (input: Readonly<{
+        endpointTemplateId: string;
+        scope: 'account' | 'machine';
+        publicHeaders: Record<string, string> | null;
+    }>) => void;
+    /** Resolves the contributing plugin's localized header hints. */
+    localizeText: (value: unknown) => string;
 }>): React.ReactElement | null {
     if (props.endpoints.length === 0) return null;
+    // Each endpoint is its own sheet: an agent uses only the endpoint it speaks, so an unset one
+    // blocks only those agents and never reads as the connection's state. The header editor is the public
+    // plugin-ui one, so the sheets sit in core's plugin presentation scope.
     return (
-        <ItemGroup title={t('settingsProvidersCollection.endpointsTitle')} description={t('settingsProvidersCollection.overridesDescription')}>
-            {props.endpoints.flatMap((endpoint) => {
+        <CorePluginUiPresentationScope>
+            {props.endpoints.map((endpoint, index) => {
                 const label = endpointProtocolLabel(endpoint.protocol);
                 const accountBaseUrl = endpoint.accountOverrideBaseUrl
                     ?? endpoint.defaultBaseUrl
                     ?? (endpoint.effectiveSource !== 'machineOverride' ? endpoint.baseUrl : null);
                 const machineBaseUrl = endpoint.machineOverrideBaseUrl;
+                const hints = endpoint.publicHeaderHints
+                    ? Object.fromEntries(Object.entries(endpoint.publicHeaderHints).map(([name, hint]) => [name, props.localizeText(hint)]))
+                    : undefined;
+                const accountHeaders = endpoint.accountOverridePublicHeaders;
+                // The every-machine field speaks for the Account and provider layers only: an address set for the
+                // chosen machine alone is that machine's, and no other machine inherits it.
+                const unset = (accountBaseUrl ?? '') === '';
                 const rows = [
                     <FieldValueItem
                         key={`${endpoint.endpointTemplateId}:account`}
                         fieldTestID={`provider-connection-endpoint.${endpoint.endpointTemplateId}.account`}
-                        title={label}
+                        title={t('settingsProviders.detail.endpointDefault')}
                         accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointDefault')}`}
+                        subtitle={unset && endpoint.requiresEndpointOverride ? t('settingsProvidersCollection.endpointNotSet') : undefined}
+                        subtitleLines={0}
                         value={accountBaseUrl ?? ''}
+                        placeholder={t('settingsProviders.authoring.baseUrlPlaceholder')}
+                        monospace
                         onCommit={(baseUrl) => props.onSetOverride({
                             endpointTemplateId: endpoint.endpointTemplateId,
                             currentUrl: baseUrl,
@@ -155,7 +201,11 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
                         key={`${endpoint.endpointTemplateId}:reset-account`}
                         title={t('settingsProviders.detail.resetEndpoint')}
                         accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointDefault')}, ${t('settingsProviders.detail.resetEndpoint')}`}
-                        subtitle={t('settingsProviders.detail.resetDefaultEndpoint')}
+                        subtitle={t(endpoint.defaultBaseUrl === null
+                            ? 'settingsProviders.detail.clearEndpoint'
+                            : 'settingsProviders.detail.resetDefaultEndpoint')}
+                        // An operation, not a destination: no chevron (as the headers' own reset row).
+                        showChevron={false}
                         onPress={() => props.onSetOverride({
                             endpointTemplateId: endpoint.endpointTemplateId,
                             currentUrl: accountBaseUrl ?? '',
@@ -164,36 +214,77 @@ export function ProviderEndpointOverridesSection(props: Readonly<{
                         })}
                     />);
                 }
-                if (!props.machineSelected) return rows;
-                rows.push(<FieldValueItem
-                    key={`${endpoint.endpointTemplateId}:machine`}
-                    fieldTestID={`provider-connection-endpoint.${endpoint.endpointTemplateId}.machine`}
-                    title={t('settingsProviders.detail.endpointMachine')}
-                    accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointMachine')}`}
-                    subtitle={machineBaseUrl === null ? t('settingsProviders.detail.endpointMachineDescription') : undefined}
-                    value={machineBaseUrl ?? accountBaseUrl ?? endpoint.baseUrl ?? ''}
-                    onCommit={(baseUrl) => props.onSetOverride({
-                        endpointTemplateId: endpoint.endpointTemplateId,
-                        currentUrl: baseUrl,
-                        scope: 'machine',
+                rows.push(<EndpointHeadersEditor
+                    key={`${endpoint.endpointTemplateId}:account-headers`}
+                    testID={`provider-connection-endpoint.${endpoint.endpointTemplateId}.account`}
+                    layer="account"
+                    values={accountHeaders}
+                    inherited={endpoint.defaultPublicHeaders}
+                    copy={endpointHeadersCopy('account')}
+                    required={endpoint.requiredPublicHeaders}
+                    hints={hints}
+                    onChange={(publicHeaders) => props.onSetHeaders({
+                        endpointTemplateId: endpoint.endpointTemplateId, scope: 'account', publicHeaders,
                     })}
                 />);
-                if (machineBaseUrl !== null || endpoint.effectiveSource === 'machineOverride') {
-                    rows.push(<Item
-                        key={`${endpoint.endpointTemplateId}:reset-machine`}
-                        title={t('settingsProviders.detail.resetEndpoint')}
-                        accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointMachine')}, ${t('settingsProviders.detail.resetEndpoint')}`}
-                        subtitle={t('settingsProviders.detail.resetMachineEndpoint')}
-                        onPress={() => props.onSetOverride({
+                if (props.machineSelected) {
+                    rows.push(<FieldValueItem
+                        key={`${endpoint.endpointTemplateId}:machine`}
+                        fieldTestID={`provider-connection-endpoint.${endpoint.endpointTemplateId}.machine`}
+                        title={t('settingsProviders.detail.endpointMachine')}
+                        accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointMachine')}`}
+                        subtitle={machineBaseUrl === null ? t('settingsProviders.detail.endpointMachineDescription') : undefined}
+                        value={machineBaseUrl ?? accountBaseUrl ?? endpoint.baseUrl ?? ''}
+                        placeholder={t('settingsProviders.authoring.baseUrlPlaceholder')}
+                        monospace
+                        onCommit={(baseUrl) => props.onSetOverride({
                             endpointTemplateId: endpoint.endpointTemplateId,
-                            currentUrl: machineBaseUrl ?? endpoint.baseUrl ?? '',
+                            currentUrl: baseUrl,
                             scope: 'machine',
-                            reset: true,
+                        })}
+                    />);
+                    if (machineBaseUrl !== null || endpoint.effectiveSource === 'machineOverride') {
+                        rows.push(<Item
+                            key={`${endpoint.endpointTemplateId}:reset-machine`}
+                            title={t('settingsProviders.detail.resetEndpoint')}
+                            accessibilityLabel={`${label}, ${t('settingsProviders.detail.endpointMachine')}, ${t('settingsProviders.detail.resetEndpoint')}`}
+                            subtitle={t(accountBaseUrl === null
+                                ? 'settingsProviders.detail.clearEndpoint'
+                                : 'settingsProviders.detail.resetMachineEndpoint')}
+                            showChevron={false}
+                            onPress={() => props.onSetOverride({
+                                endpointTemplateId: endpoint.endpointTemplateId,
+                                currentUrl: machineBaseUrl ?? endpoint.baseUrl ?? '',
+                                scope: 'machine',
+                                reset: true,
+                            })}
+                        />);
+                    }
+                    rows.push(<EndpointHeadersEditor
+                        key={`${endpoint.endpointTemplateId}:machine-headers`}
+                        testID={`provider-connection-endpoint.${endpoint.endpointTemplateId}.machine`}
+                        layer="machine"
+                        values={endpoint.machineOverridePublicHeaders}
+                        inherited={{ ...endpoint.defaultPublicHeaders, ...accountHeaders }}
+                        copy={endpointHeadersCopy('machine')}
+                        required={endpoint.requiredPublicHeaders}
+                        hints={hints}
+                        onChange={(publicHeaders) => props.onSetHeaders({
+                            endpointTemplateId: endpoint.endpointTemplateId, scope: 'machine', publicHeaders,
                         })}
                     />);
                 }
-                return rows;
+                return (
+                    <ItemGroup
+                        key={endpoint.endpointTemplateId}
+                        testID={`provider-connection-endpoint.${endpoint.endpointTemplateId}`}
+                        title={label}
+                        description={index === 0 ? t('settingsProvidersCollection.overridesDescription') : undefined}
+                    >
+                        {rows}
+                    </ItemGroup>
+                );
             })}
-        </ItemGroup>
+        </CorePluginUiPresentationScope>
     );
 }

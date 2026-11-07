@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema, serializeModelVisibilityRefV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1} from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { ProviderConnectionV1Schema} from '@happier-dev/protocol/providers/connections/v1';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { projectAccountProviderModelsV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 
 import {
     buildSessionModelPickerSections,
@@ -61,7 +66,23 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
-    it('admits Account rows only with known contextual requirements and never activates recovery while unknown', () => {
+    it('allows an unloaded preference without execution readiness while preserving compatibility and visibility', () => {
+        const group = providerGroup({ connectionId: 'pc_preference', modelId: 'model',
+            modelLoadPreflightPolicy: 'required', loadState: 'unloaded' });
+        const input = { declarationContext: { kind: 'account' as const },
+            agentTargetKey: 'agent:happier.agent.codex/codex', nativeModels: [], providerGroups: [group],
+            hiddenNativeModelKeys: new Set<string>(), providerProjectionAuthoritative: true };
+        const options = (purpose: 'preference' | 'execution', providerGroups = [group]) =>
+            buildSessionModelPickerSections({ ...input, purpose, providerGroups }).flatMap(section => section.options);
+        expect(options('preference')[0]?.disabled).toBe(false);
+        expect(options('execution')[0]?.disabled).toBe(true);
+        expect(options('preference', [{ ...group, rows: [{ ...group.rows[0]!, visibility: 'hidden_current_selection' }] }])[0]?.disabled).toBe(true);
+        const incompatible = { ...group.rows[0]!, compatibility: { ...group.rows[0]!.compatibility,
+            result: { status: 'incompatible' as const, reasons: ['no_compatible_protocol' as const] } } };
+        expect(buildSessionModelPickerSections({ ...input, purpose: 'preference', providerGroups: [{ ...group, rows: [incompatible] }] })
+            .flatMap(section => section.options)[0]?.disabled).toBe(true);
+    });
+    it('keeps producer-verified rows selectable while contextual declarations are absent or change', () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const group = providerGroup({ connectionId: 'pc_independent', modelId: 'model' });
         const selected = group.rows[0]!.ref;
@@ -77,20 +98,33 @@ describe('buildSessionModelPickerSections', () => {
                 declarationContext, agentTargetKey, nativeModels: [], providerGroups: [group],
                 hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true, selected,
             }).flatMap(section => section.options);
-            if (declarationContext.kind === 'account' || declarationContext.projection) {
-                expect(options.some(option => !option.disabled && option.value
-                    && 'providerConnectionId' in option.value && option.value.providerConnectionId === selected.providerConnectionId)).toBe(true);
-            } else {
-                expect(options.every(option => option.disabled && !option.onActivate)).toBe(true);
-            }
+            expect(options.some(option => !option.disabled && option.value
+                && 'providerConnectionId' in option.value && option.value.providerConnectionId === selected.providerConnectionId)).toBe(true);
         }
     });
     it.each(['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'])(
         'excludes unsupported tool models from Team and Provider rows for %s while keeping unknown chat models', (agentTargetKey) => {
-        // Exercise the canonical publisher's actual declaration through the
-        // strict Team schema and the real picker, not copied capability facts.
-        const models = readAccountProviderDeclarations({ kind: 'account' }).find(entry => entry.definition.id === 'cliproxyapi')
-            ?.definition.managedRuntime?.connectedAccounts?.find(family => family.purpose === 'openai-upstream')?.staticModels ?? [];
+        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry => entry.definition.id === 'cliproxyapi')!;
+        const models = declaration.definition.managedRuntime?.connectedAccounts?.find(family => family.purpose === 'openai-upstream')?.staticModels ?? [];
+        const group = providerGroup({ connectionId: 'pc_work', modelId: 'gpt-5.5' });
+        const projected = projectAccountProviderModelsV1({
+            catalog: { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+                modelPickerVisibilityByConnectionId: { [group.connectionId]: true }, connections: [ProviderConnectionV1Schema.parse({
+                v: 1, id: group.connectionId, source: { kind: 'contribution', contributionKey: declaration.contributionKey },
+                role: 'named', displayName: 'Work', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1,
+            })] },
+            definitions: [{ ...declaration, definition: { ...declaration.definition,
+                endpointTemplates: declaration.definition.endpointTemplates.map(endpoint => ({ ...endpoint,
+                    baseUrl: 'http://127.0.0.1:8317/v1', localUrlCandidates: undefined })),
+                catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [...models] } } }],
+            agent: readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' }), request: { agentTargetKey },
+        });
+        expect(projected.status).toBe('success');
+        if (projected.status !== 'success') throw new Error('Expected Account projection');
+        const projectedIds = projected.groups.flatMap(group => group.rows.map(row => row.ref.modelId));
+        expect(projectedIds).toContain('gpt-5.5');
+        expect(projectedIds).not.toContain('gpt-image-1.5');
+        expect(projectedIds).not.toContain('gpt-image-2');
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
             id: 'resource-1', teamId: 'team-1', displayName: 'Connected Pool', resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null,
@@ -103,20 +137,26 @@ describe('buildSessionModelPickerSections', () => {
                 application: { agentTargetKey,
                     implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
                     endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
-                sourceRevision: 'source-v1', availability: 'available',
+                sourceRevision: 'source-v1',
+                compatibility: modelId.startsWith('gpt-image') ? {
+                    ...group.rows[0]!.compatibility,
+                    result: { status: 'incompatible', reasons: ['model_capability_toolRoundTrips_unsupported'] },
+                    confirmed: false,
+                } : group.rows[0]!.compatibility,
+                availability: modelId.startsWith('gpt-image') ? 'policy_denied' : 'available',
+                ...(modelId.startsWith('gpt-image') ? { deliveryUnavailableReason: 'provider_incompatible_with_agent' } : {}),
             })),
             sourcePresentation: { kind: 'provider', provider: {
                 identity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, definitionRevision: 1,
             } },
         });
-        const group = providerGroup({ connectionId: 'pc_work', modelId: 'gpt-5.5' });
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
             teamCredentialResources: [resource],
-            providerGroups: [{ ...group, rows: resource.providerModels.map(row => ({
-                ...group.rows[0]!, ref: { ...group.rows[0]!.ref, agentTargetKey, modelId: row.descriptor.id },
-                descriptor: row.descriptor,
-            })) }],
+            providerGroups: [{ ...group, rows: projected.groups.flatMap(group => group.rows)
+                .filter(row => row.ref.modelId === 'gpt-5.5').map(row => ({ ...row,
+                    compatibility: group.rows[0]!.compatibility, endpointHealth: 'available' as const,
+                })) }],
         });
         expect(sections.map(section => section.options.map(option => option.value?.modelId)))
             .toEqual([['gpt-5.5'], ['gpt-5.5']]);
@@ -137,6 +177,45 @@ describe('buildSessionModelPickerSections', () => {
         });
         expect(retained[0]?.options[0]).toMatchObject({ disabled: true });
         expect(retained[0]?.options[0]?.onActivate).toBeUndefined();
+        // The producer's hard refusal remains authoritative even if display facts
+        // later contradict it; it must never become an enabled repair action.
+        const contradicted = { ...resource, providerModels: resource.providerModels.map(row => ({ ...row,
+            descriptor: { ...row.descriptor, capabilities: { toolRoundTrips: 'supported' as const } },
+        })) };
+        const refused = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
+            providerGroups: [], teamCredentialResources: [contradicted], selectedTeamCredentialModel: resource.providerModels[0]!.selection,
+            onRecoverTeamCredentialResource: vi.fn(),
+        });
+        expect(refused[0]?.options[0]).toMatchObject({ disabled: true });
+        expect(refused[0]?.options[0]?.onActivate).toBeUndefined();
+        const withoutCompatibility = { ...contradicted, providerModels: contradicted.providerModels.map(row => ({
+            ...row, compatibility: undefined,
+        })) };
+        const unavailable = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
+            providerGroups: [], teamCredentialResources: [withoutCompatibility], selectedTeamCredentialModel: resource.providerModels[0]!.selection,
+            onRecoverTeamCredentialResource: vi.fn(),
+        });
+        expect(unavailable[0]?.options[0]).toMatchObject({ disabled: true });
+        expect(unavailable[0]?.options[0]?.onActivate).toBeUndefined();
+        const verified = { ...resource, providerModels: [ { ...selectedTeam,
+            descriptor: { ...selectedTeam.descriptor, capabilities: { toolRoundTrips: 'unsupported' as const } },
+        } ] };
+        // Producer compatibility cannot supply absent exact Agent requirements
+        // or override the Agent's required model capabilities.
+        for (const declarationContext of [
+            { kind: 'machine', projection: null }, { kind: 'account' },
+        ] satisfies ProviderDeclarationContext[]) {
+            const input = { declarationContext, agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set<string>(),
+                providerProjectionAuthoritative: true, providerGroups: [], teamCredentialResources: [verified] };
+            expect(buildSessionModelPickerSections(input).flatMap(section => section.options)).toEqual([]);
+            const retained = buildSessionModelPickerSections({ ...input,
+                selectedTeamCredentialModel: selectedTeam.selection, onRecoverTeamCredentialResource: vi.fn(),
+            })[0]?.options[0];
+            expect(retained).toMatchObject({ disabled: true });
+            expect(retained?.onActivate).toBeUndefined();
+        }
     });
     it('keeps a selected Provider model named before its demanded projection arrives, then uses the projected row', () => {
         const group = providerGroup({ connectionId: 'pc_work', modelId: 'same', connectionName: 'Work' });
@@ -384,13 +463,66 @@ describe('buildSessionModelPickerSections', () => {
         expect(JSON.stringify(sections)).not.toContain('custodianAccountId');
         expect(JSON.stringify(sections)).not.toContain('brokerMachineId');
 
+        const limited = { ...resource,
+            readiness: { kind: 'limit_reached' as const, metric: 'total_tokens' as const, resetsAtUtc: '2026-09-15T00:00:00.000Z' },
+            recoveryAction: 'retry' as const,
+        };
+        const build = (entry: typeof resource, current = true) => buildSessionModelPickerSections({
+            declarationContext: { kind: 'account' }, agentTargetKey: 'agent:happier.agent.codex/codex',
+            nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
+            providerProjectionAuthoritative: true, teamCredentialResources: [entry],
+            teamCredentialResourceStatusByKey: new Map((current ? ['team-1:resource-1'] : []).map(key => [key, { kind: 'current' as const }])),
+            onRecoverTeamCredentialResource: vi.fn(),
+        })[0]!.options[0]!;
+        const direct = build(limited);
+        expect(direct.disabled).toBe(false);
+        expect(direct.onActivate).toBeUndefined();
+        expect(direct.description).not.toContain(t('teams.credentials.limits.reached'));
+        const brokered = build({ ...limited, providerModels: limited.providerModels.map(row => ({
+            ...row, selection: { ...row.selection, deliveryMode: 'brokered' as const },
+        })) });
+        expect(brokered.onActivate).toBeTypeOf('function');
+        expect(brokered.description).toContain(t('teams.credentials.limits.reached'));
+        const reconnect = build({ ...limited, readiness: {
+            kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required',
+        }, recoveryAction: 'source_owner_action' });
+        expect(reconnect.onActivate).toBeTypeOf('function');
+        expect(build(limited, false).onActivate).toBeTypeOf('function');
+        expect(build({ ...limited, providerModels: limited.providerModels.map(row => ({
+            ...row, availability: 'source_owner_required' as const, direct: null,
+        })) }).onActivate).toBeTypeOf('function');
+
+        const unverified = build({ ...resource, providerModels: resource.providerModels.map(row => ({
+            ...row, confidence: 'account_unverified' as const,
+            sources: { manual: false, static: true, probe: false },
+            compatibility: {
+                result: { status: 'experimental' as const, selectedProtocol: 'anthropic-messages' as const,
+                    reasons: ['compatibility_evidence_missing' as const],
+                    confirmationScope: { kind: 'model' as const, modelId: row.selection.modelId } },
+                compatibilityFingerprint: 'compatibility:v1:experimental', confirmed: false,
+            },
+        })) });
+        expect(unverified.description).toContain(t('settingsProviders.status.notChecked'));
+        expect(unverified.accessibilityLabel).toContain(t('settingsProviders.status.notChecked'));
+        expect(unverified.titleAccessory).toMatchObject({ props: {
+            label: t('settingsProviders.models.experimental'), variant: 'neutral', hideDot: true,
+        } });
+        expect(unverified.accessibilityLabel).toContain(t('settingsProviders.models.experimental'));
+        expect(unverified.disabled).toBe(false);
+        expect(unverified.onActivate).toBeUndefined();
+
+        const unsupported = build({ ...resource, providerModels: resource.providerModels.map(row => ({
+            ...row, availability: 'policy_denied' as const, deliveryUnavailableReason: 'provider_machine_unavailable' as const,
+        })) });
+        expect(unsupported.description).toContain(t(presentProviderError('provider_machine_unavailable').descriptionKey));
+        expect(unsupported.description).not.toContain(t('teams.credentials.forbidden'));
         const recover = vi.fn();
         const staleSections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
             agentTargetKey: 'agent:happier.agent.codex/codex',
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
             teamCredentialResources: [resource],
-            currentTeamCredentialResourceKeys: new Set(),
+            teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'homeUnreachable' }]]),
             onRecoverTeamCredentialResource: recover,
         });
         expect(staleSections[0]?.options[0]).toMatchObject({
@@ -401,7 +533,29 @@ describe('buildSessionModelPickerSections', () => {
         expect(recover).toHaveBeenCalledWith(resource);
     });
 
-    it('keeps an unavailable selected Team model named with its resource, Team, Home, route, and recovery', () => {
+    it('keeps an unavailable native selection and presents its Machine transport refusal without suggesting missing source keys', () => {
+        const selection = { kind: 'team_credential_provider_model' as const, teamId: 'team-1', resourceId: 'resource-1',
+            expectedResourceRevision: 7, deliveryMode: 'vendor-native' as const,
+            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'retained-model' };
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: 'resource-1', teamId: 'team-1', displayName: 'Gateway', resourceRevision: 7,
+            readiness: { kind: 'source_unavailable' }, deliveryUnavailableReason: 'provider_credential_transport_unavailable',
+            recoveryAction: 'choose_another_resource', mayBroker: false, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
+            sourcePresentation: { kind: 'provider', provider: { identity: { pluginId: 'provider.gateway', localId: 'gateway' }, definitionRevision: 1 } },
+        });
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: selection.agentTargetKey, nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
+            providerProjectionAuthoritative: true, selectedTeamCredentialModel: selection, teamCredentialResources: [resource],
+        });
+        expect(sections[0]?.options[0]?.value).toEqual(selection);
+        expect(sections[0]?.options[0]?.disabled).toBe(true);
+        expect(sections[0]?.options[0]?.description).toContain(t('teams.credentials.errors.nativeDeliveryUnavailable'));
+        expect(sections[0]?.options[0]?.description).not.toContain(t('teams.credentials.errors.sourceMissing'));
+    });
+
+    it.each([undefined, 'connected_service_credential_reconnect_required'] as const)(
+        'keeps an unavailable selected Team model named with its resource, Team, Home, route, and recovery (%s)', reason => {
         const selection = {
             kind: 'team_credential_provider_model' as const,
             resourceId: 'resource-1',
@@ -414,7 +568,7 @@ describe('buildSessionModelPickerSections', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
             id: 'resource-1', teamId: 'team-1', displayName: 'Acme Claude access',
             resourceRevision: 8,
-            readiness: { kind: 'source_unavailable' }, recoveryAction: 'source_owner_action',
+            readiness: { kind: 'source_unavailable', ...(reason ? { reason } : {}) }, recoveryAction: 'source_owner_action',
             mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'stale', sessionUsePolicy: 'personal_allowed',
             providerModels: [],
@@ -433,7 +587,7 @@ describe('buildSessionModelPickerSections', () => {
             teamCredentialResources: [resource],
             teamNameById: { 'team-1': 'Acme' },
             homeNameByTeamId: { 'team-1': 'Work Home' },
-            currentTeamCredentialResourceKeys: new Set(),
+            teamCredentialResourceStatusByKey: new Map(),
             onRecoverTeamCredentialResource: recover,
         });
 
@@ -448,6 +602,10 @@ describe('buildSessionModelPickerSections', () => {
         expect(sections[0]?.options[0]?.description).toContain(t('teams.credentials.delivery.direct'));
         expect(sections[0]?.options[0]?.description).toContain(t('teams.credentials.recovery.ownerHandoff'));
         expect(sections[0]?.options[0]?.description).not.toContain('source_unavailable');
+        if (reason) {
+            expect(sections[0]?.options[0]?.description).toContain(t('connectedServices.diagnostics.title.connected_service_credential_reconnect_required'));
+            expect(sections[0]?.options[0]?.description).not.toContain(t('teams.credentials.errors.sourceMissing'));
+        }
         sections[0]?.options[0]?.onActivate?.();
         expect(recover).toHaveBeenCalledWith(resource);
     });
@@ -484,7 +642,7 @@ describe('buildSessionModelPickerSections', () => {
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
             teamCredentialResources: [resource],
-            currentTeamCredentialResourceKeys: new Set(['team-1:resource-1']),
+            teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'current' as const }]]),
         });
 
         expect(sections[0]?.options[0]).toMatchObject({ disabled: true });
@@ -525,7 +683,7 @@ describe('buildSessionModelPickerSections', () => {
             nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
             providerProjectionAuthoritative: true,
             teamCredentialResources: [resource],
-            currentTeamCredentialResourceKeys: new Set(['team-1:resource-1']),
+            teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'current' as const }]]),
         });
 
         const description = sections[0]?.options[0]?.description ?? '';

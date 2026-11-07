@@ -1,15 +1,20 @@
 import * as React from 'react';
+import type { GestureResponderEvent } from 'react-native';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 import { ConnectedServicesDefaultAuthRow } from './ConnectedServicesDefaultAuthRow';
 import type {
-    AccountProfile,
-    ConnectedServicesDefaultAuthByAgentIdV1,
-    PluginProjectedAgentConnectedAccountPurposeV2,
+    AccountProfile} from '@happier-dev/protocol/account/profile';
+import type {
+    ConnectedServicesDefaultAuthByAgentIdV1} from '@happier-dev/protocol/account/settings/connected-services';
+import type {
+    PluginProjectedAgentConnectedAccountPurposeV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type {
     QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { connectedAcknowledgementSubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
@@ -151,7 +156,7 @@ type SelectionListProps = Readonly<{
             options: ReadonlyArray<{
                 id: string;
                 disabled?: boolean;
-                onSelect: () => void;
+                onSelect: (event?: GestureResponderEvent) => void;
             }>;
         }>;
     };
@@ -248,7 +253,7 @@ function findSelectionListProps(tree: renderer.ReactTestRenderer): SelectionList
 function findSelectionOption(
     tree: renderer.ReactTestRenderer,
     optionId: string,
-): { onSelect: () => void; disabled?: boolean } {
+): { onSelect: (event?: GestureResponderEvent) => void; disabled?: boolean } {
     const listProps = findSelectionListProps(tree);
     for (const section of listProps.rootStep.sections) {
         const option = section.options.find((candidate) => candidate.id === optionId);
@@ -268,6 +273,8 @@ function getShownModalConfig(index: number): CapturedDefaultAuthModalConfig {
 function findDefaultAuthTrigger(tree: renderer.ReactTestRenderer, agentId: string): Record<string, any> {
     const node = tree.root.findAll((candidate) =>
         candidate.props?.testID === `settings-connected-services-default-auth-${agentId}`
+        // The rendered row, not the binding-row element that names it.
+        && typeof candidate.props?.onPress === 'function'
     )[0];
     if (!node) {
         throw new Error(`Expected default auth trigger for ${agentId}`);
@@ -285,7 +292,8 @@ async function openPickerModal(
     });
     const config = getShownModalConfig(modalIndex);
     const Content = config.component;
-    return (await renderScreen(<Content {...config.props} />)).tree;
+    // The native Modal host injects onClose when it mounts this content.
+    return (await renderScreen(<Content {...config.props} onClose={() => {}} />)).tree;
 }
 
 function hasPoolSuggestion(
@@ -307,7 +315,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         narrowLayoutRef.value = false;
     });
 
-    async function renderClaudeNativeRow() {
+    async function renderClaudeNativeRow(onOpenSettings: (serviceId: string, anchor?: PopoverAnchor) => void = vi.fn(), accounts: readonly ConnectedAccountV4[] = [CLAUDE_V4_ACCOUNT]) {
         const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
         return (await renderScreen(
             <ConnectedServicesDefaultAuthRow labelsByKey={{}}
@@ -317,7 +325,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 agentTitle="Claude"
                 connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
-                connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
+                connectedAccountsV4={accounts}
                 connectedAccountGroupsV4={[]}
                 accountGroupsEnabled={false}
                 settings={{
@@ -325,11 +333,22 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
                 setDefaultAuthSettings={vi.fn(async () => {})}
-                onOpenConnectedServicesSettings={vi.fn()}
+                onOpenConnectedServicesSettings={onOpenSettings}
             />,
         )).tree;
     }
 
+    it('opens Connect from the selected sign-in picker control', async () => {
+        const openSettings = vi.fn();
+        const tree = await renderClaudeNativeRow(openSettings, []);
+        const picker = await openPickerModal(tree, 'claude');
+        const trigger = { getBoundingClientRect: () => ({ left: 10, top: 20, width: 80, height: 32 }) };
+        // The native host event is the boundary; the real picker/model owns the route to Connect.
+        const event = { currentTarget: trigger } as unknown as GestureResponderEvent;
+        const option = findSelectionOption(picker, `connected-service:${encodeURIComponent(CLAUDE_SERVICE_KEY)}:connect`);
+        await act(async () => option.onSelect(event));
+        expect(openSettings).toHaveBeenCalledWith(CLAUDE_SERVICE_KEY, { kind: 'view', ref: { current: trigger } });
+    });
     it('on a compact layout shows the selected value in the subtitle and hides the right detail', async () => {
         narrowLayoutRef.value = true;
         const tree = await renderClaudeNativeRow();
@@ -337,14 +356,14 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         // Compact: the (long) selected value moves to the subtitle; the right detail
         // is suppressed so it doesn't crowd the title.
         expect(trigger.detail).toBeUndefined();
-        expect(trigger.subtitle).toBe('connectedServices.authChip.nativeLabel');
+        expect(trigger.subtitle).toBe('connectedServices.authModal.nativeAuthTitle');
     });
 
     it('on a wide layout keeps the selected value in the right detail, not the subtitle', async () => {
         narrowLayoutRef.value = false;
         const tree = await renderClaudeNativeRow();
         const trigger = findDefaultAuthTrigger(tree, 'claude');
-        expect(trigger.detail).toBe('connectedServices.authChip.nativeLabel');
+        expect(trigger.detail).toBe('connectedServices.authModal.nativeAuthTitle');
         expect(trigger.subtitle).toBe('connectedServices.defaultAuth.rowDetail');
     });
 
@@ -661,7 +680,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                     accountGroupsEnabled={true}
                     teamCredentialResources={[TEAM_RESOURCE]}
                     teamNameById={{ 'team-a': 'Acme' }}
-                    currentTeamCredentialResourceKeys={new Set(['team-a:resource-a'])}
+                    teamCredentialResourceStatusByKey={new Map([['team-a:resource-a', { kind: 'current' as const }]])}
                     settings={{
                         connectedServicesDefaultProfileByServiceId: {},
                     }}
@@ -728,7 +747,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={true}
                 teamCredentialResources={[TEAM_RESOURCE]}
                 teamNameById={{ 'team-a': 'Acme' }}
-                currentTeamCredentialResourceKeys={new Set<string>()}
+                teamCredentialResourceStatusByKey={new Map()}
                 onRecoverTeamCredentialResource={onRecoverTeamCredentialResource}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
@@ -808,6 +827,22 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         await update(React.cloneElement(row, { dismissedPoolAdoptionSuggestionKeys: { [key]: true } }));
         expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(false);
         await update(React.cloneElement(row, { dismissedPoolAdoptionSuggestionKeys: {} }));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
+
+        await update(React.cloneElement(row, { connectedAccountGroupsV4: [] }));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(false);
+        await update(React.cloneElement(row, { connectedAccountGroupsV4: [{
+            ...CODEX_V4_GROUP, policy: { ...CODEX_V4_GROUP.policy, autoSwitch: false },
+        }] }));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(false);
+        await update(React.cloneElement(row, { connectedAccountGroupsV4: [{
+            ...CODEX_V4_GROUP, activeConnectedAccountId: 'other', members: [
+                { ...CODEX_V4_GROUP.members[0]!, enabled: false },
+                { ...CODEX_V4_GROUP.members[0]!, connectedAccountId: 'other' },
+            ],
+        }] }));
+        expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(false);
+        await update(row);
         expect(hasPoolSuggestion(tree, 'codex', CODEX_SERVICE_KEY)).toBe(true);
     });
 

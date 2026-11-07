@@ -1,3 +1,4 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import { agentDeclaresManagedCliInstall } from '@happier-dev/agents';
 import type {
     TeamCredentialProviderModelSelectionV1,
@@ -11,7 +12,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type {
     PluginProjectedAgentV2,
     PluginProjectionInstalledPackageV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     ExpectedMarketplaceListingV1Schema,
     projectExpectedMarketplaceListing,
@@ -76,7 +77,7 @@ export function createTemporaryComputerCreatorDependencies(facts: Readonly<{
     teamCredentialServerId: string | null;
     teamCredentialResources: readonly TeamCredentialResourceCatalogEntryV1[];
     /** Only exact, non-stale rows may admit a launch. */
-    currentTeamCredentialResourceKeys: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey: TeamCredentialResourceStatusByKey;
     selectedTeamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
     /**
      * The machine whose open Agent catalog this screen is showing — the
@@ -119,7 +120,7 @@ export function createTemporaryComputerCreatorDependencies(facts: Readonly<{
 
     const brokerableModelExistsFor = (agentTargetKey: string): boolean => (
         facts.teamCredentialResources.some((resource) => (
-            facts.currentTeamCredentialResourceKeys.has(resourceKey(resource))
+            (facts.teamCredentialResourceStatusByKey.get(resourceKey(resource))?.kind === 'current')
             && resource.mayBroker
             && resource.readiness.kind === 'available'
             && resource.providerModels.some((model) => (
@@ -147,7 +148,7 @@ export function createTemporaryComputerCreatorDependencies(facts: Readonly<{
         const resource = facts.teamCredentialResources.find((candidate) => (
             candidate.id === selected.resourceId
             && candidate.resourceRevision === selected.expectedResourceRevision
-            && facts.currentTeamCredentialResourceKeys.has(resourceKey(candidate))
+            && (facts.teamCredentialResourceStatusByKey.get(resourceKey(candidate))?.kind === 'current')
         ));
         if (!resource || !resource.mayBroker || resource.readiness.kind !== 'available') {
             note('team_credential_resource_unavailable');
@@ -266,7 +267,7 @@ export function createTemporaryComputerCreatorDependencies(facts: Readonly<{
             const sources = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.sources.list'].parse(sourcesResult.result).sources;
             const matches: ExpectedMarketplaceListingV1[] = [];
             for (const source of sources) {
-                if (!source.enabled || !source.kinds.includes('plugin')
+                if (!source.enabled || !source.kinds.some(kind => kind === 'plugin')
                     || source.format !== 'happier-catalog' && source.format !== 'happier-npm') continue;
                 const result = await execution.execute('registries.items.read', { kind: 'plugin', sourceId: source.id,
                     itemId: source.format === 'happier-npm' ? distribution.packageName : agentTarget.identity.pluginId,

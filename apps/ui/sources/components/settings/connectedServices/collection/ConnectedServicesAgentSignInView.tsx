@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
@@ -12,9 +13,12 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { Modal } from '@/modal';
-import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
+import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
+import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { canExecuteConnectedServiceAction, getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { useActiveServerAccountScope, useSetting, useSettingsSelector } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useSetting } from '@/sync/store/hooks';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import { selectConnectedMetadataAcknowledgements, selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -40,10 +44,9 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     const activeAccountScope = useActiveServerAccountScope(activeServer.serverId);
     const acknowledgementExecution = useMountedActionExecution(activeAccountScope);
     const index = useConnectedServicesIndex({ agents: 'load' });
+    const [settled, setSettled] = React.useState<QualifiedConnectedAccountRef | null>(null);
     const { agentEntries, qualifiedAccounts, qualifiedGroups } = index;
-    const settings = useSettingsSelector((settings) => ({
-        connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-    }), ["connectedServicesDefaultProfileByServiceId"]);
+    const settings = useSettingsValues(['connectedServicesDefaultProfileByServiceId']);
     const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
     const poolAdoptionDismissedByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataAcknowledgements);
     const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults();
@@ -72,14 +75,15 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     });
 
     /** Released V2/V3 default-auth ingress uses the same action admission as the index. */
-    const openLegacyConnectedServiceSettings = React.useCallback(async (serviceId: string) => {
+    const openLegacyConnectedServiceSettings = React.useCallback(async (serviceId: string, anchor?: PopoverAnchor) => {
         const entry = getLegacyConnectedServiceRegistryEntry(serviceId);
         if (!entry.service || !canExecuteConnectedServiceAction(entry, index.transport)) {
             await Modal.alert(t('errors.daemonUnavailableTitle'), t('errors.daemonUnavailableBody'));
             return;
         }
-        router.push(buildConnectedAccountSettingsRoute(entry.service, null, { add: true }));
-    }, [index.transport, router]);
+        const result = await presentConnectSheet({ scope: activeAccountScope, service: entry.service, ...(anchor ? { anchor } : {}) });
+        if (result.kind !== 'dismissed') setSettled(result.account);
+    }, [activeAccountScope, index.transport]);
 
     return (
         <ItemList>
@@ -90,6 +94,8 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                 description={t('connectedServicesSettings.usageDescription')}
                 alwaysShowTitle
             />
+            {settled ? <ConnectedAccountSettled account={settled} model={index.indexModel} agents={agentEntries}
+                machineId={index.appShellProjection.machineId ?? undefined} onDismiss={() => setSettled(null)} /> : null}
             <SettingSection section={CONNECTED_SERVICES_SETTINGS.sectionRefs.usage}>
                 <ItemGroup title={t('connectedServicesSettings.agentDefaultsTitle')} description={t('connectedServicesSettings.agentDefaultsDescription')}>
                     {agentEntries.filter((agentEntry) => agentEntry.connectedAccounts.length > 0).map((agentEntry, agentIndex) => (
@@ -113,7 +119,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                             purposeBindingsLoading={purposeCatalog.status === 'loading'}
                             teamCredentialResources={teamCredentialCatalog.resources}
                             teamNameById={teamCredentialCatalog.teamNameById}
-                            currentTeamCredentialResourceKeys={teamCredentialCatalog.currentResourceKeys}
+                            teamCredentialResourceStatusByKey={teamCredentialCatalog.resourceStatusByKey}
                             onRecoverTeamCredentialResource={(resource) => {
                                 if (!activeAccountScope) return;
                                 router.push(teamCredentialDetailPath({

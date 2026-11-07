@@ -1,17 +1,22 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { presentArmedSessionRouteSource, presentNativeRouteSourceLabel, presentSessionRouteChip, resolveSessionRoutePresentation, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 
 import type {
-    ConnectedAccountServiceKey,
-    ConnectedServiceUxDiagnosticV1,
-    PluginProjectedAgentConnectedAccountPurposeV2,
+    ConnectedAccountServiceKey} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
+    ConnectedServiceUxDiagnosticV1} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type {
+    PluginProjectedAgentConnectedAccountPurposeV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type {
     PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
     SessionTeamCredentialBindingIntentListV1,
     TeamCredentialResourceCatalogEntryV1,
@@ -28,9 +33,8 @@ import {
     type ConnectedServiceUxDiagnosticPresentation,
 } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { buildConnectedServiceUxDiagnosticAlertButtons } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnosticAlertActions';
-import {
-    resolveConnectedServiceProfileActionRoute,
-} from '@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
 import type { SessionRouteSources } from '@/components/sessions/new/components/useSessionRouteSourceSections';
@@ -77,7 +81,6 @@ import { t, type TranslationKey } from '@/text';
 import {
     createManualAuthSwitchRestartSignal,
     resolveSessionIntentionalRestartState,
-    SESSION_INTENTIONAL_RESTART_FAILSAFE_MS,
     type SessionIntentionalRestartSignal,
     type SessionIntentionalRestartState,
 } from './sessionIntentionalRestartSignal';
@@ -316,8 +319,6 @@ type SessionConnectedServicesAuthSwitchRetryState = Readonly<{
     expectedBindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding>>;
 }>;
 
-const RESTART_TIMEOUT_RECONCILIATION_BUDGET_MS = 30_000;
-
 export function buildExistingSessionConnectedServiceCredentialBindingIntents(input: Readonly<{
     agentIdentity: PluginContributionIdentityV1;
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
@@ -383,7 +384,12 @@ function areBindingsEqual(
 ): boolean {
     const serviceIds = new Set([...Object.keys(left), ...Object.keys(right)]);
     for (const serviceId of serviceIds) {
-        if (!areServiceBindingsEqual(left[serviceId], right[serviceId])) return false;
+        const leftBinding = left[serviceId];
+        const rightBinding = right[serviceId];
+        if (!areServiceBindingsEqual(leftBinding, rightBinding)) return false;
+        if (leftBinding?.source === 'connected' && leftBinding.selection === 'group'
+            && rightBinding?.source === 'connected' && rightBinding.selection === 'group'
+            && leftBinding.appliedProfileId !== rightBinding.appliedProfileId) return false;
     }
     return true;
 }
@@ -464,7 +470,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     }> | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
-    teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
     sessionMetadata: unknown;
     settings: {
@@ -476,11 +482,16 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     switchingDisabledReason: SessionConnectedServicesAuthSwitchDisabledReason | null;
     sessionActive?: boolean;
     intentionalRestartSignals?: ReadonlyArray<SessionIntentionalRestartSignal>;
+    intentionalRestartRecoveryEvidenceAtMs?: number | null;
     /** Passive Provider runtime failures enter the existing generic recovery owner. */
     passiveProviderRecoveryServiceId?: ConnectedAccountServiceKey | null;
     applyBinding: typeof setSessionConnectedServiceAuthBinding;
 }>): SessionConnectedServicesAuthSwitchResult {
-    const accountProfile = useProfile();
+    // Only the connected-account facts auth switching reads; a timestamp-only Account update leaves it still.
+    const accountProfile = useProfile(profile => ({
+        connectedAccountsV4: profile?.connectedAccountsV4,
+        connectedAccountGroupsV4: profile?.connectedAccountGroupsV4,
+    }));
     const { present } = useConnectedAccountIdentityPrivacy();
     const armedTarget = params.armedAuthoringTarget === undefined ? params.armedContinuationAgent : params.armedAuthoringTarget;
     const needsConnectedLabels = params.connectedAccounts.length > 0 || Boolean(armedTarget?.connectedAccounts.length);
@@ -496,12 +507,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     const teamCredentialContextRef = React.useRef({
         serverId: params.serverId ?? null,
         resources: params.teamCredentialResources ?? [],
-        currentResourceKeys: params.teamCredentialResourceCurrentKeys,
+        resourceStatusByKey: params.teamCredentialResourceStatusByKey,
     });
     teamCredentialContextRef.current = {
         serverId: params.serverId ?? null,
         resources: params.teamCredentialResources ?? [],
-        currentResourceKeys: params.teamCredentialResourceCurrentKeys,
+        resourceStatusByKey: params.teamCredentialResourceStatusByKey,
     };
     const accountGroupsFeatureEnabled = useFeatureEnabled('connectedServices.accountGroups', {
         scopeKind: 'spawn',
@@ -511,7 +522,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     const [pendingRestart, setPendingRestart] = React.useState<SessionConnectedServicesAuthSwitchPendingRestart | null>(null);
     const [restartRetryState, setRestartRetryState] = React.useState<SessionConnectedServicesAuthSwitchRetryState | null>(null);
     const [manualRestartSignal, setManualRestartSignal] = React.useState<SessionIntentionalRestartSignal | null>(null);
-    const [restartClockMs, setRestartClockMs] = React.useState(() => Date.now());
     const [partialApplicationNotice, setPartialApplicationNotice] =
         React.useState<PartialAuthSwitchApplicationNotice | null>(null);
     const [actionableState, setActionableState] =
@@ -590,13 +600,11 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         ));
     }, [metadataBindingsByServiceId]);
 
-    const resolveProfileActionRoute = React.useCallback(
-        (serviceId: string, profileId?: string) => resolveConnectedServiceProfileActionRoute(
-            { serviceId, profileId },
-            connectedServicesRegistry.entries,
-        ),
-        [connectedServicesRegistry.entries],
-    );
+    const openConnectSheet = React.useCallback((serviceId: string, accountId?: string, anchor?: PopoverAnchor) => {
+        const service = parseQualifiedPluginContributionKey(serviceId) ?? undefined;
+        return presentConnectSheet({ scope: binding?.scope ?? null, service, ...(anchor ? { anchor } : {}),
+            ...(service && accountId ? { intent: 'reconnect', account: { service, accountId } } : {}) });
+    }, [binding]);
 
     const freshSessionConfiguration = params.sessionConfiguration && readSessionOwnerMetadataView(params.sessionConfiguration)
         ? params.sessionConfiguration
@@ -664,8 +672,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     deliveryMode: requestedTeamBinding.deliveryMode,
                     selection: requestedTeamBinding,
                     isCurrent: () => teamCredentialContextRef.current.serverId === startedServerId
-                        && (teamCredentialContextRef.current.currentResourceKeys === undefined
-                            || teamCredentialContextRef.current.currentResourceKeys.has(`${selectedResource.teamId}:${requestedTeamBinding.resourceId}`))
+                        && (teamCredentialContextRef.current.resourceStatusByKey === undefined
+                            || (teamCredentialContextRef.current.resourceStatusByKey.get(`${selectedResource.teamId}:${requestedTeamBinding.resourceId}`)?.kind === 'current'))
                         && teamCredentialContextRef.current.resources.some((resource) => (
                             resource.id === requestedTeamBinding.resourceId
                             && resource.readiness.kind === 'available'
@@ -683,8 +691,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                         t('teams.credentials.usePolicy.visibilityNote'),
                         { confirmText: t('common.continue'), cancelText: t('common.cancel') },
                     );
-                    if (!confirmed || (teamCredentialContextRef.current.currentResourceKeys !== undefined
-                        && !teamCredentialContextRef.current.currentResourceKeys.has(`${selectedResource.teamId}:${selectedResource.id}`))
+                    if (!confirmed || (teamCredentialContextRef.current.resourceStatusByKey !== undefined
+                        && !(teamCredentialContextRef.current.resourceStatusByKey.get(`${selectedResource.teamId}:${selectedResource.id}`)?.kind === 'current'))
                         || !teamCredentialContextRef.current.resources.some((resource) => (
                         resource.id === selectedResource.id
                         && resource.resourceRevision === selectedResource.resourceRevision
@@ -710,6 +718,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         if (!bindings) return;
         const attemptId = switchAttemptIdRef.current + 1;
         switchAttemptIdRef.current = attemptId;
+        const startedAtMs = Date.now();
         const pendingRestartForAttempt = {
             attemptId,
             expectedBindingsByServiceId: {
@@ -766,10 +775,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         }).then((result) => {
             if (result.ok) {
                 if (switchAttemptIdRef.current === attemptId) {
-                    const nowMs = Date.now();
-                    setRestartClockMs(nowMs);
                     setManualRestartSignal(result.action === 'restart_requested'
-                        ? createManualAuthSwitchRestartSignal({ attemptId, startedAtMs: nowMs })
+                        ? createManualAuthSwitchRestartSignal({ attemptId, startedAtMs })
                         : null);
                     setPendingRestart(result.action === 'restart_requested' ? pendingRestartForAttempt : null);
                     setPartialApplicationNotice(null);
@@ -820,16 +827,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                                     ? () => startFreshUnderSelectedAccount(serviceId, binding)
                                     : undefined,
                                 resumeCurrentAccount: dismiss,
-                                openConnectedAccounts: () => router.push('/(app)/settings/connected-services'),
+                                openConnectedAccounts: () => {
+                                    fireAndForget(openConnectSheet(diagnosticServiceId ?? failureServiceId),
+                                        { tag: 'SessionAuthSwitch.connect' });
+                                },
                                 reconnectProfile: () => {
-                                    if (diagnosticProfileId) {
-                                        router.push(resolveProfileActionRoute(
-                                            failureServiceId,
-                                            diagnosticProfileId,
-                                        ));
-                                        return;
-                                    }
-                                    router.push('/(app)/settings/connected-services');
+                                    fireAndForget(openConnectSheet(failureServiceId, diagnosticProfileId),
+                                        { tag: 'SessionAuthSwitch.reconnect' });
                                 },
                                 enableStateSharing: () => router.push('/(app)/settings/connected-services/provider-state-sharing'),
                                 dismiss,
@@ -839,12 +843,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     return;
                 }
                 if (nextActionableState.kind === 'reconnect_profile') {
-                    router.push(resolveProfileActionRoute(
-                        result.serviceId ?? serviceId,
-                        nextActionableState.profileId,
-                    ));
-                } else if ('route' in nextActionableState) {
+                    fireAndForget(openConnectSheet(result.serviceId ?? serviceId, nextActionableState.profileId),
+                        { tag: 'SessionAuthSwitch.reconnect' });
+                } else if (nextActionableState.kind === 'provider_state_sharing_required') {
                     router.push(nextActionableState.route);
+                } else {
+                    fireAndForget(openConnectSheet(result.serviceId ?? serviceId), { tag: 'SessionAuthSwitch.connect' });
                 }
                 return;
             }
@@ -868,16 +872,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                         ? () => startFreshUnderSelectedAccount(serviceId, binding)
                         : undefined,
                     resumeCurrentAccount: dismiss,
-                    openConnectedAccounts: () => router.push('/(app)/settings/connected-services'),
+                    openConnectedAccounts: () => {
+                        fireAndForget(openConnectSheet(diagnosticServiceId ?? failureServiceId),
+                            { tag: 'SessionAuthSwitch.connect' });
+                    },
                     reconnectProfile: () => {
-                        if (diagnosticProfileId) {
-                            router.push(resolveProfileActionRoute(
-                                failureServiceId,
-                                diagnosticProfileId,
-                            ));
-                            return;
-                        }
-                        router.push('/(app)/settings/connected-services');
+                        fireAndForget(openConnectSheet(failureServiceId, diagnosticProfileId),
+                            { tag: 'SessionAuthSwitch.reconnect' });
                     },
                     enableStateSharing: () => router.push('/(app)/settings/connected-services/provider-state-sharing'),
                     dismiss,
@@ -896,9 +897,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         }).catch((error) => {
             if (switchAttemptIdRef.current !== attemptId) return;
             if (isNonTerminalRestartTimeoutError(error)) {
-                const nowMs = Date.now();
-                setRestartClockMs(nowMs);
-                setManualRestartSignal(createManualAuthSwitchRestartSignal({ attemptId, startedAtMs: nowMs }));
+                setManualRestartSignal(createManualAuthSwitchRestartSignal({ attemptId, startedAtMs }));
                 setPendingRestart({
                     ...pendingRestartForAttempt,
                     timedOut: true,
@@ -929,7 +928,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.sessionActive,
         params.settings.connectedServicesDefaultProfileByServiceId,
         profileOptionsByServiceId,
-        resolveProfileActionRoute,
+        openConnectSheet,
         router,
         supportedConnectedServiceIds,
         startFreshUnderSelectedAccount,
@@ -997,7 +996,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             groupOptionsByServiceId={groupOptionsByServiceId}
             bindingsByServiceId={optimisticBindingsByServiceId}
             teamCredentialResources={params.teamCredentialResources}
-            teamCredentialResourceCurrentKeys={params.teamCredentialResourceCurrentKeys}
+            teamCredentialResourceStatusByKey={params.teamCredentialResourceStatusByKey}
             teamNameById={params.teamNameById}
             onRecoverTeamCredentialResource={(resource) => {
                 requestClose();
@@ -1010,9 +1009,14 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             }}
             defaultProfileIdByServiceId={params.settings.connectedServicesDefaultProfileByServiceId}
             resolveOptionAvailability={resolveOptionAvailability}
-            onOpenSettings={(serviceId) => {
+            onOpenSettings={(serviceId, anchor) => {
                 requestClose();
-                router.push(resolveProfileActionRoute(serviceId));
+                fireAndForget(openConnectSheet(serviceId, undefined, anchor).then((result) => {
+                    if (result.kind === 'dismissed') return;
+                    setBindingForService(buildQualifiedPluginContributionKey(result.account.service), {
+                        source: 'connected', selection: 'profile', profileId: result.account.accountId,
+                    });
+                }), { tag: 'SessionAuthSwitch.connectAndSelect' });
             }}
             maxHeight={maxHeight}
         />
@@ -1021,14 +1025,14 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         optimisticBindingsByServiceId,
         params.settings.connectedServicesDefaultProfileByServiceId,
         params.teamCredentialResources,
-        params.teamCredentialResourceCurrentKeys,
+        params.teamCredentialResourceStatusByKey,
         params.teamNameById,
         params.serverId,
         params.routeSources,
         params.nativeAgentTargetKey,
         profileOptionsByServiceId,
         resolveOptionAvailability,
-        resolveProfileActionRoute,
+        openConnectSheet,
         router,
         setBindingForService,
         freshSessionConfiguration,
@@ -1096,7 +1100,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     presentIdentity: present,
                     resolveAuthentication: getConnectedAccountAuthentication,
                     teamResources: params.teamCredentialResources,
-                    teamResourceCurrentKeys: params.teamCredentialResourceCurrentKeys,
+                    teamResourceStatusByKey: params.teamCredentialResourceStatusByKey,
                     teamNameById: params.teamNameById,
                 }).find((candidate) => candidate.current);
                 return choice ? [[serviceId, choice]] : [];
@@ -1155,6 +1159,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 ? qualifiedLabel : unavailableLabel;
             return createConnectedServicesAuthActionChip({
                 label: displayLabel,
+                pending: true,
                 connectedCount: label.connectedCount,
                 authSource: !defaultsReady ? 'unknown'
                     : label.connectedCount === 0 ? 'native' : label.connectedCount === serviceIds.length ? 'connected' : 'mixed',
@@ -1195,6 +1200,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         const armedNote = armedSource ? t('connectedServices.authChip.armedNote', { source: armedSource }) : null;
         return createConnectedServicesAuthActionChip({
             label: routeChip?.label ?? label.label,
+            pending: routePresentation?.pending != null || pendingRestart !== null || partialApplicationNotice !== null
+                || actionableState !== null || providerSessionDiagnosticActionState !== null || label.warningCodes.length > 0
+                || supportedConnectedServiceIds.some((serviceId) => !areServiceBindingsEqual(
+                    optimisticBindingsByServiceId[serviceId], metadataBindingsByServiceId[serviceId])),
             connectedCount: label.connectedCount,
             authSource,
             popoverContent: (args: AgentInputContentPopoverRenderArgs) => popoverContent(args, armedNote, routePresentation?.applied),
@@ -1211,14 +1220,21 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
         labelsByKey,
         params.teamCredentialResources,
-        params.teamCredentialResourceCurrentKeys,
+        params.teamCredentialResourceStatusByKey,
         params.teamNameById,
-        accountProfile,
+        // Only these profile members are read: a profile refresh restamps the whole profile.
+        accountProfile?.connectedAccountsV4,
+        accountProfile?.connectedAccountGroupsV4,
         present,
         accountGroupsFeatureEnabled,
         groupOptionsByServiceId,
         optimisticBindingsByServiceId,
+        metadataBindingsByServiceId,
         params.settings.connectedServicesDefaultProfileByServiceId,
+        pendingRestart,
+        partialApplicationNotice,
+        actionableState,
+        providerSessionDiagnosticActionState,
         popoverContent,
         profileOptionsByServiceId,
         resolveServiceTitle,
@@ -1227,15 +1243,23 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         supportedConnectedServiceIds,
     ]);
 
+    const restartState = React.useMemo(() => resolveSessionIntentionalRestartState({
+        signals: [manualRestartSignal, ...(params.intentionalRestartSignals ?? [])],
+        recoveryEvidenceAtMs: params.intentionalRestartRecoveryEvidenceAtMs,
+    }), [manualRestartSignal, params.intentionalRestartSignals, params.intentionalRestartRecoveryEvidenceAtMs]);
+
     React.useEffect(() => {
-        if (!pendingRestart || params.sessionActive !== true) return;
-        if (arePendingRestartBindingsApplied(pendingRestart, metadataBindingsByServiceId)) {
+        if (!pendingRestart) return;
+        const failed = restartState?.status === 'failed';
+        const recovered = manualRestartSignal !== null && restartState === null;
+        if (!failed && !recovered && params.sessionActive !== true) return;
+        if (!failed && arePendingRestartBindingsApplied(pendingRestart, metadataBindingsByServiceId)) {
             setPendingRestart(null);
             setRestartRetryState(null);
             setManualRestartSignal(null);
             return;
         }
-        if (pendingRestart.timedOut) {
+        if (failed || recovered || pendingRestart.timedOut) {
             setPendingRestart(null);
             setManualRestartSignal(null);
             setOptimisticBindingsByServiceId(metadataBindingsByServiceId);
@@ -1244,7 +1268,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 expectedBindingsByServiceId: pendingRestart.expectedBindingsByServiceId,
             });
         }
-    }, [metadataBindingsByServiceId, params.sessionActive, pendingRestart]);
+    }, [manualRestartSignal, metadataBindingsByServiceId, params.sessionActive, pendingRestart, restartState]);
 
     React.useEffect(() => {
         if (!restartRetryState) return;
@@ -1253,43 +1277,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             setManualRestartSignal(null);
         }
     }, [metadataBindingsByServiceId, restartRetryState]);
-
-    React.useEffect(() => {
-        if (!pendingRestart?.timedOut) return;
-        const handle = setTimeout(() => {
-            setPendingRestart((current) => {
-                if (!current?.timedOut || current.attemptId !== pendingRestart.attemptId) {
-                    return current;
-                }
-                setManualRestartSignal(null);
-                setOptimisticBindingsByServiceId(metadataBindingsByServiceId);
-                setRestartRetryState({
-                    attemptId: current.attemptId,
-                    expectedBindingsByServiceId: current.expectedBindingsByServiceId,
-                });
-                return null;
-            });
-        }, RESTART_TIMEOUT_RECONCILIATION_BUDGET_MS);
-        return () => clearTimeout(handle);
-    }, [metadataBindingsByServiceId, pendingRestart]);
-
-    const restartState = React.useMemo(() => resolveSessionIntentionalRestartState({
-        signals: [
-            manualRestartSignal,
-            ...(params.intentionalRestartSignals ?? []),
-        ],
-        nowMs: restartClockMs,
-    }), [manualRestartSignal, params.intentionalRestartSignals, restartClockMs]);
-
-    React.useEffect(() => {
-        if (restartState?.status !== 'restarting') return undefined;
-        const expiresAtMs = restartState.startedAtMs + SESSION_INTENTIONAL_RESTART_FAILSAFE_MS;
-        const delayMs = Math.max(0, expiresAtMs - restartClockMs);
-        const handle = setTimeout(() => {
-            setRestartClockMs(Date.now());
-        }, delayMs);
-        return () => clearTimeout(handle);
-    }, [restartClockMs, restartState]);
 
     const statusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         if (actionableState?.kind === 'provider_session_state_unavailable_for_resume') {
@@ -1331,16 +1318,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                                 )
                                 : undefined,
                             resumeCurrentAccount: dismiss,
-                            openConnectedAccounts: () => router.push('/(app)/settings/connected-services'),
+                            openConnectedAccounts: () => {
+                                fireAndForget(openConnectSheet(diagnosticServiceId ?? providerDiagnosticActionState.failureServiceId),
+                                    { tag: 'SessionAuthSwitch.connect' });
+                            },
                             reconnectProfile: () => {
-                                if (diagnosticProfileId) {
-                                    router.push(resolveProfileActionRoute(
-                                        providerDiagnosticActionState.failureServiceId,
-                                        diagnosticProfileId,
-                                    ));
-                                    return;
-                                }
-                                router.push('/(app)/settings/connected-services');
+                                fireAndForget(openConnectSheet(providerDiagnosticActionState.failureServiceId, diagnosticProfileId),
+                                    { tag: 'SessionAuthSwitch.reconnect' });
                             },
                             enableStateSharing: () => router.push('/(app)/settings/connected-services/provider-state-sharing'),
                             dismiss,
@@ -1378,7 +1362,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         partialApplicationNotice,
         pendingRestart,
         providerSessionDiagnosticActionState,
-        resolveProfileActionRoute,
+        openConnectSheet,
         restartRetryState,
         freshSessionConfiguration,
         startFreshUnderSelectedAccount,

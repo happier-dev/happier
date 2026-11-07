@@ -3,15 +3,18 @@ import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import type {
-    ConnectedServiceBindingsV2,
-    PluginContributionIdentityV1,
+    ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     PluginProjectedAgentConnectedAccountPurposeV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { useNewSessionConnectedServices } from '@/components/sessions/new/modules/useNewSessionConnectedServices';
+import { getConnectedServicesAuthActionChipPlacement } from '@/components/sessions/agentInput/definitions/createConnectedServicesAuthActionChip';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { CONNECTED_SERVICES_BINDINGS_KEY } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
@@ -101,6 +104,8 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
     const teamCredentialResources = teamCredentialCatalog.resources;
 
     const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
+        placementId: getConnectedServicesAuthActionChipPlacement({ scoped: true }).id,
+        placementPending: props.value !== undefined,
         agentCore,
         defaultAuthAgentId: props.agentId,
         defaultAuthConsumer: props.agentIdentity,
@@ -122,7 +127,7 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
         // restore inheritance.
         emitWhenAllNative: true,
         teamCredentialResources,
-        teamCredentialResourceCurrentKeys: teamCredentialCatalog.currentResourceKeys,
+        teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
         teamNameById: teamCredentialCatalog.teamNameById,
         router,
         setAgentOptionStateForCurrentAgent,

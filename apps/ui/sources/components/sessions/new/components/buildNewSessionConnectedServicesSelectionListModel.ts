@@ -1,7 +1,10 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import type * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialResourceCatalogEntryV1, TeamCredentialRouteV1 } from '@happier-dev/protocol/teams';
 
 import {
     type SelectionListOption,
@@ -14,7 +17,12 @@ import {
     type ConnectedServicesServiceBinding,
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { teamCredentialRecoveryPresentation } from '@/components/settings/teams/credentials/teamCredentialPresentation';
+import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility, type DirectDeliveryDisclosureTranslationKey } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TranslationParams } from '@/text';
+import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { derivePoolUsage, type PoolMemberUsageInput } from '@/components/settings/connectedServices/pools/derivePoolUsage';
+import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '@/components/settings/connectedServices/account/accountBlockFormatters';
+import { formatResetCountdown } from '@/sync/domains/connectedServices/formatResetCountdown';
 
 import type {
     ConnectedServicesAccountGroupOptionsByServiceId,
@@ -39,6 +47,7 @@ export type ConnectedServicesSelectionIconVariant = 'default' | 'warning';
 export type ConnectedServicesSelectionRowKind = 'native' | 'group' | 'account' | 'team';
 
 export type ConnectedServicesSelectionListTranslationKey =
+    | DirectDeliveryDisclosureTranslationKey
     | 'connectedServices.authModal.nativeAuthTitle'
     | 'connectedServices.authModal.nativeAuthSubtitle'
     | 'connectedServices.authModal.groupSubtitle'
@@ -85,7 +94,7 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     /** Exact currentness projection from the Home catalog; stale rows stay visible but cannot be selected. */
-    teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
@@ -94,12 +103,13 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     /** Runs through browses one native model source for the exact selected Agent. */
     nativeRoute?: Readonly<{ agentTargetKey: string; active: boolean; onBrowse?: () => void }>;
     /** The Team source the Session's applied route runs through; it follows the model selection, so the Session may carry no binding for it. */
-    appliedTeamRoute?: Readonly<{ teamId: string; resourceId: string; deliveryMode: 'direct' | 'brokered' }>;
+    appliedTeamRoute?: Readonly<{ teamId: string; resourceId: string; deliveryMode: TeamCredentialRouteV1 }>;
     /** Exact-binding consumers can prevent stale selections from visually adopting a different default profile. */
     allowDefaultProfileFallback?: boolean;
     quotaBadgesByKey: Readonly<Record<string, ReadonlyArray<ConnectedServicesSelectionListBadge> | undefined>>;
+    quotaSnapshotsByKey?: Readonly<Record<string, Readonly<{ meters: readonly ConnectedServiceQuotaMeterV1[] }> | null | undefined>>;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
-    onOpenSettings: (serviceId: string) => void;
+    onOpenSettings: (serviceId: string, anchor?: PopoverAnchor) => void;
     translate: ConnectedServicesSelectionListTranslate;
     resolveServiceTitle: (serviceId: string) => string;
     renderRowIcon: (params: Readonly<{ kind: ConnectedServicesSelectionRowKind; variant?: ConnectedServicesSelectionIconVariant }>) => React.ReactNode;
@@ -108,7 +118,7 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     renderSettingsIcon: () => React.ReactNode;
     renderQuotaBadges: (badges: ReadonlyArray<ConnectedServicesSelectionListBadge>) => React.ReactNode;
     renderNeedsReauthPill: () => React.ReactNode;
-    onReconnectProfile?: (serviceId: string, profileId: string) => void;
+    onReconnectProfile?: (serviceId: string, profileId: string, anchor?: PopoverAnchor) => void;
     resolveOptionAvailability?: (params: Readonly<{
         serviceId: string;
         optionId: string;
@@ -139,7 +149,7 @@ export function createReauthServiceOptionId(serviceId: string, profileId: string
 export function createTeamResourceServiceOptionId(
     selection: TeamResourceConnectedServiceSelectionV2,
 ): string {
-    const disclosedMember = selection.disclosedMember;
+    const disclosedMember = selection.deliveryMode === 'direct' ? selection.disclosedMember : null;
     return `connected-service:team-resource:${encodeURIComponent(selection.resourceId)}:${selection.deliveryMode}:${disclosedMember
         ? `${encodeURIComponent(buildQualifiedPluginContributionKey(disclosedMember.service))}:${encodeURIComponent(disclosedMember.accountId)}`
         : 'brokered'}`;
@@ -203,12 +213,33 @@ export function buildNewSessionConnectedServicesSelectionListModel(
     params: BuildNewSessionConnectedServicesSelectionListModelParams,
 ): NewSessionConnectedServicesSelectionListModel {
     let firstSelectedOptionId: string | null = null;
-    const bindingsActive = params.nativeRoute?.active !== false;
+    // The route the Session actually runs through decides what reads selected. An applied Team route outranks
+    // any retained binding (and the native row), whether or not the Agent supplied a native descriptor.
+    const teamRouteApplied = params.appliedTeamRoute !== undefined;
+    const bindingsActive = params.nativeRoute?.active !== false && !teamRouteApplied;
     const sections: SelectionListSectionDescriptor[] = params.supportedServiceIds.map((serviceId) => {
         const serviceTitle = params.resolveServiceTitle(serviceId);
         const serviceOptions = params.profileOptionsByServiceId[serviceId] ?? [];
         const groupOptions = params.groupOptionsByServiceId[serviceId] ?? [];
         const connectedProfiles = serviceOptions.filter(isConnectedServiceProfileOptionSelectable);
+        const profileById = new Map(serviceOptions.map(option => [option.profileId.trim(), option]));
+        const usageMember = (profileId: string): PoolMemberUsageInput => ({
+            accountId: profileId,
+            enabled: true,
+            credentialStatus: profileById.get(profileId)?.status,
+            meters: params.quotaSnapshotsByKey?.[connectedServiceProfileKey({ serviceId, profileId })]?.meters ?? null,
+        });
+        const now = Date.now();
+        const usageSubtitle = (profileIds: readonly string[]): string | undefined => {
+            const usage = derivePoolUsage({ members: profileIds.map(usageMember), now });
+            return usage.windows.map(window => {
+                const reset = formatResetCountdown(now, window.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER);
+                const percent = `${window.remainingPct}%`;
+                return `${window.label} · ${reset
+                    ? ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remainingWithReset({ percent, reset })
+                    : ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remaining({ percent })}`;
+            }).join(' · ') || undefined;
+        };
         const needsReauthProfiles = serviceOptions.filter((option) => !isConnectedServiceProfileOptionSelectable(option));
         const connectedProfileIds = connectedProfiles.map((option) => option.profileId.trim()).filter(Boolean);
         const binding = params.bindingsByServiceId[serviceId];
@@ -257,12 +288,12 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options.push({
                 id: optionId,
                 label,
-                subtitle: availability.subtitle ?? resolveGroupSubtitle({
+                subtitle: [availability.subtitle ?? resolveGroupSubtitle({
                     serviceTitle,
                     activeProfileId,
                     profiles: connectedProfiles,
                     translate: params.translate,
-                }),
+                }), usageSubtitle(group.memberProfileIds ?? [])].filter(Boolean).join(' · '),
                 accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
                 icon: params.renderRowIcon({
                     kind: 'group',
@@ -283,17 +314,16 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             // a current selection and leave the person without the Home's
             // recovery instruction. Only the Home's recovery is presented here;
             // repair authority is decided again by the destination it names.
-            const resourceCurrent = params.teamCredentialResourceCurrentKeys === undefined
-                || params.teamCredentialResourceCurrentKeys.has(`${resource.teamId}:${resource.id}`);
+            const resourceCurrent = params.teamCredentialResourceStatusByKey === undefined
+                || (params.teamCredentialResourceStatusByKey.get(`${resource.teamId}:${resource.id}`)?.kind === 'current');
             const selectable = resourceCurrent && resource.readiness.kind === 'available';
             const recovery = selectable
                 ? null
                 : teamCredentialRecoveryPresentation(resource.recoveryAction, { isSourceCustodian: false });
             const seenSelectionIds = new Set<string>();
             for (const selection of resource.connectedServiceSelections) {
-                if (selection.deliveryMode === 'brokered' && selection.disclosedMember) continue;
-                if (selection.deliveryMode === 'direct' && (!selection.disclosedMember
-                    || buildQualifiedPluginContributionKey(selection.disclosedMember.service) !== serviceId)) continue;
+                if (selection.deliveryMode === 'direct'
+                    && buildQualifiedPluginContributionKey(selection.disclosedMember.service) !== serviceId) continue;
                 const matchesBinding = binding?.source === 'team_resource'
                     && areTeamResourceConnectedServiceSelectionsEqual(binding, selection);
                 const matchesAppliedRoute = params.appliedTeamRoute !== undefined
@@ -314,18 +344,23 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                     binding: selection,
                 });
                 const teamName = params.teamNameById?.[resource.teamId]?.trim();
+                const subtitle = [availability.subtitle ?? [
+                    teamName,
+                    resourceCurrent ? null : params.translate('teams.unavailable.retry'),
+                    selectable ? params.translate(selection.deliveryMode === 'brokered'
+                        ? 'teams.credentials.delivery.brokered'
+                        : 'teams.credentials.delivery.direct') : null,
+                    recovery === null ? null : params.translate(recovery.labelKey),
+                ].filter((part): part is string => Boolean(part)).join(' · '),
+                selection.deliveryMode === 'direct'
+                    ? describeDirectDeliveryVisibility(readDirectDeliveryVisibility(), params.translate) : null,
+                ].filter(Boolean).join('\n\n');
                 options.push({
                     id: optionId,
                     label: resource.displayName,
-                    subtitle: availability.subtitle ?? [
-                        teamName,
-                        resourceCurrent ? null : params.translate('teams.unavailable.retry'),
-                        selectable ? params.translate(selection.deliveryMode === 'brokered'
-                            ? 'teams.credentials.delivery.brokered'
-                            : 'teams.credentials.delivery.direct') : null,
-                        recovery === null ? null : params.translate(recovery.labelKey),
-                    ].filter((part): part is string => Boolean(part))
-                        .join(' · '),
+                    subtitle,
+                    subtitleLines: selection.deliveryMode === 'direct' ? 0 : undefined,
+                    accessibilityLabel: [resource.displayName, subtitle].join(', '),
                     icon: params.renderRowIcon({ kind: 'team', variant: selectable && !availability.disabled ? 'default' : 'warning' }),
                     selected,
                     disabled: availability.disabled === true || (!selectable && !params.onRecoverTeamCredentialResource),
@@ -345,8 +380,8 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 && buildQualifiedPluginContributionKey(resource.sourcePresentation.service) === serviceId
             ));
             const retainedRecovery = retainedResource?.readiness.kind === 'available'
-                ? (params.teamCredentialResourceCurrentKeys === undefined
-                    || params.teamCredentialResourceCurrentKeys.has(`${retainedResource.teamId}:${retainedResource.id}`)
+                ? (params.teamCredentialResourceStatusByKey === undefined
+                    || (params.teamCredentialResourceStatusByKey.get(`${retainedResource.teamId}:${retainedResource.id}`)?.kind === 'current')
                     ? null
                     : { labelKey: 'teams.unavailable.retry' as const })
                 : teamCredentialRecoveryPresentation(retainedResource?.recoveryAction, { isSourceCustodian: false });
@@ -356,7 +391,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options.push({
                 id: optionId,
                 label: retainedResource?.displayName ?? binding.resourceId,
-                subtitle: retainedResource
+                subtitle: [retainedResource
                     ? [
                         retainedTeamName,
                         params.translate(binding.deliveryMode === 'brokered'
@@ -365,6 +400,10 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                         retainedRecovery === null ? null : params.translate(retainedRecovery.labelKey),
                     ].filter((part): part is string => Boolean(part)).join(' · ')
                     : params.translate('common.unavailable'),
+                    binding.deliveryMode === 'direct'
+                        ? describeDirectDeliveryVisibility(readDirectDeliveryVisibility(), params.translate) : null,
+                ].filter(Boolean).join('\n\n'),
+                subtitleLines: binding.deliveryMode === 'direct' ? 0 : undefined,
                 icon: params.renderRowIcon({ kind: 'team', variant: 'warning' }),
                 selected: bindingsActive,
                 disabled: retainedResource === undefined
@@ -396,7 +435,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options.push({
                 id: optionId,
                 label,
-                subtitle: availability.subtitle ?? resolveProfileSubtitle(option),
+                subtitle: [availability.subtitle ?? resolveProfileSubtitle(option), usageSubtitle([profileId])].filter(Boolean).join(' · ') || undefined,
                 accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
                 icon: params.renderRowIcon({ kind: 'account', variant: availability.disabled ? 'warning' : 'default' }),
                 selected,
@@ -423,16 +462,16 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 icon: params.renderRowIcon({ kind: 'account', variant: 'warning' }),
                 rightAccessory: params.renderNeedsReauthPill(),
                 onSelect: unsupportedKind
-                    ? () => params.onOpenSettings(serviceId)
+                    ? (event) => params.onOpenSettings(serviceId, resolvePressTriggerAnchor(event))
                     : params.onReconnectProfile
-                    ? () => params.onReconnectProfile?.(serviceId, profileId)
-                    : () => params.onOpenSettings(serviceId),
+                    ? (event) => params.onReconnectProfile?.(serviceId, profileId, resolvePressTriggerAnchor(event))
+                    : (event) => params.onOpenSettings(serviceId, resolvePressTriggerAnchor(event)),
             });
         }
 
         if (params.includeNativeAuthOption !== false && !params.nativeRoute) {
             const nativeOptionId = createNativeServiceOptionId(serviceId);
-            const nativeSelected = params.bindingsKnown !== false && !usesConnectedProfile && !usesConnectedGroup && !usesTeamResource;
+            const nativeSelected = params.bindingsKnown !== false && !teamRouteApplied && !usesConnectedProfile && !usesConnectedGroup && !usesTeamResource;
             const nativeBinding = { source: 'native' } satisfies ConnectedServicesServiceBinding;
             const nativeAvailability = resolveAvailability({
                 rootParams: params,
@@ -462,7 +501,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 subtitle: params.translate('connectedServices.authModal.notConnectedSubtitle'),
                 accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: connectLabel }),
                 icon: params.renderSettingsIcon(),
-                onSelect: () => params.onOpenSettings(serviceId),
+                onSelect: (event) => params.onOpenSettings(serviceId, resolvePressTriggerAnchor(event)),
             });
         }
 
@@ -476,6 +515,9 @@ export function buildNewSessionConnectedServicesSelectionListModel(
 
     if (params.nativeRoute && params.includeNativeAuthOption !== false) {
         const route = params.nativeRoute;
+        const unavailable = params.supportedServiceIds.map(serviceId => params.resolveOptionAvailability?.({
+            serviceId, optionId: createNativeServiceOptionId(serviceId), binding: { source: 'native' },
+        })).find(availability => availability?.disabled);
         const selected = route.active && params.bindingsKnown !== false && params.supportedServiceIds.every(serviceId => (
             !params.bindingsByServiceId[serviceId] || params.bindingsByServiceId[serviceId]?.source === 'native'
         ));
@@ -487,11 +529,11 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options: [{
                 id,
                 label: params.translate('connectedServices.authModal.nativeAuthTitle'),
-                subtitle: params.translate('connectedServices.authModal.nativeAuthSubtitle'),
+                subtitle: unavailable?.subtitle ?? params.translate('connectedServices.authModal.nativeAuthSubtitle'),
                 icon: params.renderRowIcon({ kind: 'native' }),
                 selected,
                 ...(route.onBrowse ? { rightAccessory: params.renderBrowseMark() } : {}),
-                disabled: !route.onBrowse,
+                disabled: !route.onBrowse || unavailable?.disabled === true,
                 onSelect: route.onBrowse,
             }],
         });

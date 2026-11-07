@@ -55,8 +55,8 @@ function ownedEntry(overrides: Partial<SavedSecretCatalogEntryV1> = {}): SavedSe
 const { SecretsSettingsPage, SecretUsedBySection } = await import('./SecretsSettingsPage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
-async function renderPage(overrides: Partial<SecretsSettingsPageProps> = {}, accountId?: string) {
-    const props: SecretsSettingsPageProps = {
+function basePageProps(overrides: Partial<SecretsSettingsPageProps> = {}): SecretsSettingsPageProps {
+    return {
         personalSecrets: [PERSONAL],
         sharedEntries: [] as SavedSecretCatalogEntryV1[],
         corruptEntries: [] as SavedSecretCatalogCorruptEntryV1[],
@@ -75,6 +75,10 @@ async function renderPage(overrides: Partial<SecretsSettingsPageProps> = {}, acc
         accessEditor: null,
         ...overrides,
     };
+}
+
+async function renderPage(overrides: Partial<SecretsSettingsPageProps> = {}, accountId?: string) {
+    const props = basePageProps(overrides);
     const screen = await renderScreen(
         <InjectedAuthProvider credentials={accountId ? { token: createAccountTokenForTests(accountId) } : null}>
             <SecretsSettingsPage {...props} />
@@ -131,13 +135,28 @@ describe('SecretUsedBySection', () => {
 });
 
 describe('SecretsSettingsPage', () => {
-    it('opens a listed secret as its own page, and shows the page the Credentials rail selected', async () => {
+    it('beside the Credentials rail, leaves your secrets to it and asks for one with Add as the next step', async () => {
+        const first = ownedEntry();
+        const { renderInCollectionLayout } = await import('@/dev/testkit/render/renderInCollectionLayout');
+        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+        const onAdd = vi.fn();
+        const screen = await renderInCollectionLayout(<SecretsSettingsPage {...basePageProps({ personalSecrets: [], sharedEntries: [first], onAdd })} />, 'split');
+        expect(screen.findByTestId(`saved-secret:${first.ref}:header`)).toBeFalsy();
+        // No orphan section heading over an empty sheet: one state, one next step.
+        expect(screen.findAllByType(ItemGroup).some((group) => group.props.title === 'secretsSettings.yoursTitle')).toBe(false);
+        expect(screen.findByTestId('saved-secret:pick')).toBeTruthy();
+        await screen.pressByTestIdAsync('saved-secret:pick-add');
+        expect(onAdd).toHaveBeenCalledOnce();
+    });
+
+    it('where no rail stands beside it, is the list of your secrets, each opening its page', async () => {
         const first = ownedEntry();
         const second = ownedEntry({ ref: 'happier:shared-secret:v1:shared-b', name: 'Registry token' });
         const onOpenSecret = vi.fn();
         const { screen, props } = await renderPage({ personalSecrets: [], sharedEntries: [first, second], onOpenSecret });
         await screen.pressByTestIdAsync(`saved-secret:${second.ref}:header`);
         expect(onOpenSecret).toHaveBeenCalledWith(second.ref);
+        expect(screen.findByTestId('saved-secret:pick')).toBeFalsy();
 
         await screen.update(<SecretsSettingsPage {...props} selectedRef={first.ref} />);
         expect(pageHeader(screen, first.ref)?.props.title).toBe(first.name);
@@ -154,11 +173,9 @@ describe('SecretsSettingsPage', () => {
         invalidateSavedSecretCatalog(scope);
         beginSavedSecretCatalogLoad(scope);
         const { screen } = await renderPage({ personalSecrets: [], sharedEntries: [entry], sharedCatalogStatus: 'refreshing',
-            sharedCatalogStale: true, resolveSharedReference: ref => resolveSavedSecretReference(scope, [], ref) });
-        const header = screen.findAll(row => row.props.testID === `saved-secret:${entry.ref}:header`
-            && typeof row.props.subtitle === 'string')[0];
-        expect(header?.props.subtitle).not.toContain('secrets.catalog.status.temporarily_unavailable');
-        expect(header?.props.subtitleLeading).toBeUndefined();
+            sharedCatalogStale: true, resolveSharedReference: ref => resolveSavedSecretReference(scope, [], ref), selectedRef: entry.ref });
+        expect(pageHeader(screen, entry.ref)?.props.title).toBe(entry.name);
+        expect(screen.getTextContent()).not.toContain('secrets.catalog.status.temporarily_unavailable');
     });
     it.each(['plain', 'e2ee'] as const)('discloses personal storage from the %s Account even when the device seals the value', async (mode) => {
         const accountId = `personal-storage-${mode}`;
@@ -173,15 +190,17 @@ describe('SecretsSettingsPage', () => {
         const { screen } = await renderPage({ personalSecrets: [PERSONAL, locallySealed], sharedEntries: [shared] }, accountId);
         const label = mode === 'plain' ? 'secretsSettings.storagePlain' : 'secretsSettings.storageE2ee';
         const otherLabel = mode === 'plain' ? 'secretsSettings.storageE2ee' : 'secretsSettings.storagePlain';
+        // The Account's storage is what every one of your secrets shares: the section says it once, no row repeats it.
+        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
         await vi.waitFor(() => {
-            for (const secret of [PERSONAL, locallySealed]) {
-                const header = screen.findAll((row) => row.props.testID === `saved-secret:${secret.id}:header` && typeof row.props.subtitle === 'string')[0];
-                expect(header?.props.subtitle).toContain(label);
-                expect(header?.props.subtitle).not.toContain(otherLabel);
-            }
+            const yours = screen.findAllByType(ItemGroup).find((group) => group.props.title === 'secretsSettings.yoursTitle');
+            expect(String(yours?.props.description)).toContain(label);
+            expect(String(yours?.props.description)).not.toContain(otherLabel);
         });
-        const sharedHeader = screen.findAll((row) => row.props.testID === `saved-secret:${shared.ref}:header` && typeof row.props.subtitle === 'string')[0];
-        expect(sharedHeader?.props.subtitle).toContain(otherLabel);
+        for (const secret of [PERSONAL, locallySealed]) {
+            const header = screen.findAll((row) => row.props.testID === `saved-secret:${secret.id}:header` && typeof row.props.subtitle === 'string')[0];
+            expect(header?.props.subtitle).not.toContain(label);
+        }
         await screen.pressByTestIdAsync(`saved-secret:${locallySealed.id}:header`);
         expect(screen.findAll((row) => row.props.title === 'secretsSettings.storageTitle' && typeof row.props.subtitle === 'string')
             .some((row) => row.props.subtitle.startsWith(`${label}.`))).toBe(true);
@@ -196,7 +215,10 @@ describe('SecretsSettingsPage', () => {
             accountEncryptionMode: 'plain',
         });
         const { screen } = await renderPage({}, accountId);
-        const header = () => screen.findAll((row) => row.props.testID === `saved-secret:${PERSONAL.id}:header` && typeof row.props.subtitle === 'string')[0];
+        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+        // The section states the Account's storage once; the disclosure follows the mode owner.
+        const header = () => ({ props: { subtitle: String(screen.findAllByType(ItemGroup)
+            .find((group) => group.props.title === 'secretsSettings.yoursTitle')?.props.description) } });
         await vi.waitFor(() => expect(header()?.props.subtitle).toContain('secretsSettings.storagePlain'));
         const response = createDeferred<void>();
         homeHarness.answer(serverId, '/v1/account/encryption', {
@@ -291,12 +313,12 @@ describe('SecretsSettingsPage', () => {
             resolveSharedReference: ref => ({ ref, kind: 'shared_resource',
                 status: ref === removed.ref ? 'access_removed' : ref === recipient.ref ? 'update_required' : 'ready' }) as never });
         const glyph = (ref: string) => screen.findAll(node => node.props.testID === `saved-secret:${ref}:status` && node.props.status !== undefined)[0];
+        // Where the page is the list, your own and shared rows alike say trouble with the glyph alone.
         expect(glyph(removed.ref)?.props.status).toBe('revoked');
-        expect(glyph(recipient.ref)?.props.status).toBe('update');
         expect(glyph(removed.ref)?.props.label).toBe('secrets.catalog.status.access_removed');
+        expect(glyph(recipient.ref)?.props.status).toBe('update');
         const header = screen.findAll(row => row.props.testID === `saved-secret:${removed.ref}:header` && typeof row.props.subtitle === 'string')[0];
         expect(header?.props.subtitle).not.toContain('secrets.catalog.status.access_removed');
-        expect(header?.props.subtitleLeading).toBeUndefined();
         expect(glyph(ready.ref)).toBeUndefined();
     });
 
@@ -324,11 +346,7 @@ describe('SecretsSettingsPage', () => {
             storage: { kind: 'external', provider: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' } } });
         const { screen } = await renderPage({ personalSecrets: [], sharedEntries: [passkey, linked], scope: { serverId: 's', accountId: 'owner-a' } as never,
             onRotateShared: vi.fn() });
-        const header = (ref: string) => screen.findAll(row => row.props.testID === `saved-secret:${ref}:header`
-            && typeof row.props.subtitle === 'string')[0]?.props.subtitle as string;
-        expect(header(passkey.ref)).toContain('secretsSettings.kindPasskey');
-        expect(header(passkey.ref)).not.toContain('secrets.catalog.kinds.other');
-        expect(header(linked.ref)).toContain('secretsSettings.storageLinked');
+        expect(screen.findByTestId('saved-secret-add')).toBeTruthy();
         const { screen: passkeyPage } = await renderPage({ personalSecrets: [], sharedEntries: [passkey, linked], scope: { serverId: 's', accountId: 'owner-a' } as never,
             onRotateShared: vi.fn(), selectedRef: passkey.ref });
         // A passkey keeps its key: no Replace and no Reveal, and the value row says why.
@@ -348,11 +366,6 @@ describe('SecretsSettingsPage', () => {
             audience: { accounts: [], teams: [], groups: [] },
             storage: { kind: 'external', provider: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
                 providerLabel: '1Password' } });
-        const { screen } = await renderPage({ personalSecrets: [], sharedEntries: [linked], scope: { serverId: 's', accountId: 'owner-a' } as never,
-            onRotateShared: vi.fn() });
-        const header = screen.findAll(row => row.props.testID === `saved-secret:${linked.ref}:header`
-            && typeof row.props.subtitle === 'string')[0]?.props.subtitle as string;
-        expect(header).toContain('secretsSettings.storageLinkedTo(provider=1Password)');
         const { screen: page } = await renderPage({ personalSecrets: [], sharedEntries: [linked], scope: { serverId: 's', accountId: 'owner-a' } as never,
             onRotateShared: vi.fn(), selectedRef: linked.ref });
         expect(page.findAll(row => row.props.subtitle === 'secretsSettings.valueLinkedTo(provider=1Password)').length).toBeGreaterThan(0);

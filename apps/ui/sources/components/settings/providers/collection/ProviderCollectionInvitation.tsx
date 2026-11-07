@@ -14,21 +14,20 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { PROVIDERS_SETTINGS } from '../providersSettings';
-import { AddProviderMenu, newProviderRoute } from './AddProviderMenu';
 import type { ProviderAvailableContribution } from './providerCollectionModel';
 
-/** How many catalog marks the invitation shows. */
-const INVITATION_MARK_COUNT = 5;
+/** How many providers an invitation to connect shows before "Browse all": its marks here, its rows on the home. */
+export const INVITATION_MARK_COUNT = 5;
 const CONNECTED_SERVICES_ROUTE = '/(app)/settings/connected-services';
 
 /**
  * The empty Providers collection, wide or narrow (lab PI1 / PI1p): the catalog's marks, one promise,
- * Add provider leading with Custom endpoint beside it, and the pointer for subscriptions. `onAdd`
- * opens an authoring route the way the hosting list navigates.
+ * Add provider leading with Custom endpoint beside it, and the pointer for subscriptions. Both
+ * entry controls open the same Add picker; its selected continuation owns authoring navigation.
  */
 export const ProviderCollectionInvitation = React.memo(function ProviderCollectionInvitation(props: Readonly<{
     available: ReadonlyArray<ProviderAvailableContribution>;
-    onAdd: (href: string) => void;
+    onAdd: () => void;
 }>) {
     const router = useRouter();
     const { theme } = useUnistyles();
@@ -56,28 +55,22 @@ export const ProviderCollectionInvitation = React.memo(function ProviderCollecti
             action={(
                 <View style={styles.invitationActions}>
                     <View style={styles.actions}>
-                        <AddProviderMenu
-                            available={props.available}
-                            include="catalog"
-                            onAdd={props.onAdd}
-                            renderTrigger={(toggle) => (
-                                <RoundButton
-                                    testID="settings-providers-invitation-add"
-                                    // One size family for the pair: the fill, not the size, says which leads.
-                                    size="small"
-                                    title={t('settingsProvidersCollection.addProvider')}
-                                    disabled={props.available.length === 0}
-                                    onPress={toggle}
-                                />
-                            )}
-                        />
+                        <SettingAnchor setting={PROVIDERS_SETTINGS.settings.add}>
+                            <RoundButton
+                                testID="settings-providers-invitation-add"
+                                // One size family for the pair: the fill, not the size, says which leads.
+                                size="small"
+                                title={t('settingsProvidersCollection.addProvider')}
+                                onPress={props.onAdd}
+                            />
+                        </SettingAnchor>
                         <SettingAnchor setting={PROVIDERS_SETTINGS.settings.custom}>
                         <RoundButton
                             testID="settings-providers-invitation-custom"
                             size="small"
                             display="secondary"
                             title={t('settingsProvidersCollection.customEndpoint')}
-                            onPress={() => props.onAdd(newProviderRoute(null))}
+                            onPress={props.onAdd}
                         />
                         </SettingAnchor>
                     </View>

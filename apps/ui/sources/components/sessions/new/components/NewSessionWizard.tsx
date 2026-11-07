@@ -50,10 +50,12 @@ import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { buildNewSessionProfileSelectionPopover } from '@/components/sessions/new/components/buildNewSessionProfileSelectionPopover';
 import { NewSessionProfilesBrowserContent } from '@/components/sessions/new/components/NewSessionProfilesBrowserContent';
 import type {
-    AcpConfigOptionOverridesV1,
-    ProviderErrorV1,
+    AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
+    ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import type {
     SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
@@ -87,13 +89,17 @@ import {
 } from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
+import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
 import { NewSessionLaunchApprovalNotice, type NewSessionLaunchApprovalNoticeState } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import {
     useNewSessionPromptValue,
     type NewSessionPromptStore,
 } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
-import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
+import {
+    isNewSessionComposerEditable,
+    type NewSessionComposerDocument,
+} from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
@@ -159,6 +165,7 @@ export interface NewSessionWizardAgentProps {
     acpSessionModeId?: string | null;
     setAcpSessionModeId?: (modeId: string | null) => void;
     acpConfigOptions?: React.ComponentProps<typeof AgentInput>['acpConfigOptionsOverride'];
+    acpModelConfigOptionId?: React.ComponentProps<typeof AgentInput>['acpModelConfigOptionIdOverride'];
     acpConfigOptionsProbe?: React.ComponentProps<typeof AgentInput>['acpConfigOptionsOverrideProbe'];
     acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
@@ -171,7 +178,7 @@ export interface NewSessionWizardAgentProps {
     teamCredentialResources?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialResources'];
     teamNameById?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamNameById'];
     homeNameByTeamId?: React.ComponentProps<typeof NewSessionModelSelectionContent>['homeNameByTeamId'];
-    currentTeamCredentialResourceKeys?: React.ComponentProps<typeof NewSessionModelSelectionContent>['currentTeamCredentialResourceKeys'];
+    teamCredentialResourceStatusByKey?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialResourceStatusByKey'];
     teamCredentialServerId?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialServerId'];
     selectedTeamCredentialModel?: React.ComponentProps<typeof NewSessionModelSelectionContent>['selectedTeamCredentialModel'];
     onSelectTeamCredentialModel?: React.ComponentProps<typeof NewSessionModelSelectionContent>['onSelectTeamCredentialModel'];
@@ -179,6 +186,7 @@ export interface NewSessionWizardAgentProps {
     providerModelProjectionError?: ProviderErrorV1 | null;
     providerModelProjectionFailures?: React.ComponentProps<typeof NewSessionModelSelectionContent>['providerProjectionFailures'];
     retryProviderModelProjection?: (() => Promise<void> | void) | null;
+    providerModelProjectionApproval?: React.ComponentProps<typeof NewSessionModelSelectionContent>['providerProjectionApproval'];
     providerCurrentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys?: ReadonlySet<string>;
     experimentalModelConfirmation?: SessionModelPickerExperimentalConfirmationController;
@@ -227,6 +235,7 @@ export interface NewSessionWizardFooterProps {
     composerFileScope?: React.ComponentProps<typeof AgentInput>['composerFileScope'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
+    newSessionAfterSendMode?: React.ComponentProps<typeof AgentInput>['newSessionAfterSendMode'];
     /** Registers this footer's Send as the Temporary-computer replacement owner. */
     registerTemporaryComputerReplacementLaunch?: (send: () => void) => () => void;
     canCreate: boolean;
@@ -237,6 +246,8 @@ export interface NewSessionWizardFooterProps {
     providerLaunchError?: ProviderErrorV1 | null;
     retryProviderLaunch?: () => void;
     launchApproval?: NewSessionLaunchApprovalNoticeState | null;
+    /** The requester's own folders on someone else's machine (MEMBER-WORKSPACE): read state and its hint. */
+    requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
@@ -465,7 +476,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         teamCredentialResources,
         teamNameById,
         homeNameByTeamId,
-        currentTeamCredentialResourceKeys,
+        teamCredentialResourceStatusByKey,
         teamCredentialServerId,
         selectedTeamCredentialModel,
         onSelectTeamCredentialModel,
@@ -473,6 +484,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         providerModelProjectionError,
         providerModelProjectionFailures,
         retryProviderModelProjection,
+        providerModelProjectionApproval,
         providerCurrentSelectionRecovery,
         hiddenNativeModelKeys,
         experimentalModelConfirmation,
@@ -712,6 +724,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         retry={props.footer.retryProviderLaunch}
                                     />
                                     <NewSessionLaunchApprovalNotice approval={props.footer.launchApproval} />
+                                    <NewSessionRequesterFolderHint isolation={props.footer.requesterIsolation} />
                                     {/*
                                       * Resolved upstream by
                                       * `resolveNewSessionLaunchPresentation`. The Wizard
@@ -736,8 +749,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onStructuredInputMentionsChange={props.footer.composerDocument?.onStructuredInputMentionsChange}
                                         onComposerFocusChange={onComposerFocusChange}
                                         onComposerFocusRequestChange={props.footer.composerDocument?.onComposerFocusRequestChange}
+                                        onComposerBlurRequestChange={props.footer.composerDocument?.onComposerBlurRequestChange}
                                         onPromptPickerOpenRequestChange={props.footer.composerDocument?.onPromptPickerOpenRequestChange}
                                         composerRef={props.footer.composerDocument?.ref}
+                                        statusRegions={props.footer.composerDocument?.statusRegions}
                                         composerReferenceHost={props.footer.composerReferenceHost}
                                         composerFileScope={props.footer.composerFileScope}
                                         onComposerActionBarLayoutChange={props.footer.composerDocument?.onComposerActionBarLayoutChange}
@@ -745,8 +760,12 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         composerDecorations={props.footer.composerDocument?.composerDecorations ?? []}
                                         composerInputLock={props.footer.composerDocument?.composerInputLock ?? null}
                                         onSend={handleSend}
+                                        newSessionAfterSendMode={props.footer.newSessionAfterSendMode}
                                         isSendDisabled={!canCreate || (props.footer.composerDocument?.composerInputLock ?? null) !== null}
-                                        disabled={props.footer.composerDocument?.composerInputLock?.mode === 'editAndSubmit'}
+                                        disabled={!isNewSessionComposerEditable({
+                                            isSubmitting: isCreating,
+                                            inputLock: props.footer.composerDocument?.composerInputLock,
+                                        })}
                                         isSending={isCreating}
                                         submitAccessibilityLabel={props.footer.submitAccessibilityLabel}
                                         placeholder={t('session.inputPlaceholder')}
@@ -783,6 +802,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 : undefined
                                         }
                                         acpConfigOptionsOverride={props.agent.acpConfigOptions}
+                                        acpModelConfigOptionIdOverride={props.agent.acpModelConfigOptionId}
                                         acpConfigOptionsOverrideProbe={props.agent.acpConfigOptionsProbe}
                                         acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
                                         onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
@@ -1063,7 +1083,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 ) : undefined}
                                             >
                                                 <NewSessionModelSelectionContent
-                                                    modelDiscoveryFailed={modelOptionsProbe?.failed}
+                                                    modelOptionsProbe={modelOptionsProbe}
                                                     presentation={modelPresentation}
                                                     modelOptions={modelOptions}
                                                     selectedModelId={modelMode}
@@ -1078,7 +1098,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     teamCredentialResources={teamCredentialResources}
                                                     teamNameById={teamNameById}
                                                     homeNameByTeamId={homeNameByTeamId}
-                                                    currentTeamCredentialResourceKeys={currentTeamCredentialResourceKeys}
+                                                    teamCredentialResourceStatusByKey={teamCredentialResourceStatusByKey}
                                                     teamCredentialServerId={teamCredentialServerId}
                                                     selectedTeamCredentialModel={selectedTeamCredentialModel}
                                                     onSelectTeamCredentialModel={onSelectTeamCredentialModel}
@@ -1086,6 +1106,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     providerProjectionError={providerModelProjectionError}
                                                     providerProjectionFailures={providerModelProjectionFailures}
                                                     retryProviderProjection={retryProviderModelProjection}
+                                                    providerProjectionApproval={providerModelProjectionApproval}
                                                     currentSelectionRecovery={providerCurrentSelectionRecovery}
                                                     hiddenNativeModelKeys={hiddenNativeModelKeys}
                                                     experimentalConfirmation={experimentalModelConfirmation}

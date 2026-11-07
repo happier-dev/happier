@@ -10,7 +10,7 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { CLIAvailability } from '@/agents/machineAgents/machineAgentCliAvailability';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -68,7 +68,7 @@ export function useNewSessionWizardProps(params: Readonly<{
 
     // Secret satisfaction helpers
     machineEnvPresence: UseMachineEnvPresenceResult;
-    secrets: SavedSecret[];
+    secrets: readonly SavedSecret[];
     secretBindingsByProfileId: Record<string, Record<string, string>>;
     selectedSecretIdByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
     sessionOnlySecretValueByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
@@ -101,6 +101,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     acpSessionModeId?: NewSessionWizardAgentProps['acpSessionModeId'];
     setAcpSessionModeId?: NewSessionWizardAgentProps['setAcpSessionModeId'];
     acpConfigOptions?: NewSessionWizardAgentProps['acpConfigOptions'];
+    acpModelConfigOptionId?: NewSessionWizardAgentProps['acpModelConfigOptionId'];
     acpConfigOptionsProbe?: NewSessionWizardAgentProps['acpConfigOptionsProbe'];
     acpConfigOptionOverrides?: NewSessionWizardAgentProps['acpConfigOptionOverrides'];
     setAcpConfigOptionOverride?: NewSessionWizardAgentProps['setAcpConfigOptionOverride'];
@@ -111,7 +112,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     teamCredentialResources?: NewSessionWizardAgentProps['teamCredentialResources'];
     teamNameById?: NewSessionWizardAgentProps['teamNameById'];
     homeNameByTeamId?: NewSessionWizardAgentProps['homeNameByTeamId'];
-    currentTeamCredentialResourceKeys?: NewSessionWizardAgentProps['currentTeamCredentialResourceKeys'];
+    teamCredentialResourceStatusByKey?: NewSessionWizardAgentProps['teamCredentialResourceStatusByKey'];
     selectedTeamCredentialModel?: NewSessionWizardAgentProps['selectedTeamCredentialModel'];
     onSelectTeamCredentialModel?: NewSessionWizardAgentProps['onSelectTeamCredentialModel'];
     providerModelGroups?: NewSessionWizardAgentProps['providerModelGroups'];
@@ -120,6 +121,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     providerModelProjectionError?: NewSessionWizardAgentProps['providerModelProjectionError'];
     providerModelProjectionFailures?: NewSessionWizardAgentProps['providerModelProjectionFailures'];
     retryProviderModelProjection?: NewSessionWizardAgentProps['retryProviderModelProjection'];
+    providerModelProjectionApproval?: NewSessionWizardAgentProps['providerModelProjectionApproval'];
     providerCurrentSelectionRecovery?: NewSessionWizardAgentProps['providerCurrentSelectionRecovery'];
     hiddenNativeModelKeys?: NewSessionWizardAgentProps['hiddenNativeModelKeys'];
     experimentalModelConfirmation?: NewSessionWizardAgentProps['experimentalModelConfirmation'];
@@ -158,6 +160,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     composerFileScope?: NewSessionWizardFooterProps['composerFileScope'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: () => void;
+    newSessionAfterSendMode?: NewSessionWizardFooterProps['newSessionAfterSendMode'];
     registerTemporaryComputerReplacementLaunch?: NewSessionWizardFooterProps['registerTemporaryComputerReplacementLaunch'];
     canCreate: boolean;
     isCreating: boolean;
@@ -399,6 +402,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             acpSessionModeId: params.acpSessionModeId,
             setAcpSessionModeId: params.setAcpSessionModeId,
             acpConfigOptions: params.acpConfigOptions,
+            acpModelConfigOptionId: params.acpModelConfigOptionId,
             acpConfigOptionsProbe: params.acpConfigOptionsProbe,
             acpConfigOptionOverrides: params.acpConfigOptionOverrides,
             setAcpConfigOptionOverride: params.setAcpConfigOptionOverride,
@@ -409,7 +413,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             teamCredentialResources: params.teamCredentialResources,
             teamNameById: params.teamNameById,
             homeNameByTeamId: params.homeNameByTeamId,
-            currentTeamCredentialResourceKeys: params.currentTeamCredentialResourceKeys,
+            teamCredentialResourceStatusByKey: params.teamCredentialResourceStatusByKey,
             selectedTeamCredentialModel: params.selectedTeamCredentialModel,
             onSelectTeamCredentialModel: params.onSelectTeamCredentialModel,
             providerModelGroups: params.providerModelGroups,
@@ -418,6 +422,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             providerModelProjectionError: params.providerModelProjectionError,
             providerModelProjectionFailures: params.providerModelProjectionFailures,
             retryProviderModelProjection: params.retryProviderModelProjection,
+            providerModelProjectionApproval: params.providerModelProjectionApproval,
             providerCurrentSelectionRecovery: params.providerCurrentSelectionRecovery,
             hiddenNativeModelKeys: params.hiddenNativeModelKeys,
             experimentalModelConfirmation: params.experimentalModelConfirmation,
@@ -446,6 +451,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.providerModelProjectionError,
         params.providerModelProjectionFailures,
         params.retryProviderModelProjection,
+        params.providerModelProjectionApproval,
         params.providerCurrentSelectionRecovery,
         params.hiddenNativeModelKeys,
         params.experimentalModelConfirmation,
@@ -458,6 +464,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.acpSessionModeOptions,
         params.acpSessionModeProbe,
         params.acpConfigOptions,
+        params.acpModelConfigOptionId,
         params.acpConfigOptionsProbe,
         params.acpConfigOptionOverrides,
         params.permissionMode,
@@ -472,7 +479,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.teamCredentialResources,
         params.teamNameById,
         params.homeNameByTeamId,
-        params.currentTeamCredentialResourceKeys,
+        params.teamCredentialResourceStatusByKey,
         params.selectedTeamCredentialModel,
         params.onSelectTeamCredentialModel,
         params.handlePermissionModeChange,
@@ -536,6 +543,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             composerFileScope: params.composerFileScope,
             setSessionPrompt: params.setSessionPrompt,
             handleCreateSession: params.handleCreateSession,
+            newSessionAfterSendMode: params.newSessionAfterSendMode,
             registerTemporaryComputerReplacementLaunch: params.registerTemporaryComputerReplacementLaunch,
             canCreate: params.canCreate,
             isCreating: params.isCreating,
@@ -580,6 +588,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.emptyAutocompleteKinds,
         params.emptyAutocompleteSuggestions,
         params.handleCreateSession,
+        params.newSessionAfterSendMode,
         params.registerTemporaryComputerReplacementLaunch,
         params.isCreating,
         params.isTemporaryComputer,

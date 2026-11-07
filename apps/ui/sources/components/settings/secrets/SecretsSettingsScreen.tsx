@@ -456,9 +456,9 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             onCancelAdd={() => { void runGuardedNavigation(clearEditors); }}
             createEditor={createEditor}
             accessEditor={accessEditor}
+            onOpenSecret={openSecret}
             selectedRef={selectedRef}
             onOpenUsedBy={(route) => { void runGuardedNavigation(() => router.push(route as never)); }}
-            onOpenSecret={openSecret}
         />
     );
 });

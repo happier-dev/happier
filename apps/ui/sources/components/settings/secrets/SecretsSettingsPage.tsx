@@ -13,7 +13,8 @@ import {
     subscribeAccountEncryptionModeCacheInvalidation,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { AccountSettingsSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
-import { savedSecretUsedByCopy, sharedSecretProvenanceSegments, sharedSecretRowStatus, sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
+import { savedSecretAudienceSummary, savedSecretEntryKindLabel, savedSecretLinkedStorageLabel, savedSecretOwnedRowSummary, savedSecretUsedByCopy, sharedSecretProvenanceSegments, sharedSecretRowStatus,
+    sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
 import { useSavedSecretUsedBy, useSavedSecretUsedBySourcesDemand } from '@/components/secrets/useSavedSecretUsedBy';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
@@ -48,6 +49,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
+import { useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentation';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 type CorruptOwnerEntry = Extract<SavedSecretCatalogCorruptEntryV1, { relationship: 'owner' }>;
@@ -96,10 +98,10 @@ export type SecretsSettingsPageProps = Readonly<{
     createEditor: React.ReactNode | null;
     /** The one secret whose recipients are being chosen, with its editor, shown inside its row. */
     accessEditor: Readonly<{ key: string; element: React.ReactNode }> | null;
+    /** Opens one of your secrets as its own page (the route's `secret`), where the page is their list. */
+    onOpenSecret?: (ref: string) => void;
     /** The secret the Credentials rail selected (route `secret`): the page becomes that secret's page. */
     selectedRef?: string | null;
-    /** Opens one of your secrets as its own page (the route's `secret`), from this list. */
-    onOpenSecret?: (ref: string) => void;
     /** Opens what uses a secret, from its Used by section. */
     onOpenUsedBy?: (route: string) => void;
 }>;
@@ -109,14 +111,6 @@ function kindLabel(kind: SavedSecret['kind'] | null): string | null {
     return kind ? t(`secrets.catalog.kinds.${kind}`) : null;
 }
 
-/**
- * A resource's type, read from the catalog's value-free storage fact: a transferred passkey is saved
- * with the generic kind, so its storage says what it is. Content is never opened to label a row.
- */
-function entryKindLabel(entry: SavedSecretCatalogEntryV1): string | null {
-    return entry.storage?.kind === 'passkey' ? t('secretsSettings.kindPasskey') : kindLabel(entry.kind);
-}
-
 /** The installed source a linked resource reads from, named by its admitted declaration; null when unknown. */
 function linkedProvider(entry: SavedSecretCatalogEntryV1): string | null {
     return entry.storage?.kind === 'external' ? entry.storage.providerLabel ?? null : null;
@@ -124,20 +118,13 @@ function linkedProvider(entry: SavedSecretCatalogEntryV1): string | null {
 
 /** Where the value lives: a vault-linked resource keeps only which field to read, under the Account's mode. */
 function entryStorageLabel(entry: SavedSecretCatalogEntryV1): string | null {
-    if (entry.storage?.kind !== 'external') return storageLabel(entry.encryptionMode);
-    const provider = linkedProvider(entry);
-    return provider ? t('secretsSettings.storageLinkedTo', { provider }) : t('secretsSettings.storageLinked');
+    return savedSecretLinkedStorageLabel(entry) ?? storageLabel(entry.encryptionMode);
 }
 
 function sharedRowStatus(resolution: SavedSecretReferenceResolution, entry: SavedSecretCatalogEntryV1) {
     return resolution.displayStatus ?? resolution.status ?? entry.materialStatus;
 }
 
-function audienceSummary(entry: SavedSecretCatalogEntryV1): string {
-    const audience = entry.audience;
-    const count = audience ? audience.accounts.length + audience.teams.length + audience.groups.length : 0;
-    return count === 0 ? t('secretsSettings.accessOnlyYou') : t('secretsSettings.accessRecipients', { count });
-}
 
 function storageLabel(mode: SavedSecretCatalogEntryV1['encryptionMode']): string | null {
     if (mode === 'e2ee') return t('secretsSettings.storageE2ee');
@@ -212,7 +199,7 @@ function SecretStorageRow(props: Readonly<{
  * access editor inside the secret's own row.
  */
 export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props: SecretsSettingsPageProps) {
-    const personalStorageMode = usePersonalSecretStorageMode(props.personalSecrets.length > 0);
+    const personalStorageMode = usePersonalSecretStorageMode(true);
     const [expandedKey, setExpandedKey] = React.useState<string | null>(props.selectedRef ?? null);
     const selectedRef = props.selectedRef ?? null;
     React.useEffect(() => { if (selectedRef) setExpandedKey(selectedRef); }, [selectedRef]);
@@ -228,6 +215,16 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
     const ownerCorrupt = props.corruptEntries.filter((entry): entry is CorruptOwnerEntry => entry.relationship === 'owner');
     const recipientCorrupt = props.corruptEntries.filter((entry) => entry.relationship === 'recipient');
     const yoursEmpty = props.personalSecrets.length === 0 && ownerShared.length === 0 && ownerCorrupt.length === 0;
+    // Your secrets are listed in the Credentials rail; this section keeps Add, its draft and what needs a repair.
+    // Beside the rail the page leaves your secrets to it ('land'); where no rail stands beside it, the page is their list.
+    const indexView = useHappierCollectionIndexView();
+    const listsOwned = indexView === 'list';
+    const yoursHasRows = adding || props.sharedCatalogStatus === 'loading' || props.personalSecrets.length > 0
+        || ownerCorrupt.length > 0 || (listsOwned && ownerShared.length > 0) || (yoursEmpty && props.sharedCatalogStatus === 'ready');
+    // How Happier keeps them is what every one of your secrets shares: said once, for the section.
+    const yoursStorage = storageLabel(personalStorageMode);
+    const storageDefault = `${yoursStorage}. ${personalStorageMode === 'e2ee'
+        ? t('secretsSettings.storageE2eeDescription') : t('secretsSettings.storagePlainDescription')}`;
     const openEntry = selectedRef ? ownerShared.find((entry) => entry.ref === selectedRef) ?? null : null;
     const pageNotices = (
         <>
@@ -286,9 +283,21 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
             <SettingsPageHeader description={t('secretsSettings.purpose')} />
             {pageNotices}
 
+            {/* Nothing of yours only this page can hold: one state that asks for a secret, with Add as its next step. */}
+            {!yoursHasRows && indexView === 'land' ? (
+                <EmptyState
+                    testID="saved-secret:pick"
+                    layout="page"
+                    iconName="key"
+                    title={t('secretsSettings.pickTitle')}
+                    subtitle={yoursStorage ? `${t('secretsSettings.pickDescription')} ${storageDefault}` : t('secretsSettings.pickDescription')}
+                    primaryAction={{ label: t('secretsSettings.add'), testID: 'saved-secret:pick-add', onPress: props.onAdd }}
+                />
+            ) : null}
+            {yoursHasRows ? (
             <ItemGroup
                 title={t('secretsSettings.yoursTitle')}
-                description={t('secretsSettings.yoursDescription')}
+                description={yoursStorage ? `${t('secretsSettings.yoursDescription')} ${storageDefault}` : t('secretsSettings.yoursDescription')}
                 actionLayout="adaptive"
                 action={<AddSecretAction disabled={adding} onPress={props.onAdd} />}
             >
@@ -344,14 +353,14 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
                         shareDisabled={accessKey !== null}
                     />
                 ))}
-                {ownerShared.map((entry) => (
+                {listsOwned ? ownerShared.map((entry) => (
                     <OwnedSecretRow
                         key={entry.ref}
                         entry={entry}
                         status={sharedRowStatus(props.resolveSharedReference(entry.ref), entry)}
                         onOpen={props.onOpenSecret}
                     />
-                ))}
+                )) : null}
                 {ownerCorrupt.map((entry, idx) => (
                     <CorruptSecretRow
                         key={`owner:${entry.repair.resourceId}`}
@@ -363,6 +372,7 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
                     />
                 ))}
             </ItemGroup>
+            ) : null}
 
             {recipientShared.length + recipientCorrupt.length > 0 ? (
                 <ItemGroup
@@ -556,9 +566,8 @@ const PersonalSecretRow = React.memo(function PersonalSecretRow(props: Readonly<
                     {...headerProps}
                     testID={`saved-secret:${secret.id}:header`}
                     title={secret.name}
-                    // Open, the body's Storage and access rows say the rest; the header keeps only the kind.
-                    subtitle={props.expanded ? kindLabel(secret.kind) ?? undefined
-                        : [kindLabel(secret.kind), storageLabel(props.storageMode), t('secretsSettings.accessOnlyYou')].filter(Boolean).join(' · ')}
+                    // How it is stored and "only you" are every row's defaults, said once by the section.
+                    subtitle={kindLabel(secret.kind) ?? undefined}
                 />
             )}
         >
@@ -586,7 +595,7 @@ const PersonalSecretRow = React.memo(function PersonalSecretRow(props: Readonly<
     );
 });
 
-/** One of your secrets in the list: what it is and who can use it; it opens as its own page. */
+/** One of your secrets where the page is their list (no rail beside it): the rail's row copy, opening its page. */
 const OwnedSecretRow = React.memo(function OwnedSecretRow(props: Readonly<{
     entry: SavedSecretCatalogEntryV1;
     status: SavedSecretCatalogEntryV1['materialStatus'];
@@ -594,16 +603,15 @@ const OwnedSecretRow = React.memo(function OwnedSecretRow(props: Readonly<{
 }>) {
     const { entry, status, onOpen } = props;
     const name = entry.name ?? t('secrets.catalog.unavailableName');
-    const summary = [entryKindLabel(entry), entryStorageLabel(entry), audienceSummary(entry)]
-        .filter((part): part is string => Boolean(part)).join(' · ');
+    const summary = savedSecretOwnedRowSummary(entry);
     return (
         <Item
             testID={`saved-secret:${entry.ref}:header`}
             title={name}
-            subtitle={summary}
+            subtitle={summary || undefined}
             rightElement={secretStatusGlyph(entry.ref, sharedSecretRowStatus(status), sharedSecretStatusLabel(status))}
             keepChevronWithRightElement
-            accessibilityLabel={[name, t('secrets.catalog.relationship.owner'), summary, ...statusWords(status)].join(', ')}
+            accessibilityLabel={[name, t('secrets.catalog.relationship.owner'), summary, ...statusWords(status)].filter(Boolean).join(', ')}
             onPress={onOpen ? () => onOpen(entry.ref) : undefined}
         />
     );
@@ -724,7 +732,7 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
 
     // Who it is, on one line: its type and where it is kept; a secret in trouble says so once, here.
     const meta: PageHeaderMetaFact[] = [
-        ...(entryKindLabel(entry) ? [{ key: 'kind', text: entryKindLabel(entry)! }] : []),
+        ...(savedSecretEntryKindLabel(entry) ? [{ key: 'kind', text: savedSecretEntryKindLabel(entry)! }] : []),
         ...(entryStorageLabel(entry) ? [{ key: 'storage', text: entryStorageLabel(entry)!,
             ...(entry.encryptionMode === 'e2ee' && !linked ? { icon: 'lock' as const } : {}) }] : []),
         ...(status !== 'ready' ? [{ key: 'status', testID: `${testID}:status`, text: sharedSecretStatusLabel(status), icon: 'warning' as const }] : []),
@@ -846,7 +854,7 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
                 <ItemGroup title={t('secretsSettings.sharingTitle')} description={t('secretsSettings.sharingDescription')}>
                     <Item
                         testID={`${testID}:access`}
-                        title={audienceSummary(entry)}
+                        title={savedSecretAudienceSummary(entry)}
                         mode="info"
                         showChevron={false}
                         showDivider={false}

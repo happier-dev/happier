@@ -8,6 +8,8 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { teamsUnavailableHomeReason } from '../teamsDirectoryViewState';
 import type { HomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { t } from '@/text';
+import { teamCredentialCatalogConfidenceLabel } from './catalogConfidencePresentation';
+import { teamCredentialCatalogStatusLabel } from './catalogStatusPresentation';
 
 import {
     deliveryModeLabel,
@@ -21,6 +23,10 @@ import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/
 
 export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCredentialCatalogSettingsGroup(props: Readonly<{
     title: string;
+    /** A page section's sentence above its rows (Credentials and Providers say what is shared with you). */
+    description?: string;
+    /** Each resource's identity mark (its service or provider), drawn by the page that knows its marks. */
+    renderMark?: (resource: TeamCredentialResourceCatalogEntryV1) => React.ReactNode;
     /** `group`: a titled section of a page. `rail`: a labelled group of rows in a collection rail. */
     variant?: 'group' | 'rail';
     sourceKind: 'connected_service' | 'provider';
@@ -69,7 +75,8 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
     ) : null : null;
 
     const rows = resources.map((resource) => {
-        const resourceCurrent = props.catalog.currentResourceKeys.has(`${resource.teamId}:${resource.id}`);
+        const status = props.catalog.resourceStatusByKey.get(`${resource.teamId}:${resource.id}`) ?? { kind: 'pending' as const };
+        const resourceCurrent = status.kind === 'current';
         // The catalog row never decides who may repair a resource: every
         // navigable recovery opens the exact resource's own Settings, which
         // applies the Home's viewer decision. Recoveries without a
@@ -78,7 +85,7 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         const recovery = teamCredentialRecoveryPresentation(resource.recoveryAction);
         const canOpen = resourceCurrent;
         const teamName = props.catalog.teamNameById[resource.teamId] ?? t('teams.title');
-        const state = resourceStateLabel(resource.readiness.kind);
+        const state = teamCredentialCatalogStatusLabel(status) ?? resourceStateLabel(resource.readiness);
         // A disabled row must still say why it cannot open and what its
         // recovery is; an openable row's destination is the recovery, so
         // the state alone is enough.
@@ -87,9 +94,14 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
             : null;
         const mode = recipientDeliveryMode(resource);
         const delivery = mode ? deliveryModeLabel(mode) : null;
-        const subtitle = [teamName, delivery, state, recoveryLabel].filter((part): part is string => Boolean(part)).join(' · ');
+        const confidence = resource.providerModels.some(row => row.confidence === 'account_unverified')
+            ? teamCredentialCatalogConfidenceLabel({ confidence: 'account_unverified' }) : null;
+        // One message per state: a recovery its state sentence already says is not said twice.
+        const subtitle = [teamName, delivery, state, confidence, recoveryLabel && state?.includes(recoveryLabel) ? null : recoveryLabel]
+            .filter((part): part is string => Boolean(part)).join(' · ');
         return (
             <Item
+                rowRole="catalogRow"
                 key={`${resource.teamId}:${resource.id}`}
                 density={rail ? 'compact' : undefined}
                 pressableStyle={rail ? collectionListStyles.row : undefined}
@@ -97,12 +109,16 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
                 testID={`team-credential-catalog-resource:${resource.teamId}:${resource.id}`}
                 title={resource.displayName}
                 subtitle={subtitle}
+                // On a page the line carries a repair in words: it wraps rather than stopping mid-sentence.
+                subtitleLines={rail ? undefined : 0}
+                icon={props.renderMark?.(resource)}
                 accessibilityLabel={[
                     resource.displayName,
                     teamName,
                     sourceKindLabel(resource.sourcePresentation),
                     delivery,
                     state,
+                    confidence,
                     recoveryLabel,
                 ].filter((part): part is string => Boolean(part)).join(', ')}
                 disabled={!canOpen}
@@ -124,7 +140,7 @@ export const TeamCredentialCatalogSettingsGroup = React.memo(function TeamCreden
         );
     }
     return (
-        <ItemGroup title={props.title}>
+        <ItemGroup title={props.title} description={props.description}>
             {rows}
             {state}
         </ItemGroup>

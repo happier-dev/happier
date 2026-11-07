@@ -1,4 +1,3 @@
-import type { Metadata } from '@happier-dev/session-core/state';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import {
     LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
@@ -25,7 +24,7 @@ export type SessionConfigOptionValueId = string;
 
 function normalizeValueId(raw: unknown): SessionConfigOptionValueId | null {
     if (typeof raw === 'string') {
-        return raw.trim().length > 0 ? raw : null;
+        return raw;
     }
     if (typeof raw === 'boolean') return raw ? 'true' : 'false';
     if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
@@ -68,6 +67,7 @@ export type SessionConfigOption = Readonly<{
     id: string;
     name: string;
     description?: string;
+    category?: string;
     type: string;
     currentValue: SessionConfigOptionValueId;
     options?: readonly SessionConfigOptionSelectOption[];
@@ -124,14 +124,15 @@ function resolveOptionChoices(option: SessionConfigOption): readonly SessionConf
  * object literal would resolve `toString`/`constructor` off `Object.prototype` and disable
  * (or crash on) an option that declared no rule at all.
  */
-function applyOverridingBooleanOptionDimming(
+export function applySessionConfigOptionOverrideRules(
     controls: SessionConfigOptionControl[],
+    ruleControls: readonly SessionConfigOptionControl[] = controls,
 ): SessionConfigOptionControl[] {
     const overriddenBy = new Map<string, Readonly<{
         name: string;
         forcedValue?: SessionConfigOptionValueId;
     }>>();
-    for (const control of controls) {
+    for (const control of ruleControls) {
         const rule = control.option.overridesWhenOn;
         if (!rule || !isBooleanConfigOptionType(control.option.type)) continue;
         if (!resolveBooleanConfigOptionValue(control.option, control.effectiveValue)) continue;
@@ -163,7 +164,7 @@ function resolveRequestedValue(
     rawValue: unknown,
 ): SessionConfigOptionValueId | undefined {
     const requestedValue = normalizeValueId(rawValue);
-    if (!requestedValue) return undefined;
+    if (requestedValue === null) return undefined;
     const choices = option.options ?? option.groups?.flatMap((group) => group.options);
     if (choices?.length) {
         return choices.some((entry) => entry.value === requestedValue)
@@ -183,12 +184,12 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
         const rec = entry as Record<string, unknown>;
         const id = typeof rec.id === 'string' && rec.id.trim().length > 0 ? rec.id : '';
-        const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+        const name = typeof rec.name === 'string' && rec.name.trim() ? rec.name : '';
         const type = typeof rec.type === 'string' ? rec.type.trim() : '';
         if (!id || !name || !type) continue;
 
         const currentValue = normalizeValueId(rec.currentValue);
-        if (!currentValue) continue;
+        if (currentValue === null) continue;
 
         const options = Array.isArray(rec.options)
             ? rec.options
@@ -197,10 +198,10 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
                 )
                 .map((option: RawConfigOptionChoice) => {
                     const value = normalizeValueId(option.value);
-                    const optionName = typeof option.name === 'string' ? option.name.trim() : '';
-                    if (!value || !optionName) return null;
-                    const description = typeof option.description === 'string' ? option.description.trim() : '';
-                    return { value, name: optionName, ...(description ? { description } : {}) };
+                    const optionName = typeof option.name === 'string' && option.name.trim() ? option.name : '';
+                    if (value === null || !optionName) return null;
+                    const description = typeof option.description === 'string' ? option.description : undefined;
+                    return { value, name: optionName, ...(description === undefined ? {} : { description }) };
                 })
                 .filter(
                     (option: NonNullable<SessionConfigOption['options']>[number] | null): option is NonNullable<SessionConfigOption['options']>[number] =>
@@ -213,29 +214,31 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
                 if (!group || typeof group !== 'object' || Array.isArray(group)) return null;
                 const groupRecord = group as Record<string, unknown>;
                 const groupId = typeof groupRecord.id === 'string' && groupRecord.id.trim().length > 0 ? groupRecord.id : '';
-                const groupName = typeof groupRecord.name === 'string' ? groupRecord.name.trim() : '';
+                const groupName = typeof groupRecord.name === 'string' && groupRecord.name.trim() ? groupRecord.name : '';
                 if (!groupId || !groupName || !Array.isArray(groupRecord.options)) return null;
                 const groupOptions: SessionConfigOptionSelectOption[] = groupRecord.options.map((choice: unknown): SessionConfigOptionSelectOption | null => {
                     if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return null;
                     const choiceRecord = choice as RawConfigOptionChoice;
                     const value = normalizeValueId(choiceRecord.value);
-                    const choiceName = typeof choiceRecord.name === 'string' ? choiceRecord.name.trim() : '';
-                    if (!value || !choiceName) return null;
-                    const choiceDescription = typeof choiceRecord.description === 'string' ? choiceRecord.description.trim() : '';
-                    return { value, name: choiceName, ...(choiceDescription ? { description: choiceDescription } : {}) };
+                    const choiceName = typeof choiceRecord.name === 'string' && choiceRecord.name.trim() ? choiceRecord.name : '';
+                    if (value === null || !choiceName) return null;
+                    const choiceDescription = typeof choiceRecord.description === 'string' ? choiceRecord.description : undefined;
+                    return { value, name: choiceName, ...(choiceDescription === undefined ? {} : { description: choiceDescription }) };
                 }).filter((choice: SessionConfigOptionSelectOption | null): choice is SessionConfigOptionSelectOption => choice !== null);
                 return groupOptions.length > 0 ? { id: groupId, name: groupName, options: groupOptions } : null;
             }).filter((group): group is SessionConfigOptionSelectGroup => group !== null)
             : undefined;
 
-        const description = typeof rec.description === 'string' ? rec.description.trim() : '';
+        const description = typeof rec.description === 'string' ? rec.description : undefined;
+        const category = typeof rec.category === 'string' ? rec.category : undefined;
         const overridesWhenOn = normalizeOverrideRule(rec.overridesWhenOn);
         parsed.push({
             id,
             name,
             type,
             currentValue,
-            ...(description ? { description } : {}),
+            ...(description === undefined ? {} : { description }),
+            ...(category === undefined ? {} : { category }),
             ...(options && options.length > 0 ? { options } : {}),
             ...(groups && groups.length > 0 ? { groups } : {}),
             ...(overridesWhenOn ? { overridesWhenOn } : {}),
@@ -291,6 +294,7 @@ export type SessionConfigOptionInput = Readonly<{
     id: string;
     name: string;
     description?: string;
+    category?: string;
     type: string;
     currentValue: unknown;
     options?: ReadonlyArray<{
@@ -311,6 +315,10 @@ export type SessionConfigOptionInput = Readonly<{
     overridesWhenOn?: unknown;
 }>;
 
+type ModelDescriptorWithConfigOptions = Readonly<{
+    modelOptions?: ReadonlyArray<SessionConfigOptionInput>;
+}>;
+
 function buildSessionConfigOptionControls(params: Readonly<{
     agentId: string;
     stateAgentId: string | null;
@@ -318,8 +326,13 @@ function buildSessionConfigOptionControls(params: Readonly<{
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
     hideModeOption: boolean;
     hideModelOption: boolean;
+    modelConfigOptionId?: string | null;
+    modelDescriptors?: ReadonlyArray<ModelDescriptorWithConfigOptions> | null;
 }>): SessionConfigOptionControl[] | null {
     if (params.stateAgentId !== params.agentId) return null;
+
+    // Scope is a producer fact, not a category/name heuristic or the draft selection.
+    const modelScopedIds = new Set(params.modelDescriptors?.flatMap((model) => model.modelOptions?.map((option) => option.id) ?? []) ?? []);
 
     const controls: SessionConfigOptionControl[] = [];
     const idCounts = new Map<string, number>();
@@ -329,63 +342,49 @@ function buildSessionConfigOptionControls(params: Readonly<{
         }
     }
 
-    for (const entry of params.configOptions) {
+    const replacedSelectorId = params.hideModelOption && params.modelConfigOptionId
+        && params.configOptions.some((entry) => entry.id === params.modelConfigOptionId)
+        ? params.modelConfigOptionId
+        : null;
+    let selectorPassed = false;
+
+    for (const entry of normalizeAcpConfigOptionsArray(params.configOptions) ?? []) {
         const id = entry.id;
-        const name = entry.name.trim();
+        const name = entry.name;
         const type = entry.type.trim();
         if (!id || !name || !type || idCounts.get(id) !== 1) continue;
 
         if (params.hideModeOption && id === 'mode') continue;
-        if (params.hideModelOption && (id === 'models' || id === 'model')) continue;
+        if (params.hideModelOption && id === params.modelConfigOptionId) {
+            selectorPassed = true;
+            continue;
+        }
+        if (modelScopedIds.has(id)) continue;
 
         const currentValue = normalizeValueId(entry.currentValue);
-        if (!currentValue) continue;
+        if (currentValue === null) continue;
 
-        const optionsRaw = Array.isArray(entry.options) ? entry.options : [];
-        const options = optionsRaw
-            .map((opt) => {
-                const value = normalizeValueId(opt.value);
-                const optName = opt.name.trim();
-                if (!value || !optName) return null;
-                const optDescription = typeof opt.description === 'string' ? opt.description.trim() : '';
-                return { value, name: optName, ...(optDescription ? { description: optDescription } : {}) };
-            })
-            .filter((value): value is SessionConfigOptionSelectOption => value !== null);
-
-        const groups: SessionConfigOptionSelectGroup[] = Array.isArray(entry.groups)
-            ? entry.groups.map((group): SessionConfigOptionSelectGroup | null => {
-                const groupId = group.id;
-                const groupName = group.name.trim();
-                const groupOptions: SessionConfigOptionSelectOption[] = group.options.map((choice: Readonly<{
-                    value: unknown;
-                    name: string;
-                    description?: string;
-                }>): SessionConfigOptionSelectOption | null => {
-                    const value = normalizeValueId(choice.value);
-                    const choiceName = choice.name.trim();
-                    if (!value || !choiceName) return null;
-                    const choiceDescription = typeof choice.description === 'string' ? choice.description.trim() : '';
-                    return { value, name: choiceName, ...(choiceDescription ? { description: choiceDescription } : {}) };
-                }).filter((choice: SessionConfigOptionSelectOption | null): choice is SessionConfigOptionSelectOption => choice !== null);
-                return groupId && groupName && groupOptions.length > 0
-                    ? { id: groupId, name: groupName, options: groupOptions }
-                    : null;
-            }).filter((group): group is SessionConfigOptionSelectGroup => group !== null)
-            : [];
-
-        if (options.length > 0 && groups.length > 0) continue;
+        const options = entry.options ?? [];
+        const groups = entry.groups ?? [];
+        const groupedChoices = groups.flatMap((group) => group.options);
+        // The canonical ACP projection retains display groups alongside their flat selection index.
+        if (options.length > 0 && groups.length > 0 && (
+            options.length !== groupedChoices.length
+            || options.some((choice, index) => choice.value !== groupedChoices[index]?.value)
+        )) continue;
         if (new Set(groups.map((group) => group.id)).size !== groups.length) continue;
         const choices = options.length > 0 ? options : groups.flatMap((group) => group.options);
         if (hasDuplicateConfigOptionValues(choices)) continue;
 
-        const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+        const description = entry.description;
         const overridesWhenOn = normalizeOverrideRule(entry.overridesWhenOn);
         const option: SessionConfigOption = {
             id,
             name,
             type,
             currentValue,
-            ...(description ? { description } : {}),
+            ...(description === undefined ? {} : { description }),
+            ...(entry.category === undefined ? {} : { category: entry.category }),
             ...(options.length > 0 ? { options } : {}),
             ...(groups.length > 0 ? { groups } : {}),
             ...(overridesWhenOn ? { overridesWhenOn } : {}),
@@ -397,13 +396,16 @@ function buildSessionConfigOptionControls(params: Readonly<{
 
         controls.push({
             option,
+            ...(replacedSelectorId !== null && entry.category === 'model'
+                ? { modelPlacement: selectorPassed ? 'after' as const : 'before' as const }
+                : {}),
             ...(requestedValue !== undefined ? { requestedValue } : {}),
             effectiveValue,
             isPending,
         });
     }
 
-    return controls.length > 0 ? applyOverridingBooleanOptionDimming(controls) : null;
+    return controls.length > 0 ? applySessionConfigOptionOverrideRules(controls) : null;
 }
 
 /**
@@ -435,22 +437,23 @@ export function resolveSessionConfigOptionOverridesFromMetadata(params: Readonly
 
 export function computeSessionConfigOptionControls(params: {
     agentId: string;
-    metadata: Metadata | null | undefined;
+    metadata: ComposerOptionsInputV1 | null | undefined;
+    modelDescriptors?: ReadonlyArray<ModelDescriptorWithConfigOptions> | null;
 }): SessionConfigOptionControl[] | null {
     const state = parseSessionConfigOptionsState(
-        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_CONFIG_OPTIONS_STATE_KEY, LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY),
+        readMetadataAliasValue(params.metadata ?? {}, SESSION_CONFIG_OPTIONS_STATE_KEY, LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY),
     );
     if (!state) return null;
     if (state.agentId !== params.agentId) return null;
     if (state.configOptions.length === 0) return null;
 
     const sessionModes = parseSessionModesState(
-        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
+        readMetadataAliasValue(params.metadata ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
     );
     const hasDedicatedModeControl = sessionModes?.agentId === params.agentId && sessionModes.availableModes.length > 0;
 
     const sessionModels = parseSessionModelsState(
-        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODELS_STATE_KEY, LEGACY_ACP_SESSION_MODELS_STATE_KEY),
+        readMetadataAliasValue(params.metadata ?? {}, SESSION_MODELS_STATE_KEY, LEGACY_ACP_SESSION_MODELS_STATE_KEY),
     );
     const hasDedicatedModelControl =
         sessionModels?.agentId === params.agentId && sessionModels.availableModels.length > 0;
@@ -466,6 +469,8 @@ export function computeSessionConfigOptionControls(params: {
         overrides,
         hideModeOption: hasDedicatedModeControl,
         hideModelOption: hasDedicatedModelControl,
+        modelConfigOptionId: state.modelConfigOptionId,
+        modelDescriptors: params.modelDescriptors ?? (sessionModels?.agentId === params.agentId ? sessionModels.availableModels : null),
     });
 }
 
@@ -475,6 +480,8 @@ export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
     hideModeOption?: boolean;
     hideModelOption?: boolean;
+    modelConfigOptionId?: string | null;
+    modelDescriptors?: ReadonlyArray<ModelDescriptorWithConfigOptions> | null;
 }>): SessionConfigOptionControl[] | null {
     if (!Array.isArray(params.configOptions) || params.configOptions.length === 0) return null;
     return buildSessionConfigOptionControls({
@@ -484,6 +491,8 @@ export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
         overrides: params.overrides ?? null,
         hideModeOption: params.hideModeOption ?? false,
         hideModelOption: params.hideModelOption ?? false,
+        modelConfigOptionId: params.modelConfigOptionId,
+        modelDescriptors: params.modelDescriptors,
     });
 }
 
@@ -491,11 +500,17 @@ export function computeSessionConfigOptionControlsFromOverride(params: Readonly<
     agentId: string;
     configOptions: ReadonlyArray<SessionConfigOptionInput> | null | undefined;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
+    hideModelOption?: boolean;
+    modelConfigOptionId?: string | null;
+    modelDescriptors?: ReadonlyArray<ModelDescriptorWithConfigOptions> | null;
 }>): SessionConfigOptionControl[] | null {
     return computeSessionConfigOptionControlsForProvider({
         providerId: params.agentId,
         configOptions: params.configOptions,
         overrides: params.overrides ?? null,
+        hideModelOption: params.hideModelOption,
+        modelConfigOptionId: params.modelConfigOptionId,
+        modelDescriptors: params.modelDescriptors,
     });
 }
 
@@ -507,3 +522,4 @@ export type AcpConfigOptionControl = SessionConfigOptionControl;
 export const computeAcpConfigOptionControls = computeSessionConfigOptionControls;
 export const computeAcpConfigOptionControlsForProvider = computeSessionConfigOptionControlsForProvider;
 export const computeAcpConfigOptionControlsFromOverride = computeSessionConfigOptionControlsFromOverride;
+export const normalizeSessionConfigOptionValueId = normalizeValueId;

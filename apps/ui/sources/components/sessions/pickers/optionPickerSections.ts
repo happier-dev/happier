@@ -4,6 +4,17 @@ import type { OptionPickerOption, OptionPickerSection } from './OptionPickerOver
 
 type OptionVisuals = Pick<SelectionListOption, 'icon' | 'rightAccessory' | 'rightAccessoryOutsidePressable'>;
 
+/** A section-level status/recovery row has no selectable value or model identity. */
+export function optionPickerOptionKey<TValue>(
+    sectionId: string,
+    option: OptionPickerOption<TValue>,
+    getValueKey: (value: TValue) => string,
+): string {
+    return option.value === null && (option.disabled || option.onActivate)
+        ? JSON.stringify(['section-status', sectionId])
+        : getValueKey(option.value);
+}
+
 /** Descriptor projection is separate from the mounted native row visuals. */
 export function useOptionPickerSections<TValue>(input: Readonly<{
     sourceSections: readonly OptionPickerSection<TValue>[];
@@ -23,7 +34,7 @@ export function useOptionPickerSections<TValue>(input: Readonly<{
             title: section.title,
             virtualization: 'auto' as const,
             options: section.options.flatMap((option): SelectionListOption[] => {
-                const valueKey = getValueKey(option.value);
+                const valueKey = optionPickerOptionKey(section.id, option, getValueKey);
                 if (seen.has(valueKey)) return [];
                 seen.add(valueKey);
                 return [{

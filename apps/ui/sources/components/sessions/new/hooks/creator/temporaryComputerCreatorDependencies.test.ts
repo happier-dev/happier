@@ -6,7 +6,7 @@ import {
 } from '@happier-dev/protocol/teams';
 import type { RunnerActivationClient } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import { InstalledPluginCapabilityEntryV1Schema } from '@happier-dev/protocol/capabilities';
-import { BUILT_IN_REGISTRY_SOURCES_V1, createRegistryHostV1, RegistryFetchErrorV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { BUILT_IN_REGISTRY_SOURCES_V1, createRegistryHostV1, RegistryFetchErrorV1, type RegistrySourceDescriptorV1, type RegistryRemoteSourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -156,7 +156,7 @@ function compose(params: Readonly<{
     return createTemporaryComputerCreatorDependencies({
         teamCredentialServerId: params.serverId === undefined ? 'srv-runner' : params.serverId,
         teamCredentialResources: params.resources ?? [catalogEntry()],
-        currentTeamCredentialResourceKeys: params.currentKeys ?? new Set(['team-1:resource-1']),
+        teamCredentialResourceStatusByKey: new Map([...(params.currentKeys ?? ['team-1:resource-1'])].map(key => [key, { kind: 'current' as const }])),
         selectedTeamCredentialModel: params.selected ?? null,
         agentCatalogMachineId: params.agentCatalogMachineId === undefined ? 'machine-1' : params.agentCatalogMachineId,
         projectedAgentsById: (params.projectedAgentsById ?? {}) as never,
@@ -630,7 +630,7 @@ describe('createTemporaryComputerCreatorDependencies external Agent acquisition'
         const privateOrigin = 'https://npm.acme.example.test';
         const urls = ['https://public-catalog.example/index.json', overrides.reviewRefused ? DEFAULT_CURATED_MARKETPLACE_SOURCE_URL : 'https://private-catalog.example/index.json',
             ...(overrides.duplicate ? ['https://duplicate-catalog.example/index.json'] : [])];
-        const sources: readonly RegistrySourceDescriptorV1[] = urls.map(url => ({ id: deriveMarketplaceSourceId(url), title: url,
+        const sources: readonly RegistryRemoteSourceDescriptorV1[] = urls.map(url => ({ id: deriveMarketplaceSourceId(url), title: url,
             format: 'happier-catalog', kinds: ['plugin'], url, enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true,
             npmRegistryProfileId: 'creator_private_profile' }));
         const http = vi.fn(async (url: string) => {

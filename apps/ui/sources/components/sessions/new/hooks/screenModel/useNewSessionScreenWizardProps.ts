@@ -15,6 +15,8 @@ type AcpSessionModeProbeState = Readonly<{
 type AcpConfigOptionsProbeState = Readonly<{
     phase: AcpConfigOptionsProbe['phase'];
     onRefresh: AcpConfigOptionsProbe['onRefresh'];
+    failed?: boolean;
+    refreshErrorMessage?: string;
 }>;
 
 export function useNewSessionScreenWizardProps(params: Readonly<{
@@ -82,6 +84,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'acpSessionModeId'
         | 'setAcpSessionModeId'
         | 'acpConfigOptions'
+        | 'acpModelConfigOptionId'
         | 'acpConfigOptionOverrides'
         | 'setAcpConfigOptionOverride'
         | 'modelMode'
@@ -91,7 +94,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'teamCredentialResources'
         | 'teamNameById'
         | 'homeNameByTeamId'
-        | 'currentTeamCredentialResourceKeys'
+        | 'teamCredentialResourceStatusByKey'
         | 'selectedTeamCredentialModel'
         | 'onSelectTeamCredentialModel'
         | 'providerModelGroups'
@@ -100,6 +103,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'providerModelProjectionError'
         | 'providerModelProjectionFailures'
         | 'retryProviderModelProjection'
+        | 'providerModelProjectionApproval'
         | 'providerCurrentSelectionRecovery'
         | 'hiddenNativeModelKeys'
         | 'experimentalModelConfirmation'
@@ -148,6 +152,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'composerFileScope'
         | 'setSessionPrompt'
         | 'handleCreateSession'
+        | 'newSessionAfterSendMode'
         | 'registerTemporaryComputerReplacementLaunch'
         | 'canCreate'
         | 'isCreating'
@@ -205,6 +210,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
             onRefresh: acpSessionModeProbeState.onRefresh,
         },
         acpConfigOptionsProbe: {
+            ...acpConfigOptionsProbeState,
             phase: acpConfigOptionsProbeState.phase,
             onRefresh: acpConfigOptionsProbeState.onRefresh,
         },

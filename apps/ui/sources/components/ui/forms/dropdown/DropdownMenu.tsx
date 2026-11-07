@@ -3,13 +3,13 @@ import { Platform, View, ViewStyle, StyleProp, TextStyle, type AccessibilityStat
 import { usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Popover, type PopoverAnchor, type PopoverPlacement } from '@/components/ui/popover';
+import { Popover, type PopoverAnchor, type PopoverPlacement, type PopoverRenderProps } from '@/components/ui/popover';
 import { POPOVER_PREFERRED_ROOM_PX } from '@/components/ui/popover/popoverPreferredRoom';
 import { FloatingOverlay, type FloatingOverlayArrow } from '@/components/ui/overlays/FloatingOverlay';
 import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
 import { SelectableMenuResults, type SelectableMenuResultsHandle } from '@/components/ui/forms/dropdown/SelectableMenuResults';
-import type { SelectableMenuCategoryDecorations, SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
+import type { MenuItemSource, SelectableMenuItemSource, SelectableMenuCategoryDecorations, SelectableMenuItem, SelectableMenuSwatch } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdown/useSelectableMenu';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
@@ -19,11 +19,30 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { useHardwareKeyboard } from '@/components/ui/selectionList/useHardwareKeyboard';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { iconMatchedSpinnerSize } from '@happier-dev/plugin-ui/presentation';
 
 const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
+/**
+ * Submenu hover intent (pointer only; touch opens on tap). A row must hold the pointer this long before
+ * its submenu opens, so passing over it toward another item opens nothing.
+ */
+const SUBMENU_HOVER_OPEN_DELAY_MS = 150;
+/**
+ * How long an open submenu survives the pointer leaving it or crossing a sibling row: long enough for
+ * diagonal travel from the parent row into the submenu, short enough to read as a response.
+ */
+const SUBMENU_HOVER_CLOSE_GRACE_MS = 300;
+
+function isTouchPointerEvent(event: unknown): boolean {
+    const value = event as { nativeEvent?: { pointerType?: unknown }; pointerType?: unknown } | null;
+    return (value?.nativeEvent?.pointerType ?? value?.pointerType) === 'touch';
+}
+
 
 
 /** A menu that is not tied to its trigger's width reads as a menu, not a sheet: this is its widest. */
@@ -46,7 +65,18 @@ export type DropdownMenuItem = Readonly<{
     /** Current choice state, independent of keyboard highlight. */
     checked?: boolean;
     submenu?: DropdownMenuSubmenu;
+    /** Present the item as a round colour choice instead of a text row (`title` stays its label). */
+    swatch?: SelectableMenuSwatch;
+    /**
+     * The item finishes its own work before the menu closes (it loads something first): selecting it
+     * leaves this menu and its parents open; the owner closes them when it is ready.
+     */
+    keepMenuOpen?: boolean;
+    /** The item's work is under way: its trailing slot shows the app's activity spinner. */
+    loading?: boolean;
 }>;
+
+export type DropdownMenuSelection = Readonly<{ anchor: PopoverAnchor }>;
 
 export type DropdownMenuSubmenu = Readonly<{
     items: ReadonlyArray<DropdownMenuItem>;
@@ -56,6 +86,8 @@ export type DropdownMenuSubmenu = Readonly<{
     emptyLabel?: string | null;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    /** Intent signal: the submenu is opening (preload what its items will need). Hover may repeat it. */
+    onOpen?: () => void;
     /** Draw this submenu's category titles (a chooser titled by what it acts on), whatever its parent does. */
     showCategoryTitles?: boolean;
     /** Draw a hairline between this submenu's groups ("Sections" | New section…, Back to project). */
@@ -123,7 +155,9 @@ export type DropdownMenuItemTriggerConfig = Readonly<{
 export type DropdownMenuProps = Readonly<{
     testID?: string;
     header?: React.ReactNode;
-    footer?: React.ReactNode;
+    footer?: React.ReactNode | ((selection: DropdownMenuSelection) => React.ReactNode);
+    /** Replace rows with a domain chooser inside this menu's existing overlay and dismissal lifecycle. */
+    renderContent?: (layout: PopoverRenderProps) => React.ReactNode;
     /**
      * The trigger element.
      * Prefer the render-prop form so DropdownMenu can provide a consistent `toggle()` helper.
@@ -147,7 +181,13 @@ export type DropdownMenuProps = Readonly<{
     onOpenChange: (next: boolean) => void;
 
     items: ReadonlyArray<DropdownMenuItem>;
-    onSelect: (itemId: string) => void;
+    /** A large admitted inventory supplies lightweight metadata and materializes only demanded rows. */
+    itemSource?: MenuItemSource<DropdownMenuItem>;
+    /**
+     * `selection.anchor` is what the menu hung from (its trigger, or `popoverAnchor`): an item that opens a
+     * surface (Share…) hangs that surface from the same control once the menu has closed.
+     */
+    onSelect: (itemId: string, selection?: DropdownMenuSelection) => void;
     /** Destination row decoration defers web activation until press, leaving mouse-down available for dragging. */
     wrapItem?: (item: SelectableMenuItem, content: React.ReactNode) => React.ReactNode;
     /** When false, selecting an item does not close the popover (useful for multi-select menus). */
@@ -168,7 +208,8 @@ export type DropdownMenuProps = Readonly<{
     /** When true, shows a search field and enables keyboard navigation on web. */
     search?: boolean;
     searchPlaceholder?: string;
-    emptyLabel?: string | null;
+    /** What an empty menu says: a sentence, or a composed empty state; `null` draws nothing. */
+    emptyLabel?: React.ReactNode;
     placement?: PopoverPlacement;
     /** Gap between the trigger and the menu (default 0 for dropdown feel). */
     gap?: number;
@@ -248,6 +289,10 @@ export type DropdownMenuProps = Readonly<{
      * When omitted, a simple string label is used.
      */
     createItemDisplay?: ((query: string) => DropdownMenuCreateItemDisplay) | null;
+    /** Set by a parent menu on its submenu: keyboard Left from the submenu returns to the parent. */
+    onKeyboardBack?: () => void;
+    /** Set by a parent menu on its submenu: the pointer entered or left this submenu's surface. */
+    onSurfacePointerChange?: (inside: boolean, event: unknown) => void;
 }>;
 
 type DropdownTriggerAccessibilityProps = Readonly<{
@@ -256,13 +301,22 @@ type DropdownTriggerAccessibilityProps = Readonly<{
     'aria-expanded'?: boolean;
 }>;
 
-/** A sheet titled by `title` drops the category heading that only repeats it; the category's rows stay. */
-export function untitleSheetCategories<Category extends Readonly<{ title: string }>>(
+/**
+ * A sheet titled by `title` drops the category heading that only repeats it; the category's rows stay.
+ * Only while no titled group is drawn above it: after one, the heading is what keeps its rows out of that group.
+ */
+export function untitleSheetCategories<Category extends Readonly<{ title: string; items?: readonly unknown[] }>>(
     categories: readonly Category[],
     title: string | undefined,
 ): readonly Category[] {
     if (!title) return categories;
-    return categories.map((category) => (category.title === title ? { ...category, title: '' } : category));
+    let titledAbove = false;
+    return categories.map((category) => {
+        const drawn = category.items === undefined || category.items.length > 0;
+        if (category.title === title && !titledAbove) return { ...category, title: '' };
+        if (drawn && category.title.trim().length > 0) titledAbove = true;
+        return category;
+    });
 }
 
 function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): React.ReactNode {
@@ -282,15 +336,28 @@ function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): Reac
     });
 }
 
+const NO_SELECTABLE_ITEMS: ReadonlyArray<SelectableMenuItem> = Object.freeze([]);
+
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
+    // Keycaps name a key: with no hardware keyboard they only take width from the row.
+    const hasHardwareKeyboard = useHardwareKeyboard();
     const reducedMotion = useReducedMotionPreference();
     const anchorRef = React.useRef<View>(null);
     const resolvedAnchorRef = props.popoverAnchorRef ?? anchorRef;
+    const selection = React.useMemo<DropdownMenuSelection>(() => ({ anchor: props.popoverAnchor ?? { kind: 'view', ref: resolvedAnchorRef } }),
+        [props.popoverAnchor, resolvedAnchorRef]);
+    const submenuAnchorsRef = React.useRef(new Map<string, React.RefObject<unknown>>());
     const [activeSubmenu, setActiveSubmenu] = React.useState<{
         itemId: string;
         anchorRef: React.RefObject<unknown>;
     } | null>(null);
+    const menuItems = props.itemSource?.items ?? props.items;
+    const findMenuItem = React.useCallback((id: string) => {
+        if (!props.itemSource) return menuItems.find((item) => item.id === id);
+        const index = props.itemSource.indexById.get(id);
+        return index === undefined ? undefined : props.itemSource.getItem(index);
+    }, [menuItems, props.itemSource]);
 
     const rowVariant: SelectableRowVariant = props.variant ?? 'slim';
     const resolvedTriggerDensity = useResolvedItemDensity(props.itemTrigger?.itemProps?.density);
@@ -320,8 +387,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         return { vertical: 8, horizontal: 8 } as const;
     }, [matchTriggerWidth, props.connectToTrigger, requestedPlacement]);
 
-    const selectableItems = React.useMemo((): SelectableMenuItem[] => {
-        return props.items.map((item) => {
+    const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
             const hasSubmenu = Boolean(item.submenu && item.submenu.items.length > 0);
             return {
                 id: item.id,
@@ -332,23 +398,38 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 category: item.category,
                 disabled: item.disabled,
                 checked: item.checked,
+                swatch: item.swatch,
                 left: item.icon ?? null,
                 rowContainerStyle: item.rowContainerStyle,
                 ...(item.destructive ? { rowTitleStyle: { color: theme.colors.state.danger.foreground } } : {}),
-                right: item.rightElement
+                right: item.loading
+                    ? <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
+                    : item.rightElement
                     ? item.rightElement
                     : hasSubmenu
                         ? <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
-                        : item.shortcut
+                        : item.shortcut && hasHardwareKeyboard
                             ? <KeyHint label={item.shortcut} />
                             : null,
                 hasSubmenu,
             };
-        });
-    }, [props.items, theme.colors.state.danger.foreground, theme.colors.text.secondary]);
+    };
+    // A shut menu is a trigger: its rows are built when it opens (a row menu per list row would otherwise
+    // build and group every row's items at rest). The trigger reads the raw items only for the selected one.
+    const selectableItems = React.useMemo(() => props.open ? menuItems.map(toSelectableItem) : NO_SELECTABLE_ITEMS,
+        [hasHardwareKeyboard, menuItems, props.open, theme.colors.state.danger.foreground, theme.colors.text.secondary]);
+    const selectableItemSource: SelectableMenuItemSource | undefined = props.open && props.itemSource ? {
+        items: selectableItems,
+        indexById: props.itemSource.indexById,
+        getItem(index) {
+            const item = props.itemSource?.getItem(index);
+            return item ? toSelectableItem(item) : undefined;
+        },
+    } : undefined;
 
     const closeOnSelect = props.closeOnSelect !== false;
     const onRequestClose = React.useCallback(() => props.onOpenChange(false), [props]);
+    const requestPopoverCloseRef = React.useRef<PopoverRenderProps['requestClose']>(onRequestClose);
     const schedule = React.useCallback((cb: () => void, fallbackDelayMs = 0) => {
         // Let the current press and any menu teardown finish before opening or committing.
         // Note: some runtimes can throttle or suppress `requestAnimationFrame` (background tabs,
@@ -393,14 +474,14 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const selectedItemForTrigger = React.useMemo((): DropdownMenuItem | null => {
         const selectedId = typeof props.selectedId === 'string' ? props.selectedId.trim() : '';
         if (!selectedId) return null;
-        const found = props.items.find((it) => it.id === selectedId) ?? null;
+        const found = findMenuItem(selectedId) ?? null;
         if (!found || found.disabled) return null;
         return found;
-    }, [props.items, props.selectedId]);
+    }, [findMenuItem, props.selectedId]);
     const activeSubmenuItem = React.useMemo((): DropdownMenuItem | null => {
         if (!activeSubmenu) return null;
-        return props.items.find((item) => item.id === activeSubmenu.itemId) ?? null;
-    }, [activeSubmenu, props.items]);
+        return findMenuItem(activeSubmenu.itemId) ?? null;
+    }, [activeSubmenu, findMenuItem]);
     React.useEffect(() => {
         if (!props.open && activeSubmenu) {
             setActiveSubmenu(null);
@@ -423,8 +504,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
         if (!pageTrigger) return null;
         const selectedId = typeof props.selectedId === 'string' ? props.selectedId.trim() : '';
         if (!selectedId) return null;
-        return props.items.find((it) => it.id === selectedId) ?? null;
-    }, [pageTrigger, props.items, props.selectedId]);
+        return findMenuItem(selectedId) ?? null;
+    }, [pageTrigger, findMenuItem, props.selectedId]);
     const triggerNode = React.useMemo(() => {
         if (props.itemTrigger) {
             const cfg = props.itemTrigger;
@@ -519,12 +600,14 @@ export function DropdownMenu(props: DropdownMenuProps) {
         searchQuery,
         selectedIndex,
         filteredCategories,
+        allItems: filteredItems,
         inputRef,
         handleSearchChange,
         handleKeyPress,
         setSelectedIndex,
     } = useSelectableMenu({
         items: selectableItems,
+        itemSource: selectableItemSource,
         onRequestClose,
         open: props.open,
         initialSelectedId: props.selectedId ?? null,
@@ -553,30 +636,71 @@ export function DropdownMenu(props: DropdownMenuProps) {
             : null,
     });
 
-    const highlightedId = filteredCategories.flatMap((category) => category.items)[selectedIndex]?.id ?? null;
+    // The menu's results keep one identity per filter result, so its row structure is rebuilt only when they change.
+    const sheetCategories = React.useMemo(
+        () => untitleSheetCategories(filteredCategories, props.popoverAccessibilityLabel),
+        [filteredCategories, props.popoverAccessibilityLabel],
+    );
+    const highlightedId = filteredItems[selectedIndex]?.id ?? null;
+    // A pointer open highlights nothing on swatches until the person hovers or uses the keyboard.
+    const [swatchHighlightVisible, setSwatchHighlightVisible] = React.useState(false);
+    React.useEffect(() => {
+        if (!props.open) setSwatchHighlightVisible(false);
+    }, [props.open]);
+    const handleResultsSelectionChange = React.useCallback((index: number) => {
+        setSwatchHighlightVisible(true);
+        setSelectedIndex(index);
+    }, [setSelectedIndex]);
+
     const resultScroll = useScrollRectIntoViewRegistry({
         activeKey: highlightMoved || (highlightedId !== null && highlightedId === props.selectedId) ? highlightedId : null,
         padding: theme.space.s8,
         animated: !reducedMotion,
+        // Revealed once per highlighted row: a long menu mounts rows as the person scrolls, and those layouts must
+        // not pull them back to a highlight they scrolled away from.
+        once: true,
     });
 
     const handleCreate = React.useCallback(() => {
         const query = searchQuery.trim();
         if (!query || !props.onCreateItem) return;
-        props.onOpenChange(false);
+        requestPopoverCloseRef.current('selection');
         schedule(() => props.onCreateItem?.(query), DROPDOWN_ACTION_FRAME_FALLBACK_MS);
     }, [props, schedule, searchQuery]);
     const commitSelection = React.useCallback((itemId: string) => {
-        if (!closeOnSelect) {
-            props.onSelect(itemId);
+        if (!closeOnSelect || findMenuItem(itemId)?.keepMenuOpen) {
+            props.onSelect(itemId, selection);
             return;
         }
-        props.onOpenChange(false);
-        schedule(() => props.onSelect(itemId), DROPDOWN_ACTION_FRAME_FALLBACK_MS);
-    }, [closeOnSelect, props, schedule]);
+        // Restore through the same owner as Escape, before the item's deferred action
+        // can deliberately move focus into its own dialog or pane.
+        requestPopoverCloseRef.current('selection');
+        schedule(() => props.onSelect(itemId, selection), DROPDOWN_ACTION_FRAME_FALLBACK_MS);
+    }, [closeOnSelect, findMenuItem, props, schedule, selection]);
 
+    // Assigned once handleOpenSubmenu exists below; keyboard opening uses the pointer's own anchor.
+    const handleOpenSubmenuRef = React.useRef<(itemId: string, anchorRef: React.RefObject<unknown>) => void>(() => undefined);
+    const openSubmenuFromKeyboard = React.useCallback((itemId: string) => {
+        const anchorRef = submenuAnchorsRef.current.get(itemId);
+        if (anchorRef) handleOpenSubmenuRef.current(itemId, anchorRef);
+    }, []);
+    // Outside a swatch row, Right opens the highlighted submenu and Left returns to the parent menu.
+    const handleSubmenuCrossKey = React.useCallback((key: string): boolean => {
+        if (key === 'ArrowRight') {
+            const item = filteredItems[selectedIndex];
+            if (!item?.hasSubmenu || item.disabled) return false;
+            openSubmenuFromKeyboard(item.id);
+            return true;
+        }
+        if (key === 'ArrowLeft' && props.onKeyboardBack) {
+            props.onKeyboardBack();
+            return true;
+        }
+        return false;
+    }, [filteredItems, openSubmenuFromKeyboard, props.onKeyboardBack, selectedIndex]);
     const handleKeyDown = React.useCallback((e: any) => {
         if (Platform.OS !== 'web') return;
+        setSwatchHighlightVisible(true);
         const key = e?.nativeEvent?.key;
         if (typeof key !== 'string') return;
         // Search fields own ordinary typed text. An unsearched dropdown instead
@@ -587,16 +711,20 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 handleCreate();
                 return;
             }
-            if (item.hasSubmenu) return;
+            if (item.hasSubmenu) {
+                openSubmenuFromKeyboard(item.id);
+                return;
+            }
             commitSelection(item.id);
-        });
+        }) || (!props.search && handleSubmenuCrossKey(key));
         if (!handled) return;
         e.preventDefault?.();
         e.stopPropagation?.();
-    }, [commitSelection, handleCreate, handleKeyPress, props.search]);
+    }, [commitSelection, handleCreate, handleKeyPress, handleSubmenuCrossKey, openSubmenuFromKeyboard, props.search]);
     const handleOpenSubmenu = React.useCallback((itemId: string, itemAnchorRef: React.RefObject<unknown>) => {
-        const item = props.items.find((candidate) => candidate.id === itemId);
+        const item = findMenuItem(itemId);
         if (!item?.submenu || item.disabled) return;
+        item.submenu.onOpen?.();
         const openFromAnchor = () => {
             setActiveSubmenu({ itemId, anchorRef: itemAnchorRef });
         };
@@ -617,7 +745,59 @@ export function DropdownMenu(props: DropdownMenuProps) {
             setTimeout(() => retryWhenAnchorSettles(attempt + 1), 0);
         };
         retryWhenAnchorSettles(0);
-    }, [isSubmenuAnchorReady, props.items]);
+    }, [findMenuItem, isSubmenuAnchorReady]);
+    handleOpenSubmenuRef.current = handleOpenSubmenu;
+    const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingHoverIdRef = React.useRef<string | null>(null);
+    const clearHoverTimer = React.useCallback(() => {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = null;
+        pendingHoverIdRef.current = null;
+    }, []);
+    React.useEffect(() => clearHoverTimer, [clearHoverTimer]);
+    React.useEffect(() => {
+        if (!props.open) clearHoverTimer();
+    }, [clearHoverTimer, props.open]);
+    const activeSubmenuIdRef = React.useRef<string | null>(null);
+    activeSubmenuIdRef.current = activeSubmenu?.itemId ?? null;
+    const scheduleSubmenuClose = React.useCallback(() => {
+        clearHoverTimer();
+        if (!activeSubmenuIdRef.current) return;
+        hoverTimerRef.current = setTimeout(() => {
+            hoverTimerRef.current = null;
+            setActiveSubmenu(null);
+        }, SUBMENU_HOVER_CLOSE_GRACE_MS);
+    }, [clearHoverTimer]);
+    // The pointer rests on a row: open its submenu after a dwell, or close another open one after the
+    // grace period. Entering the open submenu cancels either, which lets diagonal travel reach it.
+    const handleHoverItem = React.useCallback((item: SelectableMenuItem, anchorRef: React.RefObject<unknown>) => {
+        if (pendingHoverIdRef.current === item.id) return;
+        if (activeSubmenuIdRef.current === item.id) {
+            clearHoverTimer();
+            return;
+        }
+        clearHoverTimer();
+        pendingHoverIdRef.current = item.id;
+        const opensSubmenu = item.hasSubmenu === true && item.disabled !== true;
+        if (!opensSubmenu && !activeSubmenuIdRef.current) {
+            pendingHoverIdRef.current = null;
+            return;
+        }
+        // Switching from an open submenu waits the grace period, so crossing a row on the way in is harmless.
+        const delay = activeSubmenuIdRef.current ? SUBMENU_HOVER_CLOSE_GRACE_MS : SUBMENU_HOVER_OPEN_DELAY_MS;
+        hoverTimerRef.current = setTimeout(() => {
+            hoverTimerRef.current = null;
+            pendingHoverIdRef.current = null;
+            if (opensSubmenu) handleOpenSubmenu(item.id, anchorRef);
+            else setActiveSubmenu(null);
+        }, delay);
+    }, [clearHoverTimer, handleOpenSubmenu]);
+    const handleSubmenuSurfacePointerChange = React.useCallback((inside: boolean, event: unknown) => {
+        if (isTouchPointerEvent(event)) return;
+        if (inside) clearHoverTimer();
+        else scheduleSubmenuClose();
+    }, [clearHoverTimer, scheduleSubmenuClose]);
+
     const handlePressMenuItem = React.useCallback((item: SelectableMenuItem) => {
         if (item.id === CREATE_ITEM_ID) {
             handleCreate();
@@ -627,9 +807,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
         commitSelection(item.id);
     }, [commitSelection, handleCreate]);
     const handleSubmenuSelect = React.useCallback((itemId: string) => {
+        if (activeSubmenuItem?.submenu?.items.some((item) => item.id === itemId && item.keepMenuOpen)) {
+            props.onSelect(itemId, selection);
+            return;
+        }
         setActiveSubmenu(null);
         commitSelection(itemId);
-    }, [commitSelection]);
+    }, [activeSubmenuItem, commitSelection, props, selection]);
 
     const overlayArrowCfg = React.useMemo((): Omit<Exclude<FloatingOverlayArrow, boolean>, 'placement'> | null => {
         const arrow = props.overlayArrow;
@@ -648,7 +832,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 inputRef={inputRef}
                 value={searchQuery}
                 onChangeText={handleSearchChange}
-                placeholder={props.searchPlaceholder ?? t('commandPalette.placeholder')}
+                placeholder={props.searchPlaceholder ?? t('common.search')}
                 onKeyPress={handleKeyDown}
             />
         </View>
@@ -690,12 +874,27 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     sheetSubtitle={props.popoverSheetSubtitle}
                     onRequestClose={onRequestClose}
                 >
-                    {({ maxHeight, maxWidth, placement, presentation }) => (<>
+                    {({ maxHeight, maxWidth, placement, presentation, requestClose }) => {
+                        requestPopoverCloseRef.current = requestClose;
+                        return <>
+                        {/* Pointer presence on this surface drives submenu hover intent (web pointers only). */}
+                        <View
+                            collapsable={false}
+                            testID={props.onSurfacePointerChange ? 'dropdown-submenu-surface' : undefined}
+                            onPointerEnter={Platform.OS === 'web' || props.onSurfacePointerChange ? (event: unknown) => {
+                                props.onSurfacePointerChange?.(true, event);
+                            } : undefined}
+                            onPointerLeave={Platform.OS === 'web' || props.onSurfacePointerChange ? (event: unknown) => {
+                                props.onSurfacePointerChange?.(false, event);
+                                // Leaving this menu for anywhere but its open submenu closes that submenu after the grace.
+                                if (!isTouchPointerEvent(event)) scheduleSubmenuClose();
+                            } : undefined}
+                        >
                         <FloatingOverlay
                             // The search field stays pinned above the scrolling results, so a long list scrolled to
                             // its current choice never carries the field out of view.
                             header={props.header || props.search ? <>{props.header}{searchField}</> : undefined}
-                            footer={props.footer}
+                            footer={typeof props.footer === 'function' ? props.footer(selection) : props.footer}
                             maxHeight={maxHeight}
                             edgeFades={{ top: true, bottom: true }}
                             edgeIndicators={{ size: 14, opacity: 0.35 }}
@@ -724,23 +923,24 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 props.overlayStyle ?? null,
                             ]}
                         >
-                            <View
+                            {props.renderContent ? props.renderContent({ maxHeight, maxWidth, placement, presentation, requestClose }) : <View
                                 onLayout={searchable ? onResultsLayout : undefined}
                                 style={{ paddingBottom: resultsPaddingBottom, minHeight: searchable ? resultsMinHeight : undefined }}
                             >
                                 <SelectableMenuResults
                                     ref={resultsRef}
+                                    itemSource={selectableItemSource}
                                     wrapItem={props.wrapItem}
                                     // A sheet is titled already: a category that repeats its title is not drawn twice.
-                                    categories={presentation === 'sheet'
-                                        ? untitleSheetCategories(filteredCategories, props.popoverAccessibilityLabel)
-                                        : filteredCategories}
+                                    categories={presentation === 'sheet' ? sheetCategories : filteredCategories}
                                     selectedIndex={selectedIndex}
-                                    onSelectionChange={setSelectedIndex}
+                                    onSelectionChange={handleResultsSelectionChange}
+                                    swatchHighlightVisible={swatchHighlightVisible}
                                     onPressItem={(item) => {
                                         handlePressMenuItem(item);
                                     }}
                                     onOpenSubmenu={handleOpenSubmenu}
+                                    onHoverItem={handleHoverItem}
                                     rowVariant={rowVariant}
                                     emptyLabel={emptyLabel}
                                     showCategoryTitles={props.showCategoryTitles ?? false}
@@ -749,10 +949,14 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     rowKind={props.rowKind}
                                     itemProps={props.itemRowProps}
                                     registerItemLayout={resultScroll.registerItemLayout}
+                                    viewport={resultScroll.viewport}
+                                    initialViewportHeight={maxHeight}
                                     onKeyDown={handleKeyDown}
+                                    submenuAnchorRegistry={submenuAnchorsRef.current}
                                 />
-                            </View>
+                            </View>}
                         </FloatingOverlay>
+                        </View>
                         {activeSubmenu && activeSubmenuItem?.submenu ? (
                             <DropdownMenu
                                 open={true}
@@ -781,9 +985,12 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 // A menu that is a sheet on a phone opens its submenus as sheets too.
                                 popoverPhonePresentation={props.popoverPhonePresentation}
                                 popoverAccessibilityLabel={activeSubmenuItem.submenu.title ?? activeSubmenuItem.title}
+                                onKeyboardBack={() => setActiveSubmenu(null)}
+                                onSurfacePointerChange={handleSubmenuSurfacePointerChange}
                             />
                         ) : null}
-                    </>)}
+                    </>;
+                    }}
                 </Popover>
             ) : null}
         </View>

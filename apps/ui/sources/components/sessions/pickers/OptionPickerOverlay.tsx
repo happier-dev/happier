@@ -27,7 +27,7 @@ import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayout
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { OptionPickerPaneRow, OptionPickerPaneRowContent, optionPickerPaneRowStyles } from './OptionPickerPaneRow';
 import { OptionPickerPaneSlotsContext } from './optionPickerPaneSlots';
-import { useOptionPickerSections } from './optionPickerSections';
+import { optionPickerOptionKey, useOptionPickerSections } from './optionPickerSections';
 import { OptionPickerSelectedControls } from './OptionPickerSelectedControls';
 import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
 
@@ -177,6 +177,8 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     getValueKey?: (value: TValue) => string;
     /** Says there is nothing to choose (shown only with no options); a search that matches none says "No matches". */
     emptyText: string;
+    /** An owning source's typed failure replaces the settled empty verdict. */
+    emptyContent?: React.ReactNode;
     customLabel?: string;
     customDescription?: string;
     searchPlaceholder?: string;
@@ -317,10 +319,8 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     const probeFailureMessage = props.probe?.failed
         ? props.probe.refreshErrorMessage ?? t('agentInput.model.unavailable')
         : null;
-    // The state line is the failure's one voice in a whole pane: it has the retry a note cannot carry.
-    const notes = probeFailureMessage !== null && !wholePaneScrolls
-        ? [...(props.notes ?? []), probeFailureMessage]
-        : props.notes ?? [];
+    // The state line is the failure's one voice, in a pane and a popover alike: it has the Retry a note cannot carry.
+    const notes = props.notes ?? [];
     const headerNotes = multiColumn ? [] : notes;
     const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
     const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
@@ -477,7 +477,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         optionTestIDPrefix, selectedControlsExpandedContent,
         renderVisuals: renderOptionVisuals, onPressIn: onOptionPressIn });
     const optionByKey = React.useMemo(() => new Map(
-        sourceSections.flatMap((section) => section.options.map((option) => [getValueKey(option.value), option] as const)),
+        sourceSections.flatMap((section) => section.options.map((option) => [optionPickerOptionKey(section.id, option, getValueKey), option] as const)),
     ), [getValueKey, sourceSections]);
     const selectionRootStep = React.useMemo(() => ({
         id: 'options',
@@ -652,7 +652,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     // A grid shows its status line after the options only while it has something to say. In a content-sized
     // grid it sits below the scroll area, so notices can wrap without moving the cards' starting position.
     const hasFooterStatus = (multiColumn && notes.length > 0) || Boolean(props.footerContent) || probeFailureMessage !== null;
-    const noteLines = wholePaneScrolls && (probeFailureMessage !== null || (multiColumn && notes.length > 0)) ? (
+    const noteLines = probeFailureMessage !== null || (wholePaneScrolls && multiColumn && notes.length > 0) ? (
         <HappierBodyEdgeContext.Provider value>
             <View style={[styles.paneLines, multiColumn ? null : styles.listTextEdge]}>
                 {probeFailureMessage !== null ? (
@@ -664,13 +664,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                         action={probe?.onRefresh ? { label: t('common.retry'), onPress: probe.onRefresh } : undefined}
                     />
                 ) : null}
-                {multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
+                {multiColumn && wholePaneScrolls ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
             </View>
         </HappierBodyEdgeContext.Provider>
     ) : null;
     const notesBody = hasFooterStatus ? (
         <>
-            {wholePaneScrolls ? noteLines : multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
+            {noteLines}
+            {!wholePaneScrolls && multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
             {props.footerContent}
         </>
     ) : null;
@@ -686,7 +687,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     // Empty is a settled verdict: while the catalog loads, the header's loading line is the only status,
     // and a failure says itself in its own state line rather than as an empty catalog.
     const emptyStateNode = !props.canEnterCustomValue && probeInFlightLabel === null && probeFailureMessage === null ? (
-        <SurfaceStateCard testID="model-picker-overlay-empty" size="line" kind="empty" title={props.emptyText} />
+        props.emptyContent ?? <SurfaceStateCard testID="model-picker-overlay-empty" size="line" kind="empty" title={props.emptyText} />
     ) : null;
     const paneLeading = wholePaneScrolls ? paneSlots?.leading : null;
     const paneTrailing = wholePaneScrolls ? paneSlots?.trailing : null;

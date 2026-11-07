@@ -1,3 +1,5 @@
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { ProviderCompatibilityReview } from './detail/ProviderCompatibilityReview';
 import * as React from 'react';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { PROVIDER_DETAIL_SETTINGS } from './providersSettings';
@@ -6,6 +8,7 @@ import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { areProviderContributionKeysEqualV1, parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import {
@@ -19,7 +22,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Switch } from '@/components/ui/forms/Switch';
-import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -34,7 +38,7 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { MachineScopedSection } from '@/components/settings/machines/MachineScopedSection';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { ProviderExternalLinkItem } from '@/components/settings/providers/ProviderExternalLinkItem';
 import { ProviderHeaderActions, ProviderProbeResult, ProviderSavedSecretControl } from '@/components/settings/providers/ProviderPageParts';
@@ -50,11 +54,13 @@ import { randomUUID } from '@/platform/randomUUID';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import {
-    presentProviderConnection,
+    presentProviderConnectionDetail,
     PROVIDER_CONNECTION_STATUS_KEY,
 } from '@/providers/connection/presentation';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
-import { readProviderConnectionPickerKind } from '@/providers/catalog/accountProviderDeclarations';
+import { readAccountProviderDeclaration, readProviderConnectionPickerKind } from '@/providers/catalog/accountProviderDeclarations';
+import { ProviderConnectionUsageSection } from '@/components/settings/providers/ProviderConnectionUsageSection';
+import { providerConnectionUsageAuthority } from '@/providers/hooks/useProviderConnectionUsage';
 import {
     providerSettingsMachineRowKey,
     useProviderSettingsTarget,
@@ -95,18 +101,18 @@ import {
 } from './detail/ProviderConnectionDetailSections';
 import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } from './ProviderFeatureAvailability';
 import { providerConnectionDetailRoute, providerConnectionModelsRoute, readProviderGatewayPurposeDeclarations,
-    providerConnectionEditRoute, readProviderGatewayViewDeclarations, recordProviderCollectionVisit, resolveProviderConnectionIcon } from './collection/providerCollectionModel';
+    providerConnectionEditRoute, readProviderGatewayViewDeclarations, resolveProviderConnectionIcon } from './collection/providerCollectionModel';
 import { createCustomProviderDraftFromTemplate } from '@/providers/authoring/state';
+import { ConnectedServiceGatewayUsedBy } from '@/components/settings/connectedServices/ConnectedServiceGatewayUsedBy';
 import { ProviderGatewaySections, resolveProviderGatewayChosenMachine, type ProviderGatewayHubReachability,
     type ProviderGatewayMachine } from './gateway/ProviderGatewaySections';
 import { buildProviderGatewaySlotMutation, type ProviderGatewayConfigurationPatch } from '@/providers/connection/gatewayConfiguration';
 import { useProviderGatewayConfiguration } from '@/providers/hooks/useProviderGatewayConfiguration';
 import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { buildConnectedServiceSetupRoute } from '@/components/settings/connectedServices/setup/connectMoreBlocks';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useProviderConnectionModelsSection } from './models/useProviderConnectionModelsSection';
-import { ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
 import { joinList } from '@/utils/text/joinList';
 
 type ManagedDeployment = Extract<
@@ -186,6 +192,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         startAddingModels?: boolean;
         /** The connection was created a moment ago by the add flow (its completion note may show). */
         justConnected?: boolean;
+        /** An embedding collection retains its own selection after canonical mutations. */
+        onDeleted?: () => void;
+        onDuplicated?: (connectionId: string) => void;
     }>,
 ) {
     const router = useRouter();
@@ -202,6 +211,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     );
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const providerTarget = useProviderSettingsTarget();
+    const [compatibilityReviewAgent, setCompatibilityReviewAgent] = React.useState<string | null>(null);
     const {
         machineId,
         machineRows,
@@ -251,7 +261,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     } : null, [mutationApprovalHref, router]);
     const deleteInFlightRef = React.useRef(false);
     const [deletePending, setDeletePending] = React.useState(false);
-    const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
+    const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'notSupported'>('idle');
     const [probeError, setProbeError] = React.useState<ProviderErrorV1 | null>(null);
     const [managedPurposeDraft, setManagedPurposeDraft] = React.useState<ManagedPurposeDraft | null>(null);
     const [duplicateMode, setDuplicateMode] = React.useState<'sameSource' | 'asCustom' | null>(null);
@@ -269,11 +279,6 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const ignoreManagedPurposeGuardRef = React.useRef(false);
     const probeGenerationRef = React.useRef(0);
     const pendingProbe = React.useRef<AbortController | null>(null);
-    const connectionShown = connection !== null;
-    // The wide collection lands on the connection opened last, whichever layout opened it.
-    React.useEffect(() => {
-        if (connectionShown) recordProviderCollectionVisit(props.connectionId);
-    }, [connectionShown, props.connectionId]);
     const models = useProviderConnectionModelsSection({
         declarationContext: query.declarationContext,
         connectionId: props.connectionId,
@@ -295,6 +300,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     );
     // A connected contribution is no longer "available to add": its kind comes from its declaration.
     const pickerSourceKind = readProviderConnectionPickerKind(storedConnection?.source, query.declarationContext);
+    // Usage appears only when the connection's Provider declares where to read it.
+    const storedContributionKey = storedConnection?.source.kind === 'contribution' ? storedConnection.source.contributionKey : null;
+    const usageDeclaration = storedContributionKey
+        ? readAccountProviderDeclaration(storedContributionKey, query.declarationContext) : null;
+    const usageSources = usageDeclaration?.definition.usageSources ?? NO_USAGE_SOURCES;
     const pickerVisibility = useProviderModelPickerVisibility(connection ? props.connectionId : null,
         pickerSourceKind ? { kind: pickerSourceKind, serverId } : undefined);
     // The Connection section's Models row opens the connection's Models page (lab PD1).
@@ -418,9 +428,16 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             if (result.status === 'error') {
                 setProbeState('idle');
                 setProbeError(result.error);
+                const refreshed = await query.refresh();
+                if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
+                const checked = refreshed?.connections.find(row => row.connectionId === props.connectionId);
+                // Endpoint failures were committed by the probe owner. Keep
+                // only Action refusals that supplied no endpoint observation.
+                setProbeError(checked?.runtime.endpoints.some(endpoint => endpoint.errorCode === result.error.code)
+                    ? null : result.error);
                 return;
             }
-            setProbeState(result.status === 'success' ? 'success' : 'notSupported');
+            setProbeState(result.status === 'success' ? 'idle' : 'notSupported');
             await query.refresh();
         } catch (caught) {
             if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
@@ -434,29 +451,28 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         }
     }, [focused, machineId, probeProviderConnection, probeScope, props.connectionId, query.refresh, resolveCurrentTarget]);
 
-    const bindSecret = React.useCallback((scope: 'account' | 'machine', targetMachineId: string | null) => {
+    // One Saved Secret writer for every declared slot: the inference key and a usage source's billing key.
+    const bindSecret = React.useCallback((scope: 'account' | 'machine', targetMachineId: string | null, credentialSlotId = 'apiKey', event?: unknown) => {
         if (scope === 'machine' && !targetMachineId) return;
         if (!selectedTargetServerMatchesActiveAccount) return;
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         if (!accountLifetime?.isCurrent()) return;
-        Modal.show({
-            component: SavedSecretPickerModal,
-            props: {
-                scope: accountLifetime.scope,
-                selectedId: null,
-                onSelectId: (savedSecretId) => {
-                    if (!accountLifetime.isCurrent()) return;
-                    invalidateProbe();
-                    void mutation.run({
-                        action: 'bindSecret', ...(targetMachineId ? { machineId: targetMachineId } : {}), connectionId: props.connectionId,
-                        credentialSlotId: 'apiKey', savedSecretId, scope,
-                    }, `secret:${scope}:${targetMachineId}`);
-                },
-            },
-            chrome: { kind: 'card', title: t('settingsProviders.detail.pickSecretTitle'), dimensions: { size: 'lg' } },
-            closeOnBackdrop: true,
+        const bindings = storedConnection ? query.catalog?.secretBindingsByConnectionId[storedConnection.id] : undefined;
+        const current = scope === 'account' ? bindings?.account?.[credentialSlotId]
+            : targetMachineId ? bindings?.byMachineId?.[targetMachineId]?.[credentialSlotId] : undefined;
+        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', keyKind: 'apiKey' }, scope: accountLifetime.scope, ...(connectionContributionKey ? { bindingTarget: { kind: 'provider', contributionKey: connectionContributionKey, slot: credentialSlotId } } : {}), ...(current ? { current } : {}) }).then(result => {
+            if (result.kind === 'dismissed' || !accountLifetime.isCurrent()) return;
+            invalidateProbe();
+            void mutation.run({
+                action: 'bindSecret', ...(targetMachineId ? { machineId: targetMachineId } : {}), connectionId: props.connectionId,
+                credentialSlotId, savedSecretId: result.secretRef, scope,
+            }, `secret:${credentialSlotId}:${scope}:${targetMachineId}`);
         });
-    }, [invalidateProbe, mutation, props.connectionId, selectedTargetServerMatchesActiveAccount]);
+    }, [connectionContributionKey, invalidateProbe, mutation, props.connectionId, query.catalog?.secretBindingsByConnectionId, selectedTargetServerMatchesActiveAccount, storedConnection]);
+
+    const chooseBillingKey = React.useCallback((slotId: string, event?: unknown) => bindSecret('account', machineId, slotId, event), [bindSecret, machineId]);
+    // The same picker and writer as the API key row's Choose key.
+    const chooseApiKey = React.useCallback((event?: unknown) => bindSecret('account', machineId, 'apiKey', event), [bindSecret, machineId]);
 
     const duplicate = React.useCallback(async (mode: 'sameSource' | 'asCustom', name: string, allowNavigation: () => void) => {
         if (!connection) return;
@@ -468,9 +484,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         if (result?.status === 'success' && result.action === 'duplicate') {
             allowNavigation();
             setDuplicateMode(null);
-            router.replace(providerConnectionDetailRoute(result.connection.connectionId) as never);
+            if (props.onDuplicated) props.onDuplicated(result.connection.connectionId);
+            else router.replace(providerConnectionDetailRoute(result.connection.connectionId) as never);
         }
-    }, [connection, machineId, mutation, props.connectionId, router]);
+    }, [connection, machineId, mutation, props.connectionId, props.onDuplicated, router]);
 
     const remove = React.useCallback(async () => {
         if (!connection || deleteInFlightRef.current) return;
@@ -479,7 +496,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         try {
             const result = await mutation.run({ action: 'delete', ...(machineId ? { machineId } : {}), connectionId: props.connectionId }, 'delete');
             if (result?.status === 'success') {
-                router.replace('/(app)/settings/providers' as never);
+                if (props.onDeleted) props.onDeleted();
+                else router.replace('/(app)/settings/providers' as never);
             }
         } catch {
             // Never leak navigation boundary errors from row activation.
@@ -487,7 +505,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             deleteInFlightRef.current = false;
             setDeletePending(false);
         }
-    }, [connection, machineId, mutation, props.connectionId, router]);
+    }, [connection, machineId, mutation, props.connectionId, props.onDeleted, router]);
 
     const endpointConfiguration = useProviderEndpointConfiguration({
         connection, machineId, mutation, onChange: invalidateProbe,
@@ -760,6 +778,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? { saved: storedConnection, declarations: gatewayDeclarations } : null;
     const availabilityVisible = connection !== null && (connection.scope === 'account' || connection.grants.accountState !== 'absent');
     const teamsSharingAvailable = Boolean(teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId);
+    // An intentionally absent grant reports Off, not a broken configuration. Stale grants and actual
+    // authorization failures still need the repair controls without the person opening Advanced first.
     const authorizationNeedsRepair = connection?.authorizationError != null
         && connection.authorizationError.code !== 'provider_connection_disabled'
         && connection.authorizationError.code !== 'provider_not_enabled_on_machine';
@@ -768,12 +788,18 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         : machineSectionVisible && connection?.grants.machineState === 'stale' ? 'provider_machine_grant_stale'
         : null;
     const advancedNeedsAttention = advancedRepairError != null;
+    // A repair the presenter scopes to the Account (and the Account grant fact itself) is made by Use on all machines.
+    const accountGrantStale = advancedRepairError === 'provider_account_grant_stale'
+        || (advancedRepairError != null && presentProviderError(advancedRepairError).scope === 'account');
     // A gateway runs where Runs on says and is reached through Happier: availability, grants and
     // endpoints are a gateway user's concern only when one of them is broken and needs the repair.
     const advancedAvailable = gateway
         ? advancedNeedsAttention
         : availabilityVisible || machineSectionVisible || teamsSharingAvailable || (connection?.endpoints.length ?? 0) > 0;
-    const advancedShown = advancedAvailable && (advancedOpen || advancedNeedsAttention);
+    // A stale Account grant needs only Availability, which then stands on its own with the cause under its switch;
+    // the rest of Advanced (Machines, sharing, endpoints) stays behind its toggle.
+    const availabilityRepair = accountGrantStale && availabilityVisible;
+    const advancedShown = advancedAvailable && (advancedOpen || (advancedNeedsAttention && !availabilityRepair));
     const machineViews = useProviderConnectionMachineViews({
         enabled,
         active: focused && advancedShown && machineSectionVisible,
@@ -838,10 +864,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const gatewayModels = React.useMemo(() => (models.groups[0]?.rows ?? []).map((row) => ({
         id: row.descriptor.id, name: row.descriptor.name,
     })), [models.groups]);
-    const connectGatewayService = React.useCallback((serviceKey: string) => {
-        const result = runGuardedNavigation(() => router.push(buildConnectedServiceSetupRoute({ kind: 'service', serviceKey }) as never));
-        if (result !== true) fireAndForget(result, { tag: 'ProviderConnectionDetailScreen.connectGatewayService' });
-    }, [router]);
+    const connectGatewayService = React.useCallback((serviceKey: string, anchor?: PopoverAnchor) => {
+        const service = parseQualifiedPluginContributionKey(serviceKey) ?? undefined;
+        fireAndForget(presentConnectSheet({ scope: addressedScope, service, ...(anchor ? { anchor } : {}) }), {
+            tag: 'ProviderConnectionDetailScreen.connectGatewayService',
+        });
+    }, [addressedScope]);
 
     const setConnectionEnabled = React.useCallback(async (next: boolean) => {
         invalidateProbe();
@@ -905,7 +933,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             : connection?.authorizationError
                 ? { error: connection.authorizationError, retry: refreshConnectionQuery }
                 : null;
-    const displayError = displayFailure?.error ?? null;
+    // A stale Account grant is repaired by Use on all machines, so it is said once, under that switch (the
+    // page is where its "Review account access" leads); only a failed write keeps its own card and Retry.
+    const accountGrantStaleShownAtControl = accountGrantStale && displayFailure !== null
+        && displayFailure.error !== mutation.error && presentProviderError(displayFailure.error).scope === 'account'
+        && (connection?.scope === 'account' || connection?.grants.accountState !== 'absent');
+    const displayError = accountGrantStaleShownAtControl ? null : displayFailure?.error ?? null;
     const failureItems = displayError ? (
         <ProviderErrorItems
             error={displayError}
@@ -941,7 +974,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         );
     }
 
-    const presentation = presentProviderConnection(connection);
+    const presentation = presentProviderConnectionDetail(connection);
     const teamCredentialSourceOffer = connection.teamCredentialSourceOffer;
     const probeErrorPresentation = presentProviderError(probeError);
     const accountGrantValid = connection.grants.accountState === 'valid';
@@ -1002,14 +1035,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             title: t('settingsProvidersCollection.duplicateAsCustom'),
             onSelect: () => { void runGuardedNavigation(() => setDuplicateMode('asCustom')); },
         },
-        // A gateway's on/off is rare (one with no subscription set is already inert): the menu, not the header.
         ...(gateway ? [{
-            id: 'gatewayEnabled',
-            testID: 'provider-connection-menu-gateway-enabled',
-            title: t(connectionEnabled ? 'settingsProvidersCollection.gateway.turnOff' : 'settingsProvidersCollection.gateway.turnOn'),
-            disabled: mutation.isPending('enable:connection'),
-            onSelect: () => setConnectionEnabled(!connectionEnabled),
-        }, {
             id: 'useExternal',
             testID: 'provider-connection-menu-use-external',
             title: t('settingsProvidersCollection.gateway.useExternalEndpoint'),
@@ -1024,31 +1050,25 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             onSelect: () => remove(),
         },
     ];
-    // Until this page tests again, the Test row says what the machine's last check found and when:
-    // the reason behind a header "Needs attention" sits with the control that rechecks it.
-    const lastCheck = connection.runtime.health !== 'not_checked' && connection.runtime.checkedAt !== null
-        ? (() => {
-            const errorCode = connection.runtime.endpoints.find((endpoint) => endpoint.errorCode)?.errorCode ?? null;
-            const result = connection.runtime.health === 'available'
-                ? t(PROVIDER_CONNECTION_STATUS_KEY.available)
-                : errorCode
-                    ? t(presentProviderError(errorCode).descriptionKey)
-                    : t(PROVIDER_CONNECTION_STATUS_KEY[presentation.status]);
-            return {
-                text: [result, t('connectedServicesCollection.checkedAt', { time: formatAsOfTime(connection.runtime.checkedAt, Date.now()) })].join(' · '),
-                failed: connection.runtime.health !== 'available',
-            };
-        })()
+    // Header and Test row consume the same daemon-owned observation. The local
+    // Action state owns progress/refusals, never a second endpoint-health verdict.
+    const check = presentation.lastCheck;
+    const lastCheck = check
+        ? {
+            text: [check.errorCode
+                ? t(presentProviderError(check.errorCode).descriptionKey)
+                : t(PROVIDER_CONNECTION_STATUS_KEY[check.status]),
+            t('connectedServicesCollection.checkedAt', { time: formatAsOfTime(check.checkedAt, Date.now()) })].join(' · '),
+            failed: check.failed,
+        }
         : null;
     const probeDetail = connection.probeCapability === 'none'
         ? t('settingsProviders.detail.testOnFirstSession')
         : probeError
             ? t(probeErrorPresentation.descriptionKey)
-            : probeState === 'success'
-                ? t('settingsProviders.detail.testSucceeded')
-                : probeState === 'notSupported'
-                    ? t('settingsProviders.detail.testNotSupported')
-                    : lastCheck?.text ?? null;
+            : probeState === 'notSupported'
+                ? t('settingsProviders.detail.testNotSupported')
+                : lastCheck?.text ?? null;
     const probeFailed = Boolean(probeError) || (probeState === 'idle' && lastCheck?.failed === true);
     const apiKeyActionsDisabled = !selectedTargetServerMatchesActiveAccount;
     const selectedMachineName = machineId
@@ -1061,7 +1081,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
 
     const onThisComputerRows = machineId ? (
         <>
-            {query.machineError ? <ProviderErrorItems error={query.machineError} retry={refreshConnectionQuery} /> : null}
+            {query.machineError ? <ProviderErrorItems error={query.machineError} layout="inline" retry={refreshConnectionQuery} /> : null}
             {endpointHosts.length > 0 && selectedMachineName ? (
                 <Item
                     testID="provider-connection-endpoint-access"
@@ -1139,7 +1159,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             testID="provider-connection-machine-api-key"
                             saved={connection.credential.boundMachineIds.includes(machineId)}
                             disabled={apiKeyActionsDisabled}
-                            onChoose={() => bindSecret('machine', machineId)}
+                            onChoose={(event) => bindSecret('machine', machineId, 'apiKey', event)}
                         />
                     )}
                     rightElementOutsidePressable
@@ -1168,12 +1188,39 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // its retry or fresh-read action, right under that control rather than far above it.
     const accountAccessShown = connection.scope === 'account' || connection.grants.accountState !== 'absent';
     const mutationFailureKey = displayFailure?.error === mutation.error ? mutation.errorKey : null;
-    const failureBesideKey = advancedShown && mutationFailureKey !== null
+    const failureBesideKey = mutationFailureKey !== null
         && (mutationFailureKey === 'enable:account'
-            ? accountAccessShown
+            ? accountAccessShown && (advancedShown || availabilityRepair)
+            : !advancedShown ? false
             : machineSectionVisible && readableMachineRows.some((row) => `machine:${row.target.machineId}` === mutationFailureKey))
         ? mutationFailureKey
         : null;
+    const availabilitySection = availabilityVisible ? (
+        <ItemGroup
+            title={t('settingsProvidersCollection.availabilityTitle')}
+            description={t('settingsProvidersCollection.availabilityDescription')}
+        >
+            <Item
+                testID="provider-connection-account-access"
+                title={t('settingsProviders.detail.accountAccess')}
+                subtitle={accountGrantStale
+                    ? t('settingsProviders.accountAccessStale')
+                    : t('settingsProviders.detail.accountAccessDescription')}
+                subtitleLines={0}
+                showChevron={false}
+                rightElement={mutation.isPending('enable:account')
+                    ? <ActivitySpinner size="small" />
+                    : <Switch accessibilityLabel={t('settingsProviders.detail.accountAccess')} value={accountGrantValid} onValueChange={(next) => {
+                        invalidateProbe();
+                        void mutation.run(buildProviderConnectionEnableMutation({
+                            connectionId: props.connectionId, enabled: next, access: 'account',
+                        }), 'enable:account');
+                    }} />}
+                rightElementOutsidePressable
+            />
+            {failureBesideKey === 'enable:account' ? failureItems : null}
+        </ItemGroup>
+    ) : null;
     // Peer reachability is owner-originated evidence, never inferred from machine presence.
     const gatewayReachability: ProviderGatewayHubReachability = gatewayRuntime?.reachability ?? 'not_checked';
     const gatewayUnavailableMachineName = gatewayChosenMachine?.machine && !gatewayChosenMachine.machine.online
@@ -1196,7 +1243,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 description={!gateway ? undefined : gatewayServices.length > 0
                     ? t('settingsProvidersCollection.gateway.descriptionNamed', { services: joinList(gatewayServices) })
                     : t('settingsProvidersCollection.gateway.description')}
-                titleAccessory={connection.provenance === 'external' || gateway ? (
+                // A gateway says "Experimental" once, in its Details section's What to know row.
+                titleAccessory={connection.provenance === 'external' && !gateway ? (
                     <StatusPill
                         testID="provider-connection-experimental"
                         variant="neutral"
@@ -1229,12 +1277,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         testID: 'provider-gateway-status',
                         text: t('settingsProvidersCollection.gateway.statusUnavailable', { machine: gatewayUnavailableMachineName }),
                     }] : gateway ? (
-                        // Its live custody when a machine reports it; idle or not yet known says nothing.
-                        !connectionEnabled ? [{
-                            key: 'gateway-status',
-                            testID: 'provider-gateway-status',
-                            text: t('settingsProvidersCollection.gateway.statusOff'),
-                        }] : gatewayRunningMachineName ? [{
+                        // Its live custody when a machine reports it; idle, unknown or off (the switch says
+                        // it) says nothing.
+                        connectionEnabled && gatewayRunningMachineName ? [{
                             key: 'gateway-status',
                             testID: 'provider-gateway-status',
                             text: t('settingsProvidersCollection.gateway.statusRunningOn', { machine: gatewayRunningMachineName }),
@@ -1247,16 +1292,15 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 ]}
                 actions={(
                     <ProviderHeaderActions>
-                        {gateway ? null : (
-                            <PageHeaderStateSwitch
-                                testID="provider-connection-enabled"
-                                label={t('settingsProvidersCollection.enabled')}
-                                accessibilityHint={t('settingsProvidersCollection.enabledDescription')}
-                                value={connectionEnabled}
-                                busy={mutation.isPending('enable:connection')}
-                                onValueChange={(next) => { void setConnectionEnabled(next); }}
-                            />
-                        )}
+                        {/* On/off is the header switch on every connection, a gateway included (lab s2svc:gateway). */}
+                        <PageHeaderStateSwitch
+                            testID="provider-connection-enabled"
+                            label={t('settingsProvidersCollection.enabled')}
+                            accessibilityHint={t('settingsProvidersCollection.enabledDescription')}
+                            value={connectionEnabled}
+                            busy={mutation.isPending('enable:connection')}
+                            onValueChange={(next) => { void setConnectionEnabled(next); }}
+                        />
                         <PageHeaderMenu testID="provider-connection-menu" actions={menuActions} />
                     </ProviderHeaderActions>
                 )}
@@ -1332,6 +1376,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 ? t('common.unavailable')
                                 : undefined}
                     nameRow={nameRow}
+                    usedBy={<ConnectedServiceGatewayUsedBy connectionId={connection.connectionId} />}
                     pickerRows={(
                         <>
                             {pickerVisibility ? (
@@ -1377,11 +1422,44 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     testID="provider-connection-account-api-key"
                                     saved={connection.credential.accountBound}
                                     disabled={apiKeyActionsDisabled}
-                                    onChoose={() => bindSecret('account', machineId)}
+                                    onChoose={(event) => bindSecret('account', machineId, 'apiKey', event)}
                                 />
                             )}
                             rightElementOutsidePressable
                         />
+                        {/* A second key the endpoint needs (Claude's own Anthropic key beside the gateway token). */}
+                        {(connection.credential.additionalCredentials ?? []).map((slot) => (
+                            <Item
+                                key={slot.slotId}
+                                testID={`provider-connection-account-key:${slot.slotId}`}
+                                title={slot.label ? localizePluginText(contributionAuthorPluginId, slot.label) : t('settingsProviders.authoring.apiKey')}
+                                subtitle={apiKeyActionsDisabled
+                                    ? t('settingsProviders.local.accountScopeMismatchDescription')
+                                    : slot.accountBound
+                                        ? t('settingsProvidersCollection.apiKeySavedDescription')
+                                        : t('settingsProviders.detail.apiKeyMissing')}
+                                subtitleLines={0}
+                                showChevron={false}
+                                rightElement={(
+                                    <ProviderSavedSecretControl
+                                        testID={`provider-connection-account-key:${slot.slotId}`}
+                                        saved={slot.accountBound}
+                                        disabled={apiKeyActionsDisabled}
+                                        onChoose={(event) => bindSecret('account', machineId, slot.slotId, event)}
+                                    />
+                                )}
+                                rightElementOutsidePressable
+                            />
+                        ))}
+                        {connection.credential.authorityDescription ? (
+                            <Item
+                                testID="provider-connection-key-authority"
+                                mode="info"
+                                title={t('settingsProvidersCollection.keyAuthorityTitle')}
+                                subtitle={localizePluginText(contributionAuthorPluginId, connection.credential.authorityDescription)}
+                                subtitleLines={0}
+                            />
+                        ) : null}
                         {keyUrl && !keySaved ? <ProviderExternalLinkItem kind="getApiKey" url={keyUrl} /> : null}
                     </>
                 ) : null}
@@ -1398,6 +1476,23 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 ) : null}
             </ItemGroup>
             )}
+
+            {!gateway && !gatewayArriving && usageSources.length > 0 ? (
+                <ProviderConnectionUsageSection
+                    connectionId={connection.connectionId}
+                    {...providerConnectionUsageAuthority({ sources: usageSources, connection: storedConnection,
+                        declaration: usageDeclaration, machineId,
+                        secretBindings: query.catalog?.secretBindingsByConnectionId[connection.connectionId] })}
+                    providerName={presentation.title}
+                    serverId={serverId}
+                    scope={addressedScope}
+                    machineId={machineId}
+                    sources={usageSources}
+                    active={focused}
+                    onChooseBillingKey={apiKeyActionsDisabled ? null : chooseBillingKey}
+                    onChooseApiKey={apiKeyActionsDisabled || !connection.credential ? null : chooseApiKey}
+                />
+            ) : null}
 
             {/* A gateway's machine is chosen in Runs on; it has no per-machine test, key or runtime here. */}
             {gateway || gatewayArriving ? null : machineSection(onThisComputerRows)}
@@ -1541,47 +1636,32 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 </ItemGroup>
             ) : null}
 
-            <ProviderCompatibilitySection summaries={connection.compatibility} />
+            <ProviderCompatibilitySection summaries={connection.compatibility} onReview={setCompatibilityReviewAgent} />
+            {compatibilityReviewAgent ? <ProviderCompatibilityReview
+                key={JSON.stringify([serverId, machineId, props.connectionId, compatibilityReviewAgent])}
+                connectionId={props.connectionId}
+                agentTargetKey={compatibilityReviewAgent}
+                machineId={machineId}
+                serverId={serverId}
+                onReviewed={() => setCompatibilityReviewAgent(null)}
+            /> : null}
 
+            {availabilityRepair ? availabilitySection : null}
             {advancedAvailable ? (
                 <ItemGroup>
                     <Item
                         testID="provider-connection-advanced"
                         title={t('settingsProviders.detail.advancedTitle')}
-                        subtitle={advancedRepairError ? t(presentProviderError(advancedRepairError).descriptionKey)
+                        subtitle={advancedRepairError && !availabilityRepair ? t(presentProviderError(advancedRepairError).descriptionKey)
                             : advancedShown ? undefined : t('settingsProvidersCollection.advancedSummary')}
-                        showChevron={false}
                         accessibilityExpanded={advancedShown}
-                        rightElement={<ExpandableItemCaret expanded={advancedShown} />}
-                        onPress={advancedNeedsAttention ? undefined : toggleAdvanced}
+                        onPress={advancedNeedsAttention && !availabilityRepair ? undefined : toggleAdvanced}
                     />
                 </ItemGroup>
             ) : null}
             {advancedShown ? (
                 <>
-                    {connection.scope === 'account' || connection.grants.accountState !== 'absent' ? (
-                        <ItemGroup
-                            title={t('settingsProvidersCollection.availabilityTitle')}
-                            description={t('settingsProvidersCollection.availabilityDescription')}
-                        >
-                            <Item
-                                title={t('settingsProviders.detail.accountAccess')}
-                                subtitle={t('settingsProviders.detail.accountAccessDescription')}
-                                subtitleLines={0}
-                                showChevron={false}
-                                rightElement={mutation.isPending('enable:account')
-                                    ? <ActivitySpinner size="small" />
-                                    : <Switch accessibilityLabel={t('settingsProviders.detail.accountAccess')} value={accountGrantValid} onValueChange={(next) => {
-                                        invalidateProbe();
-                                        void mutation.run(buildProviderConnectionEnableMutation({
-                                            connectionId: props.connectionId, enabled: next, access: 'account',
-                                        }), 'enable:account');
-                                    }} />}
-                                rightElementOutsidePressable
-                            />
-                            {failureBesideKey === 'enable:account' ? failureItems : null}
-                        </ItemGroup>
-                    ) : null}
+                    {availabilityRepair ? null : availabilitySection}
 
                     {machineSectionVisible ? (
                         <ItemGroup title={t('settingsProviders.detail.machinesTitle')} description={t('settingsProviders.detail.machinesFooter')}>
@@ -1590,9 +1670,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 const rowMachineId = row.target.machineId;
                                 const selected = rowMachineId === machineId;
                                 const machineViewState = machineViews.byTargetKey[rowKey];
-                                const machineView = machineViewState?.status === 'success' || machineViewState?.status === 'loading'
-                                    ? machineViewState.connection
-                                    : null;
+                                const machineView = machineViewState?.connection ?? null;
                                 const granted = machineViewState?.status === 'success'
                                     && machineView?.grants.machineState === 'valid';
                                 const machineEndpoint = machineView?.endpoints
@@ -1627,6 +1705,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                         {machineError ? (
                                             <ProviderErrorItems
                                                 error={machineError}
+                                                layout="inline"
                                                 retry={() => machineViews.refresh(row.target)}
                                                 enableOnMachine={machineError.action === 'enable_on_machine'
                                                     ? () => setMachineEnabled(rowMachineId, true)
@@ -1651,6 +1730,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         endpoints={endpointConfiguration.endpoints}
                         machineSelected={machineId !== null}
                         onSetOverride={(input) => { void setEndpointOverride(input); }}
+                        onSetHeaders={(input) => { void endpointConfiguration.patch(input); }}
+                        localizeText={(value) => localizePluginText(contributionAuthorPluginId, value)}
                     />
                 </>
             ) : null}
@@ -1658,7 +1739,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     );
 
     return (
-        <ItemList testID="provider-connection-detail">
+        // A gateway's page sits in the Connected services column beside account and pool details, at their width.
+        <ItemList testID="provider-connection-detail" pageColumn={gateway ? 'wide' : undefined}>
             {header}
             {footer}
         </ItemList>
@@ -1666,6 +1748,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
 });
 
 const NO_GATEWAY_SLOTS = Object.freeze({});
+const NO_USAGE_SOURCES: readonly ProviderUsageSourceV1[] = Object.freeze([]);
 
 const stylesheet = StyleSheet.create(() => ({
     formActions: {

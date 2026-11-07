@@ -1,24 +1,24 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import { serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import type { TeamCredentialProviderModelSelectionV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
-import { resolveProviderModelCapabilityCompatibilityV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 
 import type { OptionPickerOption, OptionPickerSection } from '@/components/sessions/pickers/OptionPickerOverlay';
+import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
-import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
+import { presentProviderModelRow, type ProviderModelSelectionPurpose } from '@/providers/models/presentProviderModelRow';
 import { providerConnectionSourceLabel } from '@/providers/session/resolveSessionRoutePresentation';
-import { resolveAccountAgentProviderRequirements, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import type { ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { t } from '@/text';
 import {
-    formatLimitResetUtc,
-    limitMetricLabel,
     teamCredentialRecoveryLabel,
     teamCredentialRecoveryPresentation,
 } from '@/components/settings/teams/credentials/teamCredentialPresentation';
+import { buildTeamCredentialModelPickerSections, createTeamCredentialModelEligibility, teamCredentialDeliveryLabel, teamCredentialUnavailableReason } from './buildTeamCredentialModelPickerSections';
 import {
     isTeamCredentialProviderModelPickerValue,
     sessionModelSelectionKey,
@@ -63,6 +63,8 @@ export type SessionNativeModelOption = Readonly<{
     value: string;
     label: string;
     description?: string;
+    /** The options this model declares (its effort tiers), so its card can offer them before it is chosen. */
+    modelOptions?: readonly AcpConfigOption[];
 }>;
 
 /**
@@ -129,45 +131,6 @@ export function sessionModelConnectionTitle(group: SessionModelProjectionGroup):
     return providerConnectionSourceLabel(group);
 }
 
-function teamCredentialDeliveryLabel(deliveryMode: TeamCredentialProviderModelSelectionV1['deliveryMode']): string {
-    switch (deliveryMode) {
-        case 'brokered': return t('teams.credentials.delivery.brokered');
-        case 'direct': return t('teams.credentials.delivery.direct');
-    }
-}
-
-function teamCredentialUnavailableReason(resource: TeamCredentialResourceCatalogEntryV1): string | null {
-    switch (resource.readiness.kind) {
-        case 'available': return null;
-        case 'broker_unavailable': return t('teams.credentials.errors.brokerUnavailable');
-        case 'source_unavailable': return t('teams.credentials.errors.sourceMissing');
-        case 'update_required': return t('teams.unavailable.updateRequired');
-        case 'policy_denied': return t('teams.credentials.forbidden');
-        // The Home already resolved which allowance closed and when it reopens;
-        // the picker is where the member decides what to do about it.
-        case 'limit_reached': return [
-            t('teams.credentials.limits.reached'),
-            limitMetricLabel(resource.readiness.metric),
-            formatLimitResetUtc(resource.readiness.resetsAtUtc),
-        ].filter((part): part is string => Boolean(part)).join(' · ');
-        case 'resource_corrupt':
-        case 'resource_unavailable':
-            return t('teams.credentials.detail.notFound');
-    }
-}
-
-function teamCredentialModelUnavailableReason(
-    resource: TeamCredentialResourceCatalogEntryV1,
-    availability: TeamCredentialResourceCatalogEntryV1['providerModels'][number]['availability'],
-): string | null {
-    switch (availability) {
-        case 'available': return teamCredentialUnavailableReason(resource);
-        case 'source_owner_required': return t('teams.credentials.errors.sourceOwnerRequired');
-        case 'resource_corrupt': return t('teams.credentials.detail.notFound');
-        case 'policy_denied': return t('teams.credentials.forbidden');
-    }
-}
-
 function nativeModelRef(agentTargetKey: string, modelId: string): ProviderBoundModelRef | null {
     return modelId === 'default'
         ? null
@@ -175,6 +138,7 @@ function nativeModelRef(agentTargetKey: string, modelId: string): ProviderBoundM
 }
 
 export function buildSessionModelPickerSections(input: Readonly<{
+    purpose?: ProviderModelSelectionPurpose;
     agentTargetKey: string;
     declarationContext: ProviderDeclarationContext;
     nativeModels: readonly SessionNativeModelOption[];
@@ -192,7 +156,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
-    currentTeamCredentialResourceKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     selectedTeamCredentialModel?: SessionModelPickerOptionValue;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
     /** The Agent's own source (its signed-in account or pool); headings fall back to "Built-in". */
@@ -209,9 +173,6 @@ export function buildSessionModelPickerSections(input: Readonly<{
      */
     gatewaySlotTitle?: (slot: SessionModelGatewaySlot) => string | null;
 }>): readonly SessionModelPickerSection[] {
-    const requirements = resolveAccountAgentProviderRequirements(input.agentTargetKey, input.declarationContext);
-    const modelEligible = (model: ProviderModelDescriptorV1) => requirements.kind === 'known'
-        && !resolveProviderModelCapabilityCompatibilityV1({ required: requirements.requirements.required, model }).incompatible;
     const nativeSource = { label: input.nativeSourceLabel || t('settingsProviders.models.builtIn'), native: true };
     const shouldShowDescriptions = input.nativeModels.some((model) => (
         model.value !== 'default'
@@ -260,10 +221,10 @@ export function buildSessionModelPickerSections(input: Readonly<{
     const providerSections = input.providerGroups.flatMap((group): SessionModelPickerSection[] => {
         const source = { label: sessionModelConnectionTitle(group), native: false };
         const entries = group.rows.flatMap((row): { row: typeof row; option: SessionModelPickerOption }[] => {
-            if (!modelEligible(row.descriptor)) return [];
             const hiddenCurrentSelection = row.visibility === 'hidden_current_selection';
             if (row.visibility !== 'visible' && !hiddenCurrentSelection) return [];
             const presentation = presentProviderModelRow({
+                purpose: input.purpose,
                 modelId: row.ref.modelId,
                 name: row.descriptor.name,
                 description: row.descriptor.description,
@@ -273,6 +234,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 endpointHealth: row.endpointHealth,
                 stale: row.catalog.stale,
                 loadState: row.loadState,
+                modelLoadPreflightPolicy: group.modelLoadPreflightPolicy,
                 visibility: hiddenCurrentSelection ? 'hidden_current_selection' : 'visible',
             });
             return [{ row, option: {
@@ -280,12 +242,11 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 label: presentation.label,
                 searchText: row.ref.modelId,
                 description: presentation.description,
+                // The line leads with the model id, which tells a gateway's look-alike names apart: a phone row
+                // gets the card's second line instead of cutting the id short.
+                descriptionLines: 2,
                 source,
-                disabled: presentation.selectionDisabled
-                    || (
-                        group.modelLoadPreflightPolicy === 'required'
-                        && row.loadState === 'unloaded'
-                    ),
+                disabled: presentation.selectionDisabled,
                 accessibilityLabel: `${source.label}, ${presentation.label}`,
             } }];
         });
@@ -308,64 +269,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
         return sections;
     });
 
-    const teamSections = (input.teamCredentialResources ?? []).flatMap((resource): SessionModelPickerSection[] => {
-        const options = resource.providerModels.flatMap((row): SessionModelPickerOption[] => {
-            if (row.selection.agentTargetKey !== input.agentTargetKey) return [];
-            if (!modelEligible(row.descriptor)) return [];
-            const current = input.currentTeamCredentialResourceKeys?.has(`${resource.teamId}:${resource.id}`) ?? true;
-            const available = current && resource.readiness.kind === 'available'
-                && row.availability === 'available';
-            const delivery = teamCredentialDeliveryLabel(row.selection.deliveryMode);
-            const unavailableReason = current
-                ? teamCredentialModelUnavailableReason(resource, row.availability)
-                : t('teams.unavailable.offline');
-            // The Home's typed recovery travels with the disabled row: the
-            // picker itself has no settings surface to open, so the recovery is
-            // the row's description and accessible name rather than a control.
-            const recoveryPresentation = available
-                ? null
-                : teamCredentialRecoveryPresentation(
-                    resource.recoveryAction,
-                    // The catalog projection carries no custodian identity, and
-                    // repair authority is re-decided by the resource Settings a
-                    // recovery destination would open.
-                    { isSourceCustodian: false },
-                );
-            const recovery = recoveryPresentation === null
-                ? null
-                : teamCredentialRecoveryLabel(recoveryPresentation);
-            return [{
-                value: row.selection,
-                label: row.descriptor.name || row.selection.modelId,
-                searchText: row.selection.modelId,
-                source: { label: resource.displayName, native: false, inDescription: true },
-                description: [resource.displayName, delivery, unavailableReason, recovery]
-                    .filter((value): value is string => Boolean(value))
-                    .join(' · '),
-                disabled: !available && !input.onRecoverTeamCredentialResource,
-                ...(!available && input.onRecoverTeamCredentialResource
-                    ? { onActivate: () => input.onRecoverTeamCredentialResource?.(resource) }
-                    : {}),
-                accessibilityLabel: [
-                    input.teamNameById?.[resource.teamId] ?? t('teams.title'),
-                    input.homeNameByTeamId?.[resource.teamId],
-                    resource.displayName,
-                    row.descriptor.name || row.selection.modelId,
-                    delivery,
-                    available ? undefined : unavailableReason,
-                    available ? undefined : recovery,
-                ].filter((value): value is string => Boolean(value)).join(', '),
-            }];
-        });
-        if (options.length === 0) return [];
-        const teamName = input.teamNameById?.[resource.teamId] ?? t('teams.title');
-        const homeName = input.homeNameByTeamId?.[resource.teamId];
-        return [{
-            id: `team-resource:${resource.teamId}:${resource.id}`,
-            title: `${t('teams.credentials.title')} · ${teamName}${homeName ? ` · ${homeName}` : ''}`,
-            options,
-        }];
-    });
+    const teamModelEligible = createTeamCredentialModelEligibility(input);
+    const teamSections = buildTeamCredentialModelPickerSections(input, teamModelEligible);
 
     const sections: SessionModelPickerSection[] = [
         ...(nativeOptions.length > 0
@@ -397,7 +302,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
             row.selection.agentTargetKey === selectedValue.agentTargetKey
             && row.selection.modelId === selectedValue.modelId
         )) ?? null;
-        const teamModelEligible = requirements.kind === 'known' && (!teamModel || modelEligible(teamModel.descriptor));
+        const retainedTeamModelEligible = teamModelEligible(teamModel);
         const label = recovery?.displaySnapshot?.modelName
             ?? teamModel?.descriptor.name
             ?? selectedValue.modelId;
@@ -415,7 +320,9 @@ export function buildSessionModelPickerSections(input: Readonly<{
             ? teamCredentialRecoveryLabel(teamRecoveryPresentation)
             : null;
         const teamUnavailableReason = teamResource
-            ? teamCredentialUnavailableReason(teamResource) ?? t('teams.credentials.detail.notFound')
+            ? teamCredentialUnavailableReason(teamResource,
+                isTeamCredentialProviderModelPickerValue(selectedValue) ? selectedValue.deliveryMode : undefined,
+            ) ?? t('teams.credentials.detail.notFound')
             : null;
         const accessibilityLabel = recovery?.displaySnapshot
             ? [
@@ -446,8 +353,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
                             ? t('agentInput.model.unavailable')
                             : t('settingsProviders.detail.deletedDescription'),
                 ...(accessibilityLabel ? { accessibilityLabel } : {}),
-                disabled: !(teamResource && teamModelEligible && input.onRecoverTeamCredentialResource),
-                ...(teamResource && teamModelEligible && input.onRecoverTeamCredentialResource
+                disabled: !(teamResource && retainedTeamModelEligible && input.onRecoverTeamCredentialResource),
+                ...(teamResource && retainedTeamModelEligible && input.onRecoverTeamCredentialResource
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(teamResource) }
                     : {}),
             }],
@@ -474,7 +381,7 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
-    currentTeamCredentialResourceKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     fallbackLabel: string;
     fieldLabel: string;
@@ -512,7 +419,7 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
                 providerModels: resource.providerModels.filter(model => sessionModelSelectionKey(model.selection) === selectedKey) })) : [],
         teamNameById: input.teamNameById,
         homeNameByTeamId: input.homeNameByTeamId,
-        currentTeamCredentialResourceKeys: input.currentTeamCredentialResourceKeys,
+        teamCredentialResourceStatusByKey: input.teamCredentialResourceStatusByKey,
         currentSelectionRecovery: input.currentSelectionRecovery,
     });
     const selectedSection = sections.find((section) => section.options.some((option) => (

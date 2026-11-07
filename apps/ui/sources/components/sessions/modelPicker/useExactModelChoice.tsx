@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { providerDeclarationContext, PROVIDER_DECLARATION_CONTEXT_SECTIONS } from '@/providers/catalog/accountProviderDeclarations';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -29,11 +29,12 @@ type ProjectionGroups = NonNullable<
 const EMPTY_GROUPS: ProjectionGroups = [];
 
 type TeamModelChoiceProps = Pick<SessionModelPickerProps, 'teamCredentialResources' | 'teamNameById' | 'homeNameByTeamId'
-  | 'currentTeamCredentialResourceKeys' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'experimentalConfirmation'>;
+  | 'teamCredentialResourceStatusByKey' | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'experimentalConfirmation'>;
 
 function ExactModelChoiceModal(
   props: Readonly<{
     agentTargetKey: string;
+    purpose?: SessionModelPickerProps['purpose'];
     declarationContext: NonNullable<SessionModelPickerProps['declarationContext']>;
     sourceBrowse?: SessionModelPickerProps['sourceBrowse'];
     nativeModels: readonly {
@@ -46,11 +47,11 @@ function ExactModelChoiceModal(
     projectionError: SessionModelPickerProps['projectionError'];
     projectionFailures: SessionModelPickerProps['projectionFailures'];
     retryProjection: SessionModelPickerProps['retryProjection'];
+    projectionApproval: SessionModelPickerProps['projectionApproval'];
     probe: SessionModelPickerProps['probe'];
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys: ReadonlySet<string>;
     selected: ProviderBoundModelRef | null;
-    effectiveLabel: string;
     experimentalConfirmation: SessionModelPickerExperimentalConfirmationController;
     onSelect: (selection: ProviderBoundModelRef | null) => void;
     onClose: () => void;
@@ -59,6 +60,7 @@ function ExactModelChoiceModal(
   return (
     <SessionModelPicker
       agentTargetKey={props.agentTargetKey}
+      purpose={props.purpose}
       declarationContext={props.declarationContext}
       sourceBrowse={props.sourceBrowse}
       nativeModels={props.nativeModels}
@@ -67,6 +69,7 @@ function ExactModelChoiceModal(
       projectionError={props.projectionError}
       projectionFailures={props.projectionFailures}
       retryProjection={props.retryProjection}
+      projectionApproval={props.projectionApproval}
       probe={props.probe}
       currentSelectionRecovery={props.currentSelectionRecovery}
       hiddenNativeModelKeys={props.hiddenNativeModelKeys}
@@ -75,7 +78,7 @@ function ExactModelChoiceModal(
       teamCredentialResources={props.teamCredentialResources}
       teamNameById={props.teamNameById}
       homeNameByTeamId={props.homeNameByTeamId}
-      currentTeamCredentialResourceKeys={props.currentTeamCredentialResourceKeys}
+      teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}
       selectedTeamCredentialModel={props.selectedTeamCredentialModel}
       onSelectTeamCredentialModel={props.onSelectTeamCredentialModel}
       onSelect={(selection) => {
@@ -94,6 +97,7 @@ function ExactModelChoiceModal(
 export function useExactModelChoice(
   params: Readonly<{
     agentTargetKey: string | null;
+    purpose?: SessionModelPickerProps['purpose'];
     /** The Agent whose own models lead the picker; null offers Provider sources only. */
     agentId: string | null;
     machineId: string | null;
@@ -116,6 +120,7 @@ export function useExactModelChoice(
   const enabled = params.enabled !== false;
   // Closed rows observe the exact Machine's admitted cache without initiating discovery.
   const declarations = useDaemonMergedProjectionInputs({ machineId: params.machineId, serverId: params.serverId,
+    sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS,
     enabled: enabled && Boolean(params.machineId), load: false });
   const declarationProjection = declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 : undefined;
   const declarationContext = React.useMemo(() => providerDeclarationContext(params.machineId, declarationProjection),
@@ -144,7 +149,7 @@ export function useExactModelChoice(
     ...(params.selected ? { currentSelection: params.selected } : {}),
   });
   const confirmExperimentalModel = useConfirmExperimentalProviderModel({
-    enabled: providersEnabled && enabled,
+    enabled: providersEnabled && enabled && params.purpose !== 'preference',
     machineId: params.machineId,
     serverId: params.serverId,
     agentTargetKey: params.agentTargetKey,
@@ -218,6 +223,7 @@ export function useExactModelChoice(
   // failing) through the modal's own update, so it never shows what was true when it opened.
   const live = React.useMemo(
     () => ({
+      purpose: params.purpose,
       declarationContext,
       sourceBrowse: { machineId: params.machineId, serverId: params.serverId },
       nativeModels,
@@ -226,11 +232,11 @@ export function useExactModelChoice(
       projectionError: providersEnabled ? projection.error : null,
       projectionFailures: providersEnabled ? projection.refreshFailures : undefined,
       retryProjection: providersEnabled ? projection.refresh : null,
+      projectionApproval: providersEnabled ? projection.pendingApproval : null,
       probe,
       currentSelectionRecovery,
       hiddenNativeModelKeys,
       selected: params.selected,
-      effectiveLabel: params.selected?.modelId ?? params.fallbackLabel,
       ...params.teamModelChoice,
       experimentalConfirmation: params.teamModelChoice?.experimentalConfirmation?.pending || params.teamModelChoice?.experimentalConfirmation?.error
         ? params.teamModelChoice.experimentalConfirmation : confirmExperimentalModel,
@@ -243,6 +249,7 @@ export function useExactModelChoice(
       nativeModels,
       probe,
       params.fallbackLabel,
+      params.purpose,
       params.machineId,
       params.serverId,
       params.selected,
@@ -252,6 +259,7 @@ export function useExactModelChoice(
       projection.error,
       projection.refreshFailures,
       projection.refresh,
+      projection.pendingApproval,
       providersEnabled,
     ],
   );

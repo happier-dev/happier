@@ -1,6 +1,20 @@
 import type * as React from 'react';
 import type { View } from 'react-native';
 import type { UseFilePreviewSourceInput } from '../useFilePreviewSource';
+import type { ImageMarksDocumentV1 } from '@happier-dev/protocol';
+import type { ImageAnnotationSource } from '../annotation/annotatorStore';
+import type { CommitComposerPictureResult } from '@/components/sessions/composer/replaceComposerPicture';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+
+export type StagePictureCommitResult = CommitComposerPictureResult | Readonly<{ ok: false; reason: string }>;
+
+export type StagePictureEdit = Readonly<{
+    document?: ImageMarksDocumentV1;
+    /** Resolves the original only when Annotate is entered, never while viewing/paging. */
+    original?: () => Promise<ImageAnnotationSource | null>;
+    commit: (result: Readonly<{ source: ImageAnnotationSource; document: ImageMarksDocumentV1 }>) => Promise<StagePictureCommitResult>;
+    revert: () => Promise<StagePictureCommitResult>;
+}>;
 
 export type MediaStageItem = Readonly<{
     kind: 'image' | 'svg' | 'video' | 'pdf';
@@ -13,6 +27,11 @@ export type MediaStageItem = Readonly<{
     alphaCapable?: boolean;
     originRef?: React.RefObject<View | null>;
     openFile?: () => void;
+    edit?: StagePictureEdit;
+    /** Tray Edit marks opens directly in the same stage mode. */
+    annotate?: boolean;
+    /** Chooser's default only; its canonical resolver still decides the destination. */
+    targetSession?: SessionAddress;
 }>;
 
 export type MediaStageProps = Readonly<{

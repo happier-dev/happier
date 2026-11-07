@@ -1,4 +1,4 @@
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     DaemonProviderModelProjectionGroupV1,
     DaemonProviderModelProjectionRowV1,
@@ -16,6 +16,7 @@ export type ProviderModelRowPrimaryStatusKind =
     | 'visibility';
 
 export type ProviderModelRowVisibilityPresentation = DaemonProviderModelProjectionRowV1['visibility'];
+export type ProviderModelSelectionPurpose = 'preference' | 'execution';
 
 type ProviderModelProjectionAuthorization = DaemonProviderModelProjectionGroupV1['authorization'];
 type ProviderModelProjectionCompatibility = DaemonProviderModelProjectionRowV1['compatibility'];
@@ -72,9 +73,13 @@ function visibilityStatusLabel(
  * visibility remain owned by their daemon/protocol domains.
  */
 export function presentProviderModelRow(input: Readonly<{
+    /** Saving a preference does not authorize execution; omitted means execution. */
+    purpose?: ProviderModelSelectionPurpose;
     modelId: string;
     name?: string;
     description?: string;
+    /** The reasoning-effort tiers the model declares, already named ("Low, High"). */
+    reasoningEffortLevels?: string;
     contextLabel?: string;
     authorization?: ProviderModelProjectionAuthorization;
     compatibility?: ProviderModelProjectionCompatibility;
@@ -82,6 +87,7 @@ export function presentProviderModelRow(input: Readonly<{
     endpointHealth?: ProviderModelProjectionEndpointHealth;
     stale?: boolean;
     loadState?: ProviderModelProjectionLoadState;
+    modelLoadPreflightPolicy?: DaemonProviderModelProjectionGroupV1['modelLoadPreflightPolicy'];
     visibility?: ProviderModelRowVisibilityPresentation;
     confidence?: ProviderModelProjectionConfidence;
     /**
@@ -103,7 +109,7 @@ export function presentProviderModelRow(input: Readonly<{
         : input.compatibility;
     const compatibilityStatus = compatibility?.result.status;
     const compatibilityBlocksSelection = compatibilityStatus === 'incompatible'
-        || (compatibilityStatus === 'experimental'
+        || (input.purpose !== 'preference' && compatibilityStatus === 'experimental'
             && compatibility?.confirmed !== true
             && input.canConfirmExperimental !== true);
     const endpointLabel = input.confidence === 'account_unverified' && input.endpointHealth === 'not_checked'
@@ -144,6 +150,9 @@ export function presentProviderModelRow(input: Readonly<{
         pushDetail(input.contextLabel);
         if (label !== input.modelId) pushDetail(input.modelId);
         pushDetail(input.description);
+        if (input.reasoningEffortLevels) {
+            pushDetail(t('settingsProviders.models.reasoningEffortSummary', { levels: input.reasoningEffortLevels }));
+        }
     }
     pushDetail(primaryStatus?.label);
     if (compatibilityStatus === 'experimental') pushDetail(t('settingsProviders.models.experimental'));
@@ -155,7 +164,8 @@ export function presentProviderModelRow(input: Readonly<{
         label,
         description: details.length > 0 ? details.join(' · ') : undefined,
         primaryStatus,
-        selectionDisabled: authorizationError !== null
+        selectionDisabled: (input.purpose !== 'preference' && (authorizationError !== null
+            || (input.modelLoadPreflightPolicy === 'required' && input.loadState === 'unloaded')))
             || compatibilityBlocksSelection
             || input.visibility === 'hidden_current_selection',
     };
