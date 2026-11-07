@@ -26,6 +26,8 @@ import type { TriageListRowV1 } from '../../projection/listWindow.js';
  */
 export type TriageSelectedObservationV1 = Readonly<{
     sourceInstanceId: string;
+    /** Known Account row routing, carried separately from the source observation. */
+    sourceInstanceRowId?: string;
     /**
      * Exactly the closed observation the detail contract admits. Keep the
      * source-declared repository beside it: adding that launch-only fact to

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
-import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness } from '@happier-dev/plugin-ui';
+import { isPluginError, PluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
@@ -13,7 +13,6 @@ import {
   type TriageReadEntryDetailResultV1,
   TriageReadEntryDetailResultV1Schema,
 } from '../../actions/entryDetailProtocol.js';
-import type { TriageSurfaceSelectionV1 } from '../state/surface.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
 
@@ -51,7 +50,7 @@ export type TriageEntryDetailStateV1 =
   /** The selected connection is retired, removed, or no longer this source's. */
   | Readonly<{ kind: 'unavailable' }>
   /** Detail preparation failed; Retry or host re-admission can read it again. */
-  | Readonly<{ kind: 'unreachable' }>
+  | Readonly<{ kind: 'unreachable'; failure?: PluginError }>
   /**
    * The durable facts read cleanly and still could not compose an admissible
    * detail input — an over-bound Session projection, or an observation that no
@@ -67,7 +66,7 @@ export type TriageMountedEntryDetailStateV1 =
     /** An explicit relationship change starts a fresh authoritative linked-Session walk. */
     refreshLinkedSessions(): void;
   }>)
-  | Readonly<{ kind: 'unreachable'; retry(): void }>;
+  | Readonly<{ kind: 'unreachable'; failure?: PluginError; retry(): void }>;
 
 const READING = Object.freeze({ kind: 'reading' } satisfies TriageEntryDetailStateV1);
 const UNAVAILABLE = Object.freeze({ kind: 'unavailable' } satisfies TriageEntryDetailStateV1);
@@ -138,7 +137,7 @@ function createActionTriageEntryDetailTransport(
 }
 
 export type TriageEntryDetailInputSourceV1 = Readonly<{
-  selection: Pick<TriageSurfaceSelectionV1, 'entryRef' | 'sourceInstanceId'>;
+  selection: Pick<TriageReadEntryDetailInputV1, 'entryRef' | 'sourceInstanceId' | 'sourceInstanceRowId'>;
   /** The host-applied present observation for the selected entry and connection. */
   observation: TriageDetailSurfaceInputV1['observation'];
 }>;
@@ -166,14 +165,14 @@ async function readTriageEntryDetailStateThrough(
       v: 1,
       entryRef: source.selection.entryRef,
       sourceInstanceId: source.selection.sourceInstanceId,
+      ...(source.selection.sourceInstanceRowId === undefined ? {} : { sourceInstanceRowId: source.selection.sourceInstanceRowId }),
     }, options);
-  } catch {
-    return UNREACHABLE;
+  } catch (error) {
+    return isPluginError(error) ? Object.freeze({ kind: 'unreachable', failure: error }) : UNREACHABLE;
   }
-  // `invalidCaller` cannot be caused by anything the reader did and cannot be
-  // resolved by them either; it reads as the same unavailable detail rather
-  // than as an accusation.
-  if (result.kind !== 'read') return UNAVAILABLE;
+  if (result.kind === 'unavailable') return UNAVAILABLE;
+  if (result.kind === 'invalidCaller') return Object.freeze({ kind: 'unreachable',
+    failure: new PluginError({ code: 'invalidCaller', retryable: false }) });
 
   const built = buildTriageDetailSurfaceInputV1({
     selection: source.selection,
@@ -206,10 +205,15 @@ export function useTriageEntryDetail(
   source: TriageEntryDetailInputSourceV1 | null,
 ): TriageMountedEntryDetailStateV1 | null {
   const hostApi = usePluginHostApi();
+  const owner = usePluginUiEphemeralSharedScope();
+  const stateOwner = useRef(owner);
   const readiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
+  const currentReadiness = useRef(readiness);
+  currentReadiness.current = readiness;
+  const readmissionRevision = useRef(readiness.revision);
   const transport = useMemo<TriageEntryDetailTransportV1>(
     () => createActionTriageEntryDetailTransport(hostApi),
-    [hostApi],
+    [hostApi, owner],
   );
   const [state, setState] = useState<TriageEntryDetailStateV1 | null>(null);
   const stateRef = useRef<TriageEntryDetailStateV1 | null>(null);
@@ -233,6 +237,7 @@ export function useTriageEntryDetail(
   }
   const entryRef = retainedEntryRef.current;
   const sourceInstanceId = source?.selection.sourceInstanceId;
+  const sourceInstanceRowId = source?.selection.sourceInstanceRowId;
   const observation = source?.observation;
   const currentObservation = useRef(observation);
   currentObservation.current = observation;
@@ -240,9 +245,10 @@ export function useTriageEntryDetail(
   const observedAtMs = observation?.observedAtMs;
 
   const publish = useCallback((next: TriageEntryDetailStateV1 | null): void => {
+    stateOwner.current = owner;
     stateRef.current = next;
     setState(next);
-  }, []);
+  }, [owner]);
   const retry = useCallback((): void => {
     if (readiness.pending || readiness.ready === false) return;
     replaceLoadedLinkedSessionPages.current = true;
@@ -274,6 +280,7 @@ export function useTriageEntryDetail(
           v: 1,
           entryRef,
           sourceInstanceId,
+          ...(sourceInstanceRowId === undefined ? {} : { sourceInstanceRowId }),
           linkedSessionsCursor: cursor,
         }, { signal: controller.signal });
       } catch {
@@ -343,7 +350,7 @@ export function useTriageEntryDetail(
         }));
       }
     })();
-  }, [entryRef, observation, publish, sourceInstanceId, transport, readiness.pending, readiness.ready]);
+  }, [entryRef, observation, publish, sourceInstanceId, sourceInstanceRowId, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
     readPending.current = false;
@@ -360,20 +367,21 @@ export function useTriageEntryDetail(
     spentLinkedSessionCursors.current.clear();
     const current = generation.current;
     const controller = new AbortController();
-    const retained = stateRef.current;
+    const retained = stateOwner.current === owner ? stateRef.current : null;
+    const admission = currentReadiness.current;
     publish(
       retained?.kind === 'ready'
       && sameTriageEntryRefV1(retained.input.observation.entryRef, entryRef)
       && retained.input.instance.instance.sourceInstanceId === sourceInstanceId
         ? retained
-        : READING
+        : !admission.pending && admission.ready === false ? UNREACHABLE : READING
     );
-    if (readiness.pending || readiness.ready === false) return () => controller.abort();
+    if (admission.pending || admission.ready === false) return () => controller.abort();
     readPending.current = true;
     void (async () => {
       const next = await readTriageEntryDetailStateThrough(
         transport,
-        { selection: { entryRef, sourceInstanceId },
+        { selection: { entryRef, sourceInstanceId, ...(sourceInstanceRowId === undefined ? {} : { sourceInstanceRowId }) },
           // Observation is local presentation, not an Account read input.
           // Compose the latest one when this acquisition actually settles.
           get observation() { return currentObservation.current ?? observation; } },
@@ -401,7 +409,17 @@ export function useTriageEntryDetail(
       readPending.current = false;
       linkedSessionsController.current?.abort();
     };
-  }, [entryRef, publish, retryGeneration, sourceInstanceId, transport, readiness.pending, readiness.ready, readiness.revision]);
+  }, [entryRef, owner, publish, retryGeneration, sourceInstanceId, sourceInstanceRowId, transport]);
+
+  useEffect(() => {
+    const changed = readmissionRevision.current !== readiness.revision;
+    readmissionRevision.current = readiness.revision;
+    // Admission governs the next read. Withdrawing it must not cancel work
+    // already admitted, and re-admission can use that still-pending read.
+    if (changed && !readiness.pending && readiness.ready !== false && !readPending.current) {
+      setRetryGeneration((generation) => generation + 1);
+    }
+  }, [readiness]);
 
   useEffect(() => {
     if (observation === undefined || readiness.pending || readiness.ready === false
@@ -415,6 +433,7 @@ export function useTriageEntryDetail(
 
   return useMemo(() => {
     if (entryRef === undefined || sourceInstanceId === undefined || observation === undefined) return null;
+    if (stateOwner.current !== owner) return READING;
     if (readiness.pending && state?.kind !== 'ready') return READING;
     if (state?.kind === 'ready') {
       if (!sameTriageEntryRefV1(state.input.observation.entryRef, entryRef)
@@ -431,5 +450,5 @@ export function useTriageEntryDetail(
         : Object.freeze({ kind: 'refused' as const, reason: built.reason });
     }
     return state?.kind === 'unreachable' ? Object.freeze({ ...state, retry }) : state;
-  }, [entryRef, observation, sourceInstanceId, loadMoreLinkedSessions, retry, state, readiness.pending]);
+  }, [entryRef, owner, observation, sourceInstanceId, loadMoreLinkedSessions, retry, state, readiness.pending]);
 }

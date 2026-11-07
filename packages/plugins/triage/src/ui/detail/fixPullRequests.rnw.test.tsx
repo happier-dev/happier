@@ -28,6 +28,8 @@ describe('fix-PR relationship read states', () => {
       // The read is one quiet line inside the story, like its failure below, never a page-sized loader.
       await expect(reading.getByText('Looking for a fix pull request…')).resolves.toBeDefined();
       await expect(reading.queryByRole('progressbar')).resolves.toBeUndefined();
+      // The chapter keeps its heading while it reads, so nothing after it shifts or renumbers.
+      expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('Fix pull request');
     } finally { await reading.dispose(); }
     let retries = 0;
     const unreachable = await mount({ kind: 'unreachable', retry: () => { retries += 1; } });
@@ -52,7 +54,9 @@ describe('fix-PR relationship read states', () => {
       expect(step).not.toBeNull();
       expect(step?.textContent).toContain('Round totals on the server');
       expect(step?.textContent).toContain('Merged');
-      await expect(ready.getByRole('button', { name: 'Unlink Round totals on the server' })).resolves.toBeDefined();
+      // Unlink is a rare correction, kept behind the card's ⋯ so the card offers one press (lab c8 fix card).
+      await expect(ready.queryByRole('button', { name: 'Unlink Round totals on the server' })).resolves.toBeUndefined();
+      await expect(ready.getByRole('button', { name: 'More for Round totals on the server' })).resolves.toBeDefined();
     } finally { await ready.dispose(); }
   });
 
@@ -68,5 +72,38 @@ describe('fix-PR relationship read states', () => {
       expect(step?.textContent).toContain('No pull request is linked as the fix yet.');
       await expect(empty.getByRole('button', { name: 'Link fix PR' })).resolves.toBeDefined();
     } finally { await empty.dispose(); }
+    // With nothing to offer the chapter still stands, so the story's numbering never skips it.
+    const nothing = await mount({
+      kind: 'ready', candidates: [], primary: null, incomplete: false, busy: false, refusal: null,
+      link: () => undefined, unlink: () => undefined,
+    });
+    try {
+      expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('No pull request is linked as the fix yet.');
+    } finally { await nothing.dispose(); }
+  });
+
+  it('draws the linked fix as a card with one Open pull request, named by its number', async () => {
+    const entryRef = { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '2512' };
+    const candidate = { entryRef, origins: ['session' as const], status: 'open' as const,
+      display: { title: 'Bump express', scopeLabel: 'example/repository', displayPath: 'example/repository #2512' } };
+    let opened = 0;
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fix-pr-open', mountNonce: 'fix-pr-open-mount' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageFixPullRequests pickable={[]} onOpenPrimary={() => { opened += 1; }} state={{
+        kind: 'ready', candidates: [candidate], primary: candidate, incomplete: false, busy: false, refusal: null,
+        link: () => undefined, unlink: () => undefined,
+      }} />),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    });
+    try {
+      await expect(fixture.getByText('Fix #2512')).resolves.toBeDefined();
+      await expect(fixture.getByText('Bump express')).resolves.toBeDefined();
+      // An open pull request is waiting, not work in progress: its marker is a settled hollow mark, never a spinner.
+      await expect(fixture.queryByRole('progressbar')).resolves.toBeUndefined();
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open pull request' })); });
+      expect(opened).toBe(1);
+    } finally { await fixture.dispose(); }
   });
 });

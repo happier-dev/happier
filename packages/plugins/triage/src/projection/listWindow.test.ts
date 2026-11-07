@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
+import { TriageListFilterSelectionV1Schema } from '../actions/listEntriesProtocol.js';
 import {
     TRIAGE_TESTKIT_SOURCE,
     testkitEntryRef,
@@ -15,6 +16,7 @@ import {
     TRIAGE_LIST_NO_FILTERS_V1,
     foldTriageListWindow,
     foldTriagePostMutationObservation,
+    createTriageListFoldBaselineV1,
     triageEntryRowKey,
     triageFacetScopeKeyV1,
     type SurfaceFilterSelectionV1,
@@ -42,6 +44,18 @@ const INSTANCE = Object.freeze([
     '22222222-2222-4222-8222-222222222222',
     '33333333-3333-4333-8333-333333333333',
 ]);
+
+it('keeps repositories with the same short name readable in the pre-filter facet census', () => {
+    const observations = ['acme/widgets', 'other/widgets'].map((scopeLabel, index) => ({
+        entryRef: testkitEntryRef({ collisionScope: `repo:${index}` }),
+        sourceInstanceId: INSTANCE[0]!, observedAtMs: 1_000,
+        outcome: testkitPresentOutcome({ snapshot: testkitSnapshot({ scopeLabel, scopeDisplayName: 'widgets' }) }),
+    }));
+    const window = fold({ observations });
+    expect(observations.map(({ entryRef }) => window.facetCensus.scopeNames[
+        triageFacetScopeKeyV1(entryRef.source, entryRef.collisionScope)]))
+        .toEqual(['acme/widgets', 'other/widgets']);
+});
 
 function present(input: Readonly<{
     sourceInstanceId: string;
@@ -115,6 +129,104 @@ function fold(input: Readonly<{
 }
 
 describe('the content winner of one folded entry', () => {
+    it('projects only changed retained entries and reuses hidden entries across lenses and order', () => {
+        const baseline = createTriageListFoldBaselineV1();
+        let projected = 0;
+        const count = 2_000;
+        const observations = Array.from({ length: count }, (_, index) => present({
+            sourceInstanceId: INSTANCE[0], entryId: `${index}`, title: `Finding ${index}`, createdAtMs: index,
+            kindId: index % 2 === 0 ? 'dependency-finding' : 'scan-finding', involvement: ['assignee'],
+        }));
+        const project = (answers = observations, lens: Partial<TriageListLensV1> = {}, active = [INSTANCE[0]]) => foldTriageListWindow({
+            observations: answers, lanes: [lane(INSTANCE[0])], configuredSourcesStatus: 'complete',
+            activeSourceInstanceIds: active, lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: count, ...lens },
+            assembledAtMs: 5_000 + projected, baseline, onRowProjected: () => { projected += 1; },
+        });
+        const first = project();
+        expect(first.rows).toHaveLength(count);
+        const byId = new Map(first.rows.map(row => [row.entryRef.entryId, row]));
+        projected = 0;
+        for (let refresh = 0; refresh < 3; refresh += 1) {
+            const equal = project(structuredClone(observations).map(observation => ({ ...observation, observedAtMs: 2_000 + refresh })));
+            expect(equal).toBe(first);
+        }
+        expect(projected).toBe(0);
+        const changed = structuredClone(observations);
+        const target = changed[1];
+        if (target?.outcome.kind !== 'present') throw new Error('Missing present fixture');
+        changed[1] = { ...target, outcome: { ...target.outcome, snapshot: {
+            ...target.outcome.snapshot, title: 'Updated finding', state: { presentation: 'resolved', nativeLabel: 'Fixed' },
+        }, viewer: testkitViewer({ sourceAttention: { level: 'none' } }) } };
+        const next = project(changed);
+        expect(projected).toBe(1);
+        expect(next.rows.filter(row => row !== byId.get(row.entryRef.entryId))).toHaveLength(1);
+        const updated = next.rows.find(row => row.entryRef.entryId === '1');
+        expect(updated?.content?.outcome).toBe(updated?.observations[0]?.outcome);
+        expect(updated?.lane).toBe('2-done');
+        expect(updated?.attention).toBeNull();
+        expect(updated?.content?.outcome.snapshot.facts).toBe(byId.get('1')?.content?.outcome.snapshot.facts);
+        const narrow = project(changed, { query: 'Updated' });
+        expect(narrow.rows).toEqual([updated]);
+        const widened = project(changed, { order: 'oldest' });
+        expect(projected).toBe(1);
+        expect(widened.rows[0]).toBe(byId.get('0'));
+        expect(widened.facetCensus).toBe(first.facetCensus);
+        for (let arrival = 0; arrival < 3; arrival += 1) project(changed, {}, [INSTANCE[0], INSTANCE[1]]);
+        expect(projected).toBe(1);
+        const retired = project(changed, {}, []);
+        expect(retired.rows.every(row => row.selected.kind === 'none')).toBe(true);
+    });
+
+    it('keeps observation clocks that decide fallback order or unresolved presence and updates coverage without row work', () => {
+        const baseline = createTriageListFoldBaselineV1();
+        let projected = 0;
+        const original = present({ sourceInstanceId: INSTANCE[0], entryId: '1' });
+        if (original.outcome.kind !== 'present') throw new Error('Missing present fixture');
+        const fallback = { ...original, outcome: { ...original.outcome,
+            snapshot: testkitSnapshot({ createdAtMs: undefined }),
+        } };
+        const project = (observation: CorpusQualifiedObservationV1, exhausted = true) => foldTriageListWindow({
+            observations: [observation], lanes: [lane(INSTANCE[0], { exhausted })],
+            configuredSourcesStatus: 'complete', activeSourceInstanceIds: [INSTANCE[0]],
+            lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 5_000, baseline,
+            onRowProjected: () => { projected += 1; },
+        });
+        const first = project(fallback);
+        const advanced = project({ ...fallback, observedAtMs: 9_000 });
+        expect(advanced.rows[0]?.sortAtMs).toBe(9_000);
+        expect(advanced.rows[0]).not.toBe(first.rows[0]);
+        const partial = project({ ...fallback, observedAtMs: 9_000 }, false);
+        expect(partial.rows).toBe(advanced.rows);
+        expect(partial.coverage).toBe('partial');
+        expect(projected).toBe(2);
+        const failed = { ...fallback, outcome: { kind: 'unresolved', failure: { class: 'transient', code: 'offline' } } } as const;
+        const unavailable = project(failed);
+        const retried = project({ ...failed, observedAtMs: 10_000 });
+        expect(retried.rows[0]?.presence).toEqual({ kind: 'unresolved', observedAtMs: 10_000 });
+        expect(retried.rows[0]).not.toBe(unavailable.rows[0]);
+    });
+
+    it('retains equal nested facts by fact id when their order changes', () => {
+        const baseline = createTriageListFoldBaselineV1();
+        const original = present({ sourceInstanceId: INSTANCE[0] });
+        if (original.outcome.kind !== 'present') throw new Error('Missing present fixture');
+        const facts = [
+            { id: 'source/first', importance: 'primary', value: { kind: 'status', value: 'First value', tone: 'success' } },
+            { id: 'source/second', importance: 'primary', value: { kind: 'status', value: 'Second value', tone: 'success' } },
+        ] as const;
+        const project = (reversed: boolean) => foldTriageListWindow({
+            observations: [{ ...original, outcome: { ...original.outcome, snapshot: testkitSnapshot({
+                facts: structuredClone(reversed ? [...facts].reverse() : [...facts]),
+            }) } }],
+            lanes: [lane(INSTANCE[0])], configuredSourcesStatus: 'complete', activeSourceInstanceIds: [INSTANCE[0]],
+            lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 5_000, baseline,
+        });
+        const before = project(false).rows[0]?.content?.outcome.snapshot.facts;
+        const after = project(true).rows[0]?.content?.outcome.snapshot.facts;
+        expect(after?.[0]).toBe(before?.[1]);
+        expect(after?.[1]).toBe(before?.[0]);
+    });
+
     it('uses an explicit source-authored collision join only when a unit fact is unavailable', () => {
         const observations = [
             present({ sourceInstanceId: INSTANCE[0], entryId: 'old-shape', collisionScope: 'repository:1' }),
@@ -145,6 +257,14 @@ describe('the content winner of one folded entry', () => {
             { source: TRIAGE_TESTKIT_SOURCE, sourceInstanceId: INSTANCE[0], unitId: 'a' },
             { source: TRIAGE_TESTKIT_SOURCE, sourceInstanceId: INSTANCE[0], unitId: 'b' },
         ]));
+        // A shareable lens omits only the configured connection: the same
+        // source-owned unit still excludes other units on either connection.
+        const sharedFilters = TriageListFilterSelectionV1Schema.parse({
+            ...TRIAGE_LIST_NO_FILTERS_V1,
+            scopes: [{ source: TRIAGE_TESTKIT_SOURCE, unitId: 'a' }],
+        });
+        const shared = fold({ observations, lens: { filters: sharedFilters } });
+        expect(shared.rows.map((row) => row.entryRef.entryId).sort()).toEqual(['other-account', 'project-a']);
     });
 
     it('filters by the observing configured instance without losing a shared entry or scanning a different set', () => {
@@ -191,6 +311,20 @@ describe('the content winner of one folded entry', () => {
         expect(after?.lane).toBe('2-done');
     });
 
+    it('reuses an equal exact reread but still retires its execution selection', () => {
+        const observation = present({ sourceInstanceId: INSTANCE[0], involvement: ['assignee'] });
+        const before = fold({ observations: [observation] }).rows[0];
+        if (before === undefined) throw new Error('Missing fixture row');
+        const read = { ...structuredClone(observation), observedAtMs: 9_000 };
+        const equal = foldTriagePostMutationObservation({ row: before, observation: read,
+            lanes: [lane(INSTANCE[0])], assembledAtMs: 9_000 });
+        expect(equal).toBe(before);
+        const retired = foldTriagePostMutationObservation({ row: before, observation: read,
+            lanes: [], assembledAtMs: 9_000 });
+        expect(retired?.selected).toEqual({ kind: 'none', reason: 'allInstancesRetired' });
+        expect(retired?.content).toBe(before.content);
+    });
+
     it('keeps the reason a scan gave an entry when a selection read replaces its answer', () => {
         const before = fold({
             observations: [present({
@@ -228,8 +362,9 @@ describe('the content winner of one folded entry', () => {
             value: { kind: 'status' as const, value: 'All passing', tone: 'success' as const } };
         const count = { id: 'source/files', importance: 'secondary' as const,
             value: { kind: 'number' as const, value: 17, format: 'plain' as const } };
+        const extra = Array.from({ length: 4 }, (_, index) => ({ ...count, id: `source/extra-${index}` }));
         const prior = { ...present({ sourceInstanceId: INSTANCE[0] }), outcome: testkitPresentOutcome({
-            snapshot: testkitSnapshot({ facts: [checks, count] }),
+            snapshot: testkitSnapshot({ facts: [checks, count, ...extra] }),
         }) };
         const before = fold({ observations: [prior] }).rows[0]!;
         const read = { ...present({ sourceInstanceId: INSTANCE[0], observedAtMs: 2_000 }), outcome: testkitPresentOutcome({
@@ -239,7 +374,9 @@ describe('the content winner of one folded entry', () => {
             lanes: [lane(INSTANCE[0])], assembledAtMs: 2_000, keepViewerFacts: true });
         expect(after?.content?.outcome.snapshot.facts).toEqual(expect.arrayContaining([
             checks, { ...count, value: { kind: 'number', value: 0, format: 'plain' } },
+            ...extra,
         ]));
+        expect(after?.content?.outcome.snapshot.projectionTruncated).toBeUndefined();
         // A post-write read replaces provider truth rather than retaining scan summaries.
         const changed = foldTriagePostMutationObservation({ row: before, observation: read,
             lanes: [lane(INSTANCE[0])], assembledAtMs: 2_000 });

@@ -1,13 +1,11 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions, } from '@happier-dev/plugin-sdk';
-import {
-  raceWithTimeout,
-  throwIfAborted,
-} from '@happier-dev/plugin-sdk/async';
+import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageEntryLocatorV1,
   TriageEntryRefV1,
+  TriageTaskFieldsV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -17,10 +15,10 @@ import {
 } from '../corpus/fold/qualify.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
-import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { findConfiguredSourceInstanceRow, readConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import type { TriageAdmittedGetExecutorV1 } from '../composer/resolveForDispatch.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
 import {
@@ -36,10 +34,11 @@ export type TriageReobserveEntryInputV1 = Readonly<{
   entryRef: TriageEntryRefV1;
   sourceInstanceId: string;
   lastKnownLocator?: TriageEntryLocatorV1;
+  includeTaskFields?: true;
 }>;
 
 export type TriageReobserveEntryResultV1 =
-  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1 }>
+  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1 }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
@@ -53,8 +52,6 @@ export type TriageReobserveEntryDepsV1 = Readonly<{
   executeGet: TriageAdmittedGetExecutorV1;
   nowMs(): number;
   signal?: AbortSignal;
-  /** Owner-private test injection; never a source-facing deadline override. */
-  getDeadlineMs?: number;
 }>;
 
 function sameSource(
@@ -78,10 +75,10 @@ export async function reobserveTriageEntry(
   deps: TriageReobserveEntryDepsV1,
 ): Promise<TriageReobserveEntryResultV1> {
   throwIfAborted(deps.signal);
-  const deadline = new AbortController();
+  const invocationController = new AbortController();
   const invocationSignal = deps.signal === undefined
-    ? deadline.signal
-    : AbortSignal.any([deps.signal, deadline.signal]);
+    ? invocationController.signal
+    : AbortSignal.any([deps.signal, invocationController.signal]);
   const options: PluginCancellationOptions = {
     signal: invocationSignal,
   };
@@ -120,22 +117,16 @@ export async function reobserveTriageEntry(
       requestedEntryRef: input.entryRef,
     });
     return qualified.status === 'qualified'
-      ? { kind: 'observed', observation: qualified.observation }
+      ? { kind: 'observed', observation: qualified.observation,
+          ...(input.includeTaskFields === true && observed.kind === 'present' && observed.taskFields !== undefined
+            ? { taskFields: observed.taskFields } : {}) }
       : { kind: 'rejected', reason: qualified.reason };
   })();
-  if (deps.getDeadlineMs === undefined) {
-    try {
-      return await invocation;
-    } finally {
-      deadline.abort();
-    }
+  try {
+    return await invocation;
+  } finally {
+    invocationController.abort();
   }
-  const settled = await raceWithTimeout(invocation, deps.getDeadlineMs);
-  deadline.abort();
-  throwIfAborted(deps.signal);
-  if (settled.type === 'timeout') return { kind: 'unavailable' };
-  if (settled.type === 'rejected') throw settled.error;
-  return settled.value;
 }
 
 export function createTriageReobserveEntryActionHandler(): TriageDataActionHandler<
@@ -146,8 +137,11 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
     const result = await reobserveTriageEntry(input, {
       readConfiguredInstance: async (sourceInstanceId, options) => {
-        const row = await findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId, options);
+        const row = input.sourceInstanceRowId === undefined
+          ? await findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId, options)
+          : await readConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceRowId, options);
         return row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
+          && (input.sourceInstanceRowId === undefined || row.value.configured.instance.sourceInstanceId === sourceInstanceId)
           ? row.value.configured
           : null;
       },
@@ -169,7 +163,8 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
     });
     if (result.kind === 'observed') {
       const { entryRef, ...observation } = result.observation;
-      return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation) };
+      return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation),
+        ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }) };
     }
     return result.kind === 'unavailable'
       ? { kind: 'unavailable' }
