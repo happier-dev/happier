@@ -118,10 +118,7 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
       },
       getAccountEncryptionMode: async () => {
         if (!await isCurrent()) throw new Error('action_forbidden');
-        const current = AccountApiTokenSelfV1Schema.parse(await request('GET', ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1));
-        if (current.accountId !== root.accountId || current.credentialId !== root.credentialId
-          || current.accountEncryptionMode !== root.accountEncryptionMode) throw new Error('action_forbidden');
-        return current.accountEncryptionMode;
+        return self.accountEncryptionMode;
       } });
     const projection: TokenProjection = {
       accountId: root.accountId, serverId: http.serverId, accountEncryptionMode: self.accountEncryptionMode, isCurrent,
