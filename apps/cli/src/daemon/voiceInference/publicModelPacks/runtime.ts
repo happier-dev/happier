@@ -6,7 +6,6 @@ import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKe
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import type { ModelPackManifest, VoiceModelPackIdentityV1, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 import {
-  buildVoiceModelPackInstallUrlPolicyV1,
   deriveVoiceModelPackManifestDigestV1,
   deriveVoiceModelPackLicenseTextDigestV1,
   installModelPackWithHost,
@@ -17,7 +16,6 @@ import {
   type InstalledVoiceModelPackMetadataV1,
   type ModelPackCoreProgress,
   type ModelPackInstallerHost,
-  type ModelPackUrlPolicy,
   type VoiceModelPackHostCapabilitiesV1,
   type VoiceModelPackArtifactBindingV1,
 } from '@happier-dev/voice-modelpacks';
@@ -106,7 +104,6 @@ export type DaemonPublicVoiceModelPackRuntime = Readonly<{
 
 type PublicPackInstallerHostInput = Readonly<{
   packsRootDir: string;
-  urlPolicy: ModelPackUrlPolicy;
 }>;
 
 function buildLegacyManifest(descriptor: EffectiveVoiceModelPackDescriptorV1): ModelPackManifest {
@@ -166,8 +163,6 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
   /** Persistence-path boundary for isolated integration tests. */
   stateFilePath?: string;
   now?: () => number;
-  /** Test boundary for proving cache invalidation independently of filesystem stat changes. */
-  fingerprintInstalledPack?: (packId: string, filePaths: readonly string[]) => Promise<string>;
   /** Applied daemon-runtime policy boundary. Tests may inject exact admission facts. */
   readPluginFinalPolicyCurrentRuntimes?: () => Promise<ReadonlyMap<string, PluginFinalPolicyCurrentRuntime> | null>;
 }>): DaemonPublicVoiceModelPackRuntime {
@@ -182,24 +177,13 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
   const notifyChanged = () => {
     for (const listener of changeListeners) listener();
   };
-  const integrityHost = createNodeInstalledModelPackIntegrityHost(params.paths.packsRootDir);
-  const verifiedInstallKeys = new Set<string>();
-  const verifiedPhysicalFingerprints = new Map<string, string>();
   let reconciliation: Promise<void> | null = null;
-  let admittedRegistryRevision: number | null = null;
 
   const metadataEqual = (
     left: InstalledVoiceModelPackMetadataV1 | null,
     right: InstalledVoiceModelPackMetadataV1 | null,
   ): boolean => JSON.stringify(left) === JSON.stringify(right);
 
-  const verificationKeyFor = (metadata: InstalledVoiceModelPackMetadataV1): string => JSON.stringify([
-    metadata.identity.pluginId,
-    metadata.identity.packId,
-    metadata.artifactBinding,
-    metadata.manifestDigest,
-    metadata.verifiedAtMs,
-  ]);
   const promotionScopeKey = JSON.stringify([params.accountId, params.machineId]);
   const promotionIdentityKey = (metadata: InstalledVoiceModelPackMetadataV1): string => JSON.stringify([
     metadata.identity.pluginId,
@@ -222,7 +206,10 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         throw new Error('voice_model_pack_promotion_recovery_invalid');
       }
       if (record.accountId !== params.accountId || record.machineId !== params.machineId) {
-        throw new Error('voice_model_pack_promotion_scope_mismatch');
+        // Metadata recovery belongs to the scope that started this install.
+        // Preserve its intent and bytes until it returns, without blocking
+        // unrelated Voice work that shares this server's pack directory.
+        continue;
       }
       let before: InstalledVoiceModelPackMetadataV1 | null;
       let after: InstalledVoiceModelPackMetadataV1;
@@ -303,45 +290,6 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
     return reconciliation;
   }
 
-  async function readVerifiedInstalledManifest(input: Readonly<{
-    descriptor: DaemonVoiceModelPackCatalogEntryV1;
-    metadata: InstalledVoiceModelPackMetadataV1;
-  }>): Promise<ModelPackManifest | null> {
-    const actualManifest = await readInstalledVoiceModelPackManifest({
-      packsRootDir: params.paths.packsRootDir,
-      packId: input.metadata.directoryKey,
-    });
-    if (!actualManifest) return null;
-    const verificationKey = verificationKeyFor(input.metadata);
-    let physicalFingerprint: string;
-    try {
-      physicalFingerprint = await (params.fingerprintInstalledPack ?? integrityHost.fingerprint)(
-        input.metadata.directoryKey,
-        actualManifest.files.map((file) => file.path),
-      );
-    } catch {
-      return null;
-    }
-    if (
-      !verifiedInstallKeys.has(verificationKey)
-      || verifiedPhysicalFingerprints.get(verificationKey) !== physicalFingerprint
-    ) {
-      try {
-        await verifyInstalledModelPackWithHost({
-          host: integrityHost,
-          packId: input.metadata.directoryKey,
-          expectedManifest: buildLegacyManifest(input.descriptor),
-          actualManifest,
-        });
-      } catch {
-        return null;
-      }
-      verifiedInstallKeys.add(verificationKey);
-      verifiedPhysicalFingerprints.set(verificationKey, physicalFingerprint);
-    }
-    return actualManifest;
-  }
-
   async function project(keys?: readonly string[]): Promise<readonly DaemonPublicVoiceModelPackEntry[]> {
     const requestedKeys = keys === undefined ? null : new Set(keys);
     await ready();
@@ -352,14 +300,6 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         return identity ? [identity.pluginId] : [];
       }) } : {}),
     });
-    if (admittedRegistryRevision !== null && admittedRegistryRevision !== pluginCatalog.revision) {
-      // A registry revision can include an unobserved disable/orphan/re-enable
-      // interval. A new revision therefore starts a fresh verification epoch;
-      // stat identity is not evidence that bytes stayed admitted throughout.
-      verifiedInstallKeys.clear();
-      verifiedPhysicalFingerprints.clear();
-    }
-    admittedRegistryRevision = pluginCatalog.revision;
     let descriptors: readonly DaemonVoiceModelPackCatalogEntryV1[] = [];
     if (host) {
       const injectedPolicy = params.readPluginFinalPolicyCurrentRuntimes
@@ -404,18 +344,11 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         candidate.identity.pluginId === descriptor.identity?.pluginId
         && candidate.identity.packId === descriptor.identity?.packId
       )) ?? null;
-      if (installedMetadata && !descriptor.loadable) {
-        // A disabled/orphaned/quarantined lifecycle ends the admitted cache
-        // epoch. Reclaim must rehash physical bytes even when metadata is equal.
-        verifiedInstallKeys.delete(verificationKeyFor(installedMetadata));
-        verifiedPhysicalFingerprints.delete(verificationKeyFor(installedMetadata));
-      }
       const key = buildQualifiedPluginContributionKey({
         pluginId: descriptor.identity.pluginId,
         localId: descriptor.identity.packId,
       });
-      // Admission and invalidation still observe the whole current catalog;
-      // physical model reads belong only to the caller's requested packs.
+      // Read installed manifests only for the caller's requested packs.
       if (requestedKeys && !requestedKeys.has(key)) continue;
       entries.push(Object.freeze({
         key,
@@ -425,12 +358,10 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         installedMetadata,
         ...(installedMetadata?.lastUsedAt !== undefined ? { lastUsedAt: installedMetadata.lastUsedAt } : {}),
         installedManifest: installedMetadata
-          ? descriptor.loadable
-            ? await readVerifiedInstalledManifest({ descriptor, metadata: installedMetadata })
-            : await readInstalledVoiceModelPackManifest({
-                packsRootDir: params.paths.packsRootDir,
-                packId: installedMetadata.directoryKey,
-              })
+          ? await readInstalledVoiceModelPackManifest({
+              packsRootDir: params.paths.packsRootDir,
+              packId: installedMetadata.directoryKey,
+            })
           : null,
         runtimeDescriptor: descriptor.contribution.manifest.runtime,
         supportArtifacts: Object.freeze([...(descriptor.contribution.manifest.supportArtifacts ?? [])]),
@@ -559,13 +490,10 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
       const priorMetadata = entry.installedMetadata;
       const totalBytes = manifest.files.reduce((sum, file) => sum + file.sizeBytes, 0);
       await reportProgress?.({ phase: 'downloading', progress: 0, bytesDownloaded: 0, totalBytes });
-      const urlPolicy = buildVoiceModelPackInstallUrlPolicyV1(descriptor);
       const installerHost = params.createInstallerHost?.({
         packsRootDir: params.paths.packsRootDir,
-        urlPolicy,
       }) ?? createNodeModelPackInstallerHost({
         packsRootDir: params.paths.packsRootDir,
-        urlPolicy,
       });
       try {
         await installModelPackWithHost({
@@ -576,7 +504,6 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
             ? await readInstalledVoiceModelPackManifest({ packsRootDir: params.paths.packsRootDir, packId: manifest.packId }) ?? undefined
             : undefined,
           signal,
-          urlPolicy,
           sourceBinding: {
             kind: 'plugin',
             pluginId: descriptor.identity.pluginId,
@@ -700,8 +627,6 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         try { await state.recordInstalled(metadata, recoveringMovedBytes ? { beforeEffect: options?.beforeEffect } : undefined); }
         catch (error) { if (!recoveringMovedBytes) await rename(destination, directory); throw error; }
       }
-      verifiedInstallKeys.clear();
-      verifiedPhysicalFingerprints.clear();
       notifyChanged();
       const adopted = await resolve(key);
       if (!adopted) throw new Error('voice_model_pack_install_state_missing');
@@ -737,8 +662,6 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
         await removeInstalledVoiceModelPack({ packsRootDir: params.paths.packsRootDir, packId: entry.directoryKey });
         await state.removeInstalled(entry.identity);
       }
-      verifiedInstallKeys.clear();
-      verifiedPhysicalFingerprints.clear();
       notifyChanged();
     },
     subscribeInvalidations: (listener) => pluginReloadController.subscribe((result) => {

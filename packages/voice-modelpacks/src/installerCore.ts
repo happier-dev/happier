@@ -32,7 +32,6 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { assertManifestIntegrityVerifiable } from './integrityGate.js';
 import {
   assertManifestUrlsAllowed,
-  assertModelPackResolvedAddressesAllowed,
   assertModelPackUrlAllowed,
   type ModelPackUrlPolicy,
 } from './urlPolicy.js';
@@ -68,8 +67,6 @@ export type ModelPackDownloadStream = Readonly<{
   isPartial: boolean;
   /** Final response URL after redirects. Hosts must expose this for public plugin assets. */
   finalUrl?: string;
-  /** Addresses resolved and pinned by the host connection policy. */
-  resolvedAddresses?: readonly string[];
   /** Pull the next chunk; resolves `null` when the stream is exhausted. */
   read: () => Promise<Uint8Array | null>;
   /** Stop the underlying response when verification aborts before EOF. */
@@ -261,7 +258,7 @@ function isTransientTransferFailure(error: unknown): boolean {
   // NSURLErrorDomain also contains permanent filesystem errors (-3000 through -3005).
   const appleCode = /NSURLErrorDomain\s+Code=(-?\d+)/.exec(message);
   if (appleCode) return [-1001, -1003, -1004, -1005, -1006, -1009].includes(Number(appleCode[1]));
-  // Node fetch preserves the socket/DNS error in cause; pinned HTTP usually preserves it directly.
+  // Node fetch preserves the underlying socket/DNS error in cause.
   const cause = error.cause instanceof Error ? error.cause : undefined;
   const codes = [error, cause].map(value => value && 'code' in value ? String(value.code) : '');
   return codes.some(code => /^(ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)$/.test(code))
@@ -374,10 +371,6 @@ async function downloadFileResumable(opts: {
   }));
   try {
     assertModelPackUrlAllowed(stream.finalUrl ?? entry.url, opts.urlPolicy);
-    assertModelPackResolvedAddressesAllowed(stream.resolvedAddresses ?? [], {
-      ...opts.urlPolicy,
-      requestUrl: stream.finalUrl ?? entry.url,
-    });
 
     // An ignored Range sends a full body, so reset the prefix before appending it.
     if (loaded > 0 && !stream.isPartial) {
@@ -458,8 +451,8 @@ async function cancelDownloadAfterFailure(stream: ModelPackDownloadStream): Prom
  *
  * Preconditions enforced before any staging/network resource is opened:
  *  - pack id + every file path are filesystem-safe (path traversal rejected),
- *  - every file URL satisfies the {@link ModelPackUrlPolicy} (SD-L5: https + host
- *    allowlist),
+ *  - every file URL satisfies the {@link ModelPackUrlPolicy} (HTTPS without
+ *    configured URL credentials),
  *  - every file declares a verifiable sha256 digest + positive size (SD-M3).
  */
 export async function installModelPackWithHost(opts: {
@@ -493,7 +486,7 @@ export async function installModelPackWithHost(opts: {
   // SD-M3: refuse to download/promote a pack we cannot verify.
   assertManifestIntegrityVerifiable(opts.manifest);
   assertVoiceModelPackDeclaredResourcesV1(opts.manifest.files, opts.resourcePolicy);
-  // SD-L5: only https (+ optional host allowlist) download URLs.
+  // SD-L5: HTTPS download URLs without configured URL credentials.
   assertManifestUrlsAllowed(opts.manifest, opts.urlPolicy);
 
   throwIfAborted(opts.signal);

@@ -37,8 +37,6 @@ type InstallProgress = Readonly<{
  * `HAPPIER_MODEL_PACK_MANIFESTS`) may use http on localhost.
  */
 const DAEMON_URL_POLICY: ModelPackUrlPolicy = { allowInsecureLoopback: true };
-const MODEL_PACK_MANIFEST_WALL_TIME_MS = 60_000;
-const MODEL_PACK_MANIFEST_IDLE_TIME_MS = 15_000;
 /**
  * The strict public declaration ceiling is 384 files and 512 voices. Their
  * bounded path/URL/catalog fields fit below 2 MiB; retain another 2 MiB for the
@@ -70,10 +68,7 @@ async function fetchJson(params: Readonly<{
   try {
     stream = await createNodeModelPackDownloadOpener({
       urlPolicy: DAEMON_URL_POLICY,
-      resolveAddresses: params.network?.resolveAddresses,
-      pinnedTransport: params.network?.pinnedTransport,
-      wallTimeMs: MODEL_PACK_MANIFEST_WALL_TIME_MS,
-      idleTimeMs: MODEL_PACK_MANIFEST_IDLE_TIME_MS,
+      transport: params.network?.transport,
     })({
       url: params.url,
       signal: params.signal ?? new AbortController().signal,
@@ -121,7 +116,7 @@ export async function fetchVoiceModelPackManifest(params: Readonly<{
   const manifestUrl = resolveVoiceModelPackManifestUrl(params.packId, params.env ?? process.env);
   // LB-M1: validate the manifest document URL through the SAME shared url policy
   // owner the UI uses (network.ts) BEFORE any network round-trip, so both hosts
-  // share one transport-safety owner. The per-file https/host gate still runs at
+  // share one transport-safety owner. Per-file URL validation still runs at
   // install time via the installer core; this closes the manifest-document hole.
   assertModelPackUrlAllowed(manifestUrl, DAEMON_URL_POLICY);
   const manifest = parseModelPackManifest(await fetchJson({

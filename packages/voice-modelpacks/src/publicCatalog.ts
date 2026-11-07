@@ -17,7 +17,6 @@ import {
   voiceModelPackArtifactBindingsEqualV1,
   type VoiceModelPackArtifactBindingV1,
 } from './artifactBinding.js';
-import type { ModelPackUrlPolicy } from './urlPolicy.js';
 import { voiceModelPackSha256DigestsEqualV1 } from './sha256Digest.js';
 
 const IDENTITY_DOMAIN_V1 = utf8ToBytes('happier.voice.model-pack.v1\0');
@@ -104,27 +103,6 @@ function readOwnDataProperty(
   }
 }
 
-function readOwnStringArray(value: unknown): readonly string[] | null {
-  if (!Array.isArray(value)) return null;
-  try {
-    if (Object.getPrototypeOf(value) !== Array.prototype) return null;
-    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
-    const length = lengthDescriptor && 'value' in lengthDescriptor ? lengthDescriptor.value : null;
-    if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) return null;
-    const indexKeys = Reflect.ownKeys(value).filter((key) => typeof key === 'string' && key !== 'length');
-    if (indexKeys.length !== length) return null;
-    const result: string[] = [];
-    for (let index = 0; index < length; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-      if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'string') return null;
-      result.push(descriptor.value);
-    }
-    return Object.freeze(result);
-  } catch {
-    return null;
-  }
-}
-
 export type { VoiceModelPackIdentityV1 } from '@happier-dev/protocol';
 
 export type InstalledPluginVoiceModelPackSourceV1 = Readonly<{
@@ -133,7 +111,6 @@ export type InstalledPluginVoiceModelPackSourceV1 = Readonly<{
   artifactBinding: VoiceModelPackArtifactBindingV1;
   enabled: boolean;
   authorization: PluginFinalPolicyDecision;
-  grantedNetworkOrigins: readonly string[];
 }>;
 
 export type VoiceModelPackHostCapabilitiesV1 = Readonly<{
@@ -174,7 +151,6 @@ type ParsedVoiceModelPackDescriptorV1 = Readonly<{
   directoryKey: string;
   pluginVersion: string;
   artifactBinding: VoiceModelPackArtifactBindingV1;
-  grantedNetworkOrigins: readonly string[];
   contribution: VoiceModelPackContributionV1;
 }>;
 
@@ -291,32 +267,6 @@ function compareSemver(left: string, right: string): number {
   return 0;
 }
 
-function normalizeGrantedOrigins(origins: readonly string[]): ReadonlySet<string> {
-  return new Set(origins.flatMap((raw) => {
-    if (raw.trim() === '*') return ['*'];
-    try {
-      const url = new URL(raw);
-      return url.protocol === 'https:' && !url.username && !url.password ? [url.origin] : [];
-    } catch {
-      return [];
-    }
-  }));
-}
-
-function allDeclaredOriginsGranted(
-  contribution: VoiceModelPackContributionV1,
-  grantedOrigins: readonly string[],
-): boolean {
-  const granted = normalizeGrantedOrigins(grantedOrigins);
-  if (granted.has('*')) return true;
-  const urls = [
-    contribution.manifest.provenance.source,
-    contribution.manifest.license.url,
-    ...contribution.manifest.files.map((file) => file.url),
-  ];
-  return urls.every((raw) => granted.has(new URL(raw).origin));
-}
-
 function licenseAccepted(
   identity: VoiceModelPackIdentityV1,
   contribution: VoiceModelPackContributionV1,
@@ -419,13 +369,10 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
     authorizationProperty?.value,
     'requiresCurrentIntent',
   )?.value;
-  const grantedNetworkOriginsProperty = readOwnDataProperty(params.source, 'grantedNetworkOrigins');
-  const grantedNetworkOrigins = readOwnStringArray(grantedNetworkOriginsProperty?.value);
   if (typeof enabledProperty?.value !== 'boolean'
     || !['visible', 'disabled', 'denied', 'unavailable'].includes(String(authorizationOutcome))
     || typeof authorizationCode !== 'string'
-    || typeof authorizationRequiresCurrentIntent !== 'boolean'
-    || !grantedNetworkOrigins) {
+    || typeof authorizationRequiresCurrentIntent !== 'boolean') {
     return rejectedRaw('artifact_mapping_invalid');
   }
 
@@ -442,7 +389,6 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
     directoryKey: deriveVoiceModelPackDirectoryKeyV1(identity),
     pluginVersion,
     artifactBinding,
-    grantedNetworkOrigins: Object.freeze([...new Set(grantedNetworkOrigins)].sort()),
     contribution,
   } as const;
   const result = (
@@ -458,9 +404,6 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
     resolveVoiceModelPackArtifactsV1(manifest.runtime, manifest.files, manifest.supportArtifacts);
   } catch {
     return result('blocked', 'artifact_mapping_invalid');
-  }
-  if (!allDeclaredOriginsGranted(contribution, grantedNetworkOrigins)) {
-    return result('blocked', 'network_origin_not_granted');
   }
   // A pack id that collides with a built-in catalog entry (or that resolves to
   // a different canonical id, i.e. a blank id selecting the host default) must
@@ -516,13 +459,4 @@ export function admitVoiceModelPackContributionV1(params: Readonly<{
   if (!runtime) return result('incompatible', 'runtime_family_unsupported');
   if (runtime.abiVersion !== manifest.runtime.abiVersion) return result('incompatible', 'runtime_abi_mismatch');
   return result('available', null);
-}
-
-/** Redirect/DNS policy derived from an already-admitted immutable descriptor. */
-export function buildVoiceModelPackInstallUrlPolicyV1(
-  descriptor: EffectiveVoiceModelPackDescriptorV1,
-): ModelPackUrlPolicy {
-  if (descriptor.status !== 'available') throw new Error('voice_model_pack_not_installable');
-  const allowedOrigins = descriptor.grantedNetworkOrigins;
-  return Object.freeze({ allowedOrigins, requireResolvedAddresses: true });
 }

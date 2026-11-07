@@ -26,7 +26,6 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
 import { createReadStream } from 'node:fs';
 import { appendFile, copyFile, mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -45,7 +44,6 @@ import type {
   ModelPackUrlPolicy,
 } from '@happier-dev/voice-modelpacks';
 import {
-  assertModelPackResolvedAddressesAllowed,
   assertModelPackRedirectUrlAllowed,
   assertModelPackUrlAllowed,
   isLegacyModelPackPromotionIntent,
@@ -53,11 +51,6 @@ import {
   parseStoredModelPackPromotionIntentV1,
 } from '@happier-dev/voice-modelpacks';
 
-import {
-  openPinnedHttpStream,
-  type PinnedHttpStreamTransport,
-} from '../../network/pinnedHttp';
-import { resolveUrlConnectionIdentity } from '../../network/urlConnectionIdentity';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 const SCRATCH_SUFFIX = '.scratch';
@@ -155,36 +148,58 @@ function createNodeHasher(): ModelPackHasher {
   };
 }
 
-const MODEL_PACK_MAX_REDIRECTS = 5;
-const MODEL_PACK_DOWNLOAD_WALL_TIME_MS = 30 * 60 * 1_000;
-const MODEL_PACK_DOWNLOAD_IDLE_TIME_MS = 30_000;
 const MODEL_PACK_MIN_FREE_DISK_HEADROOM_BYTES = 512 * 1024 * 1024;
-
-async function defaultResolveAddresses(hostname: string): Promise<readonly string[]> {
-  return (await lookup(hostname, { all: true, verbatim: true })).map((answer) => answer.address);
-}
 
 function headerValue(headers: Readonly<Record<string, string | undefined>>, name: string): string | undefined {
   const expected = name.toLowerCase();
   return Object.entries(headers).find(([key]) => key.toLowerCase() === expected)?.[1];
 }
 
+export type NodeModelPackDownloadTransport = (request: Readonly<{
+  url: string;
+  headers: Readonly<Record<string, string>>;
+  signal: AbortSignal;
+}>) => Promise<Readonly<{
+  status: number;
+  headers: Readonly<Record<string, string | undefined>>;
+  contentLength: number | null;
+  read: () => Promise<Uint8Array | null>;
+  cancel: () => void;
+}>>;
+
 export type NodeModelPackDownloadNetwork = Readonly<{
-  resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
-  pinnedTransport?: PinnedHttpStreamTransport;
+  transport?: NodeModelPackDownloadTransport;
 }>;
+
+const openHttpStream: NodeModelPackDownloadTransport = async (request) => {
+  const response = await fetch(request.url, {
+    headers: request.headers,
+    signal: request.signal,
+    redirect: 'manual',
+    credentials: 'omit',
+  });
+  const reader = response.body?.getReader();
+  const length = response.headers.get('content-length');
+  const contentLength = length === null ? null : Number(length);
+  return {
+    status: response.status,
+    headers: { location: response.headers.get('location') ?? undefined },
+    contentLength: contentLength !== null && Number.isSafeInteger(contentLength) && contentLength >= 0
+      ? contentLength : null,
+    read: async () => {
+      if (!reader) return null;
+      const next = await reader.read();
+      return next.done ? null : next.value;
+    },
+    cancel: () => { void reader?.cancel().catch(() => undefined); },
+  };
+};
 
 export function createNodeModelPackDownloadOpener(opts: Readonly<{
   urlPolicy?: ModelPackUrlPolicy;
-  resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
-  pinnedTransport?: PinnedHttpStreamTransport;
-  wallTimeMs?: number;
-  idleTimeMs?: number;
+  transport?: NodeModelPackDownloadTransport;
 }>): (request: ModelPackDownloadRequest) => Promise<ModelPackDownloadStream> {
-  const resolveAddresses = opts.resolveAddresses ?? defaultResolveAddresses;
-  const transport = opts.pinnedTransport ?? openPinnedHttpStream;
-  const wallTimeMs = opts.wallTimeMs ?? MODEL_PACK_DOWNLOAD_WALL_TIME_MS;
-  const idleTimeMs = opts.idleTimeMs ?? MODEL_PACK_DOWNLOAD_IDLE_TIME_MS;
+  const transport = opts.transport ?? openHttpStream;
   return async (request) => {
     const operation = new AbortController();
     const forwardCallerAbort = () => operation.abort(request.signal.reason);
@@ -193,12 +208,7 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
     } else {
       request.signal.addEventListener('abort', forwardCallerAbort, { once: true });
     }
-    const wallTimer = setTimeout(
-      () => operation.abort(new Error('pinned_http_wall_timeout')),
-      Math.max(0, wallTimeMs),
-    );
-    wallTimer.unref?.();
-    let activeResponse: Awaited<ReturnType<PinnedHttpStreamTransport>> | null = null;
+    let activeResponse: Awaited<ReturnType<NodeModelPackDownloadTransport>> | null = null;
     let completed = false;
     const cancelActiveResponse = () => {
       const response = activeResponse;
@@ -208,7 +218,6 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
     const cleanup = () => {
       if (completed) return;
       completed = true;
-      clearTimeout(wallTimer);
       request.signal.removeEventListener('abort', forwardCallerAbort);
       operation.signal.removeEventListener('abort', settleAbortedOperation);
     };
@@ -221,21 +230,18 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
     const safeTransportError = (error: unknown): unknown => {
       if (redirects === 0) return error;
       // A transport error can quote its request URL. Keep signed Locations out
-      // of outward errors, including causes/stacks, while retaining our budgets.
-      if (error instanceof Error && /^pinned_http_(wall|idle)_timeout$/.test(error.message)) {
-        return new Error(error.message);
-      }
+      // of outward errors, including causes/stacks.
       return new Error('model_pack_download_transport_failed');
     };
     const awaitOperation = <T>(
-      pending: Promise<T>,
+      pending: () => Promise<T>,
       onAbortedResolve?: (value: T) => void,
     ): Promise<T> => {
       if (operation.signal.aborted) return Promise.reject(operation.signal.reason);
       return new Promise<T>((resolve, reject) => {
         const onAbort = () => reject(operation.signal.reason);
         operation.signal.addEventListener('abort', onAbort, { once: true });
-        pending.then((value) => {
+        pending().then((value) => {
           if (operation.signal.aborted) {
             onAbortedResolve?.(value);
             reject(operation.signal.reason);
@@ -257,25 +263,13 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
           : admittedUrl.protocol === 'https:'
             ? assertModelPackRedirectUrlAllowed(currentUrl, opts.urlPolicy)
             : assertModelPackUrlAllowed(currentUrl, opts.urlPolicy);
-        const hostname = resolveUrlConnectionIdentity(destination.hostname).hostname;
-        const resolvedAddresses = Object.freeze([
-          ...new Set(await awaitOperation(resolveAddresses(hostname))),
-        ].sort());
-        assertModelPackResolvedAddressesAllowed(resolvedAddresses, {
-          ...opts.urlPolicy,
-          requireResolvedAddresses: true,
-          requestUrl: destination.toString(),
-        });
         const headers: Record<string, string> = {};
         if (request.rangeStart && request.rangeStart > 0) headers.Range = `bytes=${request.rangeStart}-`;
         const response = await awaitOperation(
-          transport({
+          () => transport({
             url: currentUrl,
-            validatedAddresses: resolvedAddresses,
             headers,
             signal: operation.signal,
-            wallTimeMs,
-            idleTimeMs,
           }),
           (lateResponse) => lateResponse.cancel(),
         );
@@ -284,7 +278,7 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
         if ([301, 302, 303, 307, 308].includes(response.status)) {
           cancelActiveResponse();
           const location = headerValue(response.headers, 'location');
-          if (!location || redirects >= MODEL_PACK_MAX_REDIRECTS) {
+          if (!location) {
             throw new Error('model_pack_redirect_invalid');
           }
           try {
@@ -311,11 +305,10 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
           contentLength: response.contentLength,
           isPartial: response.status === 206,
           finalUrl: destination.toString(),
-          resolvedAddresses,
           read: async () => {
             if (streamSettled) return null;
             try {
-              const chunk = await awaitOperation(response.read());
+              const chunk = await awaitOperation(() => response.read());
               if (chunk === null) settleStream();
               return chunk;
             } catch (error) {
@@ -325,6 +318,7 @@ export function createNodeModelPackDownloadOpener(opts: Readonly<{
             }
           },
           cancel: () => {
+            operation.abort(new DOMException('Download cancelled', 'AbortError'));
             cancelActiveResponse();
             settleStream();
           },
@@ -342,8 +336,7 @@ export function createNodeModelPackInstallerHost(opts: {
   packsRootDir: string;
   renamePath?: typeof rename;
   urlPolicy?: ModelPackUrlPolicy;
-  resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
-  pinnedTransport?: PinnedHttpStreamTransport;
+  transport?: NodeModelPackDownloadTransport;
   resolveAvailableDiskBytes?: (packsRootDir: string) => Promise<number>;
   minFreeDiskHeadroomBytes?: number;
 }): ModelPackInstallerHost {
@@ -351,8 +344,7 @@ export function createNodeModelPackInstallerHost(opts: {
   const renamePath = opts.renamePath ?? rename;
   const openDownload = createNodeModelPackDownloadOpener({
     urlPolicy: opts.urlPolicy,
-    resolveAddresses: opts.resolveAddresses,
-    pinnedTransport: opts.pinnedTransport,
+    transport: opts.transport,
   });
   const resolveAvailableDiskBytes = opts.resolveAvailableDiskBytes ?? (async (rootDir: string) => {
     const info = await statfs(rootDir);
@@ -390,6 +382,9 @@ export function createNodeModelPackInstallerHost(opts: {
       // manifest can never donate unlisted or differently-sourced files.
       const resumePlanFile = join(scratchDir, RESUME_PLAN_FILE);
       try {
+        // An interrupted promotion still owns its intent and prior live bytes.
+        // Its scoped recovery must settle before another install can replace them.
+        if (await pathExists(intentFile)) throw new Error('model_pack_install_already_in_progress');
         let storedPlanKey: string | null = null;
         try {
           const stored = JSON.parse(await readFile(resumePlanFile, 'utf8')) as { key?: unknown };

@@ -22,7 +22,6 @@ import { manifest as publicAuthoringManifest } from '../../../../../packages/plu
 
 const pluginId = 'examples.public-sdk-review-assistant';
 const pluginVersion = '0.1.0';
-const modelOrigin = 'https://models.example.com';
 const publicAuthoringEntry = new URL('../../../../../packages/plugin-sdk/examples/public-authoring/index.ts', import.meta.url);
 
 const daemonHost = {
@@ -228,7 +227,6 @@ describe('public declarative voice model-pack authoring integration fixture', ()
           sourceLabel: { pluginId, pluginVersion },
         }),
       ]);
-
       expect(manifest.contributes.voiceProviders).toContainEqual(expect.objectContaining({
         id: 'credentialed-browser',
       }));

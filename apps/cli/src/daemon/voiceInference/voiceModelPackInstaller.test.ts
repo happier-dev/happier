@@ -2,15 +2,13 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createServer as createHttpsServer, request as httpsRequest, type RequestOptions } from 'node:https';
-import type { IncomingMessage } from 'node:http';
+import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import { fetchVoiceModelPackManifest, hashVoiceModelPackManifest, installVoiceModelPack, readInstalledVoiceModelPackManifest, removeInstalledVoiceModelPack } from './voiceModelPackInstaller';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
-import type { PinnedHttpStreamTransport } from '../../network/pinnedHttp';
-import { openPinnedHttpStream } from '../../network/pinnedHttp';
+import type { NodeModelPackDownloadTransport } from './nodeModelPackInstallerHost';
 import { createEphemeralTlsServerFixture } from '../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 import { bindProcessLogger, Logger } from '../../ui/logger';
 
@@ -212,13 +210,27 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('server_failed_to_bind');
       signedUrl = `https://127.0.0.1:${address.port}/asset.json?sig=transport-secret&jwt=transport-token`;
-      // HTTPS system boundary: add only the ephemeral fixture CA; preserve real TLS and DNS pinning.
-      const requestWithCa = ((options: RequestOptions, callback: (response: IncomingMessage) => void) =>
-        httpsRequest({ ...options, ca }, callback)) as typeof httpsRequest;
+      // HTTPS system boundary: add the fixture CA while retaining real TLS and ordinary DNS.
+      const transport: NodeModelPackDownloadTransport = (input) => new Promise((resolve, reject) => {
+        const request = httpsRequest(input.url, { ca, headers: input.headers, signal: input.signal }, (response) => {
+          const iterator = response[Symbol.asyncIterator]();
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: { location: response.headers.location },
+            contentLength: null,
+            read: async () => {
+              const next = await iterator.next();
+              return next.done ? null : next.value;
+            },
+            cancel: () => { response.destroy(); },
+          });
+        });
+        request.once('error', reject);
+        request.end();
+      });
       const result = await fetchVoiceModelPackManifest({ packId,
         env: { HAPPIER_MODEL_PACK_MANIFESTS: JSON.stringify({ [packId]: `https://localhost:${address.port}/manifest.json` }) },
-        network: { resolveAddresses: async () => ['127.0.0.1'],
-          pinnedTransport: (request) => openPinnedHttpStream(request, { httpsRequest: requestWithCa }) },
+        network: { transport },
       });
       expect(result).toEqual(manifest);
       expect(JSON.stringify(result)).not.toContain('transport-secret');
@@ -235,11 +247,11 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
 
   it('still refuses configured signed manifest and asset URLs before using them', async () => {
     const packId = 'configured-credentials-pack';
-    const transport = vi.fn<PinnedHttpStreamTransport>();
+    const transport = vi.fn<NodeModelPackDownloadTransport>();
     await expect(fetchVoiceModelPackManifest({
       packId,
       env: { HAPPIER_MODEL_PACK_MANIFESTS: JSON.stringify({ [packId]: 'https://models.example/manifest.json?jwt=configured-secret' }) },
-      network: { resolveAddresses: async () => ['93.184.216.34'], pinnedTransport: transport },
+      network: { transport: transport },
     })).rejects.toThrow('model_pack_url_credentials_forbidden');
     expect(transport).not.toHaveBeenCalled();
 
@@ -252,7 +264,7 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
     await expect(fetchVoiceModelPackManifest({
       packId,
       env: { HAPPIER_MODEL_PACK_MANIFESTS: JSON.stringify({ [packId]: 'https://models.example/manifest.json' }) },
-      network: { resolveAddresses: async () => ['93.184.216.34'], pinnedTransport: transport },
+      network: { transport: transport },
     })).rejects.toThrow('model_pack_url_credentials_forbidden');
   });
 
@@ -312,38 +324,19 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
     }
   });
 
-  it('rejects a public hostname whose fresh DNS evidence resolves to cloud metadata before connecting', async () => {
-    const packId = 'private-dns-pack';
-    const transport = vi.fn<PinnedHttpStreamTransport>();
-    const input = {
-      packId,
-      env: {
-        HAPPIER_MODEL_PACK_MANIFESTS: JSON.stringify({
-          [packId]: 'https://models.example/manifest.json',
-        }),
-      },
-      network: {
-        resolveAddresses: async () => ['169.254.169.254'],
-        pinnedTransport: transport,
-      },
-    };
-
-    await withLegacyFetchFixture(packId, async (legacyFetch) => {
-      await expect(fetchVoiceModelPackManifest(input))
-        .rejects.toThrow('model_pack_url_private_destination');
-      expect(transport).not.toHaveBeenCalled();
-      expect(legacyFetch).not.toHaveBeenCalled();
-    });
-  });
-
-  it('rejects a redirect to a private literal before opening the redirected socket', async () => {
+  it('fetches a manifest from an HTTPS LAN redirect', async () => {
     const packId = 'private-redirect-pack';
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValueOnce({
       status: 302,
-      headers: { location: 'https://169.254.169.254/latest/meta-data' },
+      headers: { location: 'https://192.168.1.2/manifest.json' },
       contentLength: 0,
       read: async () => null,
       cancel: () => undefined,
+    }).mockImplementationOnce(async () => {
+      let sent = false;
+      return { status: 200, headers: {}, contentLength: null,
+        read: async () => { if (sent) return null; sent = true; return Buffer.from(JSON.stringify(manifestFixture(packId))); },
+        cancel: () => undefined };
     });
     const input = {
       packId,
@@ -353,22 +346,21 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
         }),
       },
       network: {
-        resolveAddresses: async () => ['93.184.216.34'],
-        pinnedTransport: transport,
+        transport: transport,
       },
     };
 
     await withLegacyFetchFixture(packId, async (legacyFetch) => {
       await expect(fetchVoiceModelPackManifest(input))
-        .rejects.toThrow('model_pack_url_private_destination');
-      expect(transport).toHaveBeenCalledTimes(1);
+        .resolves.toMatchObject({ packId });
+      expect(transport).toHaveBeenCalledTimes(2);
       expect(legacyFetch).not.toHaveBeenCalled();
     });
   });
 
   it('preserves the manifest-specific non-success response error contract', async () => {
     const packId = 'missing-manifest-pack';
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({
       status: 404,
       headers: {},
       contentLength: 0,
@@ -383,8 +375,7 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
         }),
       },
       network: {
-        resolveAddresses: async () => ['93.184.216.34'],
-        pinnedTransport: transport,
+        transport: transport,
       },
     };
 
@@ -394,7 +385,7 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
 
   it('bounds the manifest response body before JSON parsing', async () => {
     const packId = 'oversized-manifest-pack';
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({
       status: 200,
       headers: {},
       contentLength: null,
@@ -416,8 +407,7 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
         }),
       },
       network: {
-        resolveAddresses: async () => ['93.184.216.34'],
-        pinnedTransport: transport,
+        transport: transport,
       },
     };
 
@@ -428,17 +418,10 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
     });
   });
 
-  it('uses the bounded pinned transport timeout for a legitimate public HTTPS manifest', async () => {
+  it('uses the shared cancellable download transport for a public HTTPS manifest', async () => {
     const packId = 'public-https-pack';
     const body = Buffer.from(JSON.stringify(manifestFixture(packId)), 'utf8');
-    const transport = vi.fn<PinnedHttpStreamTransport>(async (request) => {
-      if (request.wallTimeMs === undefined || request.idleTimeMs === undefined) {
-        throw new Error('expected bounded manifest transport timeouts');
-      }
-      expect(request.wallTimeMs).toBeGreaterThan(0);
-      expect(request.wallTimeMs).toBeLessThanOrEqual(60_000);
-      expect(request.idleTimeMs).toBeGreaterThan(0);
-      expect(request.idleTimeMs).toBeLessThanOrEqual(request.wallTimeMs);
+    const transport = vi.fn<NodeModelPackDownloadTransport>(async () => {
       let sent = false;
       return {
         status: 200,
@@ -460,8 +443,7 @@ describe('fetchVoiceModelPackManifest URL policy (LB-M1)', () => {
         }),
       },
       network: {
-        resolveAddresses: async () => ['93.184.216.34'],
-        pinnedTransport: transport,
+        transport: transport,
       },
     };
 

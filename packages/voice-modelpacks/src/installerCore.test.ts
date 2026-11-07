@@ -7,6 +7,7 @@ import { VOICE_MODEL_PACK_CONTRIBUTION_MAX_FILES_V1 } from '@happier-dev/protoco
 
 import { deriveModelPackStagingPlan, installModelPackWithHost } from './installerCore.js';
 import { createMemoryModelPackInstallerHost, type MemoryHostState } from './installerCore.testHost.js';
+import type { ModelPackUrlPolicy } from './urlPolicy.js';
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(Buffer.from(bytes)).digest('hex');
@@ -27,7 +28,7 @@ function runInstall(
   manifest: ModelPackManifest,
   opts: {
     onProgress?: (p: { loaded: number; total: number; file?: string }) => void;
-    urlPolicy?: { allowedHosts?: readonly string[] };
+    urlPolicy?: ModelPackUrlPolicy;
     resourcePolicy?: { maxFiles: number; maxFileBytes: number; maxTotalBytes: number };
   } = {},
 ) {
@@ -214,17 +215,15 @@ describe('installModelPackWithHost (shared core)', () => {
     expect(host.leftovers()).toEqual([]);
   });
 
-  it('rejects an unsafe final redirect destination before consuming response bytes', async () => {
+  it('verifies bytes from an HTTPS loopback redirect without requiring DNS evidence', async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const memory = createMemoryModelPackInstallerHost();
+    memory.serveFile('https://example.com/model.onnx', bytes);
     const host = {
       ...memory.host,
-      openDownload: async () => ({
-        contentLength: bytes.length,
-        isPartial: false,
+      openDownload: async (request: Parameters<typeof memory.host.openDownload>[0]) => ({
+        ...await memory.host.openDownload(request),
         finalUrl: 'https://127.0.0.1/model.onnx',
-        resolvedAddresses: ['127.0.0.1'],
-        read: async () => bytes,
       }),
     };
     const manifest = manifestFor([
@@ -235,8 +234,8 @@ describe('installModelPackWithHost (shared core)', () => {
       packId: manifest.packId,
       manifest,
       signal: new AbortController().signal,
-      urlPolicy: { requireResolvedAddresses: true },
-    })).rejects.toThrow('model_pack_url_private_destination');
+    })).resolves.toMatchObject({ packId: manifest.packId });
+    expect(memory.read('example/model.onnx')).toEqual(bytes);
   });
 
   it('installs a fresh pack: files land under the live dir and pack.json is written', async () => {
@@ -633,7 +632,7 @@ describe('installModelPackWithHost (shared core)', () => {
     expect(host.requestedUrls()).toEqual([]);
   });
 
-  // SD-L5: only https (+ optional host allowlist).
+  // SD-L5: HTTPS download URLs without configured URL credentials.
   it('refuses a non-https download URL before any download', async () => {
     const host = createMemoryModelPackInstallerHost();
     const manifest = manifestFor([
@@ -644,29 +643,15 @@ describe('installModelPackWithHost (shared core)', () => {
     expect(host.requestedUrls()).toEqual([]);
   });
 
-  it('refuses a download URL whose host is not on the allowlist', async () => {
+  it('accepts an HTTPS LAN mirror without a separate host allowlist', async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const host = createMemoryModelPackInstallerHost();
-    host.serveFile('https://evil.example/model.onnx', bytes);
+    host.serveFile('https://192.168.1.2/model.onnx', bytes);
     const manifest = manifestFor([
-      { path: 'model.onnx', url: 'https://evil.example/model.onnx', sha256: sha256Hex(bytes), sizeBytes: bytes.length },
+      { path: 'model.onnx', url: 'https://192.168.1.2/model.onnx', sha256: sha256Hex(bytes), sizeBytes: bytes.length },
     ]);
 
-    await expect(runInstall(host, manifest, { urlPolicy: { allowedHosts: ['github.com'] } })).rejects.toThrow(
-      'model_pack_url_host_not_allowed',
-    );
-    expect(host.requestedUrls()).toEqual([]);
-  });
-
-  it('accepts a download URL whose host is on the allowlist', async () => {
-    const bytes = new Uint8Array([1, 2, 3, 4]);
-    const host = createMemoryModelPackInstallerHost();
-    host.serveFile('https://github.com/model.onnx', bytes);
-    const manifest = manifestFor([
-      { path: 'model.onnx', url: 'https://github.com/model.onnx', sha256: sha256Hex(bytes), sizeBytes: bytes.length },
-    ]);
-
-    const result = await runInstall(host, manifest, { urlPolicy: { allowedHosts: ['github.com'] } });
+    const result = await runInstall(host, manifest);
     expect(result.packId).toBe('example');
     expect(host.read('example/model.onnx')).toEqual(bytes);
   });

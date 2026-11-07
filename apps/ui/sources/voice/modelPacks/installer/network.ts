@@ -48,8 +48,8 @@ function cacheBustUrl(url: string): string {
 
 /**
  * Fetch + parse a remote pack manifest. The manifest URL and every file URL it
- * declares are validated against the shared {@link ModelPackUrlPolicy} (https +
- * optional host allowlist). File URLs are trusted as authored — there is no
+ * declares are validated against the shared {@link ModelPackUrlPolicy} (HTTPS
+ * without configured credentials). File URLs are trusted as authored — there is no
  * host-specific URL rewriting; the installer core is the single canonical path.
  */
 export async function fetchRemoteManifest(opts: {

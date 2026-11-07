@@ -1,10 +1,21 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
+
+// Observe real disk reads at the OS boundary; installer and policy logic stay real.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) };
+});
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -25,10 +36,9 @@ import { resolveVoiceInferencePaths } from '../voiceInferencePaths';
 import { createStorageCategoryCatalog } from '@/storage/categoryCatalog';
 import { readResidentVoiceModelPackPaths } from './storagePaths';
 import { readInstalledVoiceModelPackManifest } from '../voiceModelPackInstaller';
-import { createNodeInstalledModelPackIntegrityHost } from '../nodeModelPackIntegrityHost';
 import { createDaemonPublicVoiceModelPackStateStore } from './state';
 import { createNodeModelPackInstallerHost } from '../nodeModelPackInstallerHost';
-import type { PinnedHttpStreamTransport } from '@/network/pinnedHttp';
+import type { NodeModelPackDownloadTransport } from '../nodeModelPackInstallerHost';
 import {
   installVoiceModelPackPluginArchiveFixture,
   VOICE_MODEL_PACK_TEST_RUNTIME_LIFECYCLE,
@@ -155,7 +165,7 @@ function createFixtureInstallerHostFactory(
   onBodyComplete?: () => void,
 ) {
   return ({ packsRootDir, urlPolicy }: Parameters<typeof createNodeModelPackInstallerHost>[0]) => {
-    const transport: PinnedHttpStreamTransport = async (request) => {
+    const transport: NodeModelPackDownloadTransport = async (request) => {
       if (request.url.startsWith('https://github.com/')) {
         return {
           status: 302,
@@ -187,8 +197,7 @@ function createFixtureInstallerHostFactory(
     return createNodeModelPackInstallerHost({
       packsRootDir,
       urlPolicy,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: transport,
+      transport: transport,
       resolveAvailableDiskBytes: async () => 1024 * 1024 * 1024,
       minFreeDiskHeadroomBytes: 0,
     });
@@ -203,6 +212,7 @@ describe('daemon public Voice model-pack consumed vertical', () => {
   const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     envScope.restore();
     reloadConfiguration();
     await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
@@ -215,16 +225,10 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     reloadConfiguration();
     const assets = await installZipformerPluginFixture({ happyHomeDir, roots, packCount: 32 });
     const paths = resolveVoiceInferencePaths();
-    const fingerprinted: string[] = [];
-    const integrityHost = createNodeInstalledModelPackIntegrityHost(paths.packsRootDir);
     const params = {
       accountId: 'account-demand', machineId: 'machine-demand', happyHomeDir, paths,
       stateFilePath: join(happyHomeDir, 'packs-state.json'),
       createInstallerHost: createFixtureInstallerHostFactory(assets),
-      fingerprintInstalledPack: async (packId: string, filePaths: readonly string[]) => {
-        fingerprinted.push(packId);
-        return await integrityHost.fingerprint(packId, filePaths);
-      },
     };
     const installer = createDaemonPublicVoiceModelPackRuntime(params);
     const declared = await installer.list();
@@ -255,25 +259,30 @@ describe('daemon public Voice model-pack consumed vertical', () => {
       });
     }));
     const runtime = createDaemonPublicVoiceModelPackRuntime(params);
-    fingerprinted.length = 0;
+    const read = vi.mocked(readFile).mockClear();
+    const stream = vi.mocked(createReadStream).mockClear();
+    const manifestsRead = () => read.mock.calls.map(([path]) => String(path))
+      .filter(path => path.startsWith(paths.packsRootDir) && path.endsWith('pack.json'));
     expect(await runtime.resolve(selected.key)).toMatchObject({ key: selected.key, installedManifest: expect.any(Object) });
-    expect(fingerprinted).toEqual([selected.directoryKey]);
+    expect(manifestsRead()).toEqual([join(paths.packsRootDir, selected.directoryKey, 'pack.json')]);
+    expect(stream).not.toHaveBeenCalled();
 
     const worker = await startVoiceInferenceWorker({ publicModelPacks: runtime, isolationMode: 'in_process' });
     try {
-      fingerprinted.length = 0;
+      read.mockClear();
       const statuses = await worker.getModelsStatus([selected.key, selected.key]);
       expect(statuses).toHaveLength(1);
       expect(statuses[0]).toMatchObject({ packId: selected.key, installState: 'installed' });
-      expect(fingerprinted).toEqual([selected.directoryKey]);
+      expect(manifestsRead()).toEqual([join(paths.packsRootDir, selected.directoryKey, 'pack.json')]);
 
-      fingerprinted.length = 0;
+      read.mockClear();
       expect(await runtime.resolve('dev.happier.unknown/missing')).toBeNull();
-      expect(fingerprinted).toEqual([]);
+      expect(manifestsRead()).toEqual([]);
 
-      fingerprinted.length = 0;
+      read.mockClear();
       expect(await runtime.list()).toHaveLength(32);
-      expect(new Set(fingerprinted)).toEqual(new Set(declared.map(entry => entry.directoryKey)));
+      expect(new Set(manifestsRead())).toEqual(new Set(declared.map(entry => join(paths.packsRootDir, entry.directoryKey, 'pack.json'))));
+      expect(stream).not.toHaveBeenCalled();
     } finally {
       await worker.stop();
     }
@@ -726,7 +735,7 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     })).resolves.toBeNull();
   });
 
-  it('fails closed after restart when an installed artifact was tampered', async () => {
+  it('uses admitted packs after restart without rehashing their bytes', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-public-model-pack-tamper-home-'));
     roots.push(happyHomeDir);
     envScope.patch({ HAPPIER_HOME_DIR: happyHomeDir });
@@ -745,6 +754,15 @@ describe('daemon public Voice model-pack consumed vertical', () => {
       key: qualifiedPackId,
       signal: new AbortController().signal,
     });
+    const streamFile = vi.mocked(createReadStream).mockClear();
+    const unchangedRuntime = createDaemonPublicVoiceModelPackRuntime({
+      accountId: 'account-tamper-fixture', machineId: 'machine-tamper-fixture', happyHomeDir, paths,
+    });
+    await expect(unchangedRuntime.resolve(qualifiedPackId)).resolves.toMatchObject({
+      descriptor: { loadable: true },
+      installedManifest: { files: installed.installedManifest!.files },
+    });
+    expect(streamFile).not.toHaveBeenCalled();
     const firstArtifact = installed.installedManifest!.files[0]!;
     await writeFile(
       join(paths.packsRootDir, installed.directoryKey, ...firstArtifact.path.split('/')),
@@ -758,9 +776,11 @@ describe('daemon public Voice model-pack consumed vertical', () => {
       paths,
     });
     await expect(restartedRuntime.resolve(qualifiedPackId)).resolves.toMatchObject({
+      descriptor: { loadable: true },
       installedMetadata: expect.any(Object),
-      installedManifest: null,
+      installedManifest: { files: installed.installedManifest!.files },
     });
+    expect(streamFile).not.toHaveBeenCalled();
   });
 
   it('removes a first install when the real durable state write fails after promotion', async () => {
@@ -798,7 +818,7 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     });
   });
 
-  it('rolls forward an upgrade crash after metadata commit and before marker cleanup', async () => {
+  it.each(['same-account', 'account-switch'] as const)('recovers a real installer commit after %s without losing pending state', async (scenario) => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-public-model-pack-commit-crash-'));
     roots.push(happyHomeDir);
     envScope.patch({ HAPPIER_HOME_DIR: happyHomeDir });
@@ -835,6 +855,22 @@ describe('daemon public Voice model-pack consumed vertical', () => {
       },
     }), 'utf8');
 
+    if (scenario === 'account-switch') {
+      const pendingIntent = await readFile(intentPath, 'utf8');
+      const otherAccount = createDaemonPublicVoiceModelPackRuntime({
+        accountId: 'another-account', machineId: 'machine-commit-crash', happyHomeDir, paths,
+        createInstallerHost: createFixtureInstallerHostFactory(assets),
+      });
+      const worker = await startVoiceInferenceWorker({ publicModelPacks: otherAccount, isolationMode: 'in_process' });
+      await worker.stop();
+      expect(await readFile(intentPath, 'utf8')).toBe(pendingIntent);
+      expect(await readFile(join(backupDir, 'pack.json'), 'utf8')).toContain('prior-version');
+      await expect(otherAccount.resolve(key)).resolves.toMatchObject({ installedMetadata: null });
+      await expect(otherAccount.install({ key, signal: new AbortController().signal }))
+        .rejects.toThrow('model_pack_install_already_in_progress');
+      expect(await readFile(intentPath, 'utf8')).toBe(pendingIntent);
+      expect(await readFile(join(backupDir, 'pack.json'), 'utf8')).toContain('prior-version');
+    }
     const restarted = createDaemonPublicVoiceModelPackRuntime({
       accountId: 'account-commit-crash', machineId: 'machine-commit-crash', happyHomeDir, paths, stateFilePath,
     });
@@ -902,7 +938,7 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     });
   });
 
-  it('rehashes on disable-to-reenable reclaim and rejects same-metadata artifact tampering', async () => {
+  it('retains admitted pack bytes through disable-to-reenable without a new integrity scan', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-public-model-pack-reclaim-tamper-'));
     roots.push(happyHomeDir);
     envScope.patch({ HAPPIER_HOME_DIR: happyHomeDir });
@@ -913,7 +949,6 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     const runtime = createDaemonPublicVoiceModelPackRuntime({
       accountId: 'account-reclaim', machineId: 'machine-reclaim', happyHomeDir, paths,
       createInstallerHost: createFixtureInstallerHostFactory(assets),
-      fingerprintInstalledPack: async () => 'unchanged-physical-fingerprint',
     });
     const installed = await runtime.install({ key, signal: new AbortController().signal });
     const store = createPluginRegistryStateStore({
@@ -934,10 +969,12 @@ describe('daemon public Voice model-pack consumed vertical', () => {
     const artifact = installed.installedManifest!.files[0]!;
     await writeFile(join(paths.packsRootDir, installed.directoryKey, ...artifact.path.split('/')), new Uint8Array(artifact.sizeBytes).fill(0x55));
     await setEnabled(true);
+    const streamFile = vi.mocked(createReadStream).mockClear();
     await expect(runtime.resolve(key)).resolves.toMatchObject({
       descriptor: { loadable: true },
-      installedManifest: null,
+      installedManifest: { files: installed.installedManifest!.files },
     });
+    expect(streamFile).not.toHaveBeenCalled();
   });
 
   it('converges an interrupted first-install rollback to no bytes and no metadata', async () => {

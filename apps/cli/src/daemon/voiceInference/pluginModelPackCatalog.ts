@@ -21,13 +21,12 @@ import {
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import {
   resolvePluginFinalPolicyAuthorizationFacts,
-  resolveRequiredPluginNetworkOrigins,
   type PluginFinalPolicyCurrentRuntime,
 } from '@/plugins/runtime/policy/facts';
 
 /**
  * Trusted, process-local input from the installed-plugin loader. Public plugin
- * manifests only supply `contributions`; trust, grants, and enablement are host
+ * manifests only supply `contributions`; trust and enablement are host
  * facts and must never be read from contribution data.
  */
 export type DaemonVoiceModelPackPluginRecordV1 = Readonly<{
@@ -36,7 +35,6 @@ export type DaemonVoiceModelPackPluginRecordV1 = Readonly<{
   artifactBinding: VoiceModelPackArtifactBindingV1;
   enabled: boolean;
   authorization: ReturnType<typeof evaluatePluginFinalPolicy>;
-  grantedNetworkOrigins: readonly string[];
   contributions: readonly VoiceModelPackContributionV1[];
 }>;
 
@@ -84,8 +82,8 @@ export type DaemonInstalledVoiceModelPackPlacementV1 = InstalledVoiceModelPackLi
 
 /**
  * Cross-process projection seam from normalized installed manifests into the
- * daemon-owned effective catalog. Trust and grant decisions are mandatory host inputs;
- * raw manifest data cannot assert its own trust, grants, or revocation state.
+ * daemon-owned effective catalog. Trust decisions are mandatory host inputs;
+ * raw manifest data cannot assert its own trust or revocation state.
  */
 export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params: Readonly<{
   installedPlugins: readonly PluginCatalogEntry[];
@@ -127,9 +125,6 @@ export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params
       artifactBinding,
       enabled: plugin.enabled,
       authorization,
-      grantedNetworkOrigins: resolveRequiredPluginNetworkOrigins({
-        required: plugin.manifest.hostAccess.required,
-      }),
       contributions: Object.freeze((plugin.manifest.contributes.voiceModelPacks ?? []).filter((contribution) => (
         !params.packKeys || params.packKeys.has(buildQualifiedPluginContributionKey({
           pluginId: plugin.pluginId, localId: contribution.id,

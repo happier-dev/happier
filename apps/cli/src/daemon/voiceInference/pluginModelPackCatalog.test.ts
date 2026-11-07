@@ -175,7 +175,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [pack(packId)],
       }],
       host,
@@ -197,7 +196,6 @@ describe('daemon public voice model-pack catalog projection', () => {
           artifactBinding: sourceIntegrity(),
           enabled: true,
           authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-          grantedNetworkOrigins: ['https://models.example.test'],
           // Two authoring defects at once: a reserved built-in id and a
           // duplicate id inside the same manifest.
           contributions: [pack('kokoro-82m-v1.0-onnx-q8-wasm'), pack('dup'), pack('dup')],
@@ -208,7 +206,6 @@ describe('daemon public voice model-pack catalog projection', () => {
           artifactBinding: sourceIntegrity(),
           enabled: true,
           authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-          grantedNetworkOrigins: ['https://models.example.test'],
           contributions: [pack('good-en')],
         },
       ],
@@ -239,7 +236,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [pack('kokoro-tts-en-v1')],
       }],
       host,
@@ -278,7 +274,7 @@ describe('daemon public voice model-pack catalog projection', () => {
     })).resolves.toEqual([]);
   });
 
-  it('does not treat an optional network declaration as a selected runtime origin', async () => {
+  it('admits a trusted plugin model pack without a required network-origin declaration', async () => {
     const entry = installedCatalogEntry({ optionalNetwork: true });
     const projected = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
       installedPlugins: [entry],
@@ -286,9 +282,9 @@ describe('daemon public voice model-pack catalog projection', () => {
       host,
     });
     expect(projected[0]).toMatchObject({
-      status: 'blocked',
-      reason: 'network_origin_not_granted',
-      installable: false,
+      status: 'available',
+      reason: null,
+      installable: true,
     });
   });
 
@@ -478,7 +474,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: exact.artifactBinding,
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [licensed],
       }],
       host,
@@ -499,7 +494,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [pack('english')],
       }],
       host,
@@ -526,7 +520,6 @@ describe('daemon public voice model-pack catalog projection', () => {
       artifactBinding: artifactBinding as DaemonVoiceModelPackPluginRecordV1['artifactBinding'],
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-      grantedNetworkOrigins: ['https://models.example.test'],
       contributions: [pack(packId)],
     });
 
@@ -578,7 +571,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: sourceIntegrity(),
         enabled: false,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [pack('english')],
       }],
       host,
@@ -593,7 +585,6 @@ describe('daemon public voice model-pack catalog projection', () => {
       artifactBinding: sourceIntegrity(),
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-      grantedNetworkOrigins: ['https://models.example.test'],
       contributions: [pack('english')],
     } as const;
     // A repeated plugin record is a malformed host record set, not a plugin
@@ -621,7 +612,6 @@ describe('daemon public voice model-pack catalog projection', () => {
       artifactBinding: sourceIntegrity(),
       enabled: true,
       authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-      grantedNetworkOrigins: ['https://models.example.test'],
       contributions: [contribution],
     } as const;
 
@@ -672,7 +662,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: sourceIntegrity(),
         enabled: false,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: ['https://models.example.test'],
         contributions: [contribution],
       }],
     })[0]).toMatchObject({ state: 'orphaned', reason: 'plugin_disabled', loadable: false });
@@ -699,7 +688,6 @@ describe('daemon public voice model-pack catalog projection', () => {
         artifactBinding: sourceIntegrity(),
         enabled: true,
         authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-        grantedNetworkOrigins: [],
         contributions: [],
       }],
     })[0]).toMatchObject({ state: 'orphaned', reason: 'pack_absent', loadable: false });

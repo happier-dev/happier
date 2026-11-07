@@ -38,7 +38,6 @@ export {
   assertModelPackUrlAllowed,
   assertModelPackRedirectUrlAllowed,
   assertManifestUrlsAllowed,
-  assertModelPackResolvedAddressesAllowed,
   ModelPackUrlPolicyError,
   type ModelPackUrlPolicy,
 } from './urlPolicy.js';
@@ -76,7 +75,6 @@ export {
 export {
   admitVoiceModelPackContributionV1,
   assertVoiceModelPackStoredIdentityV1,
-  buildVoiceModelPackInstallUrlPolicyV1,
   deriveVoiceModelPackLicenseTextDigestV1,
   deriveVoiceModelPackManifestDigestV1,
   deriveVoiceModelPackDirectoryKeyV1,

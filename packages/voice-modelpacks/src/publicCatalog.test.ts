@@ -5,7 +5,6 @@ import type { VoiceModelPackContributionV1 } from '@happier-dev/protocol';
 import {
   admitVoiceModelPackContributionV1,
   assertVoiceModelPackStoredIdentityV1,
-  buildVoiceModelPackInstallUrlPolicyV1,
   deriveVoiceModelPackDirectoryKeyV1,
   deriveVoiceModelPackLicenseTextDigestV1,
   deriveVoiceModelPackManifestDigestV1,
@@ -63,7 +62,6 @@ function source(overrides: Partial<InstalledPluginVoiceModelPackSourceV1> = {}):
     },
     enabled: true,
     authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-    grantedNetworkOrigins: ['https://models.example.test', 'https://licenses.example.test'],
     ...overrides,
   };
 }
@@ -316,7 +314,6 @@ describe('public voice model-pack host admission', () => {
       artifactBinding: null,
       contribution: null,
     });
-    expect(() => buildVoiceModelPackInstallUrlPolicyV1(result)).toThrow('voice_model_pack_not_installable');
   });
 
   it('rejects an accessor-backed source artifact binding without throwing or exposing source data', () => {
@@ -369,7 +366,6 @@ describe('public voice model-pack host admission', () => {
       'pluginVersion',
       'enabled',
       'authorization',
-      'grantedNetworkOrigins',
     ] as const) {
       const malformedSource = Object.defineProperty(
         { ...source() },
@@ -412,24 +408,6 @@ describe('public voice model-pack host admission', () => {
       expect(admitted.pluginVersion.length).toBeLessThanOrEqual(128);
     }
 
-    const accessorBackedOrigins = Object.defineProperty(
-      ['https://models.example.test', 'https://licenses.example.test'],
-      '0',
-      { enumerable: true, get: () => { throw new Error('malicious_origin_getter'); } },
-    );
-    expect(admitVoiceModelPackContributionV1({
-      source: source({ grantedNetworkOrigins: accessorBackedOrigins }),
-      contribution: contribution(),
-      host: daemonHost,
-    })).toEqual({
-      status: 'blocked',
-      reason: 'artifact_mapping_invalid',
-      identity: null,
-      directoryKey: null,
-      pluginVersion: '2.0.0',
-      artifactBinding: null,
-      contribution: null,
-    });
   });
 
   it('rejects inherited and accessor-backed nested manifest facts without executing raw getters', () => {
@@ -813,7 +791,6 @@ describe('public voice model-pack host admission', () => {
   it.each([
     ['plugin_policy_denied', source({ authorization: { outcome: 'denied', code: 'plugin_final_package_untrusted', requiresCurrentIntent: false } })],
     ['artifact_binding_invalid', source({ artifactBinding: { kind: 'unknown' } as never })],
-    ['network_origin_not_granted', source({ grantedNetworkOrigins: ['https://licenses.example.test'] })],
   ])('blocks %s', (reason, sourceInput) => {
     expect(admitVoiceModelPackContributionV1({ source: sourceInput, contribution: contribution(), host: daemonHost }))
       .toMatchObject({ status: 'blocked', reason });
@@ -1041,17 +1018,8 @@ describe('public voice model-pack host admission', () => {
     })).toMatchObject({ status: 'incompatible', reason: 'host_version_too_old' });
   });
 
-  it('builds a non-widening redirect/DNS policy only for admitted packs', () => {
+  it('admits trusted plugin mirrors without a separate network-origin grant', () => {
     const admitted = admitVoiceModelPackContributionV1({ source: source(), contribution: contribution(), host: daemonHost });
-    expect(buildVoiceModelPackInstallUrlPolicyV1(admitted)).toEqual({
-      allowedOrigins: ['https://licenses.example.test', 'https://models.example.test'],
-      requireResolvedAddresses: true,
-    });
-    const blocked = admitVoiceModelPackContributionV1({
-      source: source({ authorization: { outcome: 'denied', code: 'plugin_final_package_untrusted', requiresCurrentIntent: false } }),
-      contribution: contribution(),
-      host: daemonHost,
-    });
-    expect(() => buildVoiceModelPackInstallUrlPolicyV1(blocked)).toThrow('voice_model_pack_not_installable');
+    expect(admitted.status).toBe('available');
   });
 });

@@ -320,7 +320,14 @@ describe('voiceInferenceWorker', () => {
         await expect(access(uploadedFilePath)).rejects.toThrow();
 
         await worker.removeModel(ttsPackId);
+        await expect(worker.getModelsStatus([ttsPackId, sttPackId])).resolves.toEqual([
+            expect.objectContaining({ packId: ttsPackId, installState: 'not_installed' }),
+            expect.objectContaining({ packId: sttPackId, installState: 'installed' }),
+        ]);
         await worker.removeModel(sttPackId);
+        await expect(worker.getModelsStatus([sttPackId])).resolves.toEqual([
+            expect.objectContaining({ packId: sttPackId, installState: 'not_installed' }),
+        ]);
         await worker.stop();
     });
 

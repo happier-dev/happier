@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import fileSystem from 'node:fs/promises';
-import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,8 +14,15 @@ import {
   reconcileModelPackPromotions,
   readModelPackPromotionIntents,
 } from './nodeModelPackInstallerHost';
-import type { PinnedHttpStreamTransport } from '../../network/pinnedHttp';
+import type { NodeModelPackDownloadTransport } from './nodeModelPackInstallerHost';
 import { bindProcessLogger, Logger } from '../../ui/logger';
+
+// Filesystem IO is a system boundary. Mock its named export so the injected
+// failure reaches Vite's module graph as well as the test's import.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rm: vi.fn(actual.rm) };
+});
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(Buffer.from(bytes)).digest('hex');
@@ -45,7 +50,7 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-const fetchBackedPinnedTransport: PinnedHttpStreamTransport = async (request) => {
+const fetchBackedTransport: NodeModelPackDownloadTransport = async (request) => {
   const response = await fetch(request.url, { signal: request.signal, headers: request.headers });
   const headers: Record<string, string | undefined> = {};
   for (const name of ['content-length', 'location']) headers[name] = response.headers.get(name) ?? undefined;
@@ -72,12 +77,11 @@ const fetchBackedPinnedTransport: PinnedHttpStreamTransport = async (request) =>
 };
 
 function createTestNodeModelPackInstallerHost(
-  options: Omit<Parameters<typeof createNodeModelPackInstallerHost>[0], 'resolveAddresses' | 'pinnedTransport'>,
+  options: Omit<Parameters<typeof createNodeModelPackInstallerHost>[0], 'transport'>,
 ) {
   return createNodeModelPackInstallerHost({
     ...options,
-    resolveAddresses: async () => ['93.184.216.34'],
-    pinnedTransport: fetchBackedPinnedTransport,
+    transport: fetchBackedTransport,
   });
 }
 
@@ -96,14 +100,13 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     const log = new Logger({ logFilePath: logPath, pruneCurrentProcessLogs: false, allowDangerousRemoteLogging: false });
     const restore = bindProcessLogger(log);
     const cleanupError = Object.assign(new Error('EACCES_postcommit_backup_cleanup'), { code: 'EACCES' });
-    const remove = fileSystem.rm;
+    const remove = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm;
     // Node filesystem IO is the system boundary; all other paths use the real implementation.
-    const removeSpy = vi.spyOn(fileSystem, 'rm').mockImplementation(async (path, options) => {
+    const removeSpy = vi.mocked(rm).mockImplementation(async (path, options) => {
       if (String(path) === backupDir) throw cleanupError;
       return remove(path, options);
     });
     try {
-      syncBuiltinESMExports();
       const host = createTestNodeModelPackInstallerHost({ packsRootDir });
       const staging = await host.beginStaging(packId, deriveModelPackStagingPlan(manifest));
       try {
@@ -111,6 +114,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
         await staging.writeManifest(manifest);
         const promotion = await staging.promote({ scopeKey: 'fixture', identityKey: packId });
         await expect(promotion.commit()).resolves.toBeUndefined();
+        expect(removeSpy).toHaveBeenCalledWith(backupDir, { recursive: true, force: true });
         expect(await readFile(join(liveDir, 'model.bin'))).toEqual(Buffer.from(bytes));
         expect(await exists(join(packsRootDir, `.${packId}.promote-intent`))).toBe(false);
         expect(await exists(backupDir)).toBe(true);
@@ -119,8 +123,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
       } finally { await staging.cleanup(); }
     } finally {
       try {
-        removeSpy.mockRestore();
-        syncBuiltinESMExports();
+        removeSpy.mockImplementation(remove);
       } finally { restore(); }
     }
   });
@@ -231,7 +234,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
   it('installs signed HTTPS redirects through the real core without persisting their query or forwarding credentials', async () => {
     const bytes = Buffer.from('signed model bytes');
     const signedUrl = 'https://release-assets.example/model.bin?sig=transport-secret&jwt=transport-token';
-    const transport = vi.fn<PinnedHttpStreamTransport>(async (request) => {
+    const transport = vi.fn<NodeModelPackDownloadTransport>(async (request) => {
       if (request.url === 'https://models.example/model.bin') {
         return { status: 302, headers: { location: signedUrl }, contentLength: 0,
           read: async () => null, cancel: () => undefined };
@@ -244,7 +247,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
         cancel: () => undefined };
     });
     const host = createNodeModelPackInstallerHost({ packsRootDir,
-      resolveAddresses: async () => ['93.184.216.34'], pinnedTransport: transport });
+      transport: transport });
     const manifest = { packId: 'signed-asset-pack', kind: 'tts_sherpa', model: 'kokoro', version: 'v1',
       files: [{ path: 'model.bin', url: 'https://models.example/model.bin',
         sha256: sha256Hex(bytes), sizeBytes: bytes.length }] } satisfies ModelPackManifest;
@@ -268,7 +271,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
 
   it.each(['connect', 'read'] as const)('keeps signed redirect queries out of %s errors', async (failure) => {
     const signedUrl = 'https://release-assets.example/model.bin?jwt=transport-secret';
-    const transport = vi.fn<PinnedHttpStreamTransport>(async (request) => {
+    const transport = vi.fn<NodeModelPackDownloadTransport>(async (request) => {
       if (request.url === 'https://models.example/model.bin') {
         return { status: 302, headers: { location: signedUrl }, contentLength: 0,
           read: async () => null, cancel: () => undefined };
@@ -278,7 +281,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
         read: async () => { throw new Error(`body failed: ${request.url}`); }, cancel: () => undefined };
     });
     const openDownload = createNodeModelPackDownloadOpener({
-      resolveAddresses: async () => ['93.184.216.34'], pinnedTransport: transport });
+      transport: transport });
     const pending = async () => {
       const stream = await openDownload({ url: 'https://models.example/model.bin', signal: new AbortController().signal });
       await stream.read();
@@ -290,42 +293,21 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     ['http://cdn.example/model.bin?jwt=transport-secret', 'model_pack_url_insecure_scheme'],
     ['http://127.0.0.1/model.bin?jwt=transport-secret', 'model_pack_url_insecure_scheme'],
     ['https://user:pass@cdn.example/model.bin?jwt=transport-secret', 'model_pack_url_credentials_forbidden'],
-    ['https://169.254.169.254/model.bin?jwt=transport-secret', 'model_pack_url_private_destination'],
-    ['https://outside.example/model.bin?jwt=transport-secret', 'model_pack_url_origin_not_allowed'],
   ])('refuses unsafe signed redirect %s before connecting', async (location, code) => {
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({ status: 302,
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({ status: 302,
       headers: { location }, contentLength: 0, read: async () => null, cancel: () => undefined });
     const openDownload = createNodeModelPackDownloadOpener({
-      urlPolicy: { allowInsecureLoopback: true, allowedOrigins: ['https://models.example', 'https://cdn.example'] },
-      resolveAddresses: async () => ['93.184.216.34'], pinnedTransport: transport });
+      urlPolicy: { allowInsecureLoopback: true },
+      transport: transport });
     await expect(openDownload({ url: 'https://models.example/model.bin', signal: new AbortController().signal })).rejects.toThrow(code);
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('applies the absolute wall budget while DNS resolution is still pending', async () => {
-    const transport = vi.fn<PinnedHttpStreamTransport>();
-    const openDownload = createNodeModelPackDownloadOpener({
-      wallTimeMs: 20,
-      idleTimeMs: 1_000,
-      resolveAddresses: async () => await new Promise<readonly string[]>(() => undefined),
-      pinnedTransport: transport,
-    });
-
-    await expect(openDownload({
-      url: 'https://models.example/model.bin',
-      signal: new AbortController().signal,
-    })).rejects.toThrow('pinned_http_wall_timeout');
-    expect(transport).not.toHaveBeenCalled();
-  });
-
-  it('settles caller cancellation while DNS resolution ignores the abort signal', async () => {
+  it('settles caller cancellation while the network ignores the abort signal', async () => {
     const controller = new AbortController();
-    const transport = vi.fn<PinnedHttpStreamTransport>();
+    const transport = vi.fn<NodeModelPackDownloadTransport>(async () => await new Promise(() => undefined));
     const openDownload = createNodeModelPackDownloadOpener({
-      wallTimeMs: 1_000,
-      idleTimeMs: 1_000,
-      resolveAddresses: async () => await new Promise<readonly string[]>(() => undefined),
-      pinnedTransport: transport,
+      transport: transport,
     });
 
     const pending = openDownload({
@@ -335,7 +317,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     controller.abort();
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-    expect(transport).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledOnce();
   });
 
   it('cancels a response that settles at the same boundary as caller cancellation', async () => {
@@ -348,15 +330,12 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
       read: async () => null,
       cancel,
     };
-    const transport = vi.fn<PinnedHttpStreamTransport>(() => new Promise((resolve) => {
+    const transport = vi.fn<NodeModelPackDownloadTransport>(() => new Promise((resolve) => {
       resolve(response);
       queueMicrotask(() => controller.abort());
     }));
     const openDownload = createNodeModelPackDownloadOpener({
-      wallTimeMs: 1_000,
-      idleTimeMs: 1_000,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: transport,
+      transport: transport,
     });
 
     await expect(openDownload({
@@ -366,37 +345,66 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it('keeps the absolute wall budget active while the response body is pending', async () => {
+  it.each(['caller', 'stream'] as const)('settles an in-flight response read on %s cancellation', async (cancelFrom) => {
+    const controller = new AbortController();
     const cancel = vi.fn();
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
-      status: 200,
-      headers: {},
-      contentLength: null,
-      read: async () => await new Promise<Uint8Array | null>(() => undefined),
-      cancel,
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({
+      status: 200, headers: {}, contentLength: null,
+      read: async () => await new Promise(() => undefined), cancel,
     });
-    const openDownload = createNodeModelPackDownloadOpener({
-      wallTimeMs: 20,
-      idleTimeMs: 1_000,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: transport,
+    const stream = await createNodeModelPackDownloadOpener({ transport })({
+      url: 'https://models.example/model.bin', signal: controller.signal,
     });
-    const stream = await openDownload({
-      url: 'https://models.example/model.bin',
-      signal: new AbortController().signal,
-    });
-
-    await expect(stream.read()).rejects.toThrow('pinned_http_wall_timeout');
+    const pending = stream.read();
+    if (cancelFrom === 'caller') controller.abort();
+    else stream.cancel?.();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it('pins the socket to freshly validated DNS and revalidates every redirect before connection', async () => {
-    const resolvedHosts: string[] = [];
-    const transport = vi.fn<PinnedHttpStreamTransport>(async (request) => {
+  it('does not start a cancelled download', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const transport = vi.fn<NodeModelPackDownloadTransport>();
+    await expect(createNodeModelPackDownloadOpener({ transport })({
+      url: 'https://models.example/model.bin', signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('keeps a progressing download usable beyond the former thirty-minute wall cap', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({
+      status: 200,
+      headers: {},
+      contentLength: null,
+      read: async () => new Uint8Array([1]),
+      cancel,
+    });
+    const openDownload = createNodeModelPackDownloadOpener({
+      transport: transport,
+    });
+    try {
+      const stream = await openDownload({
+        url: 'https://models.example/model.bin',
+        signal: new AbortController().signal,
+      });
+      for (let minute = 0; minute < 31; minute += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        await expect(stream.read()).resolves.toEqual(new Uint8Array([1]));
+      }
+      expect(cancel).not.toHaveBeenCalled();
+      stream.cancel?.();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('follows an HTTPS redirect to a LAN mirror without a second network admission', async () => {
+    const transport = vi.fn<NodeModelPackDownloadTransport>(async (request) => {
       if (request.url === 'https://models.example/model.bin') {
         return {
           status: 302,
-          headers: { location: 'https://cdn.example/model.bin' },
+          headers: { location: 'https://192.168.1.2/model.bin' },
           contentLength: 0,
           read: async () => null,
           cancel: () => undefined,
@@ -419,11 +427,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     });
     const options = {
       packsRootDir,
-      resolveAddresses: async (hostname: string) => {
-        resolvedHosts.push(hostname);
-        return hostname === 'models.example' ? ['93.184.216.34'] : ['1.1.1.1'];
-      },
-      pinnedTransport: transport,
+      transport: transport,
     };
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async () => { throw new Error('legacy_fetch_must_not_run'); }) as typeof fetch;
@@ -432,22 +436,16 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
         url: 'https://models.example/model.bin',
         signal: new AbortController().signal,
       });
-      expect(resolvedHosts).toEqual(['models.example', 'cdn.example']);
-      expect(transport).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        validatedAddresses: ['93.184.216.34'],
-      }));
-      expect(transport).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        validatedAddresses: ['1.1.1.1'],
-      }));
-      expect(stream.finalUrl).toBe('https://cdn.example/model.bin');
-      expect(stream.resolvedAddresses).toEqual(['1.1.1.1']);
+      expect(stream.finalUrl).toBe('https://192.168.1.2/model.bin');
+      await expect(stream.read()).resolves.toEqual(new Uint8Array([1, 2, 3]));
+      await expect(stream.read()).resolves.toBeNull();
     } finally {
       globalThis.fetch = realFetch;
     }
   });
 
   it('maps malformed redirect locations to a stable model-pack transport error', async () => {
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({
       status: 302,
       headers: { location: 'http://[invalid' },
       contentLength: 0,
@@ -456,8 +454,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     });
     const host = createNodeModelPackInstallerHost({
       packsRootDir,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: transport,
+      transport: transport,
     });
 
     await expect(host.openDownload({
@@ -467,11 +464,11 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
-  it('stops after the bounded redirect count and cancels every redirect response', async () => {
+  it('follows a valid redirect chain beyond the former five-hop cap and cancels redirect bodies', async () => {
     const cancel = vi.fn();
     let redirectCount = 0;
-    const transport = vi.fn<PinnedHttpStreamTransport>(async (request) => ({
-      status: 302,
+    const transport = vi.fn<NodeModelPackDownloadTransport>(async (request) => ({
+      status: redirectCount >= 8 ? 200 : 302,
       headers: { location: new URL(`/hop-${++redirectCount}`, request.url).toString() },
       contentLength: 0,
       read: async () => null,
@@ -479,44 +476,20 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     }));
     const host = createNodeModelPackInstallerHost({
       packsRootDir,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: transport,
+      transport: transport,
     });
 
-    await expect(host.openDownload({
+    const stream = await host.openDownload({
       url: 'https://models.example/model.bin',
       signal: new AbortController().signal,
-    })).rejects.toThrow('model_pack_redirect_invalid');
-    expect(transport).toHaveBeenCalledTimes(6);
-    expect(cancel).toHaveBeenCalledTimes(6);
+    });
+    await expect(stream.read()).resolves.toBeNull();
+    expect(transport).toHaveBeenCalledTimes(9);
+    expect(cancel).toHaveBeenCalledTimes(8);
   });
 
-  it('rejects a redirect whose fresh DNS evidence becomes private before opening the next socket', async () => {
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
-      status: 302,
-      headers: { location: 'https://private.example/model.bin' },
-      contentLength: 0,
-      read: async () => null,
-      cancel: () => undefined,
-    });
-    const host = createNodeModelPackInstallerHost({
-      packsRootDir,
-      resolveAddresses: async (hostname) => (
-        hostname === 'models.example' ? ['93.184.216.34'] : ['169.254.169.254']
-      ),
-      pinnedTransport: transport,
-    });
-
-    await expect(host.openDownload({
-      url: 'https://models.example/model.bin',
-      signal: new AbortController().signal,
-    })).rejects.toThrow('model_pack_url_private_destination');
-    expect(transport).toHaveBeenCalledTimes(1);
-  });
-
-  it('resolves a bracketed IPv6 model-pack URL through its unwrapped hostname', async () => {
-    const resolvedHostnames: string[] = [];
-    const transport = vi.fn<PinnedHttpStreamTransport>().mockResolvedValue({
+  it('passes a bracketed IPv6 model-pack URL to the standard transport', async () => {
+    const transport = vi.fn<NodeModelPackDownloadTransport>().mockResolvedValue({
       status: 200,
       headers: { 'content-length': '0' },
       contentLength: 0,
@@ -526,11 +499,7 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
     const host = createNodeModelPackInstallerHost({
       packsRootDir,
       urlPolicy: { allowInsecureLoopback: true },
-      resolveAddresses: async (hostname) => {
-        resolvedHostnames.push(hostname);
-        return ['::1'];
-      },
-      pinnedTransport: transport,
+      transport: transport,
     });
 
     const stream = await host.openDownload({
@@ -538,15 +507,12 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
       signal: new AbortController().signal,
     });
 
-    expect(resolvedHostnames).toEqual(['::1']);
-    expect(stream.resolvedAddresses).toEqual(['::1']);
     expect(transport).toHaveBeenCalledWith(expect.objectContaining({
       url: 'https://[::1]:4873/model.bin',
-      validatedAddresses: ['::1'],
     }));
   });
 
-  it('uses the pinned transport for an explicitly allowed loopback development asset', async () => {
+  it('uses the standard transport for an explicitly allowed loopback development asset', async () => {
     const bytes = new Uint8Array([3, 1, 4]);
     const server = createServer((_request, response) => {
       response.statusCode = 200;
@@ -578,7 +544,6 @@ describe('node model-pack installer host — real Range resume (FIND-010)', () =
         url: manifest.files[0]!.url,
         signal: new AbortController().signal,
       });
-      expect(direct.resolvedAddresses).toEqual(['127.0.0.1']);
       while (await direct.read() !== null) {
         // Drain this first request; the full installer below exercises the core.
       }

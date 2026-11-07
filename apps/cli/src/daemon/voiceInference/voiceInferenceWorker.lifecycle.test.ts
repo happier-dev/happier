@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,11 @@ import { DaemonVoiceInferenceModelStatusSchema, getModelPackCatalogEntry, type M
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
+// Count actual model-file streams, keeping every filesystem effect real.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) };
+});
 // Count real manifest reads, one per installed-plugin catalog projection.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -22,7 +28,7 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
-import type { PinnedHttpStreamTransport } from '@/network/pinnedHttp';
+import type { NodeModelPackDownloadTransport } from './nodeModelPackInstallerHost';
 import { createNodeModelPackInstallerHost } from './nodeModelPackInstallerHost';
 import {
   createDaemonPublicVoiceModelPackRuntime,
@@ -31,7 +37,6 @@ import {
 import { installVoiceModelPackPluginArchiveFixture, VOICE_MODEL_PACK_TEST_RUNTIME_LIFECYCLE } from './publicModelPacks/pluginArchiveFixture';
 import { hashVoiceModelPackManifest } from './voiceModelPackInstaller';
 import * as lifecycleModule from './voiceInferenceWorker.lifecycle';
-import { createNodeInstalledModelPackIntegrityHost } from './nodeModelPackIntegrityHost';
 import { resolveVoiceInferencePaths } from './voiceInferencePaths';
 import { startVoiceInferenceWorker } from './voiceInferenceWorker';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -174,9 +179,9 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     return { assets, requests };
   }
 
-  function createAssetTransport(assets: ReadonlyMap<string, Uint8Array>): PinnedHttpStreamTransport {
-    // Download transport and DNS are system boundaries; verification, promotion and disk are real.
-    const pinnedTransport: PinnedHttpStreamTransport = async ({ url }) => {
+  function createAssetTransport(assets: ReadonlyMap<string, Uint8Array>): NodeModelPackDownloadTransport {
+    // Download transport is a system boundary; verification, promotion and disk are real.
+    const transport: NodeModelPackDownloadTransport = async ({ url }) => {
       const bytes = assets.get(url);
       if (!bytes) throw new Error(`fixture_asset_missing:${url}`);
       let delivered = false;
@@ -192,7 +197,7 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
         cancel: () => undefined,
       };
     };
-    return pinnedTransport;
+    return transport;
   }
 
   function createAssetInstallerHost(
@@ -201,15 +206,13 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
   ) {
     return createNodeModelPackInstallerHost({
       ...input,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: createAssetTransport(assets),
+      transport: createAssetTransport(assets),
     });
   }
 
   async function createInstalledPublicPack(
     homeDir: string,
     localId: string,
-    fingerprintInstalledPack?: Parameters<typeof createDaemonPublicVoiceModelPackRuntime>[0]['fingerprintInstalledPack'],
     pluginId = 'acme.voice',
   ) {
     // The real controller owns one file-lifetime publication; keep its source roots until shutdown.
@@ -282,7 +285,6 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
       paths: resolveVoiceInferencePaths(),
       host,
       createInstallerHost: (input) => createAssetInstallerHost(input, assets),
-      fingerprintInstalledPack,
     });
     const key = `${plugin.id}/${localId}`;
     await publicModelPacks.install({ key, signal: new AbortController().signal });
@@ -1159,7 +1161,7 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
     for (let index = 1; index < pluginCount; index += 1) {
-      await createInstalledPublicPack(homeDir, 'unrelated', undefined, `acme.unrelated-${index}`);
+      await createInstalledPublicPack(homeDir, 'unrelated', `acme.unrelated-${index}`);
     }
     const { publicModelPacks, key } = await createInstalledPublicPack(homeDir, 'selected');
     const { manifest } = createZipformerCatalogManifest();
@@ -1197,34 +1199,31 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     }
   });
 
-  it('verifies a public pack once per warm request without rereading its admitted manifest', async () => {
+  it('warms an admitted public pack without rehashing on repeated requests', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
-    const host = createNodeInstalledModelPackIntegrityHost(resolveVoiceInferencePaths().packsRootDir);
-    const fingerprinted: string[] = [];
-    const { publicModelPacks, key } = await createInstalledPublicPack(homeDir, 'warm-read', async (packId, filePaths) => {
-      fingerprinted.push(packId);
-      return await host.fingerprint(packId, filePaths);
-    });
+    const { publicModelPacks, key } = await createInstalledPublicPack(homeDir, 'warm-read');
+    const streamFile = vi.mocked(createReadStream).mockClear();
+    let warmCalls = 0;
     const lifecycle = createVoiceInferenceWorkerLifecycle({
       publicModelPacks,
       runtimeLoader: async () => ({
-        warmModel: async () => {},
+        warmModel: async () => { warmCalls += 1; },
         synthesizeTts: async () => { throw new Error('not exercised'); },
         transcribeAudio: async () => { throw new Error('not exercised'); },
       }),
     });
     try {
       for (let request = 0; request < 2; request += 1) {
-        fingerprinted.length = 0;
         await lifecycle.warmModelPack(key);
-        expect(fingerprinted).toHaveLength(1);
+        expect(streamFile).not.toHaveBeenCalled();
       }
-      fingerprinted.length = 0;
+      expect(warmCalls).toBe(1);
       await lifecycle.stop();
-      expect(fingerprinted).toHaveLength(0);
+      expect(streamFile).not.toHaveBeenCalled();
     } finally {
       await lifecycle.stop();
+      streamFile.mockClear();
     }
   });
 

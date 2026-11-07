@@ -10,9 +10,7 @@ import { assertVoiceInferencePackIdFilesystemSafe } from './voiceInferenceWorker
 
 export function createNodeInstalledModelPackIntegrityHost(
   packsRootDir: string,
-): InstalledModelPackIntegrityHost & Readonly<{
-  fingerprint(packId: string, filePaths: readonly string[]): Promise<string>;
-}> {
+): InstalledModelPackIntegrityHost {
   return Object.freeze({
     streamFile: async (packId, filePath, onChunk) => {
       const safePackId = assertVoiceInferencePackIdFilesystemSafe(packId);
@@ -26,16 +24,6 @@ export function createNodeInstalledModelPackIntegrityHost(
         await onChunk(chunk);
       }
       return streamed;
-    },
-    fingerprint: async (packId, filePaths) => {
-      const safePackId = assertVoiceInferencePackIdFilesystemSafe(packId);
-      const snapshots = [];
-      for (const filePath of ['pack.json', ...filePaths]) {
-        const info = await lstat(join(packsRootDir, safePackId, ...filePathParts(filePath)));
-        if (!info.isFile() || info.isSymbolicLink()) throw new Error('model_pack_installed_file_invalid');
-        snapshots.push([filePath, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]);
-      }
-      return JSON.stringify(snapshots);
     },
   });
 }

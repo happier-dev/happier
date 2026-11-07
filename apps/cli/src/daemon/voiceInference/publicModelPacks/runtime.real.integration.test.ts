@@ -13,7 +13,7 @@ import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT } from '@happier-dev/proto
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import type { PinnedHttpStreamTransport } from '@/network/pinnedHttp';
+import type { NodeModelPackDownloadTransport } from '../nodeModelPackInstallerHost';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -177,7 +177,7 @@ function createLocalPublishedAssetInstallerHost(
   assetPathByUrl: ReadonlyMap<string, string>,
 ) {
   return ({ packsRootDir, urlPolicy }: Parameters<typeof createNodeModelPackInstallerHost>[0]) => {
-    const transport: PinnedHttpStreamTransport = async (request) => {
+    const transport: NodeModelPackDownloadTransport = async (request) => {
       if (request.url.startsWith('https://github.com/')) {
         return {
           status: 302,
@@ -217,8 +217,7 @@ function createLocalPublishedAssetInstallerHost(
     return createNodeModelPackInstallerHost({
       packsRootDir,
       urlPolicy,
-      resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: transport,
+      transport: transport,
       resolveAvailableDiskBytes: async () => 1024 * 1024 * 1024,
       minFreeDiskHeadroomBytes: 0,
     });
