@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { t } from '@/text';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
@@ -40,6 +40,38 @@ function definition(blocks: WorkflowDefinitionV1['blocks']): WorkflowDefinitionV
 }
 
 describe('definition flow projection', () => {
+  it('keeps a Discussion outcomes read plain while retaining external Action final outputs', () => {
+    const project = (actionId: string) => projectWorkflowFlow({ ...definition([
+      { kind: 'action', id: 'outcomes', name: 'Answer outcomes', actionId, input: {} },
+    ]), finalOutput: { kind: 'result', producer: { blockId: 'outcomes', scope: { kind: 'current' } }, path: [] } });
+    expect(project('workflow.discussion.round.project').nodesById.get('outcomes')?.finalOutput === true).toBe(false);
+    expect(project('plugin:external/read').nodesById.get('outcomes')?.finalOutput).toBe(true);
+  });
+  it('carries the condition sentence from each definition scope into its If node', () => {
+    const condition = { kind: 'compare' as const, operator: 'eq' as const,
+      left: { kind: 'result' as const, producer: { blockId: 'check', scope: { kind: 'current' as const } }, path: ['approved'] },
+      right: { kind: 'literal' as const, value: false } };
+    const child = definition([{ ...step('check'), name: 'Panel check' },
+      { kind: 'if', id: 'decide', when: condition, then: [], otherwise: [] }]);
+    const projection = projectWorkflowFlow(definition([{ ...step('check'), name: 'Parent check' },
+      { kind: 'workflow', id: 'panel', workflowRef: 'external:panel', input: {} }]), { 'external:panel': child });
+    const sentence = projection.nodesById.get(JSON.stringify(['panel', 'decide']))?.labelDetail;
+    expect(sentence).toContain('Panel check');
+    expect(sentence).not.toContain('Parent check');
+    expect(sentence).toContain(t('workflows.condition.operatorEq'));
+    expect(sentence).toContain(t('common.no'));
+  });
+  it('keeps the If in a named condition so the map reads as a condition, like the editor (lab run-A)', () => {
+    const condition = { kind: 'compare' as const, operator: 'eq' as const,
+      left: { kind: 'result' as const, producer: { blockId: 'check', scope: { kind: 'current' as const } }, path: ['approved'] },
+      right: { kind: 'literal' as const, value: false } };
+    const projection = projectWorkflowFlow(definition([{ ...step('check'), name: 'Check the fix' },
+      { kind: 'if', id: 'decide', name: 'Reopen when needed', when: condition, then: [], otherwise: [] }]));
+    const node = projection.nodesById.get('decide');
+    expect(node?.label).toBe('Reopen when needed');
+    expect(node?.labelDetail?.startsWith(t('workflows.page.inspector.ifSentence', { condition: '' }).trim())).toBe(true);
+    expect(node?.labelDetail).toContain('Check the fix');
+  });
   it('uses five authored steps for a release with three lanes and a repeated issue check', () => {
     const wait = (id: string) => ({ kind: 'wait' as const, id, document: { text: id, references: [], attachments: [] } });
     const source = definition([wait('scope'), { kind: 'parallel', id: 'lanes', failurePolicy: 'collect_outcomes', branches: [

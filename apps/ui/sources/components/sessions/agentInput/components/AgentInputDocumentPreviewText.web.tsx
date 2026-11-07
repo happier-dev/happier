@@ -15,6 +15,7 @@ import { useAgentInputDefaultMaxHeight } from '../useAgentInputDefaultMaxHeight'
 
 import {
   splitAgentInputDocumentPreviewText,
+  type AgentInputDocumentPreviewReference,
   type AgentInputDocumentPreviewTextProps,
 } from './agentInputDocumentPreviewTypes';
 
@@ -57,6 +58,28 @@ function resolveTextOffset(
   const segment = element.closest(`[${OFFSET_ATTRIBUTE}]`);
   if (!segment || point.node.nodeType !== Node.TEXT_NODE) return null;
   return Number(segment.getAttribute(OFFSET_ATTRIBUTE)) + point.offset;
+}
+
+/** One placed reference drawn as the live editor's inline chip, wherever a composer text is read. */
+export function AgentInputInlineReferenceChip(
+  props: Readonly<{ reference: AgentInputDocumentPreviewReference; token: string }>,
+): React.ReactElement {
+  React.useLayoutEffect(() => ensureReferenceChipStyles(), []);
+  const { reference } = props;
+  return (
+    <ComposerChipView
+      reference={{
+        ref: reference.ref,
+        token: props.token,
+        start: reference.start,
+        end: reference.end,
+        kind: '',
+        label: reference.label,
+        ...(reference.unavailable ? { state: 'unavailable' as const } : {}),
+      }}
+      selected={false}
+    />
+  );
 }
 
 /**
@@ -133,22 +156,12 @@ export function AgentInputDocumentPreviewText(
                 data-composer-chip=""
                 {...{ [END_ATTRIBUTE]: segment.reference.end }}
               >
-                <ComposerChipView
-                  reference={{
-                    ref: segment.reference.ref,
-                    token: props.value.slice(
-                      segment.reference.start,
-                      segment.reference.end,
-                    ),
-                    start: segment.reference.start,
-                    end: segment.reference.end,
-                    kind: '',
-                    label: segment.reference.label,
-                    ...(segment.reference.unavailable
-                      ? { state: 'unavailable' as const }
-                      : {}),
-                  }}
-                  selected={false}
+                <AgentInputInlineReferenceChip
+                  reference={segment.reference}
+                  token={props.value.slice(
+                    segment.reference.start,
+                    segment.reference.end,
+                  )}
                 />
               </span>
             ),

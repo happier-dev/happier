@@ -1,14 +1,16 @@
 import type {
     WorkflowAuthoredInputV1,
-    WorkflowDefinitionV1,
     WorkflowInvocationRecoveryV1,
     WorkflowProgressEnvelopeV1,
     WorkflowInvocationLifecycleV1,
     WorkflowInvocationRecoveryAvailabilityV1,
     WorkflowRunInvocationIndexV1,
-    WorkflowRunStateV1,
     WorkflowRunSummaryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type {
+    WorkflowDefinitionV1} from '@happier-dev/protocol/workflows/workflowV1';
+import type {
+    WorkflowRunStateV1} from '@happier-dev/protocol/workflows';
 
 import type { TranslationKeyNoParams } from '@/text/i18n';
 import { t } from '@/text';
@@ -21,6 +23,8 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
+import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationRequests';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     describeWorkflowRunState,
     isTerminalWorkflowRunState,
@@ -39,11 +43,36 @@ import {
  */
 
 /**
- * Whether Run detail may expose the exact-input Reattach operation.
- *
- * The authorized Action already opened the private row and owns this decision;
- * presentation consumes its typed answer and never re-derives eligibility.
+ * One surface per open approval. The invocation's retained Action result owns the
+ * exact approval id, including plugin Actions and native participant invitations.
+ * Both inputs are already opened by the existing Run/approval demand owners.
+ * Unmatched requests retain F2, including publication custody after terminal.
  */
+export function selectWorkflowRunApprovalPresentation(params: Readonly<{
+    requests: readonly WorkflowRunPublicationRequest[];
+    waitingInvocations: readonly WorkflowRunInvocationIndexV1[];
+    progressByInvocationId?: ReadonlyMap<string, WorkflowProgressEnvelopeV1>;
+}>): Readonly<{
+    byInvocationId: ReadonlyMap<string, WorkflowRunPublicationRequest>;
+    unassigned: readonly WorkflowRunPublicationRequest[];
+}> {
+    const remaining = new Map(params.requests.map(request => [request.artifactId, request]));
+    const byInvocationId = new Map<string, WorkflowRunPublicationRequest>();
+    for (const invocation of params.waitingInvocations) {
+        if (invocation.lifecycle !== 'waiting_for_approval') continue;
+        const execution = params.progressByInvocationId?.get(invocation.id)?.execution;
+        if (execution?.kind !== 'action') continue;
+        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.output);
+        if (!approval.success) continue;
+        const request = remaining.get(approval.data.artifactId);
+        if (!request) continue;
+        byInvocationId.set(invocation.id, request);
+        remaining.delete(request.artifactId);
+    }
+    return { byInvocationId, unassigned: [...remaining.values()] };
+}
+
+/** The authorized Action owns exact-input Reattach eligibility; presentation consumes its answer. */
 export function canOfferWorkflowInvocationReattach(params: Readonly<{
     run: WorkflowRunSummaryV1;
     invocation: WorkflowRunInvocationIndexV1 | null;
@@ -264,7 +293,9 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
     const failureCause: WorkflowInvocationRecoveryPresentation['failureCause'] = failed && params.progress?.reason
         ? { kind: 'reported_failure', blockKind: params.progress.blockKind, code: params.progress.reason.code,
             message: reportedMessage,
-            headline: issue.message ?? describeRecordedTransportFailure(params.progress.reason.code) ?? reportedMessage,
+            headline: issue.message ?? describeRecordedTransportFailure(params.progress.reason.code)
+                ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
+                ?? reportedMessage,
             reset: issue.reset,
             runtimeIssue: params.progress.reason.runtimeIssueV1 ?? null,
             at: params.progress.timing?.finishedAt ?? null }
@@ -336,6 +367,23 @@ const RECORDED_TRANSPORT_FAILURE_KEYS = {
 function describeRecordedTransportFailure(code: string): string | null {
     const key = Object.hasOwn(RECORDED_TRANSPORT_FAILURE_KEYS, code)
         ? RECORDED_TRANSPORT_FAILURE_KEYS[code as keyof typeof RECORDED_TRANSPORT_FAILURE_KEYS] : undefined;
+    return key === undefined ? null : t(key);
+}
+
+/**
+ * The Run's own Discussion publication (its answer posted back where it was asked) failed. Its producer
+ * records technical prose; the page says what happened to the answer, in the person's words.
+ */
+const RUN_PUBLICATION_FAILURE_KEYS = {
+    approval_rejected: 'workflows.recovery.publicationDeclined',
+    approval_canceled: 'workflows.recovery.publicationWithdrawn',
+    discussion_post_denied: 'workflows.recovery.publicationRefused',
+    workflow_discussion_publication_unavailable: 'workflows.recovery.publicationUnavailable',
+} as const satisfies Readonly<Record<string, TranslationKeyNoParams>>;
+
+function describeRunPublicationFailure(code: string): string | null {
+    const key = Object.hasOwn(RUN_PUBLICATION_FAILURE_KEYS, code)
+        ? RUN_PUBLICATION_FAILURE_KEYS[code as keyof typeof RUN_PUBLICATION_FAILURE_KEYS] : undefined;
     return key === undefined ? null : t(key);
 }
 
@@ -426,7 +474,8 @@ export function formatWorkflowRunOriginLabel(origin: WorkflowRunSummaryV1['origi
  * Wait-for-you step is waiting for *you*; every other hold is waiting for your
  * review (07 §6.1, §6.2).
  */
-export type WorkflowRunAttentionLead = Readonly<{ step: string; waitForYou: boolean }>;
+/** `waitsForApproval`: the step waits on a request the person decides (an invitation, an Action), not a result to review. */
+export type WorkflowRunAttentionLead = Readonly<{ step: string; waitForYou: boolean; waitsForApproval?: boolean }>;
 
 /** The quiet second outcome line, derived from frozen structure and exact live rows. */
 export function formatWorkflowRunConsequenceSentence(params: Readonly<{
@@ -552,11 +601,16 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
         if (coverage.knownFailure) return t('workflows.runState.completed_with_failures');
         // Runtime rows count occurrences (including repeated steps). The root's
         // authored progress is the same projection read by the Run row and map.
+        // Retained counters can include untaken stages; omitted skipped is unknown.
         const progress = run.stepProgress;
         return progress
-            ? progress.completed === progress.total
-                ? t('workflows.run.completedCount', { count: progress.total })
-                : t('workflows.list.stepsProgress', progress)
+            ? progress.skipped !== undefined && progress.skipped > 0
+                ? t('workflows.run.completedWithSkipped', {
+                    completed: progress.completed, skipped: progress.skipped,
+                })
+                : progress.skipped === 0 && progress.completed === progress.total
+                    ? t('workflows.run.completedCount', { count: progress.total })
+                    : formatWorkflowRunStateLabel(run.state)
             : formatWorkflowRunStateLabel(run.state);
     }
     // A parked Run whose held step is not known yet says only that it waits; the word already says it.
@@ -574,12 +628,22 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
         }
         return params.attention.waitForYou
             ? t('workflows.run.attentionWaitSentence', { step: params.attention.step })
-            : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
+            : params.attention.waitsForApproval === true
+                ? t('workflows.run.attentionApprovalSentence', { step: params.attention.step })
+                : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
     }
     // A stopped Run says how far it got, from the server's authored progress the Run row also reads
     // (DESIGN-15 R9); unlike a success count it does not depend on the loaded history pages.
     if (run.state === 'cancelled' && run.stepProgress) {
-        return t('workflows.run.stoppedCount', run.stepProgress);
+        // A loop stopped part-way still says which of its items finished, so an answer that arrived
+        // never reads as "nothing finished".
+        const loop = run.stepProgress.currentLoop;
+        return loop && loop.completed > 0
+            ? t('workflows.run.stoppedCountWithItems', {
+                completed: run.stepProgress.completed, total: run.stepProgress.total,
+                itemsCompleted: loop.completed, itemsTotal: loop.total,
+            })
+            : t('workflows.run.stoppedCount', run.stepProgress);
     }
     if (run.state === 'pause_requested') return t('workflows.run.pausePending');
     if (run.state === 'paused') return t('workflows.run.paused');

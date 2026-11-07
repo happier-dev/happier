@@ -2,13 +2,14 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, renderHook, standardCleanup } from '@/dev/testkit';
+import { renderScreen, renderHook, standardCleanup, findTestInstanceByTypeContainingText } from '@/dev/testkit';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { getActionSpec, type WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol';
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { type WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -35,7 +36,9 @@ const machineRpc = vi.hoisted(() => vi.fn(async (_request: Readonly<{ method: st
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }) });
+    const dimensions = { width: 390, height: 844, scale: 1, fontScale: 1 };
+    const native = await createReactNativeWebMock({ useWindowDimensions: () => dimensions });
+    return { ...native, Dimensions: { ...native.Dimensions, get: () => dimensions } };
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -91,8 +94,16 @@ function settingsModal() {
 }
 
 function expectNoWorkflowWrites(): void {
-    expect(home.requests.filter(request => (request.path.startsWith('/v1/artifacts')
-        || request.path.startsWith('/v3/automations')) && request.input !== null)).toEqual([]);
+    // Account storage reads use POST too. Capture may read its accepted Run,
+    // but no Artifact/Run mutation or execution is allowed before Save.
+    expect(home.requests.filter(request => {
+        if (request.input === null || !(request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'))) return false;
+        const input = request.input;
+        const runRead = request.path === '/v3/automations/runs/workflow-storage' && typeof input === 'object'
+            && input !== null && 'operation' in input && ['get', 'invocations.list', 'run-key.census'].includes(String(input.operation));
+        const triggerRead = request.path === '/v3/automations/query';
+        return !runRead && !triggerRead;
+    }).map(({ path, input }) => ({ path, input }))).toEqual([]);
     expect(machineRpc.mock.calls.filter(([request]) => request.method === getActionSpec('workflow.run.start').bindings?.rpcMethod)).toEqual([]);
 }
 
@@ -160,7 +171,7 @@ afterEach(async () => {
     restoreWebGlobals?.();
 });
 
-async function answerCaptureDiscussion() {
+async function answerCaptureDiscussion(runId?: string, extraAnswer = false) {
     const { DiscussionSummaryV1Schema } = await import('@happier-dev/protocol/discussions/models');
     const discussionId = 'capture-discussion';
     const actor = { v: 1 as const, accountId: 'account-a', profile: null };
@@ -176,16 +187,126 @@ async function answerCaptureDiscussion() {
         { id: 'question', discussionId, seq: 1, localId: null, authorAccountId: 'account-a', accountActor: actor, producerV1: null,
             content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Compare the proposals' }] } }, mentionedAccountIds: [], createdAt: 1 },
         { id: 'answer', discussionId, seq: 2, localId: null, authorAccountId: 'account-a', accountActor: actor,
-            producerV1: { v: 1, kind: 'agent', sessionId: 'answerer' }, replyTarget: { kind: 'message', messageId: 'question' },
+            producerV1: runId ? { v: 1, kind: 'workflow', runId, invocationRecordId: 'captured-answer', invocationAttempt: '0',
+                execution: { kind: 'not_started', blockKind: 'step' }, outcome: 'pass' }
+                : { v: 1, kind: 'agent', sessionId: 'answerer' }, replyTarget: { kind: 'message', messageId: 'question' },
             content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Private answer prose' }] } }, mentionedAccountIds: [], createdAt: 2 },
         { id: 'unlinked-human', discussionId, seq: 3, localId: null, authorAccountId: 'account-a', accountActor: actor, producerV1: null,
             content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Separate human note' }] } }, mentionedAccountIds: [], createdAt: 3 },
+        ...(extraAnswer ? [{ id: 'other-answer', discussionId, seq: 4, localId: null, authorAccountId: 'account-a', accountActor: actor,
+            producerV1: { v: 1, kind: 'agent', sessionId: 'other-answerer' }, replyTarget: { kind: 'message', messageId: 'question' },
+            content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Other private answer' }] } }, mentionedAccountIds: [], createdAt: 4 }] : []),
     ];
-    home.answer(serverId, `/v1/discussions/${discussionId}/messages`, { body: { messages, hasMoreOlder: false, messageSeq: 3 } });
+    home.answer(serverId, `/v1/discussions/${discussionId}/messages`, { select: (_input, request) => {
+        const query = new URL(request.url).searchParams;
+        const messageId = query.get('messageId');
+        const frontier = extraAnswer ? 4 : 3;
+        const messageSeq = Math.min(frontier, Number(query.get('throughSeq') ?? frontier));
+        return { body: { messages: messages.filter(message => message.seq <= messageSeq
+            && (messageId === null || message.id === messageId)), hasMoreOlder: false, messageSeq } };
+    } });
     return discussionId;
 }
 
 describe('WorkflowEditorHostScreen saved-entry intents', () => {
+    it.each(['builtin', 'external-plugin'] as const)('reviews, seeds and saves the identical authored %s run definition', async sourceKind => {
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { useDiscussionWorkflowCapture } = await import('@/components/discussions/useDiscussionWorkflowCapture');
+        const { DiscussionPatternCapturePanel } = await import('@/components/discussions/DiscussionPatternCapturePanel');
+        const { Text } = await import('@/components/ui/text/Text');
+        const { projectWorkflowPluginSourceV1, resolveBuiltinWorkflowDefinitionV1, materializeWorkflowAcceptedSnapshotV1 } = await import('@happier-dev/protocol/workflows');
+        const { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+        const { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } = await import('@happier-dev/protocol/workflows/workflowStoredContentV1');
+        const { WorkflowRunRecipientCensusResponseV1Schema } = await import('@happier-dev/protocol/workflows/workflowRunKeyV1');
+        const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const { projectWorkflowFlow } = await import('../flow/workflowFlowProjection');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const participants = ['answerer', 'reviewer'].map(sessionId => ({ kind: 'session' as const, session: { serverId, sessionId } }));
+        const plugin = projectWorkflowPluginSourceV1({ pluginId: 'com.acme.patterns', pluginVersion: '1.0.0',
+            definition: { id: 'opinions', title: 'Independent review', definition: createWorkflowDefinitionFixture({
+                version: 1, defaults: {}, inputs: [{ name: 'question', valueType: 'string', required: true },
+                    { name: 'participants', valueType: 'json', multiple: true, required: true, inputType: { hostType: 'agentParticipant' } }],
+                blocks: [{ kind: 'loop', id: 'plugin-answers', name: 'Independent plugin answers',
+                    repetition: { kind: 'items', items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+                    body: [{ kind: 'step', id: 'plugin-answer', name: 'Plugin answer',
+                        document: { text: 'Answer independently', references: [], attachments: [] },
+                        execution: { participant: { kind: 'item', field: 'value' } }, input: [{ kind: 'input', name: 'question' }], result: { kind: 'text' } }] }],
+            }) } });
+        const catalog = sourceKind === 'builtin' ? resolveBuiltinWorkflowDefinitionV1('fresh-opinions')! : plugin;
+        const ref = sourceKind === 'builtin' ? 'builtin:fresh-opinions' : plugin.workflow;
+        const run = createWorkflowRunSummaryFixture({ id: 'captured-run', ownerAccountId: 'account-a', origin: { kind: 'direct' } });
+        const discussionId = await answerCaptureDiscussion(run.id);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('missing_account_scope');
+        const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: catalog.definition, admission: { kind: 'user' },
+            context: { source: { kind: 'catalog', ref, version: catalog.version }, inputs: { question: 'Compare', participants },
+                machineId: run.machineId, executionTarget: { kind: 'session' },
+                workspaceTarget: { project: { machineId: run.machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+                origin: { kind: 'direct', discussion: { discussion: { serverId, discussionId }, messageId: 'question', throughSeq: 3 } },
+                authorization: { principal: { kind: 'host' } } },
+            effects: { resolveTargetAvailability: async () => true,
+                resolveSessionTarget: async value => typeof value === 'object' && value !== null && !Array.isArray(value)
+                    && 'sessionId' in value && typeof value.sessionId === 'string'
+                    ? { address: { serverId, sessionId: value.sessionId }, machineId: run.machineId } : null,
+                readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(id as Parameters<typeof getActionSpec>[0]))),
+            } });
+        if (!accepted.ok) throw new Error(`fixture_materialization_failed:${accepted.error.code}`);
+        const authored = accepted.snapshot.authoredDefinition;
+        const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: run.ownerAccountId, runId: run.id }, acceptedSnapshot: accepted.snapshot }));
+        const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: run.id, ownerAccountId: run.ownerAccountId,
+            access: 'owner', encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
+            ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+        home.answer(serverId, '/v3/automations/runs/workflow-storage', { select: input => {
+            if (!input || typeof input !== 'object' || !('operation' in input)) throw new Error('Expected the real storage request');
+            if (input.operation === 'get') return { body: { run, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null, keyCensus } };
+            if (input.operation === 'invocations.list') return { body: { invocations: [], parentRevision: run.revision,
+                keyCensus, progressEnvelopesByInvocationId: {} } };
+            if (input.operation === 'run-key.census') return { body: keyCensus };
+            throw new Error(`Unexpected storage operation:${input.operation}`);
+        } });
+        let capture: ReturnType<typeof useDiscussionWorkflowCapture> | undefined;
+        function Harness() {
+            capture = useDiscussionWorkflowCapture({ discussion: { serverId, discussionId }, accountLifetime: lifetime! });
+            return <DiscussionPatternCapturePanel capture={capture} anchorRef={React.useRef(null)} discussionTitle="Compare"
+                messages={[]} accountLifetime={lifetime!} />;
+        }
+        const review = await renderScreen(<Harness />);
+        await act(async () => { await capture!.open(['question', 'answer']); });
+        expect(capture!.state.error).toBeNull();
+        expect(capture!.state.draft?.definition).toEqual(authored);
+        const assertReviewedBlocks = () => {
+            const expected = projectWorkflowFlow(capture!.state.draft!.definition!).nodes;
+            for (const node of expected) {
+                const row = review.findHostByTestId(`discussion-pattern-capture-step:${node.nodeId}`);
+                expect(row).not.toBeNull();
+                expect(findTestInstanceByTypeContainingText(row!, Text, node.label)).toBeDefined();
+            }
+            // Deliberately different message-derived steps must never substitute for the authored body.
+            expect(review.findByTestId('discussion-pattern-capture-step:answer:header')).toBeNull();
+            expect(review.findByTestId('discussion-pattern-capture-step:question')).toBeNull();
+        };
+        assertReviewedBlocks();
+        expect(review.findByTestId('discussion-pattern-capture-ask:participants')).not.toBeNull();
+        expectNoWorkflowWrites();
+        await review.pressByTestIdAsync('discussion-pattern-capture-open-editor');
+        const route = pushSpy().mock.calls.at(-1)?.[0] as { params: { definitionDraftSeedId: string } };
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, lifetime.scope)?.definition).toEqual(authored);
+        const editor = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: route.params.definitionDraftSeedId }} />,
+            { wrapper: EditorPaneWrapper });
+        await editor.pressByTestIdAsync('workflow-editor-save');
+        const { listWorkflowDefinitions, getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const saved = (await listWorkflowDefinitions()).definitions.find(row => row.metadata?.title === 'Compare');
+        if (!saved) throw new Error('missing_saved_capture');
+        const stored = await getWorkflowDefinition({ definitionId: saved.definitionId });
+        expect(stored.definition).toEqual(authored);
+        expect(stored.metadata.captureProvenance?.workflow?.source).toMatchObject({ kind: 'catalog', ref, version: catalog.version });
+        await editor.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: saved.definitionId }} />);
+        const { WorkflowBlockListEditor } = await import('../editor/WorkflowBlockListEditor');
+        const reopened = editor.findAllByType(WorkflowBlockListEditor).find(row => row.props.list.kind === 'root');
+        expect(reopened?.props.blocks).toEqual(authored.blocks);
+        expect(reopened?.props.draftStore.get().inputs).toEqual(authored.inputs);
+    });
     it('reviews an authorized Discussion capture before editor handoff and retains source attribution on save', async () => {
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { useDiscussionWorkflowCapture } = await import('@/components/discussions/useDiscussionWorkflowCapture');
@@ -194,6 +315,7 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         if (!lifetime) throw new Error('missing_account_scope');
         const hook = await renderHook(() => useDiscussionWorkflowCapture({ discussion: { serverId, discussionId }, accountLifetime: lifetime }));
         await act(async () => { await hook.getCurrent().open(['question', 'answer', 'unlinked-human']); });
+        expect(hook.getCurrent().state.error).toBeNull();
         expect(hook.getCurrent().state).toMatchObject({ status: 'review', draft: { status: 'needs_review', definition: null,
             unresolved: [{ messageId: 'unlinked-human', reason: 'unlinked_message' }] } });
         expect(hook.getCurrent().canOpenEditor).toBe(false);
@@ -211,6 +333,8 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         expect(screen.findByTestId('workflow-editor-name')?.props.value).toBe('Retry policy check');
         expect(screen.findByTestId('workflow-editor-step-step_1')).not.toBeNull();
         expectNoWorkflowWrites();
+        expect(screen.findByTestId('workflow-editor-save')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-save')?.props.disabled).not.toBe(true);
         // A failed revision retains the last draft for recovery, but reopening
         // must not silently approve it as the newly requested capture.
         home.answer(serverId, `/v1/discussions/${discussionId}/messages`, { status: 403, body: { error: 'discussion_read_denied' } });
@@ -224,9 +348,8 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         await act(async () => { hook.getCurrent().openEditor(); });
         expect(pushSpy().mock.calls).toHaveLength(navigations);
         const { listWorkflowDefinitions, getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
-        await act(async () => { screen.changeTextByTestId('workflow-editor-name', 'Captured exchange'); });
         await screen.pressByTestIdAsync('workflow-editor-save');
-        const created = (await listWorkflowDefinitions()).definitions.find(row => row.metadata?.title === 'Captured exchange');
+        const created = (await listWorkflowDefinitions()).definitions.find(row => row.metadata?.title === 'Retry policy check');
         if (!created) throw new Error('missing_saved_capture');
         const captureProvenance = { discussion: { serverId, discussionId }, messages: expect.arrayContaining([
             expect.objectContaining({ source: { kind: 'discussion', discussion: { serverId, discussionId }, messageId: 'question' }, authorAccountId: 'account-a' }),
@@ -241,17 +364,48 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         expect(JSON.stringify(reopened.definition)).not.toContain(discussionId);
     });
 
+    it('saves a duplicated definition immediately and rejects a missing handoff instead of offering a blank replacement', async () => {
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: DEFINITION_ID }} />,
+            { wrapper: EditorPaneWrapper });
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const duplicate = screen.findByType(WorkflowEditorBody).props.menuActions.find((action: { id: string }) => action.id === 'duplicate');
+        await act(async () => { duplicate.onSelect(); });
+        const route = pushSpy().mock.calls.at(-1)?.[0] as { params: { definitionDraftSeedId: string } };
+        expect(route.params.definitionDraftSeedId).toBeTypeOf('string');
+        expectNoWorkflowWrites();
+
+        // Mis-bound producer handle: the real intake must refuse the source,
+        // rather than presenting a different draft as the requested copy.
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: 'missing-copy-seed' }} />);
+        expect(screen.findByTestId('workflow-editor-save')).toBeNull();
+        expect(screen.findAllByType(WorkflowEditorBody)).toHaveLength(0);
+        expectNoWorkflowWrites();
+
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: route.params.definitionDraftSeedId }} />);
+        expect(screen.findByTestId('workflow-editor-save')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-save')?.props.disabled).not.toBe(true);
+        const title = screen.findByTestId('workflow-editor-name')?.props.value;
+        await screen.pressByTestIdAsync('workflow-editor-save');
+        const { listWorkflowDefinitions, getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const copies = (await listWorkflowDefinitions()).definitions.filter(row => row.definitionId !== DEFINITION_ID);
+        expect(copies).toHaveLength(1);
+        const copy = await getWorkflowDefinition({ definitionId: copies[0]!.definitionId });
+        expect(copy.metadata.title).toBe(title);
+        expect(copy.definition).toEqual(savedDefinition().definition);
+    });
+
     it('Save as pattern review chooses messages in thread order, keeps each choice, and opens the named draft', async () => {
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { useDiscussionWorkflowCapture } = await import('@/components/discussions/useDiscussionWorkflowCapture');
         const { DiscussionPatternCapturePanel } = await import('@/components/discussions/DiscussionPatternCapturePanel');
-        const discussionId = await answerCaptureDiscussion();
+        const discussionId = await answerCaptureDiscussion(undefined, true);
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('missing_account_scope');
         const captureRef: { current: ReturnType<typeof useDiscussionWorkflowCapture> | null } = { current: null };
         const messages = [{ id: 'question', author: 'Ana', text: 'Compare the proposals' },
             { id: 'answer', author: 'Reviewer', text: 'Private answer prose' },
-            { id: 'unlinked-human', author: 'Ana', text: 'Separate human note' }];
+            { id: 'unlinked-human', author: 'Ana', text: 'Separate human note' },
+            { id: 'other-answer', author: 'Other reviewer', text: 'Other private answer' }];
         function Harness() {
             const capture = useDiscussionWorkflowCapture({ discussion: { serverId, discussionId }, accountLifetime: lifetime! });
             captureRef.current = capture;
@@ -261,9 +415,9 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         }
         const screen = await renderScreen(<Harness />);
         await act(async () => { await captureRef.current!.open(); });
-        for (const id of ['unlinked-human', 'answer', 'question']) await screen.pressByTestIdAsync(`discussion-pattern-capture-message:${id}`);
+        for (const id of ['unlinked-human', 'answer', 'question', 'other-answer']) await screen.pressByTestIdAsync(`discussion-pattern-capture-message:${id}`);
         await screen.pressByTestIdAsync('discussion-pattern-capture-review');
-        expect(captureRef.current!.state).toMatchObject({ status: 'review', request: { messageIds: ['question', 'answer', 'unlinked-human'] },
+        expect(captureRef.current!.state).toMatchObject({ status: 'review', request: { messageIds: ['question', 'answer', 'unlinked-human', 'other-answer'] },
             draft: { status: 'needs_review' } });
         // The answer is settled first; settling the unresolved note must keep that earlier choice.
         await screen.pressByTestIdAsync('discussion-pattern-capture-step:answer:header');
@@ -276,13 +430,14 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         expectNoWorkflowWrites();
         // The name is an editable, prefilled value (the Discussion's title), not an empty field behind a placeholder.
         expect(screen.findByTestId('discussion-pattern-capture-name')?.props.value).toBe('Compare the proposals');
-        // "Asked each time you run it" are chips over the steps; a chip's state is the step's per-run choice,
-        // and a step row carries its own chip exactly while that choice is on.
-        const answerAsked = () => captureRef.current!.state.draft!.steps.find((step) => step.messageId === 'answer')!.perRun;
+        // Resolved review reads the executable draft, including its declared per-run inputs.
+        expect(screen.findByTestId('discussion-pattern-capture-step:step_1')).not.toBeNull();
+        const answerAsked = () => captureRef.current!.state.draft!.definition!.inputs.find(input => input.name === 'participants')!.required;
         const askedBefore = answerAsked();
-        await screen.pressByTestIdAsync('discussion-pattern-capture-ask:answer');
+        await screen.pressByTestIdAsync('discussion-pattern-capture-ask:participants');
         expect(answerAsked()).toBe(!askedBefore);
-        expect(screen.findByTestId('discussion-pattern-capture-step-input:answer') !== null).toBe(!askedBefore);
+        expect(captureRef.current!.state.draft!.steps.filter(step => step.role === 'step').map(step => step.perRun))
+            .toEqual([false, false]);
         await act(async () => { screen.changeTextByTestId('discussion-pattern-capture-name', 'Proposal check'); });
         await screen.pressByTestIdAsync('discussion-pattern-capture-open-editor');
         const route = pushSpy().mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
@@ -306,7 +461,7 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
         expectNoWorkflowWrites();
     });
     it('opens a catalog example as an unsaved draft and keeps edits across rerenders', async () => {
-        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol');
+        const { WORKFLOW_STARTER_EXAMPLES_V1} = await import('@happier-dev/protocol/workflows/builtins/examples');
         const example = WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === 'morning-digest')!;
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', exampleKey: example.key }} />,
             { wrapper: EditorPaneWrapper });

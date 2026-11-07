@@ -1,4 +1,5 @@
 import {
+  type DiscussionExternalSourceV1,
   DiscussionSelectionSourceV1Schema,
   isDiscussionDocEditProposalContentV1,
   readDiscussionMentionedParticipantIdsV1,
@@ -6,6 +7,7 @@ import {
 } from '@happier-dev/protocol/discussions/content';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
@@ -13,11 +15,13 @@ import {
   formatAccountDisplayName,
   resolveViewerAccountDisplayName,
 } from '@/sync/domains/account/formatAccountDisplayName';
-import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { resolveAccountActorName, resolveAccountActorPresentation, resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { t } from '@/text';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { buildMentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
-import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import { buildMentionRefV1, parseMentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { formatInlineReferenceTokenV1, INLINE_REFERENCE_ATTACHMENT_SCHEME_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import type { StoredAttachmentPayloadV1 } from '@happier-dev/protocol/transfers/attachments/attachmentPayloadV1';
+import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
 import { readableMessageText, readableMessageTextWithReferences } from '@/components/sessions/transcript/messageDisplayText';
 import { projectMessageAttachmentReference, projectMessageMentionReference, readEligibleMessageInlineReferenceTokens, type InlineMessageReference } from '@/components/sessions/transcript/references/messageStructuredReferences';
 import { formatSessionInputMentionMarkerV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
@@ -30,6 +34,20 @@ type DiscussionMessageReference = InlineMessageReference &
     >['participant'];
   }>;
 
+/**
+ * "Image #N" for a message's pictures, in the order they were attached (the tray's order), as a Session
+ * numbers its pictures; the inline chip and the picture's corner badge read this one map.
+ */
+export function readDiscussionAttachmentImageNumbers(attachments: readonly StoredAttachmentPayloadV1[]): ReadonlyMap<string, number> {
+  const numbers = new Map<string, number>();
+  for (const attachment of attachments) {
+    if (attachment.kind === 'file' && resolveSessionMediaInlineRenderableImageMimeType({ mimeType: attachment.file.mime, path: attachment.name })) {
+      numbers.set(attachment.id, numbers.size + 1);
+    }
+  }
+  return numbers;
+}
+
 /** Typed Discussion parts feed the same Markdown inline seam as Session references. */
 export function projectDiscussionMessageReferences(
   content: NonNullable<DiscussionOpenedMessageV1['content']>,
@@ -38,6 +56,8 @@ export function projectDiscussionMessageReferences(
     session?: (id: string) => string | null;
   }> = {},
   mode?: Parameters<typeof readDiscussionMessagePartsV1>[1],
+  /** A thread row draws its files below the body (the Session's tiles and chips), so only authored chips stay inline. */
+  unplacedAttachments: 'append' | 'omit' = 'append',
 ): Readonly<{
   text: string;
   readableText: string;
@@ -46,9 +66,17 @@ export function projectDiscussionMessageReferences(
 }> {
   const declared = new Map<string, DiscussionMessageReference>();
   const attachments = new Map<string, DiscussionMessageReference>();
-  const sourceParts = readDiscussionMessagePartsV1(content, mode).map(
+  const messageParts = readDiscussionMessagePartsV1(content, mode);
+  // A thread numbers its pictures as a Session does; a one-line preview keeps their names.
+  const imageNumbers = mode === 'preview' ? new Map<string, number>()
+    : readDiscussionAttachmentImageNumbers(messageParts.flatMap(part => part.t === 'attachment' ? [part.attachment] : []));
+  const sourceParts = messageParts.map(
     (part): string | DiscussionMessageReference => {
       if (part.t === 'text') return part.text;
+      // A file the author placed in the text stays a token here; the message's own attachment part resolves it.
+      if (part.t === 'reference' && parseMentionRefV1(part.reference.ref)?.scheme === INLINE_REFERENCE_ATTACHMENT_SCHEME_V1) {
+        return formatInlineReferenceTokenV1({ label: part.reference.label ?? part.reference.token, ref: part.reference.ref });
+      }
       if (part.t === 'reference') {
         const reference = projectMessageMentionReference(part.reference, part.reference.label ?? '');
         if (!reference) return formatSessionInputMentionMarkerV1(part.reference);
@@ -56,7 +84,8 @@ export function projectDiscussionMessageReferences(
         return reference;
       }
       if (part.t === 'attachment') {
-        const reference = projectMessageAttachmentReference(part.attachment);
+        const imageNumber = imageNumbers.get(part.attachment.id);
+        const reference = projectMessageAttachmentReference({ ...part.attachment, ...(imageNumber ? { imageNumber } : {}) });
         declared.set(reference.ref, reference);
         attachments.set(reference.ref, reference);
         return '';
@@ -95,7 +124,7 @@ export function projectDiscussionMessageReferences(
     if (existing) existing.tokenStarts.add(token.start);
     else inline.set(token.ref, { ...reference, tokenStarts: new Set([token.start]) });
   }
-  for (const reference of attachments.values()) {
+  for (const reference of unplacedAttachments === 'append' ? attachments.values() : []) {
     if (inline.has(reference.ref)) continue;
     const separator = text && !/\s$/u.test(text) ? ' ' : '';
     const start = text.length + separator.length;
@@ -130,13 +159,15 @@ export const EMPTY_DISCUSSION_MESSAGE_LABELS: DiscussionMessageLabelResolvers = 
 };
 type LabelMessage = Pick<DiscussionOpenedMessageV1,
   'id' | 'content' | 'replyTarget' | 'participantDeliveryV1' | 'docEditProposalDispositionV1'>
-  & Partial<Pick<DiscussionOpenedMessageV1, 'producerV1'>>;
+  & Partial<Pick<DiscussionOpenedMessageV1, 'authorAccountId' | 'producerV1' | 'messageRef'>>;
 export type DiscussionMessageLabelProjection = DiscussionMessageLabelResolvers & Readonly<{
   content: LabelMessage['content'];
   parent: LabelMessage | undefined;
   deliveries: LabelMessage['participantDeliveryV1'];
   decider: string | null;
   producer: LabelMessage['producerV1'];
+  startsGroup: boolean;
+  tracksAuthor: boolean;
   accounts: ReadonlyMap<string, string | null>;
   sessions: ReadonlyMap<string, string | null>;
 }>;
@@ -154,14 +185,23 @@ export function projectDiscussionMessageLabels(
 ): ReadonlyMap<string, DiscussionMessageLabelProjection> {
   const byId = new Map(messages.map(message => [message.id, message]));
   let changed: Map<string, DiscussionMessageLabelProjection> | null = null;
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     const known = previous.get(message.id);
     const parent = message.replyTarget?.kind === 'message' ? byId.get(message.replyTarget.messageId) : undefined;
     const disposition = message.docEditProposalDispositionV1;
     const decider = disposition && disposition.state !== 'open' ? disposition.decidedBy.accountId : null;
+    const previousMessage = messages[index - 1];
+    const startsGroup = startsDiscussionMessageGroup(
+      { authorAccountId: message.authorAccountId ?? null, producerV1: message.producerV1 ?? null, content: message.content ?? null },
+      previousMessage
+        ? { authorAccountId: previousMessage.authorAccountId ?? null, producerV1: previousMessage.producerV1 ?? null, content: previousMessage.content ?? null }
+        : undefined,
+    );
+    const tracksAuthor = Boolean(!message.producerV1 && message.authorAccountId
+      && (startsGroup || message.content !== null && message.messageRef !== undefined));
     if (known && known.content === message.content && known.parent === parent
       && known.deliveries === message.participantDeliveryV1 && known.decider === decider
-      && known.producer === message.producerV1
+      && known.producer === message.producerV1 && known.startsGroup === startsGroup && known.tracksAuthor === tracksAuthor
       && labelsUnchanged(known.accounts, labels.account) && labelsUnchanged(known.sessions, labels.session)) continue;
     const accountIds = new Set<string>();
     const sessionIds = new Set<string>();
@@ -170,6 +210,16 @@ export function projectDiscussionMessageLabels(
       for (const id of mentioned.mentionedAccountIds) accountIds.add(id);
       for (const id of mentioned.mentionedSessionIds) sessionIds.add(id);
     }
+    // Visible person labels read the thread's latest reconciled Account presentation,
+    // not an older row-local actor snapshot. A committed human row with content exposes
+    // actions even when it continues a group; an optimistic/unreadable continuation does not.
+    // Recording only rendered human-label dependencies keeps unrelated rows stable.
+    if (tracksAuthor && message.authorAccountId) accountIds.add(message.authorAccountId);
+    if (parent && !parent.producerV1 && parent.authorAccountId) accountIds.add(parent.authorAccountId);
+    const requesterAccountId = message.producerV1?.kind === 'agent'
+      ? message.producerV1.actionRequestAttributionV1?.requester?.accountId ?? null
+      : null;
+    if (requesterAccountId) accountIds.add(requesterAccountId);
     if (decider) accountIds.add(decider);
     if (message.producerV1?.kind === 'agent') sessionIds.add(message.producerV1.sessionId);
     for (const delivery of message.participantDeliveryV1 ?? []) sessionIds.add(delivery.participantSessionId);
@@ -179,7 +229,7 @@ export function projectDiscussionMessageLabels(
     for (const id of sessionIds) sessions.set(id, labels.session(id));
     changed ??= new Map(previous);
     changed.set(message.id, {
-      content: message.content, parent, deliveries: message.participantDeliveryV1, decider, producer: message.producerV1, accounts, sessions,
+      content: message.content, parent, deliveries: message.participantDeliveryV1, decider, producer: message.producerV1, startsGroup, tracksAuthor, accounts, sessions,
       account: accounts.size ? id => accounts.get(id) ?? null : EMPTY_DISCUSSION_MESSAGE_LABELS.account,
       session: sessions.size ? id => sessions.get(id) ?? null : EMPTY_DISCUSSION_MESSAGE_LABELS.session,
     });
@@ -217,6 +267,7 @@ export function resolveDiscussionMessageAuthorLabel(
     'authorAccountId' | 'accountActor' | 'createdAt'
   >,
   viewer?: Readonly<{
+    serverId?: string;
     accountId: string;
     profile: Readonly<{
       name?: string | null;
@@ -238,11 +289,87 @@ export function resolveDiscussionMessageAuthorLabel(
     }
     return t('session.collaboration.discussion.collaborator');
   }
-  if (actor.profile === null) return t('message.accountActorFormerMember');
-  return (
-    formatAccountDisplayName(actor.profile) ??
-    t('message.accountActorUnnamedMember')
-  );
+  return resolveAccountActorName(actor, Boolean(viewer?.serverId && message.authorAccountId === viewer.accountId));
+}
+
+type DiscussionExternalSourceCarrier = Partial<Pick<DiscussionOpenedMessageV1, 'content'>>;
+
+/**
+ * Channel provenance on an inbound message (email, chat): display only. The outside sender chose these
+ * names, so they never stand for a member, and the Account that posted the message is the connection's custody.
+ */
+export function readDiscussionExternalSource(message: DiscussionExternalSourceCarrier): DiscussionExternalSourceV1 | null {
+  const content = message.content;
+  return content && 'externalSource' in content && content.externalSource ? content.externalSource : null;
+}
+
+export type DiscussionMessageSpeakerKind = 'person' | 'agent' | 'workflow' | 'external';
+
+/** The kind of speaker a message shows: a member, an Agent's Session, a Workflow Run, or someone outside Happier. */
+export function resolveDiscussionMessageSpeakerKind(
+  message: DiscussionExternalSourceCarrier & Partial<Pick<DiscussionOpenedMessageV1, 'producerV1'>>,
+): DiscussionMessageSpeakerKind {
+  if (message.producerV1?.kind === 'agent') return 'agent';
+  if (message.producerV1?.kind === 'workflow') return 'workflow';
+  return readDiscussionExternalSource(message) ? 'external' : 'person';
+}
+
+/**
+ * The external conversation a reply would leave Happier for: replies under an inbound channel message, at any
+ * depth, are sent out to that conversation by its connection.
+ */
+export function resolveDiscussionOutwardReply(
+  messageId: string | null,
+  messageById: ReadonlyMap<string, DiscussionExternalSourceCarrier & Partial<Pick<DiscussionOpenedMessageV1, 'replyTarget'>>>,
+): DiscussionExternalSourceV1 | null {
+  const visited = new Set<string>();
+  for (let id = messageId; id !== null && !visited.has(id);) {
+    visited.add(id);
+    const message = messageById.get(id);
+    if (!message) return null;
+    const source = readDiscussionExternalSource(message);
+    if (source) return source;
+    id = message.replyTarget?.kind === 'message' ? message.replyTarget.messageId : null;
+  }
+  return null;
+}
+
+export type DiscussionMessageSpeakerLabelResolvers = Readonly<{
+  account?: (accountId: string) => string | null;
+  session: (sessionId: string) => string | null;
+  workflowRun: (runId: string) => string | null;
+}>;
+
+/**
+ * One display owner for who spoke a Discussion message. The Account that executed an Agent or
+ * Workflow publication is custody, not speaker identity: Agents speak as their Session and
+ * Workflows speak as their Run everywhere the message is quoted, replied to, or summarized.
+ */
+export function resolveDiscussionMessageSpeakerLabel(
+  message: Pick<
+    DiscussionOpenedMessageV1,
+    'authorAccountId' | 'accountActor' | 'createdAt'
+  > & Partial<Pick<DiscussionOpenedMessageV1, 'producerV1' | 'content'>>,
+  labels: DiscussionMessageSpeakerLabelResolvers,
+  viewer?: Parameters<typeof resolveDiscussionMessageAuthorLabel>[1],
+): string {
+  const producer = message.producerV1;
+  if (producer?.kind === 'agent') {
+    return (
+      labels.session(producer.sessionId) ??
+      t('session.collaboration.discussion.heldParticipant')
+    );
+  }
+  if (producer?.kind === 'workflow') {
+    return labels.workflowRun(producer.runId) ?? t('workflows.run.untitled');
+  }
+  const external = readDiscussionExternalSource(message);
+  if (external) return external.senderDisplayName ?? t('session.collaboration.discussion.externalSender');
+  if (message.authorAccountId) {
+    const currentAccountLabel = labels.account?.(message.authorAccountId);
+    if (currentAccountLabel !== undefined && currentAccountLabel !== null) return currentAccountLabel;
+  }
+  return resolveDiscussionMessageAuthorLabel(message, viewer);
 }
 
 /**
@@ -256,6 +383,7 @@ export function resolveDiscussionReplyAttributionLine(
   message: Pick<DiscussionOpenedMessageV1, 'producerV1'> &
     Partial<Pick<DiscussionOpenedMessageV1, 'requesterAccountActor'>>,
   viewer: Readonly<{ serverId: string; accountId: string }>,
+  labels?: Pick<DiscussionMessageSpeakerLabelResolvers, 'account'>,
 ): string | null {
   const producer = message.producerV1;
   const requester =
@@ -268,12 +396,12 @@ export function resolveDiscussionReplyAttributionLine(
     requester.accountId === viewer.accountId &&
     areServerProfileIdentifiersEquivalent(requester.serverId, viewer.serverId)
       ? t('session.collaboration.discussion.attribution.you')
-      : actor && actor.accountId === requester.accountId
+      : labels?.account?.(requester.accountId) ?? (actor && actor.accountId === requester.accountId
         ? resolveAccountActorPresentation(
             { ...actor, serverId: requester.serverId },
             viewer,
           ).name
-        : t('session.collaboration.discussion.attribution.anotherPerson');
+        : resolveUnknownAccountActorName('sentence'));
   return t('session.collaboration.discussion.attribution.askedBy', {
     requester: name,
   });
@@ -386,13 +514,19 @@ function discussionMessageProducerClass(
  * always does: it answers one question, and must never read as part of the message before it.
  */
 export function startsDiscussionMessageGroup(
-  message: Pick<DiscussionOpenedMessageV1, 'authorAccountId' | 'producerV1'>,
+  message: Pick<DiscussionOpenedMessageV1, 'authorAccountId' | 'producerV1'> & DiscussionExternalSourceCarrier,
   previous:
-    | Pick<DiscussionOpenedMessageV1, 'authorAccountId' | 'producerV1'>
+    | (Pick<DiscussionOpenedMessageV1, 'authorAccountId' | 'producerV1'> & DiscussionExternalSourceCarrier)
     | undefined,
 ): boolean {
+  // An outside sender is never a continuation of the member whose connection posted for them, or of another sender.
+  const externalSpeaker = (entry: DiscussionExternalSourceCarrier) => {
+    const source = readDiscussionExternalSource(entry);
+    return source ? `${source.conversationDisplayName}\u0000${source.senderDisplayName ?? ''}` : null;
+  };
   return (
     !previous ||
+    externalSpeaker(previous) !== externalSpeaker(message) ||
     readStampedOutcome(message) !== null ||
     message.authorAccountId === null ||
     previous.authorAccountId === null ||
@@ -486,6 +620,13 @@ export type DiscussionTimelineItem<
       /** A managed Pattern run, shown right under the message that started it. */
       kind: 'workflow_run';
       run: WorkflowRunSummaryV1;
+      /** A `workflow_run_end` closes it below its last published reply, so its operations live there. */
+      endRow?: true;
+    }>
+  | Readonly<{
+      /** The quiet end row after a finished run's last published reply here (lab T4 FD). */
+      kind: 'workflow_run_end';
+      run: WorkflowRunSummaryV1;
     }>;
 
 type AgentActivityReference = Extract<
@@ -525,16 +666,23 @@ export function buildDiscussionTimelineItems<
     readExecutionRunEntry: (runId: string) => AgentActivityEntry | null;
     /** The authorized managed Run list for this Discussion; a Run whose starting message isn't loaded waits for it. */
     workflowRuns?: readonly WorkflowRunSummaryV1[];
+    /** Commit known Run bands with their anchoring messages, retaining the shown page during acquisition. */
+    workflowRunsPending?: boolean;
+    /** Each Run's committed replies published here (`projectWorkflowRunPublishedAnswerIds`); a finished Run ends after its last. */
+    workflowRunAnswerIds?: ReadonlyMap<string, readonly string[]>;
     messageLabels?: ReadonlyMap<string, DiscussionMessageLabelProjection>;
   }>,
   previous: readonly DiscussionTimelineItem<TMessage>[] = [],
 ): readonly DiscussionTimelineItem<TMessage>[] {
+  if (params.workflowRunsPending) return previous;
   const previousMessages = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'human_message' }>>();
   const previousRuns = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_run' }>>();
+  const previousRunEnds = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_run_end' }>>();
   const previousReferences = new Map<string, AgentActivityReference>();
   for (const item of previous) {
     if (item.kind === 'human_message') previousMessages.set(item.message.id, item);
     else if (item.kind === 'workflow_run') previousRuns.set(item.run.id, item);
+    else if (item.kind === 'workflow_run_end') previousRunEnds.set(item.run.id, item);
     else previousReferences.set(item.entry.runId ?? item.subagent.id, item);
   }
   const messageById = new Map(
@@ -610,15 +758,46 @@ export function buildDiscussionTimelineItems<
     else workflowRunsByMessageId.set(origin.messageId, [run]);
   }
 
+  // A finished Run with replies here ends after the last of them that is loaded, in thread order.
+  const runEndsAfterMessageId = new Map<string, WorkflowRunSummaryV1[]>();
+  const endingRunIds = new Set<string>();
+  const threadIndexById = params.workflowRunAnswerIds && params.workflowRunAnswerIds.size > 0
+    ? new Map(params.messages.map((message, index) => [message.id, index])) : null;
+  for (const runs of threadIndexById ? workflowRunsByMessageId.values() : []) {
+    for (const run of runs) {
+      if (!isTerminalWorkflowRunState(run.state)) continue;
+      let lastIndex = -1;
+      for (const answerId of params.workflowRunAnswerIds?.get(run.id) ?? []) {
+        lastIndex = Math.max(lastIndex, threadIndexById?.get(answerId) ?? -1);
+      }
+      const last = params.messages[lastIndex];
+      if (last === undefined) continue;
+      endingRunIds.add(run.id);
+      const atMessage = runEndsAfterMessageId.get(last.id);
+      if (atMessage) atMessage.push(run);
+      else runEndsAfterMessageId.set(last.id, [run]);
+    }
+  }
+
   const items: DiscussionTimelineItem<TMessage>[] = [];
+  const startedRunIds = new Set<string>();
   for (const message of params.messages) {
     const labels = params.messageLabels?.get(message.id);
     const known = previousMessages.get(message.id);
     items.push(known?.message === message && known.labels === labels
       ? known : { kind: 'human_message', message, ...(labels ? { labels } : {}) });
+    // The end row closes an earlier Run before any Run this message starts.
+    for (const run of runEndsAfterMessageId.get(message.id) ?? []) {
+      if (!startedRunIds.has(run.id)) continue;
+      const knownEnd = previousRunEnds.get(run.id);
+      items.push(knownEnd?.run === run ? knownEnd : { kind: 'workflow_run_end', run });
+    }
     for (const run of workflowRunsByMessageId.get(message.id) ?? []) {
+      startedRunIds.add(run.id);
+      const endRow = endingRunIds.has(run.id);
       const knownRun = previousRuns.get(run.id);
-      items.push(knownRun?.run === run ? knownRun : { kind: 'workflow_run', run });
+      items.push(knownRun?.run === run && (knownRun.endRow === true) === endRow ? knownRun
+        : { kind: 'workflow_run', run, ...(endRow ? { endRow: true as const } : {}) });
     }
     items.push(...(referencesByAnchorSeq.get(message.seq) ?? []));
   }

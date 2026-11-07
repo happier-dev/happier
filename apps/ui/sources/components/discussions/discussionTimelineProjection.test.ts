@@ -7,7 +7,7 @@ import {
 } from '@/sync/domains/session/agentActivity';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
-import { buildDiscussionTimelineItems, placeDiscussionRequesterApprovals, projectDiscussionMessageReferences, projectDiscussionMessageLabels, readDiscussionMessagePreview, resolveDiscussionMessageAuthorLabel, resolveDiscussionReplyAttributionLine, resolveDiscussionReplyOutcome, resolveDiscussionWorkflowAttribution, readDiscussionWorkflowResultDetail, resolveDiscussionReplyPresentation, startsDiscussionMessageGroup } from '@/components/discussions/discussionTimelineProjection';
+import { buildDiscussionTimelineItems, placeDiscussionRequesterApprovals, projectDiscussionMessageReferences, projectDiscussionMessageLabels, readDiscussionMessagePreview, resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel, resolveDiscussionMessageSpeakerKind, resolveDiscussionOutwardReply, resolveDiscussionReplyAttributionLine, resolveDiscussionReplyOutcome, resolveDiscussionWorkflowAttribution, readDiscussionWorkflowResultDetail, resolveDiscussionReplyPresentation, startsDiscussionMessageGroup } from '@/components/discussions/discussionTimelineProjection';
 import { t } from '@/text';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
@@ -21,9 +21,35 @@ describe('readDiscussionMessagePreview', () => {
                 blobId: id, mime: 'image/png', sizeBytes: 3, sha256: 'a'.repeat(64),
             } } },
         ] });
-        expect(projection.readableText.match(/diagram\.png/g)).toHaveLength(2);
+        // A thread names a picture as a Session does: Image #1, at each place the author put it.
+        expect(projection.readableText.match(/Image #1/g)).toHaveLength(2);
         expect(projection.inline.get(`attachment:${id}`)?.tokenStarts?.size).toBe(2);
         expect(projection.text.match(/happier-ref:attachment:/g)).toHaveLength(2);
+    });
+
+    it('draws a file the author placed in the text as its inline chip, a picture as Image #N like a Session', () => {
+        const id = '762847e4-14cb-45c2-9e3a-06db902a417a';
+        const ref = `attachment:${id}`;
+        const projection = projectDiscussionMessageReferences({ v: 1, parts: [
+            { t: 'reference', reference: { kind: 'attachment', ref, token: `[graph.png](happier-ref:${ref})`, label: 'graph.png' } },
+            { t: 'text', text: ' from the deploy' },
+            { t: 'attachment', attachment: { kind: 'file', id, name: 'graph.png', file: { blobId: id, mime: 'image/png', sizeBytes: 3, sha256: 'a'.repeat(64) } } },
+        ] }, {}, undefined, 'omit');
+        expect(projection.inline.get(ref)).toMatchObject({ label: 'Image #1', imageNumber: 1 });
+        expect(projection.readableText).toContain('Image #1');
+    });
+
+    it('lets a thread row that draws the files below keep only the chips the author placed', () => {
+        const placed = '762847e4-14cb-45c2-9e3a-06db902a417a';
+        const unplaced = '63d77628-40c9-48c5-93f6-d197c2783ad5';
+        const file = (id: string, name: string) => ({ t: 'attachment' as const, attachment: { kind: 'file' as const, id, name,
+            file: { blobId: id, mime: 'text/plain', sizeBytes: 3, sha256: 'a'.repeat(64) } } });
+        const content = { v: 1 as const, parts: [{ t: 'text' as const, text: `See [notes.txt](happier-ref:attachment:${placed})` },
+            file(placed, 'notes.txt'), file(unplaced, 'log.txt')] };
+        expect(projectDiscussionMessageReferences(content).text).toContain(`happier-ref:attachment:${unplaced}`);
+        const below = projectDiscussionMessageReferences(content, {}, undefined, 'omit');
+        expect(below.text).not.toContain(`happier-ref:attachment:${unplaced}`);
+        expect(below.inline.get(`attachment:${placed}`)?.tokenStarts?.size).toBe(1);
     });
 
     it('keeps file and empty-folder attachments visible without treating their identities as participants', () => {
@@ -104,13 +130,84 @@ describe('resolveDiscussionMessageAuthorLabel', () => {
     });
 
     it('keeps historical and other Accounts distinct from the viewer', () => {
-        const viewer = { accountId: 'viewer', profile: { name: 'Maya Chen' } };
+        const viewer = { serverId: 'home', accountId: 'viewer', profile: { name: 'Maya Chen' } };
         expect(resolveDiscussionMessageAuthorLabel({ authorAccountId: 'other', accountActor: null, createdAt: 0 }, viewer))
             .toBe(t('session.collaboration.discussion.collaborator'));
         expect(resolveDiscussionMessageAuthorLabel({ authorAccountId: 'viewer', accountActor: { v: 1, accountId: 'viewer', profile: null }, createdAt: 1 }, viewer))
             .toBe(t('message.accountActorFormerMember'));
         expect(resolveDiscussionMessageAuthorLabel({ authorAccountId: 'viewer', accountActor: null, createdAt: 1 }, viewer))
             .toBe(t('session.collaboration.discussion.collaborator'));
+        expect(resolveDiscussionMessageAuthorLabel({ authorAccountId: 'other', accountActor: {
+            v: 1, accountId: 'other', accessibility: 'former',
+            profile: { name: 'Visible Bob', firstName: null, lastName: null, username: null, avatarUrl: null },
+        }, createdAt: 1 }, viewer)).toBe(t('message.accountActorFormerMember'));
+    });
+});
+
+describe('resolveDiscussionMessageSpeakerLabel', () => {
+    const person = {
+        authorAccountId: 'owner',
+        accountActor: {
+            v: 1 as const,
+            accountId: 'owner',
+            profile: { name: 'QA owner', firstName: null, lastName: null, username: null, avatarUrl: null },
+        },
+        createdAt: 1,
+    };
+
+    it('projects one speaker identity for person, Agent Session and Workflow Run messages', () => {
+        expect(resolveDiscussionMessageSpeakerLabel({ ...person, producerV1: null }, {
+            session: () => null,
+            workflowRun: () => null,
+        })).toBe('QA owner');
+        expect(resolveDiscussionMessageSpeakerLabel({ ...person, producerV1: {
+            v: 1, kind: 'agent', sessionId: 'session-reviewer', runId: 'run-agent',
+        } }, {
+            session: (sessionId) => sessionId === 'session-reviewer' ? 'Payments reviewer' : null,
+            workflowRun: () => null,
+        })).toBe('Payments reviewer');
+        expect(resolveDiscussionMessageSpeakerLabel({ ...person, producerV1: {
+            v: 1, kind: 'workflow', runId: 'run-release', invocationRecordId: 'invocation-release',
+            invocationAttempt: '0', execution: { kind: 'action', actionId: 'workflow.discussion.round.project' }, outcome: 'answer',
+        } }, {
+            session: () => null,
+            workflowRun: (runId) => runId === 'run-release' ? 'Release review' : null,
+        })).toBe('Release review');
+    });
+});
+
+describe('external channel provenance', () => {
+    // The connection owner's Account posts an inbound email or chat message; the sender picks their own name.
+    const owner = { v: 1 as const, accountId: 'owner', profile: { name: 'Maya Chen', firstName: null, lastName: null, username: null, avatarUrl: null } };
+    const external = (senderDisplayName?: string) => ({
+        id: 'm-ext', authorAccountId: 'owner', accountActor: owner, createdAt: 1, producerV1: null,
+        replyTarget: null,
+        content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'Can you check the invoice?' }],
+            externalSource: { kind: 'channel' as const, providerPluginId: 'happier.channel.email', conversationDisplayName: 'billing@acme.example',
+                ...(senderDisplayName ? { senderDisplayName } : {}) } },
+    });
+    const labels = { account: (accountId: string) => accountId === 'owner' ? 'Maya Chen' : null, session: () => null, workflowRun: () => null };
+
+    it('names the outside sender, never the member whose connection carried it, even when they pick a member name', () => {
+        expect(resolveDiscussionMessageSpeakerKind(external('Maya Chen'))).toBe('external');
+        expect(resolveDiscussionMessageSpeakerLabel(external('Jordan from Acme'), labels)).toBe('Jordan from Acme');
+        expect(resolveDiscussionMessageSpeakerLabel(external(), labels)).not.toBe('Maya Chen');
+        expect(resolveDiscussionMessageSpeakerKind({ ...external(), content: { v: 1, parts: [{ t: 'text', text: 'hi' }] } })).toBe('person');
+        // Posted by the same Account, the outside sender still opens their own byline after the member's message.
+        const memberMessage = { ...external(), content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'Forwarding' }] } };
+        expect(startsDiscussionMessageGroup(external('Maya Chen'), memberMessage)).toBe(true);
+        expect(startsDiscussionMessageGroup(memberMessage, external('Maya Chen'))).toBe(true);
+        expect(startsDiscussionMessageGroup(external('Jordan'), external('Jordan'))).toBe(false);
+    });
+
+    it('says a reply under an external message leaves Happier, through any reply depth', () => {
+        const root = external('Jordan from Acme');
+        const reply = { id: 'm-reply', content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'On it' }] },
+            replyTarget: { kind: 'message' as const, messageId: 'm-ext' } };
+        const byId = new Map<string, unknown>([['m-ext', root], ['m-reply', reply]]) as Parameters<typeof resolveDiscussionOutwardReply>[1];
+        expect(resolveDiscussionOutwardReply('m-ext', byId)?.conversationDisplayName).toBe('billing@acme.example');
+        expect(resolveDiscussionOutwardReply('m-reply', byId)?.conversationDisplayName).toBe('billing@acme.example');
+        expect(resolveDiscussionOutwardReply(null, byId)).toBeNull();
     });
 });
 
@@ -130,8 +227,19 @@ describe('resolveDiscussionReplyAttributionLine', () => {
             .toBe(t('session.collaboration.discussion.attribution.askedBy', { requester: t('session.collaboration.discussion.attribution.you') }));
     });
 
+    it('uses the current thread Account presentation instead of an older requester snapshot', () => {
+        expect(resolveDiscussionReplyAttributionLine(
+            reply('bob', { accountId: 'bob', name: 'Bob Keller' }),
+            viewer,
+            { account: () => t('message.accountActorFormerMember') },
+        )).toBe(t('session.collaboration.discussion.attribution.askedBy', {
+            requester: t('message.accountActorFormerMember'),
+        }));
+    });
+
     it.each([
-        ['former member', { v: 1 as const, accountId: 'bob', profile: null }, t('message.accountActorFormerMember')],
+        ['former member', { v: 1 as const, accountId: 'bob', accessibility: 'former' as const,
+            profile: { name: 'Still visible Bob', firstName: null, lastName: null, username: null, avatarUrl: null } }, t('message.accountActorFormerMember')],
         ['unknown requester', null, t('session.collaboration.discussion.attribution.anotherPerson')],
         ['current member', reply('bob', { accountId: 'bob', name: 'Bob Keller' }).requesterAccountActor, 'Bob Keller'],
         ['unnamed current member', reply('bob', { accountId: 'bob', name: '  ' }).requesterAccountActor, t('message.accountActorUnnamedMember')],
@@ -168,6 +276,17 @@ function message(id: string, seq: number) {
     return { id, seq };
 }
 
+it('commits an anchored message and its Run bands together, retaining the shown timeline during acquisition', () => {
+    const messages = [message('question', 1), message('answer', 2)];
+    const params = { serverId: 'home-1', discussionId: 'discussion-1', messages, subagents: [],
+        readExecutionRunEntry: () => null, workflowRunAnswerIds: new Map([['run-ready', ['answer']]]) };
+    expect(buildDiscussionTimelineItems({ ...params, workflowRuns: [], workflowRunsPending: true })).toEqual([]);
+    const shown = buildDiscussionTimelineItems({ ...params,
+        workflowRuns: [{ ...workflowRun('run-ready', { messageId: 'question' }), state: 'succeeded' }] });
+    expect(shown.map(item => item.kind)).toEqual(['human_message', 'workflow_run', 'human_message', 'workflow_run_end']);
+    expect(buildDiscussionTimelineItems({ ...params, workflowRunsPending: true, workflowRuns: [] }, shown)).toBe(shown);
+});
+
 it('publishes only the arriving timeline model across 300 messages and three Runs', () => {
     const messages = Array.from({ length: 300 }, (_, index) => message(`message-${index + 1}`, index + 1));
     const params = { serverId: 'home-1', discussionId: 'discussion-1', messages, subagents: [],
@@ -178,6 +297,7 @@ it('publishes only the arriving timeline model across 300 messages and three Run
     const next = buildDiscussionTimelineItems({ ...params, messages: [...messages, message('arrival', 301)] }, previous);
     const current = new Set(next);
     const republished = previous.filter(item => !current.has(item)).length;
+    console.info('Discussion unchanged timeline models republished', republished);
     expect(republished).toBe(0);
     expect(next).toHaveLength(previous.length + 1);
 });
@@ -188,6 +308,7 @@ it('keeps unchanged requester-card groups stable when another message arrives', 
     const previous = placeDiscussionRequesterApprovals(messages, approvals);
     const next = placeDiscussionRequesterApprovals([...messages, { id: 'arrival', producerV1: null }], approvals, previous);
     const republished = [...previous].filter(([id, group]) => next.get(id) !== group).length;
+    console.info('Discussion unchanged approval groups republished', republished);
     expect(republished).toBe(0);
 });
 
@@ -362,6 +483,35 @@ describe('buildDiscussionTimelineItems', () => {
         expect(items.map((item) => item.kind === 'human_message' ? item.message.id
             : item.kind === 'workflow_run' ? `run:${item.run.id}` : 'reference')).toEqual([
             'message-1', 'run:wf-first', 'message-2', 'run:wf-later', 'message-3',
+        ]);
+    });
+
+    it('closes a finished run with one end row right after the last answer it published here', () => {
+        const items = buildDiscussionTimelineItems({
+            serverId: 'home-1',
+            discussionId: 'discussion-1',
+            messages: [message('message-1', 1), message('message-2', 2), message('message-3', 3), message('message-4', 4)],
+            subagents: [],
+            readExecutionRunEntry: () => null,
+            workflowRuns: [
+                { ...workflowRun('wf-done', { messageId: 'message-1' }), state: 'succeeded' as const },
+                workflowRun('wf-live', { messageId: 'message-1' }),
+                { ...workflowRun('wf-quiet', { messageId: 'message-1' }), state: 'cancelled' as const },
+                { ...workflowRun('wf-next', { messageId: 'message-3' }), state: 'succeeded' as const },
+            ],
+            workflowRunAnswerIds: new Map([
+                ['wf-done', ['message-3', 'message-2']],
+                ['wf-live', ['message-2']],
+                ['wf-next', ['message-4', 'message-unloaded']],
+            ]),
+        });
+
+        expect(items.map((item) => item.kind === 'human_message' ? item.message.id
+            : item.kind === 'workflow_run' ? `run:${item.run.id}${item.endRow ? ':ends-below' : ''}`
+                : item.kind === 'workflow_run_end' ? `end:${item.run.id}` : 'reference')).toEqual([
+            'message-1', 'run:wf-done:ends-below', 'run:wf-live', 'run:wf-quiet', 'message-2',
+            // The end row closes the earlier run before the next run that message started.
+            'message-3', 'end:wf-done', 'run:wf-next:ends-below', 'message-4', 'end:wf-next',
         ]);
     });
 

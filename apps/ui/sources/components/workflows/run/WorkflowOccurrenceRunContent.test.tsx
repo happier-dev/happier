@@ -1,5 +1,5 @@
 import React from 'react';
-import { AutomationOccurrenceKeyV1Schema } from '@happier-dev/protocol';
+import { AutomationOccurrenceKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,13 +12,21 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { AutomationSourceSelectorIdV1Schema, AutomationTriggerIdSchema, AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, materializeAutomationRunExecutionRecipeV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
+import { AutomationSourceSelectorIdV1Schema} from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationV3RunDetailSchema, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
+import { createCanonicalJsonSigningInput} from '@happier-dev/protocol/crypto/canonicalJson';
+import { deriveAutomationOccurrenceKeyV1} from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { materializeAutomationRunExecutionRecipeV1, serializeAutomationRunExecutionRecipeV1} from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { sealAutomationRunResultStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
+import { sealAutomationRunFailureDetailStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { installAutomationScreensCommonModuleMocks } from '@/components/automations/screens/automationScreensTestHelpers';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1', serverId: undefined as string | undefined }));
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => false));
+const modalAlertSpy = vi.hoisted(() => vi.fn());
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
@@ -45,7 +53,7 @@ installAutomationScreensCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
             spies: {
-                alert: vi.fn(),
+                alert: modalAlertSpy,
                 confirm: modalConfirmSpy,
                 prompt: vi.fn(),
             },
@@ -279,12 +287,14 @@ describe('canonical Run page occurrence target', () => {
         routeParamsState.serverId = undefined;
         routerPushSpy.mockReset();
         modalConfirmSpy.mockReset();
+        modalAlertSpy.mockReset();
         modalConfirmSpy.mockResolvedValue(false);
         harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+        const { tryWriteServerEnabledBitInPlace} = await import('@happier-dev/protocol/features/serverEnabledBit');
         const features = createRootLayoutFeaturesResponse();
         tryWriteServerEnabledBitInPlace(features, 'automations', true);
+        tryWriteServerEnabledBitInPlace(features, 'workflows', true);
         harness.answer(serverId, '/v1/features', { body: features });
         harness.answer(serverId, '/v1/features/authenticated', { body: features });
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -293,6 +303,7 @@ describe('canonical Run page occurrence target', () => {
         harness.answer(serverId, LIST_PATH, { body: { runs: [], nextCursor: null } });
         const { storage } = await import('@/sync/domains/state/storage');
         storage.setState({ machines: {}, machineListByServerId: {}, workflowRunsById: {}, automationRunIdsByAutomationId: {} });
+        await harness.setActionPolicy(serverId, ['workflow.run.cancel', 'automation.run.reply_handoff.retry', 'automation.run.result.redeliver'], 'ui', 'allowed');
     });
     afterEach(async () => {
         await connection?.dispose();
@@ -306,6 +317,18 @@ describe('canonical Run page occurrence target', () => {
         expect(screen.getTextContent()).toContain('Finished');
         screen.pressByTestId('automation-run-detail-produced-session');
         expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('/session/session-produced-1'));
+    });
+
+    it.each(['interrupted', 'waiting_for_review'] as const)('keeps cached and opened Workflow %s status truthful', async (workflowRunState) => {
+        const row = { ...run({ state: 'running' }), workflowRunState };
+        const pending = createDeferred<void>();
+        harness.answer(serverId, DETAIL_PATH, { respondAfter: pending.promise, body: detail(row) });
+        const screen = await open(row);
+        const label = workflowRunState === 'waiting_for_review' ? 'workStatus.buckets.needs_you' : 'workflows.runState.interrupted';
+        expect(screen.getTextContent()).toContain(label);
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(label));
+        expect(screen.getTextContent()).not.toContain('automations.detail.runMeta.state.running');
     });
 
     it('opens Home B with the same Run ids while Home A is active, without reading A content', async () => {
@@ -560,28 +583,99 @@ describe('canonical Run page occurrence target', () => {
         expect(screen.findAllByProps({ title: 'common.cancel' })).toHaveLength(0);
     });
 
-    it('cancels through the Run owner only after confirmation and fences the pre-cancel direct response', async () => {
+    it('asks before cancelling and then cancels once through the canonical Run Action', async () => {
+        await harness.setActionPolicy(serverId, 'workflow.run.cancel', 'ui', 'ask');
+        const cancelPath = '/v3/automations/runs/workflow-storage';
+        harness.answer(serverId, 'POST ' + cancelPath, { body: { intent: 'cancelled', run: createWorkflowRunSummaryFixture({
+            id: 'run-1', ownerAccountId: 'account-a', state: 'cancelled', revision: 2,
+            workflowCustodyState: null, finishedAt: new Date(12).toISOString(),
+        }) } });
+        // The existing HTTP route remains supported, but this surface must use the one public Action.
+        const legacyCancelPath = '/v3/automations/runs/run-1/cancel';
+        const queuedRun = run({ state: 'queued', errorCode: null });
+        // Keep the direct response consistent with the cached Run: an equally
+        // current terminal response correctly removes the Cancel control.
+        harness.answer(serverId, DETAIL_PATH, { body: detail(queuedRun) });
+        const screen = await open(queuedRun);
+        await act(async () => screen.findByProps({ title: 'common.cancel' }).props.onPress());
+        const readCancelApproval = () => harness.artifacts(serverId).list()
+            .find(row => harness.artifacts(serverId).readPlainBody(row.id)?.includes('workflow.run.cancel'));
+        await waitForHomeGovernance(() => expect(readCancelApproval()).toBeTruthy());
+        expect(harness.requestsFor(cancelPath)).toHaveLength(0);
+        expect(modalAlertSpy.mock.calls).toEqual([]);
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const decided = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: readCancelApproval()!.id, decision: 'approve' }, {
+            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account-a',
+        });
+        expect(decided).toMatchObject({ ok: true, result: { status: 'executed' } });
+        // The approved execution publishes the cancelled Run to the projection this screen reads.
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Cancelled'));
+        expect(screen.findAllByProps({ title: 'common.cancel' })).toHaveLength(0);
+        expect(harness.requestsFor(cancelPath)).toHaveLength(1);
+        expect(harness.requestsFor(legacyCancelPath)).toHaveLength(0);
+    });
+
+    it('cancels through the Run owner and fences the pre-cancel direct response', async () => {
+        await harness.setActionPolicy(serverId, 'workflow.run.cancel', 'ui', 'allowed');
         const pending = createDeferred<void>();
         harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'running', updatedAt: 12, errorCode: 'stale-direct-after-cancel' })), respondAfter: pending.promise });
-        const cancelPath = '/v3/automations/runs/run-1/cancel';
-        harness.answer(serverId, 'POST ' + cancelPath, { body: { run: run({ state: 'cancelled', revision: 2, finishedAt: 12, updatedAt: 12, errorCode: null }) } });
+        const cancelPath = '/v3/automations/runs/workflow-storage';
+        harness.answer(serverId, 'POST ' + cancelPath, { body: { intent: 'cancelled', run: createWorkflowRunSummaryFixture({
+            id: 'run-1', ownerAccountId: 'account-a', state: 'cancelled', revision: 2,
+            workflowCustodyState: null, finishedAt: new Date(12).toISOString(),
+        }) } });
+        const legacyCancelPath = '/v3/automations/runs/run-1/cancel';
         const screen = await open(run({ state: 'queued', errorCode: null }));
         await waitForHomeGovernance(() => expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1));
-        const cancel = screen.findByProps({ title: 'common.cancel' });
-        await act(async () => cancel.props.onPress());
-        expect(harness.requestsFor(cancelPath)).toHaveLength(0);
-        expect(modalConfirmSpy).toHaveBeenCalledWith('Cancel Run?', 'This stops the Run when possible.', { cancelText: 'common.keepEditing', confirmText: 'Cancel Run', destructive: true });
-        modalConfirmSpy.mockResolvedValueOnce(true);
         // A fresh read after the mutation observes the canonical cancelled row;
         // only the already-issued response remains deliberately stale.
         harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'cancelled', revision: 2,
             finishedAt: 12, updatedAt: 12, errorCode: null })) });
-        await act(async () => cancel.props.onPress());
+        await act(async () => screen.findByProps({ title: 'common.cancel' }).props.onPress());
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Cancelled'));
         await act(async () => pending.resolve());
         expect(screen.getTextContent()).not.toContain('stale-direct-after-cancel');
         expect(screen.findAllByProps({ title: 'common.cancel' })).toHaveLength(0);
         expect(harness.requestsFor(cancelPath)).toHaveLength(1);
+        expect(harness.requestsFor(legacyCancelPath)).toHaveLength(0);
+        expect(modalAlertSpy.mock.calls).toEqual([]);
+    });
+
+    it('routes blocked reply handoff through configurable Action approval before the Run write', async () => {
+        const retryPath = '/v3/automations/runs/run-1/retry-reply-handoff';
+        const row = run({ state: 'succeeded', replyHandoffState: 'blocked', replyHandoffAttempt: 2 });
+        harness.answer(serverId, 'POST ' + retryPath, { body: { run: { ...row, revision: 2, replyHandoffState: 'ready', updatedAt: 12 } } });
+        await harness.requireUiApproval(serverId, 'automation.run.reply_handoff.retry');
+        const screen = await respond(row);
+        await screen.pressByTestIdAsync('automation-run-retry-reply-handoff');
+        expect(harness.requestsFor(retryPath)).toHaveLength(0);
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list().some(row => harness.artifacts(serverId).readPlainBody(row.id)?.includes('automation.run.reply_handoff.retry'))).toBe(true));
+        const approval = harness.artifacts(serverId).list().find(row => harness.artifacts(serverId).readPlainBody(row.id)?.includes('automation.run.reply_handoff.retry'))!;
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const result = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: approval.id, decision: 'approve' }, {
+            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account-a',
+        });
+        expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(harness.requestsFor(retryPath)).toHaveLength(1);
+    });
+
+    it('does not issue HTTP for an occurrence Action disabled in this Home', async () => {
+        const path = '/v3/automations/runs/run-1/retry-reply-handoff';
+        await harness.setActionPolicy(serverId, 'automation.run.reply_handoff.retry', 'ui', 'off');
+        const screen = await respond(run({ state: 'succeeded', replyHandoffState: 'blocked' }));
+        await screen.pressByTestIdAsync('automation-run-retry-reply-handoff');
+        expect(harness.requestsFor(path)).toHaveLength(0);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+    });
+
+    it('preserves a redelivery revision conflict through the ordinary Action result', async () => {
+        const path = '/v3/automations/runs/run-1/deliver-result-again';
+        harness.answer(serverId, 'POST ' + path, { status: 409, body: { error: 'automation_run_revision_conflict' } });
+        const { executeOccurrenceRunAction } = await import('./occurrenceRunActions');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        await expect(executeOccurrenceRunAction('automation.run.result.redeliver', { runId: 'run-1', expectedRevision: 7 }, captureActiveServerAccountScopeLifetime()))
+            .rejects.toMatchObject({ code: 'automation_run_revision_conflict' });
+        expect(harness.requestsFor(path).map(request => request.input)).toEqual([{ expectedRevision: 7 }]);
     });
 
     it('recovers blocked reply handoff through the Run owner', async () => {
@@ -604,6 +698,7 @@ describe('canonical Run page occurrence target', () => {
     });
 
     it('delivers accepted custody again only after confirmation and sends the exact displayed revision', async () => {
+        await harness.setActionPolicy(serverId, 'automation.run.result.redeliver', 'ui', 'ask');
         const row = run({ state: 'succeeded', replyHandoffState: 'accepted', revision: 7 });
         const path = '/v3/automations/runs/run-1/deliver-result-again';
         harness.answer(serverId, 'POST ' + path, { body: { run: { ...row, revision: 8, updatedAt: 12, replyHandoffState: 'ready' } } });
@@ -611,7 +706,7 @@ describe('canonical Run page occurrence target', () => {
         expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' })).toHaveLength(0);
         await screen.pressByTestIdAsync('automation-run-deliver-result-again');
         expect(harness.requestsFor(path)).toHaveLength(0);
-        modalConfirmSpy.mockResolvedValueOnce(true);
+        await harness.setActionPolicy(serverId, 'automation.run.result.redeliver', 'ui', 'allowed');
         await screen.pressByTestIdAsync('automation-run-deliver-result-again');
         expect(harness.requestsFor(path)).toHaveLength(1);
         expect(harness.requestsFor(path)[0].input).toEqual({ expectedRevision: 7 });

@@ -1,23 +1,28 @@
-import nacl from 'tweetnacl';
-import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-const { machinePluginUiResourceRead } = await import('@/sync/ops/machineContributionRegistryProjection');
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import nacl from 'tweetnacl';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spawn/spawnSessionRpcTimeout';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 // Only authenticated HTTP and device credential IO leave this process.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { executeOriginalAccountActionTransport, executeOriginalAccountMachineAction, readOriginalAccountActionMachine } = await import('./externalActionAccountTransport');
+const { machinePluginUiResourceRead } = await import('@/sync/ops/machineContributionRegistryProjection');
 let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
 let serverId: string;
 const path = '/v1/actions/plugins.uninstall';
@@ -50,36 +55,6 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
-    it.each(['matching', 'receipt', 'mismatched', 'malformed'] as const)('preserves the Machine availability mint refusal through the UI logs Action (%s)', async reply => {
-        if (!account) throw new Error('Expected captured Account');
-        const actionId = 'machines.services.logs.read';
-        const input = { serverId, machineId: 'machine-1', serviceId: 'worker' };
-        const diagnostic = { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' };
-        const row = { ...createPlainMachineRowFixture({ id: input.machineId, accountId: 'owner' }), installationId: 'installation-1' };
-        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
-        }) });
-        const actionPath = `/v1/actions/${actionId}`;
-        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
-            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable',
-                requestId: reply === 'mismatched' ? 'another-request' : request.envelope.requestId,
-                ...(reply === 'receipt' ? { managedAdmission: { managedId: 'managed-machine' } } : {}),
-                diagnostic: reply === 'malformed' ? { ...diagnostic, machineId: 'private-identifier' } : diagnostic } };
-        } });
-        const result = await executeOriginalAccountMachineAction({ account, actionId, input,
-            requestId: 'ui-machine-availability-mint', machineId: input.machineId,
-            machineServiceLogsGeneration: { expectedGeneration: 'selected-native-generation' } });
-        expect(result).toMatchObject(reply === 'matching' || reply === 'receipt'
-            ? { ok: false, errorCode: 'target_unavailable', effectAttempted: false, details: reply === 'receipt'
-                ? { error: 'invalid_request', code: 'target_unavailable', requestId: 'ui-machine-availability-mint',
-                    managedAdmission: { managedId: 'managed-machine' }, diagnostic } : diagnostic }
-            : { ok: false, errorCode: 'admission_unavailable' });
-        if (reply === 'mismatched' || reply === 'malformed') expect(result).not.toHaveProperty('details');
-        expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
-        expect(homes.requestsFor(actionPath)).toHaveLength(0);
-    });
-
     it.each(['matching', 'mismatched'] as const)('preserves the Machine availability cause and remedy with %s request correlation', async correlation => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
         const refusal = { error: 'invalid_request', code: 'target_unavailable',
@@ -88,6 +63,11 @@ describe('captured Account Action response decoding', () => {
         expect(await execute()).toMatchObject(correlation === 'matching'
             ? { ok: false, errorCode: 'target_unavailable', effectAttempted: false, details: diagnostic }
             : { ok: false, errorCode: 'invalid_action_output' });
+    });
+    it('marks an authenticated pre-open refusal as having attempted no effect', async () => {
+        const refusal = projectExternalActionHttpError('credential_scope_denied');
+        homes.answer(serverId, path, { status: refusal.statusCode, body: refusal.payload });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false });
     });
     it('mints retained managed follow-up authorization even for the requester own ordinary Machine', async () => {
         if (!account) throw new Error('Expected captured Account');
@@ -119,6 +99,305 @@ describe('captured Account Action response decoding', () => {
         expect(admittedContinuation).toEqual(managedContinuation);
         expect(forwardedEnvelope).toMatchObject({ executionAuthorization: { token: 'home-managed-follow-up-proof' } });
     });
+    it('does not dispatch retained managed follow-up when Home refuses authorization', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        answerOwnedMachine();
+        const actionId = 'machines.setup.plan';
+        const requestId = 'refused-managed-setup';
+        const actionPath = `/v1/actions/${actionId}`;
+        const refusal = projectExternalActionHttpError('action_not_admitted', requestId);
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { status: refusal.statusCode, body: refusal.payload });
+        expect(await executeOriginalAccountMachineAction({ account, actionId, requestId, machineId: 'machine-1',
+            input: { homeId: binding.serverIdentityId, machineId: 'machine-1' },
+            managedContinuation: { managedId: 'managed-1', creationRequestId: 'create-1', expectedIntentRevision: 0 } }))
+            .toMatchObject({ ok: false, errorCode: 'action_not_admitted' });
+        expect(homes.requestsFor(actionPath)).toHaveLength(0);
+    });
+    it.each(['target-active', 'another-active'] as const)('keeps the mounted Services list loading until an admitted empty or unavailable answer settles (%s)', async focus => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const priorStorage = storage.getState();
+        const priorSnapshot = runtime.getAppliedActiveServerSnapshot();
+        const priorAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+        await initializeRealAppRuntimeForTests();
+        installHomeGovernanceBoundaries(homes);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        const focusedHome = focus === 'target-active' ? serverId : await homes.addHome({
+            name: 'Other focused Home', serverUrl: 'https://other-services-home.test',
+            serverIdentityId: 'srv_other_services', accountId: 'other-owner', currentAccount: true, active: false,
+        });
+        await setActiveServerId(focusedHome, { scope: 'device' });
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://plugin-transport.test', { serverId });
+        if (!credentials) throw new Error('Services list Home credentials unavailable');
+        const focusedCredentials = focusedHome === serverId ? credentials : await TokenStorage.getCredentialsForServerUrl(
+            'https://other-services-home.test', { serverId: focusedHome });
+        if (!focusedCredentials) throw new Error('Focused Home credentials unavailable');
+        await restoreConnectionToActiveServer(focusedCredentials);
+        const actionId = 'machines.services.list';
+        const actionPath = `/v1/actions/${actionId}`;
+        const input = { serverId, machineId: 'machine-1' };
+        const row = { ...createPlainMachineRowFixture({ id: input.machineId, accountId: 'owner' }), installationId: 'installation-1' };
+        answerOwnedMachine();
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-list-loading-proof', binding: { ...binding, actionId, requestId: envelope.requestId,
+                machineId: input.machineId, installationId: row.installationId, custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } } };
+        } });
+        let finishRead!: () => void;
+        const readGate = new Promise<void>(resolve => { finishRead = resolve; });
+        let heldReads = 0;
+        let resourceReads = 0;
+        let invalidate: (() => void) | undefined;
+        let current: { kind: 'snapshot'; services: [] } | { kind: 'unavailable'; reason: 'admission_unavailable' } = { kind: 'snapshot', services: [] };
+        const content = () => { const bytes = Buffer.from(JSON.stringify(current)); return { contentType: 'application/json',
+            digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytesBase64: bytes.toString('base64') }; };
+        if (!account) throw new Error('Captured Services list Account unavailable');
+        const rpcInput = { ...input, serverId: account.serverId };
+        let checkingAddressedFrontDoor = true;
+        // The incumbent finite list uses Machine RPC, while the replacement Resource
+        // uses the original-Account HTTP Action. Both stop at their real network edge.
+        const socketBoundary = installDisconnectedServerSocketBoundary(socket => {
+            configureConnectedServerSocketBoundary(socket);
+            socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (...emission) => {
+                const [event, payload] = emission;
+                if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
+                    || !('method' in payload) || payload.method !== `${input.machineId}:${actionId}`
+                    || !('params' in payload)) throw new Error('Unexpected Services list Socket.IO request');
+                expect(payload.params).toEqual(rpcInput);
+                if (checkingAddressedFrontDoor) return { ok: true, result: current };
+                heldReads++;
+                await readGate;
+                return { ok: true, result: current };
+            });
+        }, { serverUrl: 'https://plugin-transport.test', token: credentials.token });
+        homes.answer(serverId, actionPath, { select: async (body, request) => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
+            const reply = (result: unknown) => ({ body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
+            const continuation = envelope.resourceContinuation;
+            if (!continuation) { heldReads++; await readGate; return reply(current); }
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                heldReads++; resourceReads++; await readGate; return reply({ ok: true, resource: continuation.params.resource, ...content() });
+            }
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
+                return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest });
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT)
+                return new Promise<ReturnType<typeof reply>>(resolve => {
+                    const subscriptionId = continuation.params.subscriptionId;
+                    const finish = (value: unknown) => { invalidate = undefined;
+                        request.signal?.removeEventListener('abort', aborted); resolve(reply(value)); };
+                    const aborted = () => finish({ ok: true, status: 'idle' });
+                    invalidate = () => finish({ ok: true, status: 'event', event: {
+                        version: 1, kind: 'invalidated', subscriptionId, digest: content().digest,
+                    } });
+                    request.signal?.addEventListener('abort', aborted, { once: true });
+                    if (request.signal?.aborted) aborted();
+                });
+            return reply({ ok: true, closed: true });
+        } });
+        const { useMachineServicesList } = await import('@/components/machines/services/useMachineServices');
+        const observations: Array<ReturnType<typeof useMachineServicesList>> = [];
+        let unmount = async () => {};
+        try {
+            // An explicitly addressed Home remains reachable while another Home
+            // owns focused Sync. The Resource cannot narrow that existing contract.
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            expect(await createFrontDoorActionExecute()(actionId, input,
+                { surface: 'ui', authority: 'present_user', serverId })).toMatchObject({ ok: true, result: current });
+            checkingAddressedFrontDoor = false;
+            const hook = await renderHook(() => { const value = useMachineServicesList({ ...input, active: true });
+                observations.push(value); return value; });
+            unmount = () => hook.unmount();
+            await vi.waitFor(() => expect(heldReads, JSON.stringify({
+                states: observations.map(value => ({ pending: value.pending, errorCode: value.error?.code, unavailable: value.unavailable })),
+                requests: homes.requests.map(request => ({ method: request.method, path: request.path })),
+            })).toBeGreaterThan(0));
+            expect(observations.length).toBeGreaterThan(0);
+            expect(observations.every(value => value.pending && value.rows === null && value.unavailable === null)).toBe(true);
+            await act(async () => { finishRead(); });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ rows: [], unavailable: null, pending: false }));
+            await vi.waitFor(() => expect(invalidate).toBeTypeOf('function'));
+            const beforeInvalidation = resourceReads;
+            current = { kind: 'unavailable', reason: 'admission_unavailable' };
+            await act(async () => { invalidate?.(); });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ rows: null, unavailable: 'admission_unavailable', pending: false }));
+            // This is the client READ half of the existing digest-then-READ transport.
+            expect(resourceReads).toBe(beforeInvalidation + 1);
+        } finally {
+            finishRead();
+            await unmount();
+            socketBoundary.dispose();
+            await disconnectActiveServerConnection();
+            storage.setState(priorStorage, true);
+            runtime.publishAppliedActiveServerSnapshot(priorSnapshot, priorAvailable);
+        }
+    });
+    it('does no hidden first-read work and never exposes a prior generation in a mounted logs hook', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const priorStorage = storage.getState();
+        const priorSnapshot = runtime.getAppliedActiveServerSnapshot();
+        const priorAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+        await initializeRealAppRuntimeForTests();
+        installHomeGovernanceBoundaries(homes);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await setActiveServerId(serverId, { scope: 'device' });
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://plugin-transport.test', { serverId });
+        if (!credentials) throw new Error('Log generation Home credentials unavailable');
+        await restoreConnectionToActiveServer(credentials);
+        const actionId = 'machines.services.logs.read';
+        const input = { serverId, machineId: 'machine-1', serviceId: 'worker' };
+        const row = { ...createPlainMachineRowFixture({ id: input.machineId, accountId: 'owner' }), installationId: 'installation-1' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        const actionPath = `/v1/actions/${actionId}`;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-hook-log-generation', binding: {
+                ...binding, actionId, requestId: envelope.requestId, machineId: input.machineId,
+                installationId: row.installationId, custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        let logText = 'old generation output';
+        homes.answer(serverId, actionPath, { select: body => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result: {
+                kind: 'page', page: { sourceRevision: 'source', text: logText, nextCursor: null, truncated: false },
+            } } } };
+        } });
+        const { useMachineServiceFirstLogRead } = await import('@/components/machines/services/useMachineServices');
+        const observations: Array<{ generation: string | null; state: ReturnType<typeof useMachineServiceFirstLogRead>['state'] }> = [];
+        const hook = await renderHook<ReturnType<typeof useMachineServiceFirstLogRead>, Parameters<typeof useMachineServiceFirstLogRead>[0]>(props => {
+            const value = useMachineServiceFirstLogRead(props);
+            observations.push({ generation: props.expectedGeneration, state: value.state });
+            return value;
+        }, { initialProps: { ...input, expectedGeneration: 'generation-1', active: false } });
+        try {
+            await act(async () => { await hook.getCurrent().read(); });
+            expect(homes.requestsFor(actionPath)).toHaveLength(0);
+            await hook.rerender({ ...input, expectedGeneration: 'generation-1', active: true });
+            await act(async () => { await hook.getCurrent().read(); });
+            expect(hook.getCurrent().state).toMatchObject({ kind: 'read', value: { page: { text: 'old generation output' } } });
+            await hook.rerender({ ...input, expectedGeneration: 'generation-2', active: true });
+            expect(observations.filter(value => value.generation === 'generation-2').every(value => value.state.kind !== 'read')).toBe(true);
+            expect(homes.requestsFor(actionPath)).toHaveLength(1);
+            await act(async () => { await hook.getCurrent().read(); });
+            expect(hook.getCurrent().state).toMatchObject({ kind: 'read' });
+            await hook.rerender({ ...input, expectedGeneration: null, active: true });
+            expect(observations.filter(value => value.generation === null).every(value => value.state.kind !== 'read')).toBe(true);
+            await act(async () => { await hook.getCurrent().read(); });
+            expect(hook.getCurrent().state).toEqual({ kind: 'idle' });
+            expect(homes.requestsFor(actionPath)).toHaveLength(2);
+            await hook.rerender({ ...input, expectedGeneration: 'generation-2', active: true });
+            expect(hook.getCurrent().state).toMatchObject({ kind: 'read' });
+            const retiredLifetime = hook.getCurrent().accountLifetime;
+            if (!retiredLifetime) throw new Error('Expected the requested Home credential lifetime');
+            // Retire the requested Home through its real credential owner, not
+            // ambient focused-runtime publications that this binding ignores.
+            await act(async () => {
+                expect(await TokenStorage.removeCredentialsForServerUrl('https://plugin-transport.test', { serverId })).toBe(true);
+            });
+            expect(retiredLifetime.isCurrent()).toBe(false);
+            await vi.waitFor(() => expect(hook.getCurrent().accountLifetime).toBeNull());
+            expect(hook.getCurrent().state).toEqual({ kind: 'idle' });
+            expect(JSON.stringify(hook.getCurrent().state)).not.toContain('old generation output');
+            await hook.rerender({ ...input, expectedGeneration: 'generation-2', active: false });
+            await act(async () => { await hook.getCurrent().read(); });
+            expect(hook.getCurrent().state).toEqual({ kind: 'idle' });
+            expect(homes.requestsFor(actionPath)).toHaveLength(2);
+            logText = 'fresh credential output';
+            await act(async () => { await homes.switchAccount(serverId, 'owner', { currentAccount: true }); });
+            await vi.waitFor(() => expect(hook.getCurrent().accountLifetime?.isCurrent()).toBe(true));
+            expect(hook.getCurrent().accountLifetime).not.toBe(retiredLifetime);
+            expect(hook.getCurrent().state).toEqual({ kind: 'idle' });
+            expect(homes.requestsFor(actionPath)).toHaveLength(2);
+            await hook.rerender({ ...input, expectedGeneration: 'generation-2', active: true });
+            await act(async () => { await hook.getCurrent().read(); });
+            expect(hook.getCurrent().state).toMatchObject({ kind: 'read', value: { page: { text: 'fresh credential output' } } });
+            expect(homes.requestsFor(actionPath)).toHaveLength(3);
+        } finally {
+            await hook.unmount();
+            await disconnectActiveServerConnection();
+            storage.setState(priorStorage, true);
+            runtime.publishAppliedActiveServerSnapshot(priorSnapshot, priorAvailable);
+        }
+    });
+
+    it.each(['matching', 'receipt', 'mismatched', 'malformed'] as const)('preserves the Machine availability mint refusal through the UI logs Action (%s)', async reply => {
+        if (!account) throw new Error('Expected captured Account');
+        const actionId = 'machines.services.logs.read';
+        const input = { serverId, machineId: 'machine-1', serviceId: 'worker' };
+        const diagnostic = { reason: 'machine_installation_missing', requiredFact: 'machine_installation', remedy: 'register_machine' };
+        const row = { ...createPlainMachineRowFixture({ id: input.machineId, accountId: 'owner' }), installationId: 'installation-1' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        const actionPath = `/v1/actions/${actionId}`;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable',
+                requestId: reply === 'mismatched' ? 'another-request' : request.envelope.requestId,
+                ...(reply === 'receipt' ? { managedAdmission: { managedId: 'managed-machine' } } : {}),
+                diagnostic: reply === 'malformed' ? { ...diagnostic, machineId: 'private-identifier' } : diagnostic } };
+        } });
+        const result = await executeOriginalAccountMachineAction({ account, actionId, input,
+            requestId: 'ui-machine-availability-mint', machineId: input.machineId,
+            machineServiceLogsGeneration: { expectedGeneration: 'selected-native-generation' } });
+        expect(result).toMatchObject(reply === 'matching' || reply === 'receipt'
+            ? { ok: false, errorCode: 'target_unavailable', effectAttempted: false, details: reply === 'receipt'
+                ? { error: 'invalid_request', code: 'target_unavailable', requestId: 'ui-machine-availability-mint',
+                    managedAdmission: { managedId: 'managed-machine' }, diagnostic } : diagnostic }
+            : { ok: false, errorCode: 'admission_unavailable' });
+        if (reply === 'mismatched' || reply === 'malformed') expect(result).not.toHaveProperty('details');
+        expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
+        expect(homes.requestsFor(actionPath)).toHaveLength(0);
+    });
+
+    it('keeps the selected native generation through the real UI logs front door', async () => {
+        const actionId = 'machines.services.logs.read';
+        const input = { serverId, machineId: 'machine-1', serviceId: 'worker' };
+        const machineServiceLogsGeneration = { expectedGeneration: 'selected-native-generation' };
+        const row = { ...createPlainMachineRowFixture({ id: input.machineId, accountId: 'owner' }),
+            installationId: 'installation-1' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        const actionPath = `/v1/actions/${actionId}`;
+        let receivedEnvelope: unknown;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-selected-log-generation', binding: {
+                ...binding, actionId, requestId: envelope.requestId, machineId: input.machineId,
+                installationId: row.installationId, custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        const page = { kind: 'page', page: { sourceRevision: 'source', text: 'current output', nextCursor: null, truncated: false } };
+        homes.answer(serverId, actionPath, { select: body => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
+            receivedEnvelope = envelope;
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result: page } } };
+        } });
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        expect(await createFrontDoorActionExecute()(actionId, input, { surface: 'ui', serverId,
+            expectedAccountId: 'owner', machineServiceLogsResource: machineServiceLogsGeneration }))
+            .toEqual({ ok: true, result: page });
+        expect(receivedEnvelope).toMatchObject({ input, machineServiceLogsGeneration });
+        expect(receivedEnvelope).not.toHaveProperty('resourceContinuation');
+    });
+
     it('routes a native host Resource read through its original Account logs Action', async () => {
         const actionId = 'machines.services.logs.read';
         const resource = { hostRead: 'machines.services.logs' as const,
@@ -182,6 +461,39 @@ describe('captured Account Action response decoding', () => {
         expect(await executeOriginalAccountActionTransport(request)).toEqual({ ok: true, result: { accepted: true } });
         expect(mintedEnvelope).toMatchObject({ input, resourceContinuation, machineServiceLogsGeneration });
         expect(receivedEnvelope).toEqual(mintedEnvelope);
+    });
+
+    it('checks the app demand in Home proof before forwarding requester custody', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const appBinding = { ...binding, actionId: 'registries.updates.check', requestId: 'app-update' };
+        const input = { kind: 'app', environments: [{ environmentId: 'selected', expectedRevision: 3 }] };
+        const actionPath = '/v1/actions/registries.updates.check';
+        const keys = nacl.sign.keyPair();
+        let variant: 'missing' | 'substituted' | 'current' = 'missing';
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            const demand = projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1({ actionId: appBinding.actionId, envelope });
+            return { body: { v: 1, token: 'home-app-proof', binding: {
+                ...appBinding, machineId: 'machine-1', installationId: 'installation-1', custodianAccountId: 'custodian',
+                accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(variant === 'missing' ? {} : { registryAppUpdateAdmission: variant === 'current' ? demand
+                    : { environments: [{ environmentId: 'another', expectedRevision: 3 }] } }),
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { body: { v: 1, actionId: appBinding.actionId,
+            requestId: appBinding.requestId, execution: { ok: true, result: { checkedAt: 1, results: [] } } } });
+        const captured = account;
+        const call = () => executeOriginalAccountActionTransport({ account: captured, binding: appBinding, input,
+            machineCustody: { accountMode: 'plain', installationId: 'installation-1', installationPublicKey: keys.publicKey,
+                custodian: { accountId: 'custodian' } } });
+        for (const invalid of ['missing', 'substituted'] as const) {
+            variant = invalid;
+            expect(await call()).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+        }
+        expect(homes.requestsFor(actionPath)).toHaveLength(0);
+        variant = 'current';
+        expect(await call()).toMatchObject({ ok: true, result: { checkedAt: 1, results: [] } });
+        expect(homes.requestsFor(actionPath)).toHaveLength(1);
     });
 
     it('reads only the exact Action Machine rather than the Account Machine census', async () => {
@@ -302,11 +614,36 @@ describe('captured Account Action response decoding', () => {
         await expect(pending).resolves.toEqual({ ok: true, result: { completed: true } });
     });
 
+    it('preserves the typed daemon refusal while keeping the effect outcome uncertain', async () => {
+        const diagnostic = { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' };
+        homes.answer(serverId, path, { status: 502, body: { error: 'invalid_request', code: 'action_outcome_unknown',
+            requestId: binding.requestId, diagnostic } });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', details: { diagnostic } });
+    });
+
     it('keeps the server’s empty post-dispatch 502 acknowledgement loss uncertain', async () => {
-        // registerExternalActionRoutes sends exactly this empty response after
-        // its daemon dispatcher reports submitted_unknown, without a retry.
+        // An older loaded Home sends this exact empty response after its daemon
+        // dispatcher reports submitted_unknown, without a retry.
         homes.answer(serverId, path, { status: 502 });
-        expect(await execute()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain' });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    });
+
+    it('retains canonical uncertainty when an issued write exhausts its caller-owned budget', async () => {
+        let release!: () => void;
+        homes.answer(serverId, path, { respondAfter: new Promise<void>(resolve => { release = resolve; }),
+            body: { v: 1, actionId: binding.actionId, requestId: binding.requestId,
+                execution: { ok: true, result: { completed: true } } } });
+        if (!account) throw new Error('Expected captured Account');
+        vi.useFakeTimers();
+        const timeoutMs = readSpawnSessionRpcTimeoutMsFromEnv();
+        const pending = executeOriginalAccountActionTransport({ account, binding,
+            input: { machineId: 'machine-1', pluginId: 'example.plugin' }, authority: 'present_user', timeoutMs });
+        try {
+            await waitForHomeGovernance(() => expect(homes.requestsFor(path)).toHaveLength(1));
+            await vi.advanceTimersByTimeAsync(timeoutMs + 1);
+            await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+            expect(homes.requestsFor(path)).toHaveLength(1);
+        } finally { release(); }
     });
 
     it.each([
@@ -317,9 +654,9 @@ describe('captured Account Action response decoding', () => {
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
     });
 
-    it('preserves a schema-valid pre-dispatch refusal instead of making it uncertain', async () => {
-        const refusal = projectExternalActionHttpError('invalid_envelope', binding.requestId);
+    it.each(['invalid_envelope', 'project_requester_home_unavailable'] as const)('preserves a schema-valid pre-dispatch refusal (%s) instead of making it uncertain', async code => {
+        const refusal = projectExternalActionHttpError(code, binding.requestId);
         homes.answer(serverId, path, { status: refusal.statusCode, body: refusal.payload });
-        expect(await execute()).toMatchObject({ ok: false, errorCode: 'invalid_envelope' });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: code });
     });
 });

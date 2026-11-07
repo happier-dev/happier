@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
+import type { InboxPluginSessionRow } from '@/components/inbox/inboxItemProjection';
+import { InboxPluginSessionLines } from '@/components/inbox/InboxPluginSessionLines';
+import type { InboxPluginSessionControlInvoker } from '@/hooks/inbox/useInboxPluginSessionControls';
 
 import type { InboxSessionAttentionEntry } from '@/activity/presentation/buildInboxSessionPresentation';
 import type { InboxWorkItem } from '@/activity/presentation/buildInboxWorkGroups';
@@ -28,7 +31,6 @@ import { resolveWorkflowProblemPresentation } from '@/components/workflows/prese
 import { Modal } from '@/modal';
 import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { SessionPresentationRecord, SessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { t } from '@/text';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
@@ -45,8 +47,9 @@ import { readInboxApprovalServerId, resolveInboxItemPageRoute } from '../inboxIt
 import type { InboxItemFocus } from '../inboxItemFocus';
 import { InboxSessionRowMenu } from './InboxSessionRowMenu';
 import { buildInboxSessionContextLine } from './inboxSessionContextLine';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { presentInboxWorkflowRun } from '../inboxWorkflowRunPresentation';
+import { useOpenResource } from '@/utils/url/openResource';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
+import { type SessionListPresentationSource, type SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 export function requiresInboxPromptCard(entry: InboxSessionAttentionEntry): boolean {
     return entry.candidate.personalAttention.reasons.some(
@@ -55,7 +58,8 @@ export function requiresInboxPromptCard(entry: InboxSessionAttentionEntry): bool
 }
 
 /** A Session's state word and tone, from the shared work-status owner (INT §5.3); never an Inbox rule. */
-export function presentInboxSessionStatus(session: SessionPresentationRecord, nowMs: number, source?: SessionListPresentationSource): WorkStatusPresentation {
+export function presentInboxSessionStatus(session: SessionPresentationRecord, nowMs: number,
+    source?: SessionListPresentationSource): WorkStatusPresentation {
     return resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(session, nowMs, source) });
 }
 
@@ -111,7 +115,7 @@ function InboxWorkflowRunRow(props: Readonly<{
         }
     };
     const summary = item.row.summary;
-    const { status } = presentInboxWorkflowRun(summary);
+    const status = summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null;
     // Only a Run that still waits is reviewed; a stopped or finished one is opened, and says which by its
     // own state mark (the same ended glyph the Run page draws), never the hold's hand (DESIGN-14 D8).
     const settled = summary !== undefined && summary !== null && isTerminalWorkflowRunState(summary.state);
@@ -124,10 +128,14 @@ function InboxWorkflowRunRow(props: Readonly<{
     const heldStep = !settled && item.heldStepLabel ? item.heldStepLabel : null;
     // Several holds read as the first and how many more (DESIGN-17 R4), from the server's held count.
     const moreHeld = Math.max(0, (summary?.heldCount ?? 1) - 1);
-    const facts = heldStep !== null
-        ? [moreHeld > 0
-            ? t('workflows.run.attentionWaitRowMore', { step: heldStep, count: moreHeld })
-            : t('workflows.run.attentionWaitRow', { step: heldStep }), ...(item.heldStepLaneLabel ? [item.heldStepLaneLabel] : [])]
+    // A step held for approval says so in its own words; a review or Wait-for-you hold keeps the generic sentence.
+    const heldSentence = heldStep === null ? null : moreHeld > 0
+        ? t('workflows.run.attentionWaitRowMore', { step: heldStep, count: moreHeld })
+        : item.heldStepNeed === 'approval'
+            ? t('workflows.run.attentionApprovalRow', { step: heldStep })
+            : t('workflows.run.attentionWaitRow', { step: heldStep });
+    const facts = heldSentence !== null
+        ? [heldSentence, ...(item.heldStepLaneLabel ? [item.heldStepLaneLabel] : [])]
         // Under the "Workflow runs" header the kind is already said; a narrow row says its state instead.
         : props.statusColumn ? [] : props.kindInHeader === true ? status ? [status.word] : [] : [t('inbox.work.rows.workflowRun')];
     return <InboxWorkRow testID={`inbox.run.${item.runId}`} selected={props.focused === true} showDivider={props.showDivider}
@@ -156,7 +164,7 @@ function InboxAutomationRunRow(props: Readonly<{
 }>) {
     const run = props.item.row.automation!;
     const automation = useAutomation(run.automationId, { serverId: props.serverId });
-    const state = formatAutomationRunStateLabel(run.state);
+    const state = formatAutomationRunStateLabel(run);
     const cause = formatAutomationRunCauseLabel(run.cause);
     return <InboxWorkRow testID={`inbox.automation_run.${run.id}`} selected={props.focused === true} showDivider={props.showDivider}
         title={automation?.name ?? state} facts={automation?.name ? [state, cause] : [cause]}
@@ -186,7 +194,17 @@ type RowProps = Readonly<{
     showDivider?: boolean;
     /** The group header already names this row's kind ("Workflow runs"). */
     kindInHeader?: boolean;
+    /** What plugins say about this Session (a watched PR) and their declared controls, under its line. */
+    pluginSessionRows?: readonly InboxPluginSessionRow[];
+    invokePluginSessionControl?: InboxPluginSessionControlInvoker;
+    /** The lead this row's Session reports to (null: it does, but its title is not readable) and its latest update (the item's `reportsTo`, `workerUpdateHeadline`). */
+    reportsToTitle?: string | null;
+    workerUpdateHeadline?: string;
 }>;
+
+function readRowWorker(props: Pick<RowProps, 'reportsToTitle' | 'workerUpdateHeadline'>) {
+    return props.reportsToTitle === undefined ? undefined : { leadTitle: props.reportsToTitle, headline: props.workerUpdateHeadline };
+}
 
 /**
  * One row of a work group (lab `inbox-I1`). Permission and question requests keep the canonical
@@ -196,6 +214,10 @@ type RowProps = Readonly<{
 export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowProps) {
     const { theme } = useUnistyles();
     const { item } = props;
+    const { openResourceUrl } = useOpenResource(item.kind === 'landing' ? {
+        sessionId: item.session.id,
+        serverId: sessionServerId(item.session) ?? undefined,
+    } : undefined);
     // The Session this row shows is demanded like a visible list row: an undecided one is not "locked".
     const demanded = item.kind === 'session'
         ? { sessionId: item.entry.candidate.session?.id, serverId: item.entry.candidate.address?.serverId ?? item.entry.candidate.serverId }
@@ -229,23 +251,28 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
             const candidate = entry.candidate;
             const serverId = candidate.address?.serverId ?? candidate.serverId ?? null;
             const source = candidate.presentationSource;
-            const connected = getSessionStatus(candidate.session, nowMs, { workingTextMode: 'static', presentationSource: source }).isConnected;
+            const connected = getSessionStatus(candidate.session, nowMs, { presentationSource: source }).isConnected;
             const status = presentInboxSessionStatus(candidate.session, nowMs, source);
             const time = <InboxRelativeTime timestamp={candidate.meaningfulActivityAt ?? resolveSessionListRenderableMeaningfulActivityAt(candidate.session)} />;
             const menu = page ? <InboxSessionRowMenu session={candidate.session} presentationSource={source} settle={props.settle} setReminder={props.setReminder} /> : undefined;
             if (requiresInboxPromptCard(entry)) {
                 return (
                     <InboxSessionAttentionGroupCard
-                        session={candidate.session} presentationSource={source}
+                        session={candidate.session}
+                        presentationSource={source}
                         serverId={serverId}
                         identityDisplay={props.identityDisplay}
                         connected={connected}
-                        // The request is the need; the line says where the session runs, as its sheet-mates do.
-                        contextLine={buildInboxSessionContextLine(candidate, { showHome: props.spansHomes, showNeed: false }) ?? null}
+                        // The request is the need; the line says whom the session reports to, else where it runs.
+                        contextLine={buildInboxSessionContextLine(candidate, { showHome: props.spansHomes, showNeed: false,
+                            // A request's card is about what it asks now; an older update would only mislead.
+                            worker: props.reportsToTitle === undefined ? undefined : { leadTitle: props.reportsToTitle } }) ?? null}
                         permissionRequests={entry.pendingPermissions}
                         userActionRequests={entry.pendingUserActions}
                         showDivider={props.showDivider}
                         onBeforeNavigate={props.onBeforeNavigate}
+                        selected={props.focused === true}
+                        onSelect={props.onSelectItem && serverId ? () => openItem(sessionFocus(candidate.sessionId, serverId), null) : undefined}
                         row={{ status, time, narrow: !statusColumn, trailingAccessory: menu }}
                     />
                 );
@@ -259,7 +286,7 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                     title={candidate.title}
                     facts={[
                         item.foldedUnderRunId ? t('inbox.work.rows.step') : null,
-                        buildInboxSessionContextLine(candidate, { showHome: props.spansHomes }),
+                        buildInboxSessionContextLine(candidate, { showHome: props.spansHomes, worker: readRowWorker(props) }),
                     ]}
                     time={time}
                     status={status}
@@ -268,7 +295,8 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                         ? glyph('warning', theme.colors.status.error)
                         : props.identityDisplay !== 'none' ? (
                             <SessionListIdentity
-                                session={candidate.session} presentationSource={source}
+                                session={candidate.session}
+                                presentationSource={source}
                                 display={props.identityDisplay}
                                 serverId={serverId}
                                 color={theme.colors.text.primary}
@@ -279,6 +307,10 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                             />
                         ) : undefined}
                     trailingAccessory={menu}
+                    belowAccessory={props.pluginSessionRows?.length && props.invokePluginSessionControl ? (
+                        <InboxPluginSessionLines rows={props.pluginSessionRows} invoke={props.invokePluginSessionControl}
+                            testID={`inbox.session.${candidate.sessionId}.plugin_rows`} />
+                    ) : undefined}
                     onPress={() => openItem(sessionFocus(candidate.sessionId, serverId), candidate.route ?? null)}
                 />
             );
@@ -346,7 +378,7 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                             action={() => props.settle(session)}
                         />
                     )}
-                    onPress={() => { props.onBeforeNavigate?.(); void openExternalUrl(link.url); }}
+                    onPress={() => { props.onBeforeNavigate?.(); void openResourceUrl(link.url); }}
                 />
             );
         }

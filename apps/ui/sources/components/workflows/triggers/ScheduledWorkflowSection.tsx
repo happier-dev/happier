@@ -1,3 +1,4 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -10,13 +11,14 @@ import {
 import { useIsTablet } from '@/utils/platform/responsive';
 import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
 import { Item } from '@/components/ui/lists/Item';
 import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionRowLine } from '@/components/ui/lists/collection/CollectionRowContent';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useActiveServerAccountScope, useSessionDisplayNameSource } from '@/sync/domains/state/storage';
-import { getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -46,7 +48,7 @@ export function useScheduledWorkflowRows(sessionId?: string): {
 } {
     const scope = useActiveServerAccountScope();
     const access = useWorkflowsDestinationAccess();
-    const available = access.kind === 'workflows' || access.kind === 'triggersOnly';
+    const available = access.kind === 'workflows';
     const read = useWorkflowTriggerSets(scope && available ? ACCOUNT_SCHEDULES : null);
     const previous = React.useRef<readonly ScheduledWorkflowRow[]>([]);
     const rows = React.useMemo(() => {
@@ -63,8 +65,8 @@ export function useScheduledWorkflowRows(sessionId?: string): {
 export type ScheduledWorkflowRowsRead = ReturnType<typeof useScheduledWorkflowRows>;
 
 /**
- * The scheduled rows of one read, then its failure line. A read in flight draws nothing extra: its
- * host either keeps the last-known rows or is not drawn yet. Mounted only where rows may show.
+ * The scheduled rows of one read. Its host owns the load state and recovery, so
+ * Account upcoming work and Session Habits each present a failure exactly once.
  */
 export const ScheduledWorkflowRows = React.memo(function ScheduledWorkflowRows(props: Readonly<{
     read: ScheduledWorkflowRowsRead; sessionId?: string;
@@ -86,19 +88,16 @@ export const ScheduledWorkflowRows = React.memo(function ScheduledWorkflowRows(p
             params: { id: set.target.ref, intent: 'schedule' } } as never);
         else router.push({ pathname: '/workflows', params: { trigger: set.automationId } } as never);
     }, [router, serverId]);
-    return <>
-        <ScheduledWorkflowSectionView rows={read.rows} onOpen={open} resolveWorkflowTitle={resolveWorkflowTitle}
-            sessionId={props.sessionId} density={props.density} />
-        {props.sessionId !== undefined ? <ScheduledWorkflowReadFailure read={read} sessionId={props.sessionId} /> : null}
-    </>;
+    return <ScheduledWorkflowSectionView rows={read.rows} onOpen={open} resolveWorkflowTitle={resolveWorkflowTitle}
+        sessionId={props.sessionId} density={props.density} />;
 });
 
 const ScheduledWorkflowReadFailure = React.memo(function ScheduledWorkflowReadFailure(props: Readonly<{
-    read: ScheduledWorkflowRowsRead; sessionId?: string;
+    read: ScheduledWorkflowRowsRead;
 }>) {
     if (props.read.status !== 'failed') return null;
     return <SurfaceFreshnessLine testID="scheduled-workflow-read" tone="warning"
-        reason={t(props.sessionId === undefined ? 'workflows.triggers.section.accountLoadFailed' : 'workflows.triggers.section.loadFailed')}
+        reason={t('workflows.triggers.section.accountLoadFailed')}
         action={{ label: t('workflows.retry'), onPress: props.read.retry }} />;
 });
 
@@ -209,14 +208,17 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
 
 const DestinationChip = React.memo(function DestinationChip(props: Readonly<{ sessionId: string; rowKey: string }>) {
     const scope = useActiveServerAccountScope();
-    const session = useSessionDisplayNameSource(props.sessionId, scope?.serverId);
+    const source = useSessionDisplayNameSource(props.sessionId, scope?.serverId);
+    const isSessionVisible = useSessionRecordingVisibility();
+    const session = isSessionVisible({ sessionId: props.sessionId, serverId: scope?.serverId }) ? source : null;
     const router = useRouter();
     const label = session ? getSessionName(session, scope?.serverId) : t('message.sessionReferenceUnavailable');
     return <HappierPressable testID={`scheduled-workflow:${props.rowKey}-destination:${props.sessionId}`}
         accessibilityRole="link" accessibilityLabel={label} style={styles.destination}
         onPress={() => router.push({ pathname: '/session/[id]', params: { id: props.sessionId,
             ...(scope ? { serverId: scope.serverId } : {}) } } as never)}>
-        <Avatar id={session ? getSessionAvatarId(session, scope?.serverId) : props.sessionId} size={16} monochrome />
+        {session ? <SessionAvatar session={session} serverId={scope?.serverId} size={16} monochrome />
+            : <Avatar id={props.sessionId} size={16} monochrome />}
         <View style={styles.destinationLabel}><CollectionRowLine density="comfortable">{label}</CollectionRowLine></View>
     </HappierPressable>;
 });

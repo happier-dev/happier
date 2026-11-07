@@ -1,24 +1,22 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import type { CSSProperties } from 'react';
 import type { LayoutChangeEvent, TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
-import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone.web';
 import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
-import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
 import { TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS, containsLikelyNonWhitespace, isLargeTextInputValueLength } from './largeTextInputPolicy';
 import { createComposerEditorController, type ComposerEditorDocument } from './composerEditor/composerEditorController.web';
 import { ComposerChipView } from './composerEditor/ComposerChipView.web';
 import { ComposerChipHoverCard, type ComposerChipHoverTarget } from './composerEditor/ComposerChipHoverCard.web';
 import { useHoverPreviewPopover } from '@/components/ui/popover/useHoverPreviewPopover';
-import { ensureReferenceChipStyles, referenceChipCssVariables } from '@/components/ui/referenceChip/referenceChipStyles';
+import { ensureReferenceChipStyles } from '@/components/ui/referenceChip/referenceChipStyles';
+import { isUnrenderedLayoutBox } from '@/components/ui/presentation/retainedPresentationGeometry';
+import { COMPOSER_EDITOR_CONTENT_STYLE, resolveComposerEditorHostStyle } from './composerEditor/composerEditorHostStyle.web';
 import type { ComposerEditorCaretRect, ComposerEditorDecoration, ComposerEditorReference } from './composerEditor/composerEditorTypes';
 
 export type { SupportedKey } from '@/keyboard/events';
@@ -186,7 +184,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         onCaretChange: notifyCaret,
         onFocus: () => currentProps.current.onFocus?.(),
         onBlur: () => currentProps.current.onBlur?.(),
-        onOpenLink: (url: string) => { void openExternalUrl(url, { platformOS: 'web' }); },
+        onOpenLink: (url: string) => { void openExternalUrl(url); },
         onKeyDown: (event: KeyboardEvent, document: ComposerEditorDocument) => {
             const latest = currentProps.current;
             const normalized = normalizeKeyboardKeyPressEvent(event);
@@ -244,9 +242,12 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         const dom = controller.editor.view.dom;
         const onScroll = () => { currentProps.current.onScrollYChange?.(host.scrollTop); notifyCaret(); };
         host.addEventListener('scroll', onScroll);
-        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+        // A hidden retained pane reports every observed box 0×0; its content height did not change.
+        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+            if (!isUnrenderedLayoutBox(host, host.offsetWidth, host.offsetHeight)) measure();
+        }) : null;
         for (let node: Element | null = host; node && observer; node = node.parentElement) observer.observe(node);
-        Object.assign(dom.style, { whiteSpace: 'pre-wrap', outline: 'none', minHeight: '1lh', overflowWrap: 'anywhere' });
+        Object.assign(dom.style, COMPOSER_EDITOR_CONTENT_STYLE);
         if (currentProps.current.autoFocus) dom.focus();
         measure();
         return () => {
@@ -295,7 +296,14 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         setSelection: selection => { if (controllerRef.current?.read().text === currentProps.current.value) controllerRef.current.setSelection(selection); },
         getText: () => controllerRef.current?.read().text ?? currentProps.current.value,
         flushPendingTextChange: flush,
-        focus: () => controllerRef.current?.editor.view.dom.focus(),
+        // The editor's own focus keeps its selection (a restored caret) instead of the browser's
+        // default caret, then brings that caret into view.
+        focus: () => {
+            const view = controllerRef.current?.editor.view;
+            if (!view) return;
+            view.focus();
+            view.dispatch(view.state.tr.scrollIntoView());
+        },
         blur: () => controllerRef.current?.editor.view.dom.blur(),
         measureInWindow: callback => { const rect = hostRef.current?.getBoundingClientRect(); if (rect) callback(rect.left, rect.top, rect.width, rect.height); },
         getReactNodeTag: () => null,
@@ -312,28 +320,12 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             if (files.length > 0) currentProps.current.onFilesDropped?.(files);
         },
     });
-    const scaled = scaleTextStyle(props.textStyle ?? { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE }, uiFontScale);
     const placeholderInk = useGlassBackedInk()(props.placeholderTextColor ?? theme.colors.input.placeholder);
-    const maxHeight = Number.isFinite(props.maxHeight) && (props.maxHeight ?? 0) > 0 ? props.maxHeight : 120;
-    const style = {
-        width: '100%', position: 'relative', boxSizing: 'border-box', backgroundColor: 'transparent',
-        color: scaled.color ?? theme.colors.input.text, caretColor: theme.colors.input.text,
-        fontFamily: scaled.fontFamily ?? Typography.default().fontFamily,
-        fontSize: scaled.fontSize, fontWeight: scaled.fontWeight, fontStyle: scaled.fontStyle,
-        letterSpacing: scaled.letterSpacing, lineHeight: scaled.lineHeight ? `${scaled.lineHeight}px` : '1.4',
+    const style = resolveComposerEditorHostStyle({
+        theme, uiFontScale, textStyle: props.textStyle, placeholderInk,
         paddingTop: props.paddingTop, paddingBottom: props.paddingBottom, paddingLeft: props.paddingLeft, paddingRight: props.paddingRight,
-        maxHeight, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'none',
-        '--happier-placeholder-color': placeholderInk,
-        '--happier-composer-monospace': Typography.mono().fontFamily,
-        '--happier-composer-muted': theme.colors.text.secondary,
-        '--happier-composer-warning': theme.colors.state.warning.foreground,
-        '--happier-composer-success': theme.colors.state.success.foreground,
-        '--happier-composer-accent': theme.colors.accent.blue,
-        ...referenceChipCssVariables({
-            secondary: theme.colors.text.secondary, tertiary: theme.colors.text.tertiary,
-            accent: theme.colors.accent.blue, focus: theme.colors.border.focus,
-        }),
-    } as CSSProperties;
+        maxHeight: props.maxHeight,
+    });
     const hoveredChip = chipHover.mode !== 'closed' ? chipHover.target : null;
     return <>
         <div ref={hostRef} data-composer-editor="" style={style} />

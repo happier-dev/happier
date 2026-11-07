@@ -44,16 +44,20 @@ export function happierPageRowDividerWidth(): number {
 /**
  * Where a row's hairline runs (P7-R2, the W3 frames): from the row's text edge — its inset plus, when the
  * row or its section reserves one, the leading column and its gap — to the sheet's trailing edge, so a
- * group separator (content width) still reads lighter than a row seam. Logical start and end, so a
- * right-to-left page mirrors it. Core page rows and the public list rows both take it here.
+ * group separator (content width) still reads lighter than a row seam. A flat sheet (`framed: false`) has
+ * no edge to run to: its hairline ends where the row's values and chevron end, its inset from the trailing
+ * side. Logical start and end, so a right-to-left page mirrors it. Core page rows and the public list rows
+ * both take it here.
  */
 export function happierPageRowDividerInset(input: Readonly<{
   /** The row's own inset from the sheet's edge (`HappierPageSection.rowInsetPx`). */
   rowInsetPx: number;
   /** The leading column plus its gap before the text, or 0 when the row's text starts at its inset. */
   leadingPx?: number;
+  /** `HappierPageSection.framed`: `false` for a flat sheet laid on the page or a pane. */
+  framed?: boolean;
 }>): Readonly<{ marginStart: number; marginEnd: number }> {
-  return { marginStart: input.rowInsetPx + (input.leadingPx ?? 0), marginEnd: 0 };
+  return { marginStart: input.rowInsetPx + (input.leadingPx ?? 0), marginEnd: input.framed === false ? input.rowInsetPx : 0 };
 }
 
 export type HappierPageSectionTextRender = (input: Readonly<{
@@ -204,6 +208,7 @@ export function HappierPageSectionHeader(props: HappierPageSectionHeaderProps) {
           // title's line whatever the description below; its own box may reach past that line.
           style={stacked || !hasTitle ? null : { height: HAPPIER_PAGE_TEXT.sectionTitle.lineHeight, justifyContent: 'center' }}
         >
+          {/* Stacked beneath the text, a plain action puts its label on the text's edge. */}
           <HappierTextActionEdgeContext.Provider value={stacked ? 'start' : null}>{props.action}</HappierTextActionEdgeContext.Provider>
         </View>
       ) : null}
@@ -355,8 +360,8 @@ export function HappierPageSheet(props: HappierPageSheetProps) {
       {/* A sheet inside a widget body draws its rows' own edge again. */}
       <HappierBodyEdgeContext.Provider value={false}>
       <HappierMaterialSurface testID={props.testID} materialRole={props.surface === 'none' ? undefined : 'card'} gradient={props.surface === 'none' ? null : props.gradient} renderMaterialSurface={props.renderMaterialSurface} style={[sheetStyle, props.style]}>
-        {grouped
-          ? children.map((child, index) => (isSheetGroup(child) ? (
+        {/* Normalize row keys once, whether or not a peer group is present. */}
+        {children.map((child, index) => (isSheetGroup(child) ? (
               <Fragment key={child.key ?? `page-sheet-group-${index}`}>
                 {index > 0 ? (
                   <View
@@ -373,8 +378,10 @@ export function HappierPageSheet(props: HappierPageSheetProps) {
                 ) : null}
                 {cloneElement(child, { children: withRowDividers(child.props.children) })}
               </Fragment>
-            ) : cloneElement(child, { key: child.key ?? `page-sheet-row-${index}`, showDivider: false } as DividerChildProps & { key: string })))
-          : withRowDividers(children)}
+            ) : cloneElement(child, {
+              key: child.key ?? `page-sheet-row-${index}`,
+              showDivider: !grouped && rowDividers && index < children.length - 1 && child.props.showDivider !== false,
+            } as DividerChildProps & { key: string })))}
       </HappierMaterialSurface>
       </HappierBodyEdgeContext.Provider>
     </HappierPageSectionContext.Provider>

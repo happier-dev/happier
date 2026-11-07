@@ -125,14 +125,16 @@ import {
   CollectionLoadingRows,
   type CollectionAnatomy,
   type CollectionProps,
+  type CollectionRowActions,
 } from './Collection.js';
-import { CollectionToolbar } from './CollectionToolbar.js';
+import { CollectionToolbar, CollectionToolbarCompactContext } from './CollectionToolbar.js';
 import { DetailsPaneFooter } from './DetailsPane.js';
 import { Button } from './Button.js';
 import { Heading } from './Foundation.js';
 import { usePluginUiFocusTarget } from './Focus.js';
 import { PageHeader } from './PageHeader.js';
 import { HappierText } from '../presentation/text/Text.js';
+import { capabilityCollectionAnatomy } from './Capabilities.js';
 import { HappierCollectionNavigationBackClosesDetailContext } from '../presentation/collection/collectionLayout.js';
 import {
   HappierCollectionRestingRowsContext,
@@ -140,6 +142,7 @@ import {
   type HappierCollectionRestingRows,
 } from '../presentation/collection/CollectionList.js';
 import { createListMultiSelectionStore } from './ListMultiSelection.js';
+import { HAPPIER_PAGE_TEXT } from '../presentation/layout/pageText.js';
 import { PluginUiProviderInternal } from './PluginUiProvider.js';
 import {
   PluginUiScrollActivityProvider,
@@ -374,8 +377,6 @@ function presentationHost(
 type HarnessOptions = Readonly<{
   presentation?: 'table' | 'list' | 'board' | 'grid';
   items?: readonly Entry[];
-  narrowGrid?: CollectionProps<Entry>['narrowGrid'];
-  minCardWidth?: number;
   grouped?: boolean;
   grouping?: HappierCollectionGrouping<Entry>;
   boardLayout?: CollectionProps<Entry>['boardLayout'];
@@ -390,6 +391,8 @@ type HarnessOptions = Readonly<{
   navigationBackClosesDetail?: boolean;
   restingRows?: HappierCollectionRestingRows;
   scroll?: CollectionProps<Entry>['scroll'];
+  narrowGrid?: CollectionProps<Entry>['narrowGrid'];
+  minCardWidth?: number;
   groupAction?: (
     groupKey: string,
   ) => Readonly<{ label: string; onPress: () => void }> | null;
@@ -399,13 +402,17 @@ type HarnessOptions = Readonly<{
     subtitle?: string;
     actions?: React.ReactNode;
   }>;
+  useDetailHeader?: CollectionProps<Entry>['useDetailHeader'];
   useRowActions?: CollectionProps<Entry>['useRowActions'];
+  useRowItem?: CollectionProps<Entry>['useRowItem'];
   selection?: CollectionProps<Entry>['selection'];
   modelSelection?: (
     model: HappierCollectionModel<Entry>,
   ) => CollectionProps<Entry>['selection'];
   search?: CollectionProps<Entry>['search'];
+  create?: CollectionProps<Entry>['create'];
   sort?: CollectionProps<Entry>['sort'];
+  summaryRows?: CollectionProps<Entry>['summaryRows'];
   renderDetail?: CollectionProps<Entry>['renderDetail'];
   title?: CollectionProps<Entry>['title'];
   listWidthPx?: number;
@@ -441,6 +448,7 @@ function Harness(props: HarnessProps): ReactElement {
       presentation={props.presentation ?? 'table'}
       boardLayout={props.boardLayout}
       detail={props.detail ?? 'auto'}
+      useRowItem={props.useRowItem}
       {...(props.useRowActions === undefined
         ? {}
         : { useRowActions: props.useRowActions })}
@@ -450,8 +458,12 @@ function Harness(props: HarnessProps): ReactElement {
           : { selection: props.selection }
         : { selection: props.modelSelection(model) })}
       {...(props.search === undefined ? {} : { search: props.search })}
+      {...(props.create === undefined ? {} : { create: props.create })}
       {...(props.sort === undefined ? {} : { sort: props.sort })}
+      {...(props.summaryRows === undefined ? {} : { summaryRows: props.summaryRows })}
       {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
+      {...(props.narrowGrid === undefined ? {} : { narrowGrid: props.narrowGrid })}
+      {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
       {...(props.groupAction === undefined
         ? {}
         : { groupAction: props.groupAction })}
@@ -471,9 +483,8 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.detailHeader === undefined
         ? {}
         : { detailHeader: props.detailHeader })}
+      useDetailHeader={props.useDetailHeader}
       windowStatement="3 loaded · complete"
-      {...(props.narrowGrid === undefined ? {} : { narrowGrid: props.narrowGrid })}
-      {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
       {...(props.loading === undefined ? {} : { loading: props.loading })}
       {...(props.loadingRows === undefined ? {} : { loadingRows: props.loadingRows })}
       {...(props.empty === undefined ? {} : { empty: props.empty })}
@@ -496,10 +507,11 @@ function mount(
     renderPopover?: PluginUiPresentationHost['renderPopover'];
     motion?: HappierCollectionMotionDriver;
     reducedMotion?: boolean;
+    dialog?: boolean;
     openKey?: string | null;
     pane?: ReturnType<typeof createPaneHost>;
     scrollTracker?: PluginUiScrollActivityTracker;
-    pageChrome?: Readonly<{ showsTitle: boolean; columnMaxWidthPx?: number; renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode }>;
+    pageChrome?: Readonly<{ showsTitle: boolean; largeTitle?: boolean; columnMaxWidthPx?: number; renderNavigationActions?: (actions: React.ReactNode) => React.ReactNode }>;
     hostApiOverrides?: Parameters<typeof createHostApiStub>[1];
   }> &
     HarnessOptions = {},
@@ -528,7 +540,7 @@ function mount(
   const Slot = options.pane?.Slot ?? (() => null);
   let harness: HarnessOptions = options;
   let openKey: string | null = options.openKey ?? null;
-  const wrap = () => (
+  const content = () => (
     <>
       <PluginUiProviderInternal
         hostApi={hostApi}
@@ -548,6 +560,7 @@ function mount(
       <Slot />
     </>
   );
+  const wrap = () => options.dialog ? <div role="dialog">{content()}</div> : content();
   const mounted = mountThroughReactNativeWeb(wrap());
   const query = (testID: string) =>
     mounted.container.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
@@ -583,6 +596,21 @@ function mount(
   };
 }
 
+/**
+ * The pointer-events value the browser hit-tests for an element, as React Native Web draws it: an element's own
+ * `none`/`auto` wins; `box-none` makes the element itself `none` and hands `auto` to its children (RNW's `>*`
+ * rule, which a test DOM shows as the parent's inline value); otherwise the value inherits.
+ */
+function resolvedPointerEvents(element: HTMLElement): string {
+  const own = (node: HTMLElement) => getComputedStyle(node).pointerEvents.replace(/\s*!important$/, '');
+  const value = own(element);
+  if (value === 'box-none') return 'none';
+  if (value !== '' && value !== 'inherit') return value;
+  const parent = element.parentElement;
+  if (parent === null) return 'auto';
+  return own(parent) === 'box-none' ? 'auto' : resolvedPointerEvents(parent);
+}
+
 function visible(element: HTMLElement | null): boolean {
   if (element === null) return false;
   for (
@@ -614,21 +642,6 @@ function headerTitles(container: HTMLElement): readonly string[] {
     : [...header.querySelectorAll('[dir="auto"]')].map(
         (node) => node.textContent ?? '',
       );
-}
-
-/**
- * The pointer-events value the browser hit-tests for an element, as React Native Web draws it: an element's own
- * `none`/`auto` wins; `box-none` makes the element itself `none` and hands `auto` to its children (RNW's `>*`
- * rule, which a test DOM shows as the parent's inline value); otherwise the value inherits.
- */
-function resolvedPointerEvents(element: HTMLElement): string {
-  const own = (node: HTMLElement) => getComputedStyle(node).pointerEvents.replace(/\s*!important$/, '');
-  const value = own(element);
-  if (value === 'box-none') return 'none';
-  if (value !== '' && value !== 'inherit') return value;
-  const parent = element.parentElement;
-  if (parent === null) return 'auto';
-  return own(parent) === 'box-none' ? 'auto' : resolvedPointerEvents(parent);
 }
 
 describe('Collection table', () => {
@@ -689,22 +702,27 @@ describe('Collection table', () => {
       view.unmount();
     }
   });
-  it("on a phone places Select beside the search's round buttons, never squeezed between the lens and the view switch", () => {
-    const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
-    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover, selection: { multiple: { store } } });
-    view.measure(390);
-    const mode = view.query('happier-list-selection-mode')!;
-    expect(mode).not.toBeNull();
-    // The lens row holds the lens and the arrangement switch only; Select joins Filters and ⋯ in the search row, so
-    // the row that holds Select also holds the search, and that row is not the whole two-row toolbar.
-    const toolbar = view.query('toolbar')!;
-    let row: HTMLElement | null = mode.parentElement;
-    while (row !== null && !row.contains(view.query('search'))) row = row.parentElement;
-    expect(row).not.toBeNull();
-    expect(row).not.toBe(toolbar);
-    expect(toolbar.contains(row)).toBe(true);
-    expect(row!.contains(view.query('lens'))).toBe(false);
-    view.unmount();
+  it('keeps a stacked Board header in its page scroll owner with independently mounted controls', async () => {
+    let mounts = 0;
+    function BoardHeader() {
+      const [edited, setEdited] = React.useState(false);
+      React.useEffect(() => { mounts += 1; }, []);
+      return <button data-testid="board-header-control" onClick={() => setEdited(true)}>{edited ? 'Edited note' : 'Edit note'}</button>;
+    }
+    const view = mount({ presentation: 'board', boardLayout: 'stacked', detail: 'none', scroll: 'page', header: <BoardHeader /> });
+    try {
+      view.measure(390);
+      const control = view.query('board-header-control');
+      expect(control).not.toBeNull();
+      expect(scroller(control)).not.toBeNull();
+      expect(scroller(control)).toBe(scroller(view.query('row:a')));
+      await act(async () => control!.click());
+      await view.update({ items: entries.map(entry => ({ ...entry })) });
+      expect(view.query('board-header-control')).toBe(control);
+      expect(control!.textContent).toBe('Edited note');
+      expect(mounts).toBe(1);
+      expect(view.openChanges).toEqual([]);
+    } finally { view.unmount(); }
   });
 
   it('resizes the split geometry while preserving its open detail and composition', () => {
@@ -865,6 +883,66 @@ describe('Collection table', () => {
       }
     },
   );
+  it.each([true, false])('windows a catalog directory by line in its columns and reveals keyboard focus (grouped: %s)', async (grouped) => {
+    const listeners = new Set<() => void>();
+    let window = { top: 0, bottom: 600 };
+    const offsets: number[] = [];
+    const tracker: PluginUiScrollActivityTracker & { scrollToOffset(offset: number): void } = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0,
+      getWindow: () => window,
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      measureSpan: async () => ({ top: 0 }),
+      scrollToOffset: (offset) => {
+        offsets.push(offset);
+        window = { top: offset, bottom: offset + 600 };
+        listeners.forEach((listener) => listener());
+      },
+    };
+    const catalog = Array.from({ length: 241 }, (_, index): Entry => ({
+      id: `item-${index}`, title: `Server ${index}`, group: index < 120 ? 'needs' : 'rest', repo: '', reason: '', age: '',
+    }));
+    const view = mount({
+      items: catalog,
+      grouped,
+      presentation: 'list',
+      scroll: 'page-virtualized',
+      scrollTracker: tracker,
+      detail: 'none',
+      anatomy: { ...anatomy, rowRole: 'catalogRow', description: (entry) => `What ${entry.title} does` },
+      selection: { single: { value: 'item-0', onValueChange() {} } },
+    });
+    try {
+      view.measure(1440);
+      await act(async () => {});
+      const mounted = () => view.container.querySelectorAll('[role="radio"]').length;
+      expect(mounted()).toBeGreaterThan(0);
+      expect(mounted()).toBeLessThan(catalog.length / 4);
+      expect(view.query('row:item-240')).toBeNull();
+      // Row-major columns hold under windowing: a line is two neighbouring rows, in reading order.
+      const lineOf = (key: string) => view.query(`row:${key}`)!.closest('[data-testid="collection:directory-line"]');
+      expect(lineOf('item-0')).not.toBeNull();
+      expect(lineOf('item-0')).toBe(lineOf('item-1'));
+      expect(lineOf('item-2')).not.toBe(lineOf('item-0'));
+      // The last row is an odd one out (241 rows, two columns, in one section when ungrouped): it stands in its column.
+      await act(async () => {
+        view.query('row:item-0')!.focus();
+        view.query('row:item-0')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+      });
+      expect(offsets.at(-1)).toBeGreaterThan(600);
+      expect(document.activeElement).toBe(view.query('row:item-240'));
+      expect(mounted()).toBeLessThan(catalog.length / 4);
+      // One column when two cannot fit: a row per line, and the focused row stays mounted through the recomposition.
+      const focused = view.query('row:item-240');
+      view.measure(500);
+      await act(async () => {});
+      expect(view.query('row:item-240')).toBe(focused);
+      expect(document.activeElement).toBe(focused);
+      expect(lineOf('item-240')).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
   it('uses the incumbent collection virtualizer when page windowing has no positioned page host', () => {
     const view = mount({
       detail: 'none',
@@ -881,7 +959,7 @@ describe('Collection table', () => {
       view.unmount();
     }
   });
-  it.each(['board', 'grid'] as const)(
+  it.each(['list', 'table', 'board', 'grid'] as const)(
     'chooses cards in %s without opening their navigation destinations',
     async (presentation) => {
       const choices: string[] = [];
@@ -1441,13 +1519,14 @@ describe('Collection table', () => {
     'keeps row actions and search available in %s without opening the item',
     (presentation) => {
       const actions: string[] = [];
+      const onAction = vi.fn<NonNullable<CollectionRowActions['onSecondaryAction']>>((id) => { actions.push(id); });
       const queries: string[] = [];
       const view = mount({
         presentation,
         detail: 'none',
         useRowActions: () => ({
           secondaryActions: [{ id: 'pin', label: 'Pin' }],
-          onSecondaryAction: (id) => actions.push(id),
+          onSecondaryAction: onAction,
         }),
         search: {
           label: 'Search entries',
@@ -1485,10 +1564,15 @@ describe('Collection table', () => {
         ...view.container.querySelectorAll<HTMLElement>('[role="menuitem"]'),
       ].find((item) => item.textContent?.trim() === 'Pin');
       expect(pin).toBeDefined();
+      const trigger = view.container.querySelector('[aria-haspopup="menu"][aria-expanded="true"]');
+      expect(trigger).not.toBeNull();
       act(() => {
         pin!.click();
       });
       expect(actions).toEqual(['pin']);
+      const selection = onAction.mock.calls[0]?.[1];
+      const anchor = selection?.anchorRef?.current;
+      expect(anchor instanceof HTMLElement && anchor.contains(trigger)).toBe(true);
       expect(view.openChanges).toEqual([]);
       view.unmount();
     },
@@ -1506,7 +1590,7 @@ describe('Collection table', () => {
     });
     window.dispatchEvent(new Event('resize'));
     (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({
-      matches: query.includes('hover: hover'),
+      matches: query === '(pointer: fine)' || query === '(hover: hover)',
     });
     let view: ReturnType<typeof mount> | undefined;
     try {
@@ -1576,7 +1660,7 @@ describe('Collection table', () => {
       window.dispatchEvent(new Event('resize'));
       (globalThis as { matchMedia?: unknown }).matchMedia = (
         query: string,
-      ) => ({ matches: query.includes('hover: hover') });
+      ) => ({ matches: query === '(pointer: fine)' || query === '(hover: hover)' });
       const view = mount({
         presentation,
         detail: 'none',
@@ -1631,7 +1715,7 @@ describe('Collection table', () => {
   it("gives a resting list's rows the full width on a precise pointer: the actions overlay the row's end, revealed by hover", () => {
     const matchMedia = (globalThis as { matchMedia?: unknown }).matchMedia;
     (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({
-      matches: query.includes('hover: hover'),
+      matches: query === '(pointer: fine)' || query === '(hover: hover)',
     });
     const actions: string[] = [];
     let view: ReturnType<typeof mount> | undefined;
@@ -1710,6 +1794,60 @@ describe('Collection table', () => {
       view?.unmount();
       (globalThis as { matchMedia?: unknown }).matchMedia = matchMedia;
     }
+  });
+
+  it("recomposes a narrow resting row's wrapping accessory under its title, keeping the ⋯ on the title line", () => {
+    const pressed: string[] = [];
+    const view = mount({
+      presentation: 'list',
+      detail: 'none',
+      useRowActions: (entry) => ({
+        accessoryWraps: true,
+        accessory: (
+          <Button testID={`badge:${entry.id}`} title="Needs you" onPress={() => pressed.push(entry.id)} />
+        ),
+        secondaryActions: [{ id: 'pin', label: 'Pin' }],
+        onSecondaryAction: () => undefined,
+      }),
+    });
+    const lowestCommonAncestor = (a: HTMLElement, b: HTMLElement) => {
+      let node: HTMLElement = a;
+      while (!node.contains(b)) node = node.parentElement!;
+      return node;
+    };
+    const parts = () => {
+      const row = view.query('row:a')!;
+      let item: HTMLElement = row;
+      const badge = view.query('badge:a')!;
+      while (!item.contains(badge) || item.querySelector('[aria-label="More actions"]') === null) item = item.parentElement!;
+      const title = [...item.querySelectorAll<HTMLElement>('div')].find(
+        (node) => node.textContent === 'Retry idempotent payment intents',
+      )!;
+      const glyph = [...item.querySelectorAll<HTMLElement>('div')].find((node) => node.textContent === '•')!;
+      const trigger = item.querySelector<HTMLElement>('[aria-label="More actions"]')!;
+      return { item, badge, title, glyph, trigger };
+    };
+    view.measure(390);
+    const narrow = parts();
+    // Under the title, in the text column: the title's and the badge's nearest shared node holds neither the
+    // row's mark (so the badge never starts under it) nor the ⋯ (which keeps its own trailing cell).
+    const textColumn = lowestCommonAncestor(narrow.title, narrow.badge);
+    expect(textColumn.contains(narrow.glyph)).toBe(false);
+    expect(textColumn.contains(narrow.trigger)).toBe(false);
+    // Nothing on the ⋯'s way up to the row wraps: it stays pinned at the title line's end.
+    for (let node = narrow.trigger.parentElement; node !== null && node !== narrow.item; node = node.parentElement)
+      expect(getComputedStyle(node).flexWrap).not.toBe('wrap');
+    // The badge stays its own control: pressing it never opens the row.
+    act(() => {
+      narrow.badge.click();
+    });
+    expect(pressed).toEqual(['a']);
+    expect(view.openChanges).toEqual([]);
+    // A wide row keeps the accessory at its end, beside the ⋯.
+    view.measure(1440);
+    const wide = parts();
+    expect(lowestCommonAncestor(wide.badge, wide.trigger).contains(wide.title)).toBe(false);
+    view.unmount();
   });
 
   it("draws a board card's actions inside the card at its title line, not beside it", () => {
@@ -2202,6 +2340,28 @@ describe('Collection table', () => {
     view.unmount();
   });
 
+  it('keeps an empty group that has something to say, with its count at 0 and one quiet line', () => {
+    const quiet: readonly Entry[] = entries.filter((entry) => entry.group === 'rest');
+    const grouping = {
+      axis: [
+        { key: 'needs', title: 'Needs you', emptyStatement: 'Nothing needs you right now.' },
+        { key: 'other', title: 'With an agent' },
+        { key: 'rest', title: 'Everything else' },
+      ],
+      groupOf: (entry: Entry) => entry.group,
+    };
+    for (const [presentation, width] of [['table', 1440], ['list', 390]] as const) {
+      const view = mount({ items: quiet, grouping, presentation, detail: 'none' });
+      view.measure(width);
+      const text = view.query('virtualizer')?.textContent ?? '';
+      expect(text).toContain('Needs you');
+      expect(text).toContain('Nothing needs you right now.');
+      expect(text.indexOf('Nothing needs you right now.')).toBeLessThan(text.indexOf('Everything else'));
+      expect(text).not.toContain('With an agent');
+      view.unmount();
+    }
+  });
+
   it('groups rows by the one axis, with each group naming what its rows share', () => {
     const view = mount();
     view.measure(1440);
@@ -2293,6 +2453,25 @@ describe('Collection table', () => {
     view.unmount();
   });
 
+  it('names the add key on a desktop table and runs it from C, never from a field', async () => {
+    let created = 0;
+    const view = mount({
+      create: { hint: 'new task', onPress: () => { created += 1; } },
+      search: { label: 'Search', value: '', onValueChange: () => {}, testID: 'search' },
+    });
+    view.measure(1440);
+    expect(view.query('collection:hints')!.textContent).toContain('new task');
+    const press = (target: HTMLElement) => act(async () => {
+      target.focus();
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true, cancelable: true }));
+    });
+    await press(view.query('search')!);
+    expect(created).toBe(0);
+    await press(view.query('row:a')!);
+    expect(created).toBe(1);
+    view.unmount();
+  });
+
   it('names no keys on a table that opens nothing, and keeps its window line', () => {
     const view = mount({ detail: 'none' });
     view.measure(1440);
@@ -2305,6 +2484,17 @@ describe('Collection table', () => {
 });
 
 describe('detail auto', () => {
+  it('does not offer escape to a table for a dialog-hosted list', () => {
+    const view = mount({ dialog: true, presentation: 'list', openKey: 'a' });
+    view.measure(1440);
+    expect(view.query('collection')!.closest('[role="dialog"]')).not.toBeNull();
+    const hints = view.query('collection:hints');
+    expect(hints).not.toBeNull();
+    expect(hints!.textContent).toContain('close');
+    expect(hints!.textContent).not.toContain('table');
+    view.unmount();
+  });
+
   it('opens a row into list + detail without remounting any row, and escape returns to the table', async () => {
     const view = mount();
     view.measure(1440);
@@ -2541,6 +2731,41 @@ describe('detail auto beside the host details pane', () => {
 });
 
 describe('list row lines (title meta, description, status takes the facts line)', () => {
+  it('keeps a narrow capability description beside an independent toggle, yielding only to the actual status fix', () => {
+    const toggle = vi.fn();
+    const fix = vi.fn();
+    const capabilityAnatomy = capabilityCollectionAnatomy<Entry>({
+      title: entry => entry.title,
+      description: entry => `Description for ${entry.id}`,
+      facts: () => ({}),
+      status: entry => entry.id === 'a' ? { kind: 'offline' }
+        : { kind: 'signin', fix: { kind: 'sign_in', onPress: fix } },
+      action: () => <Button title="Enable" onPress={toggle} testID="independent-toggle" />,
+      accessibilityLabel: entry => `${entry.title}. Description for ${entry.id}`,
+      testID: entry => `row:${entry.id}`,
+    });
+    const view = mount({ presentation: 'list', grouped: false, items: entries.slice(0, 2), anatomy: capabilityAnatomy });
+    view.measure(300);
+    // Layout is a native boundary: deliver its measured narrow width to the real public row subtree.
+    act(() => {
+      for (const cell of view.queryAll('row:a:cell').concat(view.queryAll('row:b:cell'))) {
+        for (const node of cell.querySelectorAll<HTMLElement>('div')) {
+          const host = node as HTMLElement & { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void };
+          host.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 80 } } });
+        }
+      }
+    });
+    try {
+      expect(view.query('row:a:cell')!.textContent).toContain('Description for a');
+      expect(view.query('row:b:cell')!.textContent).not.toContain('Description for b');
+      expect(view.query('row:b')!.getAttribute('aria-label')).toContain('Description for b');
+      act(() => view.query('independent-toggle')!.click());
+      act(() => view.query('row:b:status:fix')!.click());
+      expect(toggle).toHaveBeenCalledOnce();
+      expect(fix).toHaveBeenCalledOnce();
+    } finally { view.unmount(); }
+  });
+
   const described: CollectionAnatomy<Entry> = {
     ...anatomy,
     peek: undefined,
@@ -2557,38 +2782,108 @@ describe('list row lines (title meta, description, status takes the facts line)'
     action: (entry) => <Text testID={`action:${entry.id}`}>Add</Text>,
   };
 
+  it('keeps author and version facts visible in catalog rows with a description', () => {
+    const view = mount({ presentation: 'list', scroll: 'page', detail: 'none', anatomy: {
+      ...described, rowRole: 'catalogRow',
+      byline: () => <Text testID="catalog-release-facts">Ana · 1.2.3</Text>,
+    } });
+    try {
+      view.measure(1440);
+      expect(view.query('row:a')!.textContent).toContain('Ana · 1.2.3');
+      view.measure(390);
+      expect(view.query('row:a')!.textContent).toContain('Ana · 1.2.3');
+    } finally { view.unmount(); }
+  });
+
   function textOrder(row: HTMLElement, needles: readonly string[]): number[] {
     const text = row.textContent ?? '';
     return needles.map((needle) => text.indexOf(needle));
   }
 
-  it('draws title and meta, then the description, then the facts line where a status replaces the facts', () => {
+  it('selects catalog anatomy for described collections, retaining full text with status before description', () => {
     const view = mount({ presentation: 'list', anatomy: described });
-    view.measure(1440);
-    const withStatus = view.query('row:a')!;
-    const [title, meta, description, status] = textOrder(withStatus, [
-      'Retry idempotent payment intents',
-      'Everywhere a',
-      'What Retry',
-      'Review requested',
-    ]);
-    expect(title).toBeGreaterThanOrEqual(0);
-    expect(meta).toBeGreaterThan(title);
-    expect(description).toBeGreaterThan(meta);
-    expect(status).toBeGreaterThan(description);
-    // A status takes the facts line: the byline is not drawn beside it.
-    expect(view.query('facts:a')).toBeNull();
-    expect(view.query('status:a')).not.toBeNull();
+    try {
+      view.measure(1440);
+      const withStatus = view.query('row:a')!;
+      const [title, meta, description, status, facts] = textOrder(withStatus, [
+        'Retry idempotent payment intents',
+        'Everywhere a',
+        'What Retry',
+        'Review requested',
+        'payments-api',
+      ]);
+      expect(title).toBeGreaterThanOrEqual(0);
+      expect(meta).toBeGreaterThan(title);
+      expect(description).toBeGreaterThan(meta);
+      expect(status).toBeGreaterThan(meta);
+      expect(description).toBeGreaterThan(status);
+      expect(withStatus.getAttribute('aria-label')).toContain('What Retry idempotent payment intents does');
+      expect(facts).toBeGreaterThan(description);
+      expect(view.query('facts:a')?.textContent).toBe('payments-api');
+      expect(view.query('status:a')).not.toBeNull();
 
-    const quiet = view.query('row:c')!;
-    const [quietDescription, facts] = textOrder(quiet, [
-      'What Dark mode',
-      'mobile',
-    ]);
-    expect(quietDescription).toBeGreaterThanOrEqual(0);
-    expect(facts).toBeGreaterThan(quietDescription);
-    expect(view.query('meta:c')).not.toBeNull();
+      const quiet = view.query('row:c')!;
+      const [quietDescription, quietFacts] = textOrder(quiet, ['What Dark mode', 'mobile']);
+      expect(quietDescription).toBeGreaterThanOrEqual(0);
+      expect(quietFacts).toBeGreaterThan(quietDescription);
+      expect(view.query('facts:c')?.textContent).toBe('mobile');
+      expect(view.query('meta:c')).not.toBeNull();
+    } finally { view.unmount(); }
+  });
+
+  it('keeps a missing-description peer in the same catalog anatomy', () => {
+    const view = mount({ presentation: 'list', anatomy: {
+      ...described,
+      kindLabel: () => 'MCP server',
+      description: entry => entry.id === 'c' ? null : `What ${entry.title} does`,
+    } });
+    try {
+      view.measure(1440);
+      expect(view.query('row:c')!.textContent).toContain('Dark mode date picker');
+      expect(view.query('row:a')!.textContent).toContain('MCP server');
+      expect(view.query('row:c')!.textContent).toContain('MCP server');
+      expect(view.query('facts:c')?.textContent).toBe('mobile');
+      expect(view.query('row:c')!.textContent).not.toContain('What Dark mode');
+    } finally { view.unmount(); }
+  });
+
+  it('shows a caller-supplied kind in catalog rows only', () => {
+    const kindAnatomy = { ...described, kindLabel: () => 'MCP server' };
+    const catalog = mount({ presentation: 'list', anatomy: kindAnatomy });
+    catalog.measure(1440);
+    expect(catalog.query('row:a')!.textContent).toContain('MCP server');
+    catalog.unmount();
+    const compact = mount({ presentation: 'list', anatomy: { ...kindAnatomy, rowRole: 'item' } });
+    compact.measure(1440);
+    expect(compact.query('row:a')!.textContent).not.toContain('MCP server');
+    compact.unmount();
+  });
+
+  it.each(['item', 'menu'] as const)('retains explicit %s anatomy for a described collection', rowRole => {
+    const view = mount({ presentation: 'list', anatomy: { ...described, rowRole } });
+    view.measure(1440);
+    expect(view.query('facts:c')).not.toBeNull();
+    expect(view.query('row:c')!.textContent).toContain('What Dark mode');
     view.unmount();
+  });
+
+  it('updates mounted catalog rows when the declared role changes', async () => {
+    const kindAnatomy = { ...described, kindLabel: () => 'MCP server' };
+    const view = mount({ presentation: 'list', anatomy: kindAnatomy });
+    try {
+      view.measure(1440);
+      const row = view.query('row:c');
+      expect(row!.textContent).toContain('MCP server');
+      expect(view.query('facts:c')?.textContent).toBe('mobile');
+      await view.update({ anatomy: { ...kindAnatomy, rowRole: 'item' } });
+      expect(view.query('row:c')).toBe(row);
+      expect(row!.textContent).not.toContain('MCP server');
+      expect(view.query('facts:c')?.textContent).toBe('mobile');
+      await view.update({ anatomy: kindAnatomy });
+      expect(view.query('row:c')).toBe(row);
+      expect(row!.textContent).toContain('MCP server');
+      expect(view.query('facts:c')?.textContent).toBe('mobile');
+    } finally { view.unmount(); }
   });
 
   it('keeps the two-line row for an anatomy without a description', () => {
@@ -2604,18 +2899,138 @@ describe('list row lines (title meta, description, status takes the facts line)'
     view.unmount();
   });
 
-  it('draws the row action at rest and leaves it to the detail beside an open item', async () => {
-    const view = mount({ presentation: 'list', anatomy: described });
+  it('keeps the catalog action independently reachable beside an open detail', async () => {
+    const invoke = vi.fn();
+    const view = mount({ presentation: 'list', anatomy: { ...described,
+      action: entry => <Button title={`Add ${entry.id}`} testID={`action:${entry.id}`} onPress={() => invoke(entry.id)} />,
+    } });
     view.measure(1440);
     expect(view.query('action:b')).not.toBeNull();
     await view.setOpen('b');
     expect(visible(view.query('collection-detail'))).toBe(true);
-    expect(view.query('action:a')).toBeNull();
+    expect(view.query('action:a')).not.toBeNull();
+    await act(async () => { view.query('action:a')!.click(); });
+    expect(invoke).toHaveBeenCalledWith('a');
+    expect(view.openChanges).toEqual([]);
     view.unmount();
   });
 });
 
 describe('render scope', () => {
+  it.each([false, true])('publishes the selected header below the container (host pane: %s)', async (inPane) => {
+    let title = 'Open entry';
+    const listeners = new Set<() => void>();
+    const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+    const read = () => title;
+    function useDetailHeader() {
+      return { title: React.useSyncExternalStore(subscribe, read, read) };
+    }
+    const header = vi.fn(() => null);
+    const rows = vi.fn((): CollectionRowActions => ({}));
+    const view = mount({ openKey: 'a', useDetailHeader, header, useRowActions: rows,
+      ...(inPane ? { pane: createPaneHost() } : {}), reducedMotion: true });
+    try {
+      view.measure(inPane ? 1440 : 560);
+      expect(view.container.textContent).toContain('Open entry');
+      header.mockClear();
+      rows.mockClear();
+      await act(async () => { title = 'Closed entry'; for (const listener of listeners) listener(); });
+      expect(view.container.textContent).toContain('Closed entry');
+      expect(view.container.textContent).not.toContain('Open entry');
+      expect(header).not.toHaveBeenCalled();
+      expect(rows).not.toHaveBeenCalled();
+    } finally { view.unmount(); }
+  });
+  it.each(['table', 'board', 'grid'] as const)('publishes same-key row facts without rendering the %s container or siblings', async (presentation) => {
+    const held = new Map(entries.map(item => [item.id, item]));
+    const listeners = new Map<string, Set<() => void>>();
+    const renders = new Map<string, number>();
+    const header = vi.fn(() => null);
+    function useRowItem(item: Entry): Entry {
+      const subscribe = React.useCallback((listener: () => void) => {
+        const rowListeners = listeners.get(item.id) ?? new Set<() => void>();
+        listeners.set(item.id, rowListeners);
+        rowListeners.add(listener);
+        return () => { rowListeners.delete(listener); };
+      }, [item.id]);
+      const read = React.useCallback(() => held.get(item.id)!, [item.id]);
+      return React.useSyncExternalStore(subscribe, read, read);
+    }
+    const useRowActions = (item: Entry): CollectionRowActions => {
+      renders.set(item.id, (renders.get(item.id) ?? 0) + 1);
+      return {};
+    };
+    const publish = (item: Entry) => {
+      held.set(item.id, item);
+      for (const listener of listeners.get(item.id) ?? []) listener();
+    };
+    const view = mount({ presentation, useRowItem, useRowActions, header });
+    try {
+      view.measure(1440);
+      if (presentation === 'table') {
+        await act(async () => { view.query('row:a:peek')!.click(); });
+        expect(view.query('peek-content:a')?.textContent).toContain(entries[0]!.title);
+      }
+      renders.clear();
+      header.mockClear();
+      const sibling = view.query('row:b');
+      const changed = { ...entries[0]!, title: 'Closed after native write' };
+      await act(async () => { publish(changed); });
+      expect(view.container.textContent).toContain(changed.title);
+      expect(view.query('row:a')?.getAttribute('aria-label')).toBe(changed.title);
+      if (presentation === 'table') expect(view.query('peek-content:a')?.textContent).toContain(changed.title);
+      expect(renders.get('a')).toBe(1);
+      expect([...renders].filter(([key]) => key !== 'a')).toEqual([]);
+      expect(header).not.toHaveBeenCalled();
+      expect(view.query('row:b')).toBe(sibling);
+      renders.clear();
+      await act(async () => { publish(changed); });
+      expect([...renders]).toEqual([]);
+      expect(header).not.toHaveBeenCalled();
+      // Structural ownership stays with the model: removing a key still removes its row.
+      await view.update({ items: entries.filter(item => item.id !== 'a') });
+      expect(view.query('row:a')).toBeNull();
+      expect(view.query('row:b')).toBe(sibling);
+    } finally { view.unmount(); }
+  });
+  it.each([false, true])('executes zero unchanged rows in a 500-item page list while divider membership is unchanged (totals: %s)', async (totals) => {
+    // The heavy Workflow Library fixture that exposed this broadcast holds 500 rows.
+    const items = Array.from({ length: 500 }, (_, index): Entry => ({
+      ...entries[0]!, id: `window-${index}`, title: `Workflow ${index}`,
+      group: index < 250 ? 'needs' : 'rest',
+    }));
+    const renders = new Map<string, number>();
+    const useRowActions: NonNullable<CollectionProps<Entry>['useRowActions']> = item => {
+      renders.set(item.id, (renders.get(item.id) ?? 0) + 1);
+      return {};
+    };
+    const single = { value: 'window-0', onValueChange: () => undefined };
+    const view = mount({
+      items, presentation: 'list', scroll: 'page', useRowActions,
+      selection: { single },
+      ...(totals ? { summaryRows: [{ key: 'total', title: 'Total', cells: {} }] } : {}),
+    });
+    try {
+      view.measure(390);
+      const selected = view.query('row:window-0')!;
+      const unchanged = view.query('row:window-1');
+      act(() => selected.focus());
+      renders.clear();
+      const changed = items.map(item => item.id === 'window-0' ? { ...item, title: 'Updated workflow' } : item);
+      await view.update({ items: changed });
+      expect(view.query('row:window-0')?.textContent).toContain('Updated workflow');
+      expect(renders.get('window-0')).toBe(1);
+      expect([...renders].reduce((sum, [key, count]) => sum + (key === 'window-0' ? 0 : count), 0)).toBe(0);
+      expect(view.query('row:window-1')).toBe(unchanged);
+      expect(view.query('row:window-0')).toBe(selected);
+      expect(selected.getAttribute('aria-checked')).toBe('true');
+      expect(document.activeElement).toBe(selected);
+
+      renders.clear();
+      await view.update({ items: [...changed] });
+      expect([...renders]).toEqual([]);
+    } finally { view.unmount(); }
+  });
   it('draws listColumn fields as aligned end columns on a wide page-section list, named once, and leaves them to the byline on a phone', () => {
     const bylineLayouts: Array<boolean | undefined> = [];
     const columnsAnatomy: CollectionAnatomy<Entry> = {
@@ -2654,7 +3069,31 @@ describe('render scope', () => {
       expect(view.query('row:a')?.textContent).toContain('payments-api · 18m');
     } finally { view.unmount(); }
   });
-
+  it.each([false, true])('publishes real divider membership changes even when the membership size is unchanged (totals: %s)', async totals => {
+    const items = [...entries, { ...entries[2]!, id: 'd' }];
+    const view = mount({
+      items, presentation: 'list', scroll: 'page',
+      ...(totals ? { summaryRows: [{ key: 'total', title: 'Total', cells: {} }] } : {}),
+    });
+    try {
+      view.measure(390);
+      const hasDivider = (key: string) => view.query(`row:${key}:cell`)!.querySelector('[role="separator"]') !== null;
+      expect(hasDivider('a')).toBe(true);
+      expect(hasDivider('b')).toBe(totals);
+      expect(hasDivider('c')).toBe(true);
+      expect(hasDivider('d')).toBe(false);
+      // Reordering the final two rows keeps the Set's size but changes which row ends the sheet.
+      await view.update({ items: [items[0]!, items[1]!, items[3]!, items[2]!] });
+      expect(hasDivider('c')).toBe(false);
+      expect(hasDivider('d')).toBe(true);
+      // Switching between separate section sheets and one totals sheet changes the group boundary.
+      await view.update({ summaryRows: totals ? [] : [{ key: 'total', title: 'Total', cells: {} }] });
+      expect(hasDivider('b')).toBe(!totals);
+      await view.update({ items: entries });
+      expect(view.query('row:d')).toBeNull();
+      expect(hasDivider('c')).toBe(false);
+    } finally { view.unmount(); }
+  });
   it.each([
     { presentation: 'table', scroll: undefined },
     { presentation: 'list', scroll: undefined },
@@ -2846,6 +3285,35 @@ describe('the title suffix', () => {
     view.unmount();
   });
 
+  it('says the suffix inline on a single-line list row, between the title and its end-aligned meta, with no second line', () => {
+    // No byline, where, reason or description: the list row is one line, so the suffix it would otherwise leave to the
+    // byline stands after the title (a status word), and the meta ends the same line.
+    const single: CollectionAnatomy<Entry> = {
+      glyph: () => <Text>•</Text>,
+      title: (entry) => entry.title,
+      titleSuffix: (entry) => (entry.id === 'a' ? 'Working' : null),
+      titleMeta: (entry) => <Text testID={`meta:${entry.id}`}>{`${entry.id === 'a' ? '4.1' : '2.3'} GB`}</Text>,
+      accessibilityLabel: (entry) => `${entry.title}, ${entry.id === 'a' ? '4.1' : '2.3'} GB`,
+      testID: (entry) => `row:${entry.id}`,
+      columnTitles: { title: 'Entry' },
+    };
+    const view = mount({ presentation: 'list', anatomy: single });
+    view.measure(360);
+    const suffix = view.query('row:a:title-suffix');
+    expect(suffix?.textContent).toBe('Working');
+    expect(view.query('row:b:title-suffix')).toBeNull();
+    const row = view.query('row:a')!;
+    const text = row.textContent ?? '';
+    expect(text.indexOf('Retry idempotent payment intents')).toBeLessThan(text.indexOf('Working'));
+    expect(text.indexOf('Working')).toBeLessThan(text.indexOf('4.1 GB'));
+    // One line: the title, the suffix and the meta share one horizontal line, and that line is the row's only one.
+    let line: HTMLElement = suffix!;
+    while (!line.contains(view.query('meta:a'))) line = line.parentElement!;
+    expect(getComputedStyle(line).flexDirection).toBe('row');
+    expect(line.textContent).toContain('Retry idempotent payment intents');
+    expect(line.parentElement!.children).toHaveLength(1);
+    view.unmount();
+  });
 });
 
 describe('the title controls', () => {
@@ -2886,8 +3354,52 @@ describe('the title controls', () => {
   });
 });
 
+describe('the control fields', () => {
+  it("draw a field cell that is the row's own control beside its press target, never inside it", () => {
+    const pressed: string[] = [];
+    const view = mount({
+      anatomy: {
+        ...anatomy,
+        fields: [
+          {
+            key: 'phase',
+            title: 'Used at',
+            minWidth: 120,
+            priority: 2,
+            control: true,
+            render: (entry) => (
+              <Button
+                testID={`row:${entry.id}:phase`}
+                title="Runtime"
+                onPress={() => {
+                  pressed.push(entry.id);
+                }}
+              />
+            ),
+          },
+        ],
+      },
+    });
+    view.measure(1440);
+    const control = view.query('row:a:phase');
+    expect(control).not.toBeNull();
+    expect(view.query('row:a')?.contains(control)).toBe(false);
+    expect(
+      view.container.querySelectorAll(
+        'button button, [role="button"] [role="button"]',
+      ),
+    ).toHaveLength(0);
+    act(() => {
+      control!.click();
+    });
+    expect(pressed).toEqual(['a']);
+    expect(view.openChanges).toEqual([]);
+    view.unmount();
+  });
+});
+
 describe('the search field', () => {
-  it('carries the active filters as removable tokens inside the field, and shows the key that focuses it', async () => {
+  it('says the active filters as removable tokens on a quiet line under the field, and shows the key that focuses it', async () => {
     const removed: string[] = [];
     const view = mount({
       search: {
@@ -2896,49 +3408,32 @@ describe('the search field', () => {
         onValueChange: () => undefined,
         testID: 'search',
         tokens: [
-          {
-            key: 'view',
-            qualifier: 'view',
-            label: 'My work',
-            onRemove: () => {
-              removed.push('view');
-            },
-          },
-          {
-            key: 'state',
-            qualifier: 'is',
-            label: 'open',
-            onRemove: () => {
-              removed.push('state');
-            },
-          },
+          { key: 'view', qualifier: 'view', label: 'My work', onRemove: () => { removed.push('view'); } },
+          { key: 'state', qualifier: 'is', label: 'open', onRemove: () => { removed.push('state'); } },
         ],
       },
     });
     view.measure(1440);
-    const input = view.query('search')!;
-    const well = input.parentElement!;
-    const tokens = [...well.querySelectorAll<HTMLElement>('[role="button"]')];
-    expect(tokens.map((token) => token.getAttribute('aria-label'))).toEqual([
-      'Remove view My work',
-      'Remove is open',
-    ]);
-    // Tokens sit before the text, in the field's own well.
-    expect(
-      tokens[1]!.compareDocumentPosition(input) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // However many tokens there are, the query keeps room to be typed and read: the tokens give way, never the
-    // input (QA-F-LISTS r133: two source tokens left a 0 px input and an invisible query).
-    expect(Number.parseFloat(getComputedStyle(input).minWidth)).toBeGreaterThan(0);
-    await act(async () => {
-      tokens[1]!.click();
-    });
+    const field = view.query('search.field')!;
+    // The field holds only the query: tokens never share its line, so the query is never squeezed.
+    expect(field.querySelectorAll('[aria-label^="Remove"]')).toHaveLength(0);
+    const line = view.query('search:tokens')!;
+    const tokens = [...line.querySelectorAll<HTMLElement>('[role="button"]')];
+    expect(tokens.map((token) => token.getAttribute('aria-label'))).toEqual(['Remove view My work', 'Remove is open']);
+    expect(field.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => { tokens[1]!.click(); });
     expect(removed).toEqual(['state']);
     // The field's own focus shortcut, said as a key cap after the text and hidden from assistive technology.
     const hint = view.query('search:shortcut');
     expect(hint?.textContent).toBe('/');
     expect(hint?.closest('[aria-hidden="true"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('draws no token line while nothing narrows the list', () => {
+    const view = mount({ search: { label: 'Search entries', value: '', onValueChange: () => undefined, testID: 'search' } });
+    view.measure(1440);
+    expect(view.query('search:tokens')).toBeNull();
     view.unmount();
   });
 });
@@ -2955,8 +3450,8 @@ describe('the search tokens on a phone', () => {
       },
     });
     view.measure(390);
-    const well = view.query('search')!.parentElement!;
-    const tokens = [...well.querySelectorAll<HTMLElement>('[role="button"]')];
+    const line = view.query('search:tokens')!;
+    const tokens = [...line.querySelectorAll<HTMLElement>('[role="button"]')];
     expect(tokens.map((token) => token.getAttribute('aria-label'))).toEqual(['Remove Source acme/ledger', 'Remove Source PostHog']);
     expect(tokens.map((token) => token.textContent)).toEqual(['acme/ledger', 'PostHog']);
     view.unmount();
@@ -3001,6 +3496,24 @@ describe('the list row anatomy', () => {
     );
     expect(visible(view.query('row:b:glyph-badge'))).toBe(true);
     expect(view.query('row:a:glyph-badge')).toBeNull();
+    view.unmount();
+  });
+
+  it('keeps the glyph where a row offers no leading control, in the table as in the list', () => {
+    const view = mount({
+      anatomy: {
+        ...anatomy,
+        glyph: (entry) => <Text testID={`glyph:${entry.id}`}>•</Text>,
+        leadingControl: (entry) => entry.id === 'a' ? <Text testID="control:a">◯</Text> : null,
+      },
+    });
+    for (const width of [1440, 360]) {
+      view.measure(width);
+      expect(view.query('control:a')).not.toBeNull();
+      expect(view.query('glyph:a')).toBeNull();
+      // A row whose control is absent (a stale row, a source with no workflow) still says what it is.
+      expect(view.query('glyph:b')).not.toBeNull();
+    }
     view.unmount();
   });
 });
@@ -3050,6 +3563,58 @@ describe('a page-sized collection (scroll page)', () => {
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     }
+    view.unmount();
+  });
+
+  it.each([true, false])('keeps catalog rows and focus through directory recomposition (grouped: %s)', (grouped) => {
+    const view = mount({
+      grouped,
+      presentation: 'list',
+      scroll: 'page',
+      detail: 'none',
+      anatomy: { ...anatomy, rowRole: 'catalogRow', description: (entry) => `What ${entry.title} does` },
+    });
+    // The line that holds a row: its directory cell's parent.
+    const lineOf = (key: string) => view.query(`row:${key}`)!.closest(`[data-testid="collection:directory-line"]`);
+    view.measure(1440);
+    // Two columns, row-major: a group's first two rows share one line, in reading (and keyboard) order.
+    expect(lineOf('a')).not.toBeNull();
+    expect(lineOf('a')).toBe(lineOf('b'));
+    expect(lineOf('a')!.compareDocumentPosition(view.query('row:b')!) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
+    const rowA = view.query('row:a')!;
+    const rowB = view.query('row:b');
+    act(() => { rowA.focus(); });
+    view.measure(500);
+    // Narrower than two columns can hold: one column, a row per line.
+    expect(lineOf('a')).toBeNull();
+    // Recomposing the columns keeps every row mounted (focus, press state and a pane's source survive a resize).
+    expect(view.query('row:a')).toBe(rowA);
+    expect(view.query('row:b')).toBe(rowB);
+    expect(document.activeElement).toBe(rowA);
+    view.measure(1440);
+    expect(view.query('row:a')).toBe(rowA);
+    expect(view.query('row:b')).toBe(rowB);
+    expect(document.activeElement).toBe(rowA);
+    view.unmount();
+  });
+
+  it('reserves a loading directory as a short run of rows in its columns, not one row measured from itself', () => {
+    const view = mount({
+      items: [],
+      loading: true,
+      presentation: 'list',
+      scroll: 'page',
+      detail: 'none',
+      anatomy: { ...anatomy, rowRole: 'catalogRow', description: (entry) => `What ${entry.title} does` },
+    });
+    view.measure(1440, 2000);
+    const rows = view.queryAll('collection:skeleton-row');
+    // A page-scrolling list is only as tall as what it draws: the run stands in for the rows that are coming.
+    expect(rows.length).toBeGreaterThan(3);
+    // Row-major columns like the loaded directory: the first two placeholders stand side by side.
+    expect(rows[0]!.parentElement).not.toBe(rows[rows.length - 1]!.parentElement);
+    // A directory draws no hairlines, loading or loaded.
+    expect(rows.every((row) => getComputedStyle(row).borderBottomWidth === '' || getComputedStyle(row).borderBottomWidth === '0px')).toBe(true);
     view.unmount();
   });
 
@@ -3758,7 +4323,95 @@ const described: CollectionAnatomy<Entry> = {
 };
 const actionPresses: string[] = [];
 
+describe('first layout (web)', () => {
+  it('mounts each table row once on open: the layout is decided before the rows mount, never list then table', () => {
+    // The stage reads its layout box before the browser paints; rows must not mount in a provisional geometry first.
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1440);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
+    const mounts = new Map<string, number>();
+    function CountedGlyph(props: Readonly<{ id: string }>) {
+      React.useLayoutEffect(() => { mounts.set(props.id, (mounts.get(props.id) ?? 0) + 1); }, [props.id]);
+      return <Text>•</Text>;
+    }
+    try {
+      const view = mount({ presentation: 'table', detail: 'none', anatomy: { ...anatomy, glyph: (entry) => <CountedGlyph id={entry.id} /> } });
+      expect(view.query('row:a')).not.toBeNull();
+      expect([...mounts.values()]).toEqual(entries.map(() => 1));
+      view.unmount();
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+    }
+  });
+
+  it('keeps its table rows mounted while a retained pane hides it and shows it again', async () => {
+    // Real RNW layout path (its observer callback, UIManager measure, the stage's handler). ResizeObserver, geometry
+    // and checkVisibility are the browser boundary jsdom lacks: under `display: none` a box measures 0×0 and is not rendered.
+    const box = { width: 1440, height: 800, rendered: true };
+    const observed = new Set<Element>();
+    let deliver = () => {};
+    class BrowserResizeObserver {
+      constructor(callback: (entries: { target: Element }[]) => void) {
+        deliver = () => callback([...observed].map(target => ({ target })));
+      }
+      observe(target: Element) { observed.add(target); }
+      unobserve(target: Element) { observed.delete(target); }
+      disconnect() { observed.clear(); }
+    }
+    vi.stubGlobal('ResizeObserver', BrowserResizeObserver);
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(() => box.width);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(() => box.height);
+    const prototype = Element.prototype as unknown as { checkVisibility?: () => boolean };
+    prototype.checkVisibility = () => box.rendered;
+    const report = (next: Partial<typeof box>) => act(async () => {
+      Object.assign(box, next);
+      deliver();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    const mounts = new Map<string, number>();
+    function CountedGlyph(props: Readonly<{ id: string }>) {
+      React.useLayoutEffect(() => { mounts.set(props.id, (mounts.get(props.id) ?? 0) + 1); }, [props.id]);
+      return <Text>•</Text>;
+    }
+    try {
+      const view = mount({ presentation: 'table', detail: 'none', anatomy: { ...anatomy, glyph: (entry) => <CountedGlyph id={entry.id} /> } });
+      await report({});
+      const settled = [...mounts.values()];
+      expect(settled).toEqual(entries.map(() => 1));
+      await report({ width: 0, height: 0, rendered: false });
+      await report({ width: 1440, height: 800, rendered: true });
+      expect([...mounts.values()]).toEqual(settled);
+      view.unmount();
+    } finally {
+      delete prototype.checkVisibility;
+      width.mockRestore();
+      height.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('still lands its rows where the browser reports no box before paint', () => {
+    const view = mount({ presentation: 'table', detail: 'none' });
+    expect(view.query('row:a')).not.toBeNull();
+    view.unmount();
+  });
+});
+
 describe('grid', () => {
+  it('lands its first cards with the grid on the first paint, before any layout callback (web)', () => {
+    // The stage reads its layout box before the browser paints; the platform layout callback comes a frame or more later.
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1440);
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
+    try {
+      const view = mount({ presentation: 'grid', grouped: false, anatomy: described });
+      expect(view.query('row:a:card')).not.toBeNull();
+      view.unmount();
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+    }
+  });
+
   it('lays cards out in as many equal columns as the minimum card width allows, one column on a phone', () => {
     const view = mount({
       presentation: 'grid',
@@ -4003,6 +4656,25 @@ describe('grid', () => {
     await view.update({ items: [], loading: false });
     expect(view.query('empty-state')).not.toBeNull();
     view.unmount();
+  });
+
+  it('stands no glyph column in the loading rows of a kind that draws no glyph', async () => {
+    const rowParts = (loadingGlyph: boolean) => {
+      const view = mount({
+        presentation: 'list',
+        items: [],
+        loading: true,
+        anatomy: { ...anatomy, loadingGlyph },
+      });
+      view.measure(1440, 420);
+      const row = view.queryAll('collection:skeleton-row')[0]!;
+      const parts = row.children.length;
+      view.unmount();
+      return parts;
+    };
+    // A glyph column and the text lines; or the text lines alone, as the loaded skill rows will draw them.
+    expect(rowParts(true)).toBe(2);
+    expect(rowParts(false)).toBe(1);
   });
 
   it("stands the table's loading frame without a plugin environment: ruled column band, then rows as tall as the table's fill the view", () => {
@@ -4503,6 +5175,12 @@ const procGroups: HappierCollectionGrouping<Proc> = {
   groupOf: (proc) => proc.group,
 };
 
+const keptHere = { key: 'kept', title: 'Kept here', detail: '2 groups' };
+const sectionedProcGroups: HappierCollectionGrouping<Proc> = {
+  ...procGroups,
+  axis: procGroups.axis.map((group) => ({ ...group, section: keptHere })),
+};
+
 const procAnatomy: CollectionAnatomy<Proc> = {
   glyph: () => <Text>•</Text>,
   title: (proc) => proc.title,
@@ -4543,6 +5221,8 @@ type TreeHarnessProps = Readonly<{
   groupAction?: CollectionProps<Proc>['groupAction'];
   scroll?: 'page';
   ungrouped?: boolean;
+  /** Both groups are parts of one page section. */
+  sectioned?: boolean;
   onOpenChange: (key: string | null) => void;
 }>;
 
@@ -4559,7 +5239,7 @@ function TreeHarness(props: TreeHarnessProps): ReactElement {
   const model = useHappierCollection({
     items: procs,
     keyOf: (proc: Proc) => proc.id,
-    ...(props.ungrouped ? {} : { groups: procGroups }),
+    ...(props.ungrouped ? {} : { groups: props.sectioned ? sectionedProcGroups : procGroups }),
     parentKey: (proc: Proc) => proc.parent,
     ...(filter === undefined ? {} : { filter }),
     ...(props.initialOpen === undefined
@@ -4967,7 +5647,7 @@ describe("the search in the caller's header row", () => {
     ],
   };
 
-  it('hands the search, tokens and all, to a header render at a bounded width, and leaves the list pane without it', () => {
+  it('hands the search to a header render at a bounded width, says its tokens under that header, and leaves the list pane without it', () => {
     const view = mount({
       search,
       header: (slots) => (
@@ -4983,10 +5663,10 @@ describe("the search in the caller's header row", () => {
     expect(toolbar.contains(input)).toBe(true);
     expect(view.query('collection-list')!.contains(input)).toBe(false);
     expect(view.queryAll('search')).toHaveLength(1);
-    // The narrowings stay inside the field's well.
-    expect(
-      input.parentElement!.querySelector('[aria-label="Remove is open"]'),
-    ).not.toBeNull();
+    // The narrowings stand on the Collection's own line under the header, never inside the field's well.
+    expect(input.parentElement!.querySelector('[aria-label="Remove is open"]')).toBeNull();
+    expect(view.query('search:tokens')!.querySelector('[aria-label="Remove is open"]')).not.toBeNull();
+    expect(toolbar.compareDocumentPosition(view.query('search:tokens')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Search first, the caller's trailing controls after it.
     expect(
       input.compareDocumentPosition(view.query('trailing')!) &
@@ -5059,6 +5739,41 @@ describe("the search in the caller's header row", () => {
     phone.unmount();
   });
 
+  it("leads a phone's collection page with its large title when the host's navigation leaves the name to the page", () => {
+    const header: CollectionProps<Entry>['header'] = (slots) => (
+      <View testID="toolbar">
+        {slots.title}
+        {slots.search}
+      </View>
+    );
+    // A phone's top-level collection page (lab `merged-list` 390, as core's Inbox, lab `phone-P4`): the bar carries
+    // no title, and the page's name stands large above the folded toolbar.
+    const phone = mount({
+      search,
+      title: 'PRs & Issues',
+      header,
+      pageChrome: { showsTitle: true, largeTitle: true },
+    });
+    phone.measure(390);
+    const toolbar = phone.query('toolbar')!;
+    expect(toolbar.querySelector('[role="heading"]')).toBeNull();
+    const heading = [...phone.container.querySelectorAll<HTMLElement>('[role="heading"]')]
+      .find((node) => node.textContent === 'PRs & Issues');
+    expect(heading).toBeTruthy();
+    // The page's one display title, the step core's Inbox draws on a phone, not the toolbar's heading.
+    // The element's own declaration (RNW's inline style), not jsdom's partial cascade.
+    expect(Number.parseFloat(heading!.style.fontSize)).toBe(HAPPIER_PAGE_TEXT.heroTitle.fontSize);
+    // It leads: the toolbar comes after it.
+    expect(heading!.compareDocumentPosition(toolbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    phone.unmount();
+
+    // A page without a name of its own draws none.
+    const unnamed = mount({ search, header, pageChrome: { showsTitle: true, largeTitle: true } });
+    unnamed.measure(390);
+    expect(unnamed.container.querySelector('[role="heading"]')).toBeNull();
+    unnamed.unmount();
+  });
+
   it('hands the selection control to a header render, so the list pane draws no row of its own for it', () => {
     const store = createListMultiSelectionStore({
       scopeKey: 'entries',
@@ -5085,7 +5800,7 @@ describe("the search in the caller's header row", () => {
   it('on a pointer device selects by click and keys alone: no Select button, only the way back out while selecting', async () => {
     const matchMedia = (globalThis as { matchMedia?: unknown }).matchMedia;
     (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({
-      matches: query === '(hover: hover) and (pointer: fine)',
+      matches: query === '(pointer: fine)' || query === '(hover: hover)',
     });
     let view: ReturnType<typeof mount> | null = null;
     try {
@@ -5107,9 +5822,7 @@ describe("the search in the caller's header row", () => {
       });
       expect(store.getSnapshot().isSelectionMode).toBe(true);
       expect([...store.getSnapshot().selectedKeys]).toEqual(['a']);
-      expect(view.query('happier-list-selection-mode')?.textContent).toContain(
-        'Done',
-      );
+      expect(view.query('happier-list-selection-mode')?.textContent).toBe('Done');
       expect(view.openChanges).toEqual([]);
       await act(async () => {
         view!.query('happier-list-selection-mode')!.click();
@@ -5129,9 +5842,7 @@ describe("the search in the caller's header row", () => {
       });
       expect(store.getSnapshot().isSelectionMode).toBe(true);
       expect([...store.getSnapshot().selectedKeys]).toEqual(['b']);
-      expect(view.query('happier-list-selection-mode')?.textContent).toContain(
-        'Done',
-      );
+      expect(view.query('happier-list-selection-mode')?.textContent).toBe('Done');
       expect(view.openChanges).toEqual([]);
       await act(async () => {
         view!.query('happier-list-selection-mode')!.click();
@@ -5308,6 +6019,44 @@ describe('the Collection toolbar', () => {
     act(() => node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y, width, height } } }));
   }
 
+  it.each([false, true])('opens the filters from the funnel at the search field\'s end, with no chip row (folded=%s)', (folded) => {
+    const calls: string[] = [];
+    const header = toolbarHeader(calls);
+    const view = mount({ search, header: folded
+      ? (slots) => <CollectionToolbarCompactContext.Provider value={true}>{(header as (s: typeof slots) => React.ReactNode)(slots)}</CollectionToolbarCompactContext.Provider>
+      : header, renderPopover: openPopover });
+    view.measure(1440);
+    // The funnel is the field's own last control: one place that opens the filters, at every width.
+    const field = view.query('search.field')!;
+    const funnel = button(field, 'Filters: 2');
+    expect(funnel).not.toBeNull();
+    expect(funnel!.textContent).toBe('');
+    // Nothing stands under the search at rest: no chips, and no second Filters control in the row.
+    expect(view.query('toolbar:chips')).toBeNull();
+    expect([...view.query('toolbar')!.querySelectorAll('[aria-label="Filters: 2"]')]).toHaveLength(1);
+    act(() => { funnel!.click(); });
+    expect(view.query('refine:form')).not.toBeNull();
+    view.unmount();
+  });
+
+  it.each([false, true])('keeps a page\'s inline filter alone on the wide row, and folds it behind the funnel (folded=%s)', (folded) => {
+    const toolbar = (
+      <CollectionToolbar
+        refine={{ label: 'Show runs', inline: true, render: () => <Text testID="refine:scope">All · Mine</Text>,
+          sheet: { render: () => <Text testID="refine:form">All · Mine</Text> } }}
+        testID="toolbar"
+      />
+    );
+    const view = mount({ search, header: (slots) => {
+      const placed = React.cloneElement(toolbar, { slots });
+      return folded ? <CollectionToolbarCompactContext.Provider value={true}>{placed}</CollectionToolbarCompactContext.Provider> : placed;
+    }, renderPopover: openPopover });
+    view.measure(1440);
+    expect(button(view.query('search.field')!, 'Show runs') !== null).toBe(folded);
+    expect(view.query('refine:scope') !== null).toBe(!folded);
+    view.unmount();
+  });
+
   it('uses the current boxes when freshness arrives, instead of folding on an earlier row height', () => {
     const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover });
     view.measure(1440);
@@ -5348,6 +6097,31 @@ describe('the Collection toolbar', () => {
     // A healthy freshness gives its words up first; the row lays out again without them and still does not fit.
     layout('toolbar', 76);
     expect(view.query('refine:toolbar')).toBeNull();
+    view.unmount();
+  });
+
+  it.each(['accessory', 'pageActions', 'title'] as const)('remeasures at the same pane width when the folded %s gets narrower', (slot) => {
+    const header: CollectionProps<Entry>['header'] = (slots) => <CollectionToolbar
+      slots={{ ...slots, ...(slot === 'accessory' ? {} : { [slot]: <Text>Run on this machine</Text> }) }}
+      accessory={slot === 'accessory' ? <Text>Run on this machine</Text> : undefined}
+      refine={{ label: 'Filters', render: () => <Text testID="refine:toolbar">Refine</Text>, sheet: { render: () => null } }}
+      testID="toolbar"
+    />;
+    const view = mount({ search, header });
+    view.measure(1440);
+    const layout = (id: string, width: number, height = 36) => act(() => {
+      reportToolbarLayout(view, id, 0, width, height);
+    });
+    layout('toolbar:lead', 900);
+    layout('toolbar:trail', 450, 32);
+    layout('toolbar', 1300, 76);
+    expect(view.query('refine:toolbar')).toBeNull();
+    const content = [...view.query('toolbar')!.querySelectorAll<HTMLElement>('div')]
+      .find((node) => node.textContent === 'Run on this machine' && node.childElementCount === 0)!.parentElement!;
+    const measured = content as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void };
+    act(() => measured.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 260, height: 36 } } }));
+    act(() => measured.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 120, height: 36 } } }));
+    expect(view.query('refine:toolbar')).not.toBeNull();
     view.unmount();
   });
 
@@ -5431,7 +6205,8 @@ describe('the Collection toolbar', () => {
     // A 1440 window with the Projects column open leaves a plugin page about this wide (lab a2 draws one row).
     view.measure(1028);
     expect(view.query('refine:toolbar')).not.toBeNull();
-    expect(button(view.query('toolbar')!, 'Filters: 2')).toBeNull();
+    // The one row: the funnel stays the field's own control, with no round folded button beside ⋯.
+    expect(view.query('search.field')!.contains(button(view.query('toolbar')!, 'Filters: 2'))).toBe(true);
     view.unmount();
   });
 
@@ -5596,9 +6371,10 @@ describe('the Collection toolbar', () => {
 
     // The folded Filters: a named, counted button that opens the page's own narrowing form as the bottom sheet —
     // the same form the wide row opens, never a second set of checkbox groups.
-    const filters = button(toolbar, 'Filters: 2')!;
+    const filters = button(view.query('search.field')!, 'Filters: 2')!;
     expect(filters).not.toBeNull();
-    expect(filters.textContent).toBe('2');
+    // The line under the field says what is on; the funnel draws no count of its own.
+    expect(filters.textContent).toBe('');
     act(() => {
       filters.click();
     });
@@ -5667,6 +6443,24 @@ describe('the Collection toolbar', () => {
     view.unmount();
   });
 
+  it("on a phone places Select beside the search's round buttons, never squeezed between the lens and the view switch", () => {
+    const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover, selection: { multiple: { store } } });
+    view.measure(390);
+    const mode = view.query('happier-list-selection-mode')!;
+    expect(mode).not.toBeNull();
+    // The lens row holds the lens and the arrangement switch only; Select joins Filters and ⋯ in the search row, so
+    // the row that holds Select also holds the search, and that row is not the whole two-row toolbar.
+    const toolbar = view.query('toolbar')!;
+    let row: HTMLElement | null = mode.parentElement;
+    while (row !== null && !row.contains(view.query('search'))) row = row.parentElement;
+    expect(row).not.toBeNull();
+    expect(row).not.toBe(toolbar);
+    expect(toolbar.contains(row)).toBe(true);
+    expect(row!.contains(view.query('lens'))).toBe(false);
+    view.unmount();
+  });
+
   it('composes for a phone from the first frame when the host navigation shows the title', () => {
     const view = mount({
       search,
@@ -5715,7 +6509,58 @@ describe('an ungrouped page list (a phone)', () => {
     view.unmount();
   });
 
-  it('leaves grouped and unsorted page lists to their section titles', () => {
+  it('draws a grouped list with totals as one table: the bar, every band and row, then the totals on one sheet', () => {
+    const view = mountTree({ presentation: 'list', scroll: 'page', sort, summaryRows });
+    view.measure(390);
+    const bar = view.query('procs:sheet-header');
+    expect(bar).not.toBeNull();
+    const sheetBody = bar!.parentElement!;
+    for (const row of view.rows()) expect(sheetBody.contains(view.rowElement(row))).toBe(true);
+    expect(sheetBody.textContent).toContain('Left behind');
+    expect(sheetBody.textContent).toContain('Happier in total');
+    view.unmount();
+  });
+
+  it('draws groups that are parts of one page section under its one heading, on one sheet with their sub-headings', () => {
+    const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true });
+    view.measure(1200);
+    const text = view.container.textContent ?? '';
+    // One heading names the section and its quiet fact, once.
+    expect(text.split('Kept here')).toHaveLength(2);
+    expect(text).toContain('2 groups');
+    // The first group's first row and the last group's last row share one sheet, which holds both sub-headings
+    // but not the section's own heading.
+    const rows = view.rows();
+    let sheet = view.rowElement(rows[0]!).parentElement!;
+    while (!sheet.contains(view.rowElement(rows[rows.length - 1]!))) sheet = sheet.parentElement!;
+    // The web middle ellipsis preserves the space between its runs as a nonbreaking space.
+    expect(sheet.textContent?.replace(/\s/gu, ' ')).toContain('Started by Happier');
+    expect(sheet.textContent).toContain('Left behind');
+    expect(sheet.textContent).not.toContain('Kept here');
+    view.unmount();
+  });
+
+  it('gives each group sharing a page section its own action, beside its own sub-heading', () => {
+    const opened: string[] = [];
+    const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true,
+      groupAction: (groupKey) => ({ kind: 'link', label: 'Open', onPress: () => { opened.push(groupKey); } }) });
+    view.measure(1200);
+    const rows = view.rows();
+    let sheet = view.rowElement(rows[0]!).parentElement!;
+    while (!sheet.contains(view.rowElement(rows[rows.length - 1]!))) sheet = sheet.parentElement!;
+    for (const key of ['happier', 'left']) {
+      const action = view.query(`procs:group:${key}:action`);
+      expect(action).not.toBeNull();
+      // On the sheet with its group, once, not on the section heading that names both groups.
+      expect(sheet.contains(action)).toBe(true);
+      expect(view.container.querySelectorAll(`[data-testid="procs:group:${key}:action"]`)).toHaveLength(1);
+      act(() => { action!.click(); });
+    }
+    expect(opened).toEqual(['happier', 'left']);
+    view.unmount();
+  });
+
+  it('leaves grouped lists without totals, and unsorted page lists, to their section titles', () => {
     const grouped = mountTree({ presentation: 'list', scroll: 'page', sort });
     grouped.measure(390);
     expect(grouped.query('procs:sheet-header')).toBeNull();

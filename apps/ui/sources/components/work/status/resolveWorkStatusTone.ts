@@ -27,6 +27,7 @@ import { isManagedMachineResourceAbsent, managedCreationState } from '@/componen
 import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import { inboxItemViewV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { readWorkStatusPresentationRank } from './workStatusRank';
+import type { MachineWorkSummaryState } from '@/components/sharing/machines/machineWorkSummary';
 export { readWorkStatusPresentationRank } from './workStatusRank';
 
 /**
@@ -118,6 +119,14 @@ export type WorkStatusInput =
         state: ActionOperationStateV1;
         observation: 'available' | 'reconnecting' | 'unavailable';
         setupReview?: ActionOperationSnapshotV1['setupReview'];
+        /** The owner holds a typed review (Agent isolation) for a person to approve. */
+        reviewRequired?: boolean;
+        word: string;
+    }> }>
+    | Readonly<{ kind: 'deployment'; facts: Readonly<{
+        /** A deployment receipt's state, or one of its steps' states (deployment-protocol owns both vocabularies). */
+        state: 'queued' | 'running' | 'running_unverified' | 'succeeded' | 'failed' | 'cancelled'
+            | 'outcome_unknown' | 'pending' | 'skipped';
         word: string;
     }> }>
     | Readonly<{ kind: 'worker_update'; facts: Readonly<{
@@ -149,6 +158,8 @@ export type WorkStatusInput =
         revokedAt?: number | null;
         /** Protected, Home-qualified inventory row; connectivity alone never establishes sleep. */
         managedMachine?: ManagedMachineV1 | null;
+        /** The owner-or-Manage reader's exact current answer; denied falls back to own work only. */
+        workSummary?: MachineWorkSummaryState;
     }> }>
     | Readonly<{ kind: 'workflow'; facts: Readonly<{
         word: string; needsYouCount: number; hasActiveRun: boolean;
@@ -162,6 +173,8 @@ export type WorkStatusInput =
         attentionReason: 'draft_waiting' | 'approval_pending' | 'mentioned' | null;
         attentionType: InboxItemAttentionTypeV1 | null;
         word?: string;
+        /** Who is waiting (the Session behind the draft or request); the line names them when known. */
+        agentName?: string | null;
     }> }>
     /** An execution run, sub-agent or teammate, in the agent-activity vocabulary. */
     | Readonly<{ kind: 'agent_activity'; facts: Readonly<{ status: AgentActivityStatusV1; isActive?: boolean; word: string }> }>;
@@ -188,7 +201,8 @@ export function resolveManagedMachineWorkStatus(facts: Pick<Extract<WorkStatusIn
         if (observation?.storage === 'lost') return workStatus('storage_lost', { bucket: 'needs_you', tone: 'attention' }, t('managedPower.volumeLost'), 'blocked');
         if (!observation || observation.availability !== 'present') return workStatus('unknown', { bucket: 'idle', tone: 'neutral' }, t('status.unknown'));
         const wakeState = resolveManagedMachineWakeStateV1(managed, facts.machineId);
-        if (wakeState === 'starting') {
+        if (wakeState === 'starting' || facts.online === false && observation.power === 'running'
+            && (managed.desired === 'start' || managed.desired === 'resume')) {
             return workStatus('starting', { bucket: 'working', tone: 'neutral' }, t('managedWake.starting', { machine: managed.launch.name }));
         }
         if (observation.storage === 'retained' && (observation.power === 'stopped' || observation.power === 'suspended')) {
@@ -298,7 +312,7 @@ export function isTerminalWorkflowInvocationLifecycle(lifecycle: WorkflowInvocat
 
 function presentWorkflow(state: string, shape: StatusShape, facts: WorkflowFacts): WorkStatusPresentation {
     if (facts.failureUnseen === true) return workStatus(state,
-        { bucket: facts.inAttentionWindow === true ? 'needs_you' : shape.bucket, tone: 'danger' }, facts.word,
+        { bucket: facts.inAttentionWindow === true && facts.invocationAttentionRequired === true ? 'needs_you' : shape.bucket, tone: 'danger' }, facts.word,
         facts.invocationAttentionRequired === true ? 'decision' : 'update');
     if (facts.inAttentionWindow === true) return workStatus(state,
         { bucket: 'needs_you', tone: 'attention' }, facts.word, 'decision');
@@ -328,12 +342,27 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
                 ?? (category === null ? t('common.unknown') : t(`workStatus.buckets.${bucket}`)));
         }
         case 'action_operation': {
-            const { state, observation, setupReview, word } = input.facts;
+            const { state, observation, setupReview, reviewRequired, word } = input.facts;
             if (state === 'succeeded' || state === 'failed' || state === 'cancelled') {
                 return workStatus(state, { bucket: 'finished', tone: state === 'failed' ? 'danger' : 'neutral' }, word);
             }
-            if (setupReview) return workStatus(state, { bucket: 'needs_you', tone: 'attention' }, word, 'approval');
+            if (setupReview || reviewRequired) return workStatus(state, { bucket: 'needs_you', tone: 'attention' }, word, 'approval');
             return workStatus(state, { bucket: 'working', tone: observation === 'available' ? 'neutral' : 'attention' }, word);
+        }
+        case 'deployment': {
+            const { state, word } = input.facts;
+            switch (state) {
+                case 'queued': case 'running': return workStatus(state, { bucket: 'working', tone: 'neutral' }, word);
+                // Uncertain or unverified outcomes ask the person to look; they never read as finished-healthy.
+                case 'outcome_unknown': return workStatus(state, { bucket: 'needs_you', tone: 'attention' }, word);
+                case 'running_unverified': return workStatus(state, { bucket: 'finished', tone: 'attention' }, word);
+                case 'succeeded': return workStatus(state, { bucket: 'finished', tone: 'neutral' }, word);
+                case 'failed': return workStatus(state, { bucket: 'finished', tone: 'danger' }, word);
+                case 'cancelled': return workStatus(state, { bucket: 'finished', tone: 'neutral' }, word);
+                // A step that has not run yet waits; a skipped step is level. Both keep their glyph slot.
+                case 'pending': return { ...workStatus(state, { bucket: 'idle', tone: 'neutral' }, word), glyph: 'waiting' };
+                case 'skipped': return { ...workStatus(state, { bucket: 'finished', tone: 'neutral' }, word), glyph: 'neutral' };
+            }
         }
         case 'worker_update': {
             const { update } = input.facts;
@@ -353,7 +382,9 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
         }
         case 'workflow_run': {
             const facts = input.facts;
-            if (isWorkflowRunStopPending(facts)) return presentWorkflowStop(facts);
+            // The Run lifecycle owns its headline; unresolved physical cleanup
+            // remains separate custody and must not replace a terminal result.
+            if (facts.state !== 'cancelled' && isWorkflowRunStopPending(facts)) return presentWorkflowStop(facts);
             // A stopped Run cannot still ask for a hold answer. A retained
             // attention window can lag the parent's terminal observation.
             return presentWorkflow(facts.state, RUN_STATUS[facts.state], facts.state === 'cancelled'
@@ -393,6 +424,15 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
                 return workStatus(online === null ? 'unknown' : 'disconnected', { bucket: online === null ? 'idle' : 'offline', tone: 'neutral' }, word);
             }
             if (needsYouCount > 0) return workStatus('action_required', { bucket: 'needs_you', tone: 'attention' }, word, 'decision');
+            if (runningSessionCount === 0 && input.facts.workSummary && input.facts.workSummary.kind !== 'denied') {
+                const summary = input.facts.workSummary;
+                if (summary.kind !== 'summary' || summary.summary.kind !== 'current' || summary.stale) {
+                    return workStatus('unknown', { bucket: 'idle', tone: 'neutral' }, t('common.unknown'));
+                }
+                if (summary.summary.requesters.some(requester => requester.sessions + requester.tasks + requester.terminals > 0)) {
+                    return workStatus('thinking', { bucket: 'working', tone: 'neutral' }, t('workStatus.buckets.working'));
+                }
+            }
             return workStatus(runningSessionCount > 0 ? 'thinking' : 'waiting', { bucket: runningSessionCount > 0 ? 'working' : 'idle', tone: 'neutral' }, word);
         }
         case 'workflow': {
@@ -416,8 +456,11 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
         case 'discussion': {
             const { attentionReason, attentionType } = input.facts;
             const actionable = attentionType !== null && inboxItemViewV1(attentionType) === 'needs_you';
-            const word = input.facts.word ?? (attentionReason === 'draft_waiting' ? t('session.collaboration.discussion.home.draftWaiting')
-                : attentionReason === 'approval_pending' ? t('session.collaboration.discussion.home.approvalPending')
+            const name = input.facts.agentName?.trim() || null;
+            const word = input.facts.word ?? (attentionReason === 'draft_waiting'
+                ? name ? t('session.collaboration.discussion.home.draftWaitingNamed', { name }) : t('session.collaboration.discussion.home.draftWaiting')
+                : attentionReason === 'approval_pending'
+                    ? name ? t('session.collaboration.discussion.home.approvalPendingNamed', { name }) : t('session.collaboration.discussion.home.approvalPending')
                     : attentionReason === 'mentioned' ? t('session.collaboration.discussion.mentioned') : '');
             return workStatus(attentionReason ?? 'waiting', {
                 bucket: actionable ? 'needs_you' : 'idle', tone: actionable ? 'attention' : 'neutral',

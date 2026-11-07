@@ -541,6 +541,9 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const runsInValue: RunsInChoice = ownTarget ?? 'default';
     const detachedUnavailable = props.runAsTargets?.find((target) => target.kind === 'detached_run' && !target.available);
     const insideEvaluator = isLoopEvaluator(draft.blocks, step.id);
+    // The fields this group shows, none of them changed for the step (the same test as each row's state).
+    const agentInherited = step.execution?.engine === undefined
+        && !SESSION_AUTHORING_CONTROL_FIELD_IDS.some((field) => Object.hasOwn(step.execution ?? {}, field));
 
     return (
         <>
@@ -568,6 +571,12 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
 
             <ItemGroup title={t('workflows.page.sections.agentTitle')}>
                 <SectionContentRow testID={`${testIDPrefix}-agent-row`}>
+                    {/* Named once for the group, not as the meta of every inherited row (lab `editor-E1o`). */}
+                    {agentInherited ? (
+                        <Text testID={`${testIDPrefix}-agent-inherited`} style={workflowEditorStyles.metaText}>
+                            {t('workflows.page.blocks.workflowDefaults')}
+                        </Text>
+                    ) : null}
                     <WorkflowStepInspector
                         draft={draft}
                         step={step}
@@ -606,13 +615,16 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                 <SegmentedChoiceItem<RunsInChoice>
                     testIDPrefix={`${testIDPrefix}-runs-in`}
                     title={t('workflows.page.inspector.runsIn')}
-                    {...(ownTarget === undefined && sessionBound ? { subtitle: t('workflows.page.inspector.runsInBoundBySession') } : {})}
+                    subtitle={ownTarget === undefined && sessionBound ? t('workflows.page.inspector.runsInBoundBySession')
+                        : runsInValue === 'default' ? t('workflows.page.inspector.workflowDefault', { value: runsInLabel(workflowTarget) })
+                        : runsInLabel(runsInValue)}
+                    valueSource={runsInValue === 'default' ? 'inherited' : 'set'}
                     value={runsInValue}
                     // "Workflow default" deletes the step's own choice; the explicit
                     // option equal to the default still pins it (F24).
                     onChange={(next) => onChange(setWorkflowStepExecutionTarget(draft, step.id, next === 'default' ? undefined : next))}
                     options={[
-                        { id: 'default', label: t('workflows.page.inspector.workflowDefault', { value: runsInLabel(workflowTarget) }) },
+                        { id: 'default', label: t('workflows.page.inspector.choiceDefault') },
                         { id: 'session', label: runsInLabel('session') },
                         {
                             id: 'detached_run',
@@ -630,6 +642,8 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                     subtitle={insideEvaluator
                         ? `${t('workflows.page.inspector.reviewDescription')} ${t('workflows.page.inspector.reviewEvaluator')}`
                         : t('workflows.page.inspector.reviewDescription')}
+                    // The consequence is the decision here; it reads whole, never clipped (lab E1o).
+                    subtitleLines={0}
                     showChevron={false}
                     rightElement={(
                         <Switch

@@ -1,3 +1,4 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -6,6 +7,7 @@ import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows
 import type { EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -22,7 +24,8 @@ import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storag
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 
-import { resolveWorkflowSessionChoice, workflowSessionOptionState } from '../presentation/workflowSessionChoice';
+import { resolveWorkflowSessionChoice } from '../presentation/workflowSessionChoice';
+import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
@@ -66,6 +69,8 @@ export function useWorkflowContinuedSessionLabel(conversation: WorkflowConversat
     const current = lifetime?.isCurrent() === true;
     const sessionId = current && conversation?.kind === 'existing_session' ? conversation.sessionId : '';
     const source = useSessionDisplayNameSource(sessionId, lifetime?.scope.serverId ?? null);
+    const isSessionVisible = useSessionRecordingVisibility();
+    if (sessionId && !isSessionVisible({ sessionId, serverId: lifetime?.scope.serverId })) return t('workflows.conversation.savedSession');
     return !current || sessionId.length === 0 || source === null ? null : getSessionName(source);
 }
 
@@ -152,27 +157,17 @@ function ContinuityField(props: Readonly<{
     items: ReadonlyArray<DropdownMenuItem>;
     selectedId: string;
     onSelect: (id: string) => void;
-    onOpenChange?: (open: boolean) => void;
-    /** An option that acts in place (a retry) and leaves the menu open on its result. */
-    keepsOpen?: (id: string) => boolean;
     testIDPrefix: string;
 }>): React.ReactElement {
     const [open, setOpen] = React.useState(false);
-    const setMenuOpen = (next: boolean) => { setOpen(next); props.onOpenChange?.(next); };
     return (
         <DropdownMenu
             testID={`${props.testIDPrefix}-field`}
             open={open}
-            onOpenChange={setMenuOpen}
+            onOpenChange={setOpen}
             selectedId={props.selectedId}
             items={props.items}
-            {...(props.keepsOpen === undefined ? { onSelect: props.onSelect } : {
-                closeOnSelect: false,
-                onSelect: (id: string) => {
-                    if (!props.keepsOpen?.(id)) setMenuOpen(false);
-                    props.onSelect(id);
-                },
-            })}
+            onSelect={props.onSelect}
             itemTrigger={{ title: props.title, itemProps: { testID: props.testIDPrefix } }}
         />
     );
@@ -242,26 +237,38 @@ export function WorkflowContinuityControls(props: Readonly<{
     // option opens the picker; the selection is authored when a row is chosen
     // and the picker closes.
     const [choosingSession, setChoosingSession] = React.useState(false);
-    const [conversationOpen, setConversationOpen] = React.useState(false);
     const focusedLifetime = useActiveServerAccountScopeLifetime();
     const addressedLifetime = useWorkflowAccountLifetime();
     const accountLifetime = addressedLifetime === undefined ? focusedLifetime : addressedLifetime;
     React.useEffect(() => {
-        const retire = () => { setChoosingSession(false); setConversationOpen(false); };
+        const retire = () => { setChoosingSession(false); };
         retire();
         const retirement = accountLifetime?.onRetire(retire);
         return () => retirement?.dispose();
     }, [accountLifetime]);
+    // A settled read without candidates, or a failed one, retires the chooser and its demand; the
+    // outcome stays said under Conversation (a failure offers the retry) instead of a silent revert.
+    const [sessionNotice, setSessionNotice] = React.useState<'failed' | 'empty' | null>(null);
+    // Only a read this choice started settles it: a status already reported when the person chose
+    // (before the demand reached the host, or a failure whose retry is in flight) never retires it.
+    const readSeenSinceChoice = React.useRef(false);
     React.useEffect(() => {
         if (!choosingSession) return;
-        // Empty options during acquisition are not a completed empty result.
-        // Once it settles, a vanished picker no longer owns pending intent.
-        if (props.sessionOptionsStatus === 'error'
-            || (props.sessionOptionsStatus ?? 'ready') === 'ready' && !existingSessionOffered) {
+        if (props.sessionOptionsStatus === 'loading'
+            || (props.sessionOptionsStatus === 'ready' && existingSessionOffered)) {
+            readSeenSinceChoice.current = true;
+            return;
+        }
+        if (!readSeenSinceChoice.current) return;
+        if (props.sessionOptionsStatus === 'error') {
             setChoosingSession(false);
+            setSessionNotice('failed');
+        } else if (props.sessionOptionsStatus === 'ready' && !existingSessionOffered) {
+            setChoosingSession(false);
+            setSessionNotice('empty');
         }
     }, [choosingSession, existingSessionOffered, props.sessionOptionsStatus]);
-    const sessionOptionsDemanded = conversationOpen || choosingSession;
+    const sessionOptionsDemanded = choosingSession;
     const onSessionOptionsDemandChange = props.onSessionOptionsDemandChange;
     React.useEffect(() => {
         if (!sessionOptionsDemanded || !onSessionOptionsDemandChange) return;
@@ -281,6 +288,7 @@ export function WorkflowContinuityControls(props: Readonly<{
             options: existingSessions.map((option) => ({
                 id: option.sessionId,
                 label: option.label,
+                ...workflowSessionOptionRow(option),
                 testID: `${testIDPrefix}-conversation-session-${option.sessionId}`,
             })),
         }],
@@ -295,29 +303,14 @@ export function WorkflowContinuityControls(props: Readonly<{
         } else if ('reason' in outcome) setBindingRefusal(outcome.reason.message);
     }, [existingSessions, props.onBindExistingSession]);
 
+    // The targets a kind can name (which step, which worktree source), offered beneath its segment.
     const conversationChoices = new Map<string, WorkflowConversationSelection>();
     const conversationItems: DropdownMenuItem[] = [];
-    if (inherits) {
-        conversationItems.push({
-            id: DEFAULT_OPTION_ID,
-            title: t('workflows.page.inspector.workflowDefault', {
-                value: formatWorkflowConversationLabel({ draft, conversation: props.inherited?.conversation, existingSessions,
-                    sessionLabel: inheritedSessionLabel }),
-            }),
-            testID: `${testIDPrefix}-conversation-option-default`,
-        });
-    }
     const offerConversation = (choice: WorkflowConversationSelection, title: string, suffix: string) => {
         const id = conversationOptionId(choice);
         conversationChoices.set(id, choice);
         conversationItems.push({ id, title, testID: `${testIDPrefix}-conversation-option-${suffix}` });
     };
-    offerConversation({ kind: 'shared_run' }, t('workflows.conversation.sharedRun'), 'shared');
-    offerConversation({ kind: 'fresh' }, t('workflows.conversation.fresh'), 'fresh');
-    // A recorded origin-session continuation stays selectable as recorded; it is never silently replaced.
-    if (props.conversation?.kind === 'origin_session') {
-        offerConversation({ kind: 'origin_session' }, t('workflows.page.inspector.originSession'), 'origin');
-    }
     for (const producer of producers) {
         offerConversation(
             { kind: 'from_step', producer: producerRef(producer) },
@@ -325,40 +318,14 @@ export function WorkflowContinuityControls(props: Readonly<{
             `from-step-${producer.blockId}`,
         );
     }
-    conversationItems.push({
-        id: EXISTING_SESSION_OPTION_ID,
-        title: recordedSession === null
-            ? t('workflows.page.inspector.aSession')
-            : formatWorkflowConversationLabel({ draft, conversation: recordedSession, existingSessions, sessionLabel: recordedSessionLabel }),
-        testID: `${testIDPrefix}-conversation-option-existing`,
-        // The reason reaches the option itself; a failed read keeps it choosable as the retry.
-        ...(sessionChoice === null
-            ? { disabled: true, subtitle: existingSessions.length === 0
-                ? t('workflows.conversation.noExistingSessions') : t('entityDragDrop.reasons.generic') }
-            : workflowSessionOptionState(sessionChoice, t('workflows.conversation.noExistingSessions'))),
-    });
-    const conversationSelectedId = props.conversation === undefined
-        ? (inherits ? DEFAULT_OPTION_ID : 'shared_run')
-        : conversationOptionId(props.conversation);
 
     const workspaceChoices = new Map<string, WorkflowWorkspaceSelection>();
     const workspaceItems: DropdownMenuItem[] = [];
-    if (inherits) {
-        workspaceItems.push({
-            id: DEFAULT_OPTION_ID,
-            title: t('workflows.page.inspector.workflowDefault', {
-                value: formatWorkflowWorkspaceLabel(draft, props.inherited?.workspace),
-            }),
-            testID: `${testIDPrefix}-workspace-option-default`,
-        });
-    }
     const offerWorkspace = (choice: WorkflowWorkspaceSelection, suffix: string) => {
         const id = workspaceOptionId(choice);
         workspaceChoices.set(id, choice);
         workspaceItems.push({ id, title: formatWorkflowWorkspaceLabel(draft, choice), testID: `${testIDPrefix}-workspace-option-${suffix}` });
     };
-    offerWorkspace({ kind: 'inherit' }, 'inherit');
-    offerWorkspace({ kind: 'project_checkout' }, 'project');
     for (const producer of producers) {
         offerWorkspace({ kind: 'from_step', producer: producerRef(producer) }, `from-step-${producer.blockId}`);
     }
@@ -375,37 +342,151 @@ export function WorkflowContinuityControls(props: Readonly<{
         && !conversationChoices.has(conversationOptionId(props.conversation))) {
         offerConversation(props.conversation, formatWorkflowConversationLabel({ draft, conversation: props.conversation }), 'recorded');
     }
-    const workspaceSelectedId = props.workspace === undefined
-        ? (inherits ? DEFAULT_OPTION_ID : 'inherit')
-        : workspaceOptionId(props.workspace);
+    const workspaceSelectedId = props.workspace === undefined ? '' : workspaceOptionId(props.workspace);
+
+    // Conversation and Workspace are visible choices (lab `editor-E1o`): one segment per kind, the
+    // consequence under the label, and a field select beneath only when the chosen kind has more
+    // than one target (which step, which worktree source).
+    // Continuing another conversation (a step's or an existing Session) is one segment; which one is
+    // chosen beneath it, so the row keeps to four short, always-visible options.
+    type ConversationSegment = 'default' | 'shared_run' | 'fresh' | 'origin_session' | 'input' | 'continue';
+    const continuesConversation = choosingSession || props.conversation?.kind === 'from_step'
+        || props.conversation?.kind === 'existing_session';
+    const conversationSegment: ConversationSegment = continuesConversation ? 'continue'
+        : props.conversation === undefined ? (inherits ? 'default' : 'shared_run') : props.conversation.kind as ConversationSegment;
+    const sessionOffered = sessionChoice !== null || recordedSession !== null;
+    const conversationSegments: SegmentedChoiceOption<ConversationSegment>[] = [];
+    if (inherits) conversationSegments.push({ id: 'default', label: t('workflows.page.inspector.choiceDefault') });
+    conversationSegments.push({ id: 'shared_run', label: t('workflows.page.inspector.conversationShared') });
+    conversationSegments.push({ id: 'fresh', label: t('workflows.page.inspector.conversationFresh') });
+    // A recorded origin-session or input continuation stays selectable as recorded; never silently replaced.
+    if (props.conversation?.kind === 'origin_session' || props.conversation?.kind === 'input') {
+        conversationSegments.push({ id: props.conversation.kind,
+            label: formatWorkflowConversationLabel({ draft, conversation: props.conversation }) });
+    }
+    if (producers.length > 0 || sessionOffered || props.conversation?.kind === 'from_step') {
+        conversationSegments.push({ id: 'continue', label: t('workflows.page.inspector.conversationContinue') });
+    }
+    const conversationConsequence = props.conversation === undefined && inherits
+        ? t('workflows.page.inspector.workflowDefault', { value: formatWorkflowConversationLabel({ draft,
+            conversation: props.inherited?.conversation, existingSessions, sessionLabel: inheritedSessionLabel }) })
+        : formatWorkflowConversationLabel({ draft, conversation: props.conversation, existingSessions,
+            sessionLabel: recordedSessionLabel });
+    const chooseSession = () => {
+        readSeenSinceChoice.current = false;
+        setBindingRefusal(null);
+        setSessionNotice(null);
+        setChoosingSession(true);
+    };
+    const selectConversationSegment = (segment: ConversationSegment) => {
+        if (segment !== 'continue') { setChoosingSession(false); setSessionNotice(null); }
+        if (segment === 'default') { onChangeConversation(undefined); return; }
+        if (segment === 'continue') {
+            if (continuesConversation) return;
+            const producer = producers[0];
+            if (producer !== undefined) onChangeConversation({ kind: 'from_step', producer: producerRef(producer) });
+            else if (sessionOffered) chooseSession();
+            return;
+        }
+        if (segment === props.conversation?.kind) return;
+        if (segment === 'shared_run' || segment === 'fresh') onChangeConversation({ kind: segment });
+    };
+    // What "Continue" continues: a step's conversation, or an existing Session through its picker.
+    const continueItems: DropdownMenuItem[] = [...conversationItems];
+    if (recordedSession !== null) {
+        continueItems.push({ id: EXISTING_SESSION_OPTION_ID, title: formatWorkflowConversationLabel({ draft,
+            conversation: recordedSession, existingSessions, sessionLabel: recordedSessionLabel }),
+            testID: `${testIDPrefix}-conversation-option-existing` });
+    } else if (sessionChoice !== null) {
+        continueItems.push({ id: EXISTING_SESSION_OPTION_ID, title: t('workflows.page.inspector.aSession'),
+            testID: `${testIDPrefix}-conversation-option-existing` });
+    }
+    const continueSelectedId = choosingSession || props.conversation?.kind === 'existing_session' ? EXISTING_SESSION_OPTION_ID
+        : props.conversation === undefined ? '' : conversationOptionId(props.conversation);
+
+    // A step's Default segment covers both ways of using the workflow's workspace: following the workflow
+    // default (the step records nothing) and the explicit Workflow workspace (F24: every supported choice
+    // stays reachable), chosen in the field beneath it. Workflow settings have no Default, so the explicit
+    // choice is its own segment there.
+    type WorkspaceSegment = WorkflowWorkspaceSelection['kind'] | typeof DEFAULT_OPTION_ID;
+    const workspaceSegment: WorkspaceSegment = inherits && (props.workspace === undefined || props.workspace.kind === 'inherit')
+        ? DEFAULT_OPTION_ID : props.workspace?.kind ?? 'inherit';
+    const workspaceSegments: SegmentedChoiceOption<WorkspaceSegment>[] = [];
+    if (inherits) workspaceSegments.push({ id: DEFAULT_OPTION_ID, label: t('workflows.page.inspector.choiceDefault') });
+    else workspaceSegments.push({ id: 'inherit', label: t('workflows.page.inspector.workspaceWorkflow') });
+    workspaceSegments.push({ id: 'project_checkout', label: t('workflows.page.inspector.workspaceProject') });
+    workspaceSegments.push({ id: 'new_worktree', label: t('workflows.page.inspector.workspaceNewWorktree') });
+    if (producers.length > 0 || props.workspace?.kind === 'from_step') {
+        workspaceSegments.push({ id: 'from_step', label: t('workflows.page.inspector.conversationContinue') });
+    }
+    const workspaceConsequence = props.workspace === undefined && inherits
+        ? t('workflows.page.inspector.workflowDefault', { value: formatWorkflowWorkspaceLabel(draft, props.inherited?.workspace) })
+        : formatWorkflowWorkspaceLabel(draft, props.workspace);
+    const selectWorkspaceSegment = (segment: WorkspaceSegment) => {
+        if (segment === DEFAULT_OPTION_ID) {
+            // Reselecting Default keeps a recorded Workflow workspace; the field beneath changes it.
+            if (props.workspace?.kind !== 'inherit') onChangeWorkspace(undefined);
+            return;
+        }
+        if (segment === props.workspace?.kind) return;
+        if (segment === 'from_step') {
+            const producer = producers[0];
+            if (producer !== undefined) onChangeWorkspace({ kind: 'from_step', producer: producerRef(producer) });
+            return;
+        }
+        if (segment === 'new_worktree') { onChangeWorkspace({ kind: 'new_worktree', source: { kind: 'original' } }); return; }
+        onChangeWorkspace({ kind: segment });
+    };
+    const followItems: DropdownMenuItem[] = [
+        // Inherit by default (a later change to the workflow's workspace carries here) or pin it explicitly.
+        { id: DEFAULT_OPTION_ID, title: t('workflows.page.inspector.workspaceFollowsChanges'), testID: `${testIDPrefix}-workspace-follows-default` },
+        { id: 'inherit', title: t('workflows.page.inspector.workspaceFollowsPinned'), testID: `${testIDPrefix}-workspace-follows-workflow` },
+    ];
+    const workspaceVariantItems = workspaceItems.filter((item) => workspaceSegment === 'from_step'
+        ? item.id.startsWith('from_step:') : workspaceSegment === 'new_worktree' && item.id.startsWith('new_worktree:'));
+    const sessionStatusLine = choosingSession
+        ? (existingSessionOffered ? null : props.sessionOptionsStatus === 'ready' || props.sessionOptionsStatus === undefined
+            ? t('workflows.conversation.noExistingSessions') : t('workflows.conversation.sessionsLoading'))
+        : sessionNotice === 'failed' ? t('workflows.conversation.sessionsFailedRetry')
+        : sessionNotice === 'empty' ? t('workflows.conversation.noExistingSessions') : null;
 
     return (
         <View>
-            <ContinuityField
-                title={t('workflows.conversation.title')}
-                onOpenChange={setConversationOpen}
-                items={conversationItems}
-                selectedId={conversationSelectedId}
-                keepsOpen={(id) => id === EXISTING_SESSION_OPTION_ID && sessionChoice === 'failed'}
-                onSelect={(id) => {
-                    if (id === EXISTING_SESSION_OPTION_ID && sessionChoice === 'failed') {
-                        props.onRetrySessionOptions?.();
-                        return;
-                    }
-                    if (id !== EXISTING_SESSION_OPTION_ID) setChoosingSession(false);
-                    if (id === DEFAULT_OPTION_ID) {
-                        onChangeConversation(undefined);
-                        return;
-                    }
-                    if (id === EXISTING_SESSION_OPTION_ID) {
-                        if (existingSessionOffered) { setBindingRefusal(null); setChoosingSession(true); }
-                        return;
-                    }
-                    const choice = conversationChoices.get(id);
-                    if (choice !== undefined) onChangeConversation(choice);
-                }}
+            <SegmentedChoiceItem<ConversationSegment>
                 testIDPrefix={`${testIDPrefix}-conversation`}
+                title={t('workflows.conversation.title')}
+                subtitle={conversationConsequence}
+                options={conversationSegments}
+                value={conversationSegment}
+                valueSource={conversationSegment === 'default' ? 'inherited' : 'set'}
+                onChange={selectConversationSegment}
+                accessoryLayout="stacked"
+                showDivider={false}
             />
+            {conversationSegment === 'continue' && (continueItems.length > 1 || continueItems[0]?.id === EXISTING_SESSION_OPTION_ID) ? (
+                <ContinuityField
+                    title={t('workflows.page.inspector.continueFrom')}
+                    items={continueItems}
+                    selectedId={continueSelectedId}
+                    onSelect={(id) => {
+                        if (id === EXISTING_SESSION_OPTION_ID) { chooseSession(); return; }
+                        setChoosingSession(false);
+                        const choice = conversationChoices.get(id);
+                        if (choice !== undefined) onChangeConversation(choice);
+                    }}
+                    testIDPrefix={`${testIDPrefix}-conversation-continue`}
+                />
+            ) : null}
+            {sessionStatusLine === null ? null : (
+                <Text testID={`${testIDPrefix}-conversation-session-status`}
+                    {...(sessionNotice === 'failed' && !choosingSession ? {
+                        accessibilityRole: 'button' as const,
+                        onPress: () => { props.onRetrySessionOptions?.(); chooseSession(); },
+                    } : {})}
+                    style={workflowEditorStyles.groupSummary}>
+                    {sessionStatusLine}
+                </Text>
+            )}
             {/*
               * Continuing reaches an existing conversation with the Agent and
               * folder it already has: the runtime refuses a mismatch rather
@@ -443,20 +524,38 @@ export function WorkflowContinuityControls(props: Readonly<{
                 <Text accessibilityRole="alert" style={workflowEditorStyles.groupSummary}>{bindingRefusal}</Text>
             ) : null}
 
-            <ContinuityField
-                title={t('workflows.workspace.title')}
-                items={workspaceItems}
-                selectedId={workspaceSelectedId}
-                onSelect={(id) => {
-                    if (id === DEFAULT_OPTION_ID) {
-                        onChangeWorkspace(undefined);
-                        return;
-                    }
-                    const choice = workspaceChoices.get(id);
-                    if (choice !== undefined) onChangeWorkspace(choice);
-                }}
+            <SegmentedChoiceItem<WorkspaceSegment>
                 testIDPrefix={`${testIDPrefix}-workspace`}
+                title={t('workflows.workspace.title')}
+                subtitle={workspaceConsequence}
+                options={workspaceSegments}
+                value={workspaceSegment}
+                valueSource={workspaceSegment === DEFAULT_OPTION_ID && props.workspace === undefined ? 'inherited' : 'set'}
+                onChange={selectWorkspaceSegment}
+                accessoryLayout="stacked"
+                showDivider={false}
             />
+            {workspaceSegment === DEFAULT_OPTION_ID ? (
+                <ContinuityField
+                    title={t('workflows.page.inspector.workspaceFollows')}
+                    items={followItems}
+                    selectedId={props.workspace === undefined ? DEFAULT_OPTION_ID : 'inherit'}
+                    onSelect={(id) => onChangeWorkspace(id === 'inherit' ? { kind: 'inherit' } : undefined)}
+                    testIDPrefix={`${testIDPrefix}-workspace-follows`}
+                />
+            ) : null}
+            {workspaceVariantItems.length > 1 ? (
+                <ContinuityField
+                    title={workspaceSegment === 'new_worktree' ? t('workflows.page.inspector.worktreeSource') : t('workflows.page.inspector.continueFrom')}
+                    items={workspaceVariantItems}
+                    selectedId={workspaceSelectedId}
+                    onSelect={(id) => {
+                        const choice = workspaceChoices.get(id);
+                        if (choice !== undefined) onChangeWorkspace(choice);
+                    }}
+                    testIDPrefix={`${testIDPrefix}-workspace-variant`}
+                />
+            ) : null}
             {/* Reuse continues the exact directory, dirty state included. */}
             {workspaceKind !== 'from_step' ? null : (
                 <Text testID={`${testIDPrefix}-workspace-reuse-note`} style={workflowEditorStyles.groupSummary}>

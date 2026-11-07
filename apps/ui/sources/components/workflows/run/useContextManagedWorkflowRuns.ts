@@ -32,11 +32,12 @@ import {
 /**
  * Contextual managed Workflow Runs from a Session or Discussion, using one list lifecycle.
  *
- * `originSessionId`/`originDiscussionId` select provenance, `targetSessionId` selects destinations, and
- * `attention: 'required'` is the canonical server predicate for "this needs the
- * person". Both are asked of the same Action front door, so this hook adds no
- * second run store and invents no local attention rule — which matters because
- * an off-page approval is discoverable only through that server predicate.
+ * `originSessionId` selects provenance, `targetSessionId` selects destinations, and Discussions
+ * select exact ids already carried by their messages or acknowledged starts. The
+ * complete relation's summaries carry the canonical server attention fact.
+ * They are asked of the same Action front door, so this hook adds no
+ * second run store and invents no local attention rule. Following every byte
+ * continuation also keeps an off-page approval discoverable.
  *
  * Row bodies land in the one Account-scoped Run row owner and are read back
  * from it, so a control the Run screen settles, or an exact invalidation,
@@ -83,6 +84,7 @@ type SessionManagedWorkflowRunsReadState = Readonly<{
     resourceKind: 'session' | 'discussion';
     relation: 'origin' | 'destination';
     refreshFailed: boolean;
+    exactRunIdsKey?: string;
 }>;
 
 const EMPTY_RUN_IDS: readonly string[] = Object.freeze([]);
@@ -121,7 +123,12 @@ export function useContextManagedWorkflowRuns(params: Readonly<{
     enabled?: boolean;
     relation?: 'origin' | 'destination';
     accountLifetime?: ServerAccountScopeLifetime;
+    /** Known message/start identities; never discover these through private-origin inventory scans. */
+    runIds?: readonly string[];
 }>): SessionManagedWorkflowRunsState {
+    const exactRunIdsKey = params.resource?.kind === 'discussion' ? JSON.stringify([...new Set(params.runIds ?? [])].sort()) : undefined;
+    const exactRunIds = React.useMemo<readonly string[] | undefined>(() => exactRunIdsKey === undefined
+        ? undefined : JSON.parse(exactRunIdsKey), [exactRunIdsKey]);
     const resourceId = params.resource?.id.trim() ? params.resource.id : null;
     const resourceKind = params.resource?.kind ?? 'session';
     const relation = params.relation ?? 'origin';
@@ -157,14 +164,15 @@ export function useContextManagedWorkflowRuns(params: Readonly<{
     }, [lifetime, retainWhileResolving]);
     const current = listWindow?.loaded === true && lifetime?.isCurrent() === true;
     const currentRead = accountScopeKey !== null && readState.accountScopeKey === accountScopeKey
-        && readState.resourceId === resourceId && readState.resourceKind === resourceKind && readState.relation === relation;
+        && readState.resourceId === resourceId && readState.resourceKind === resourceKind && readState.relation === relation
+        && readState.exactRunIdsKey === exactRunIdsKey;
     // Only this Session's own window, never the Account's whole Run map: an
     // exact refresh of a Run outside this relation must not rerender a
     // mounted transcript section.
-    const rows = useWorkflowRunRows(current ? listWindow.runIds : EMPTY_RUN_IDS, accountScope);
+    const rows = useWorkflowRunRows(current ? exactRunIds ?? listWindow.runIds : EMPTY_RUN_IDS, accountScope);
 
     React.useEffect(() => {
-        if (!enabled || resourceId === null || accountScopeKey === null) {
+        if (!enabled || resourceId === null || accountScopeKey === null || exactRunIds?.length === 0) {
             // An unresolved capability probe cannot authorize another read, but it also cannot
             // disprove this Account's already-read membership. Keep that window as stale; an
             // explicit disable, different Session/Home/Account or retired scope withdraws it here.
@@ -180,52 +188,44 @@ export function useContextManagedWorkflowRuns(params: Readonly<{
         const retirement = lifetime.onRetire(() => { controller.abort(); setReadState(EMPTY_READ_STATE); });
         let cancelled = false;
         // A re-read keeps last-known-good rows; only a first read is loading.
-        setReadState(previous => ({ phase: 'loading', accountScopeKey: requestScopeKey, resourceId, resourceKind, relation,
+        setReadState(previous => ({ phase: 'loading', accountScopeKey: requestScopeKey, resourceId, resourceKind, relation, exactRunIdsKey,
             refreshFailed: previous.accountScopeKey === requestScopeKey && previous.resourceId === resourceId
                 && previous.resourceKind === resourceKind && previous.relation === relation && previous.refreshFailed }));
         void (async () => {
             try {
-                const filter = resourceKind === 'discussion' ? { originDiscussionId: resourceId }
-                    : relation === 'destination' ? { targetSessionId: resourceId } : { originSessionId: resourceId };
-                const [all, attention] = await Promise.all([
-                    listAllWorkflowRuns({
-                        filter,
-                        signal: controller.signal,
-                        accountLifetime: lifetime,
-                    }),
-                    listAllWorkflowRuns({
-                        filter: { ...filter, attention: 'required' },
-                        signal: controller.signal,
-                        accountLifetime: lifetime,
-                    }),
-                ]);
+                const filter = relation === 'destination' ? { targetSessionId: resourceId } : { originSessionId: resourceId };
+                const all = await listAllWorkflowRuns({
+                    filter: exactRunIds === undefined ? filter : { runIds: exactRunIds },
+                    signal: controller.signal,
+                    accountLifetime: lifetime,
+                });
                 if (cancelled || !lifetime.isCurrent()) return;
                 // A trigger Run without retained scope cannot establish Work membership.
                 // Keep the last proven window and its existing failed-read state, rather than infer
                 // ownership from a mutable or not-yet-hydrated client Automation catalog.
-                if ([...all.runs, ...attention.runs].some(run => isTriggeredWorkflowRun(run)
+                if (all.runs.some(run => isTriggeredWorkflowRun(run)
                     && run.automationScopeSessionId === undefined)) throw new Error('workflow_run_scope_unavailable');
-                // Both pages' bodies land in the one Account-scoped row owner,
+                // Every page's bodies land in the one Account-scoped row owner,
                 // so an off-page actionable Run is the same body the exact Run
                 // route resolves rather than a second, thinner copy.
-                // The store unions both keysets in server order and merges every body's revision.
+                // Summary attention is the server's admitted fact, including all continuation pages.
                 getStorage().getState().applyWorkflowRunListPage({
                     scope: lifetime.scope, windowId,
-                    runs: [...all.runs, ...attention.runs],
-                    metadataByRunId: { ...all.metadataByRunId, ...attention.metadataByRunId },
-                    supportsAnotherRoundByRunId: { ...all.supportsAnotherRoundByRunId, ...attention.supportsAnotherRoundByRunId },
-                    callerAccessByRunId: { ...all.callerAccessByRunId, ...attention.callerAccessByRunId },
+                    runs: all.runs,
+                    metadataByRunId: all.metadataByRunId,
+                    supportsAnotherRoundByRunId: all.supportsAnotherRoundByRunId,
+                    callerAccessByRunId: all.callerAccessByRunId,
                     nextCursor: null, mode: 'replace',
-                    attentionRunIds: attention.runs.map(run => run.id),
+                    attentionRunIds: all.runs.filter(run => run.attentionRequired).map(run => run.id),
                     lastSuccessfulReadAt: Date.now(),
                 });
-                setReadState({ phase: 'loaded', accountScopeKey: requestScopeKey, resourceId, resourceKind, relation, refreshFailed: false });
+                setReadState({ phase: 'loaded', accountScopeKey: requestScopeKey, resourceId, resourceKind, relation, exactRunIdsKey, refreshFailed: false });
             } catch {
                 if (cancelled || !lifetime.isCurrent()) return;
                 // A failed refresh is not evidence that the Session started
                 // nothing: the window keeps the membership it already proved
                 // and reports staleness beside it.
-                setReadState({ phase: 'failed', refreshFailed: true, accountScopeKey: requestScopeKey, resourceId, resourceKind, relation });
+                setReadState({ phase: 'failed', refreshFailed: true, accountScopeKey: requestScopeKey, resourceId, resourceKind, relation, exactRunIdsKey });
             }
         })();
         return () => {
@@ -233,19 +233,20 @@ export function useContextManagedWorkflowRuns(params: Readonly<{
             controller.abort();
             retirement.dispose();
         };
-    }, [accountScopeKey, enabled, invalidationToken, lifetime, relation, resourceId, resourceKind, retainWhileResolving, windowId]);
+    }, [accountScopeKey, enabled, exactRunIds, exactRunIdsKey, invalidationToken, lifetime, relation, resourceId, resourceKind, retainWhileResolving, windowId]);
 
     React.useEffect(() => {
-        if (!enabled || resourceId === null || accountScopeKey === null) return;
+        if (!enabled || resourceId === null || accountScopeKey === null || exactRunIds?.length === 0) return;
         if (lifetime === null || serverAccountScopeKeySuffix(lifetime.scope) !== accountScopeKey) return;
         return subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
+            runIds: exactRunIds,
             // This mounted, enabled window already has read demand. A wake during its first
             // read must supersede that read too, or its stale empty result can hide a new Run.
             isVisibleWindowLoaded: () => true,
             invalidate: () => setInvalidationToken((token) => token + 1),
         });
-    }, [accountScopeKey, enabled, lifetime, relation, resourceId, resourceKind]);
+    }, [accountScopeKey, enabled, exactRunIds, lifetime, relation, resourceId, resourceKind]);
 
     const runs = React.useMemo(
         () => (rows.length === 0 ? EMPTY_RUNS : rows.flatMap((row) => (row.summary ? [row.summary] : []))),
@@ -265,7 +266,13 @@ export function useContextManagedWorkflowRuns(params: Readonly<{
     }, [rows]);
 
     const unavailable = enabled && resourceId !== null && (accountScopeKey === null || lifetime?.isCurrent() !== true);
-    const phase: SessionManagedWorkflowRunsState['phase'] = unavailable ? 'failed' : current ? 'loaded'
+    let exactReadPending = false;
+    if ((enabled || retainWhileResolving) && exactRunIds !== undefined && !(currentRead && readState.phase === 'loaded')) {
+        const loadedRunIds = new Set(runs.map(run => run.id));
+        exactReadPending = exactRunIds.some(id => !loadedRunIds.has(id));
+    }
+    const phase: SessionManagedWorkflowRunsState['phase'] = unavailable ? 'failed' : exactRunIds?.length === 0 ? 'idle'
+        : exactReadPending ? currentRead ? readState.phase : 'loading' : current ? 'loaded'
         : resourceId === null || (!enabled && !retainWhileResolving) ? 'idle' : currentRead ? readState.phase : 'loading';
     const attentionRunIds = React.useMemo(() => current && listWindow.attentionRunIds
         ? new Set(listWindow.attentionRunIds) : EMPTY_ATTENTION, [current, listWindow?.attentionRunIds]);

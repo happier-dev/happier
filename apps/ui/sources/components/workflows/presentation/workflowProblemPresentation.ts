@@ -3,13 +3,16 @@ import type {
     WorkflowRunAvailabilityV1,
     WorkflowTargetUnavailableReasonV1,
     WorkflowConversationUnavailableDetailsV1,
+    WorkflowRunSummaryV1,
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowDefinitionContentUnavailableReasonV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import type { TranslationKeyNoParams } from '@/text/i18n';
-import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { isWorkflowOperationErrorCode, WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { t } from '@/text';
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
+import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 
 /**
  * The one place a Workflow failure becomes something a person can read.
@@ -34,7 +37,7 @@ import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetail
 export type WorkflowProblemRepair = 'retry' | 'refresh' | 'settings' | 'none';
 
 export type WorkflowProblemPresentation = Readonly<{
-    /** The closed Protocol code, or `null` for an unrecognized transport failure. */
+    /** The closed Workflow Protocol code, or `null` for other failures. */
     code: WorkflowOperationErrorCodeV1 | null;
     technicalDetails?: readonly TechnicalDetailsLine[];
     title: string;
@@ -69,7 +72,10 @@ type WorkflowProblemShape = Readonly<{
  * and one that cannot be continued both mean the same thing to the reader.
  */
 const WORKFLOW_PROBLEM_SHAPES = {
+    approval_required: { titleKey: 'notifications.activity.permissionFallbackBody', messageKey: 'workflows.run.approvalWantedBody', repair: 'none', accessibilitySemantics: 'alert' },
     not_authenticated: { messageKey: 'errors.authenticationFailed', repair: 'none', accessibilitySemantics: 'alert' },
+    admission_unavailable: { messageKey: 'session.startFailure.cause.admission_unavailable', repair: 'none', accessibilitySemantics: 'alert' },
+    invalid_token: { messageKey: 'errors.authenticationFailed', repair: 'none', accessibilitySemantics: 'alert' },
     subtree_denied: { messageKey: 'workflows.problem.subtreeDenied', repair: 'none', accessibilitySemantics: 'alert' },
     role_target_unavailable: { messageKey: 'workflows.problem.roleTargetUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
     role_runs_as_mismatch: { messageKey: 'workflows.problem.roleRunsAsMismatch', repair: 'none', accessibilitySemantics: 'alert' },
@@ -98,6 +104,7 @@ const WORKFLOW_PROBLEM_SHAPES = {
     workflow_wait_self_dependency: { messageKey: 'workflows.problem.waitSelfDependency', repair: 'none', accessibilitySemantics: 'alert' },
     ineligible_state: { messageKey: 'workflows.problem.ineligible', repair: 'refresh', accessibilitySemantics: 'status' },
     custody_pending: { messageKey: 'workflows.problem.custodyPending', repair: 'refresh', accessibilitySemantics: 'status' },
+    requester_custody_unavailable: { messageKey: 'workflows.problem.requesterCustodyUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
     // The Account-content owner already has this sentence; a second one here
     // would be the same concept said two ways.
     content_unavailable: { messageKey: 'workflows.contentUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
@@ -241,7 +248,14 @@ function resolveWorkflowProblemCopy(
      */
     scope?: 'run',
 ): WorkflowProblemPresentation {
-    const code = error instanceof WorkflowActionError ? error.code : null;
+    const code = error instanceof WorkflowActionError && isWorkflowOperationErrorCode(error.code) ? error.code : null;
+    if (code === null && error instanceof WorkflowActionError) {
+        const discussionCode = DiscussionErrorCodeV1Schema.safeParse(error.rawCode);
+        if (discussionCode.success) return {
+            ...present(null, { ...GENERIC_SHAPE, repair: 'none' }),
+            message: discussionFailureLabel(discussionCode.data),
+        };
+    }
     if (scope === 'run' && code === 'currentness_conflict') {
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict, messageKey: 'workflows.problem.runMovedOn' });
     }
@@ -252,6 +266,20 @@ function resolveWorkflowProblemCopy(
     }
     if (failure?.errorCode === 'target_unavailable' && failure.details && 'reason' in failure.details
         && failure.details.reason !== undefined) {
+        if (failure.details.reason === 'workspace_unavailable') {
+            if (failure.details.errorCode === 'workspace_unavailable') return present(code, {
+                ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+                messageKey: 'workflows.problem.workspaceUnavailable', repair: 'none',
+            });
+            if (failure.details.errorCode === 'workspace_conflict') return present(code, {
+                ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+                messageKey: 'workflows.problem.workspaceConflict', repair: 'none',
+            });
+            if (failure.details.errorCode === 'committed_revision_unavailable') return present(code, {
+                ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+                messageKey: 'workflows.problem.committedRevisionUnavailable', repair: 'none',
+            });
+        }
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
             ...WORKFLOW_TARGET_REASON_SHAPES[failure.details.reason],
             ...(failure.details.reason === 'platform_unsupported' && failure.details.platformReason === 'arch'
@@ -276,6 +304,15 @@ function resolveWorkflowProblemCopy(
 /** A known private-read reason from the metadata owner uses the same presentation as an Action failure. */
 export function describeWorkflowOperationProblem(code: WorkflowOperationErrorCodeV1): WorkflowProblemPresentation {
     return present(code, WORKFLOW_PROBLEM_SHAPES[code]);
+}
+
+/** A Run can fail before it has an invocation that could carry its cause. */
+export function resolveWorkflowRunProblemPresentation(
+    run: Pick<WorkflowRunSummaryV1, 'state' | 'errorCode'>,
+): WorkflowProblemPresentation | null {
+    const code = run.errorCode ?? null;
+    return (run.state === 'failed' || run.state === 'interrupted') && isWorkflowOperationErrorCode(code)
+        ? describeWorkflowOperationProblem(code) : null;
 }
 
 /** The same typed refusal is shown for an Action and a persisted invocation failure. */

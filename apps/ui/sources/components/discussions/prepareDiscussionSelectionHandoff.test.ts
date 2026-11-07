@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol';
+import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionMessageV1Schema } from '@happier-dev/protocol/discussions/models';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 
@@ -100,6 +100,7 @@ describe('prepareDiscussionSelectionHandoff', () => {
                 message({ id: 'unavailable', seq: 4, authorAccountId: 'alice', content: null }),
             ],
             resolveAccountLabel: (accountId) => labels.get(accountId) ?? null,
+            resolveSessionLabel: (sessionId) => sessionId === 'session-a' ? 'Payments reviewer' : null,
             format: 'markdown_labeled',
             roleLabels: { user: 'User', assistant: 'Assistant' },
             agentAttributionLabel: 'Via Agent',
@@ -108,7 +109,7 @@ describe('prepareDiscussionSelectionHandoff', () => {
         // A trusted Agent-posted row is a collaborator row with attribution, not
         // assistant output and not an excluded row.
         expect(result).toEqual({
-            text: '**Alice Example:**\n\nFirst\n\n**Alice Example · Via Agent:**\n\nagent\n\n**Bob Example:**\n\nHi @Carol Example',
+            text: '**Alice Example:**\n\nFirst\n\n**Payments reviewer · Via Agent:**\n\nagent\n\n**Bob Example:**\n\nHi @Carol Example',
             source: {
                 kind: 'discussion',
                 serverId: 'home-a',
@@ -158,9 +159,9 @@ describe('prepareDiscussionSelectionHandoff', () => {
 });
 
 describe('projectWorkflowRunPublishedAnswerIds', () => {
-    const published = (id: string, seq: number, runId: string, outcome: 'answer' | 'pass' | 'failed') => message({ id, seq, authorAccountId: 'alice',
+    const published = (id: string, seq: number, runId: string, outcome: 'answer' | 'pass' | 'failed', actionId = 'review.verdict') => message({ id, seq, authorAccountId: 'alice',
         producerV1: { v: 1, kind: 'workflow', runId, invocationRecordId: `invocation-${id}`, invocationAttempt: '0',
-            execution: { kind: 'action', actionId: 'review.verdict' }, outcome } });
+            execution: { kind: 'action', actionId }, outcome } });
 
     it('lists each Run\'s answers in thread order and leaves out passes, failures and other producers', () => {
         const byRun = projectWorkflowRunPublishedAnswerIds([
@@ -170,6 +171,8 @@ describe('projectWorkflowRunPublishedAnswerIds', () => {
             published('passed', 3, 'run-a', 'pass'),
             published('stopped', 4, 'run-a', 'failed'),
             published('other-run', 6, 'run-b', 'answer'),
+            // A retained pre-fix projection is not an answer or capture source.
+            published('internal-projection', 7, 'run-a', 'answer', 'workflow.discussion.round.project'),
         ]);
         expect(Object.fromEntries(byRun)).toEqual({ 'run-a': ['early', 'late'], 'run-b': ['other-run'] });
     });

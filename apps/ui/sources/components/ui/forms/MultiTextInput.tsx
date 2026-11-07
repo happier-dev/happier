@@ -6,11 +6,12 @@ import { Typography } from '@/constants/Typography';
 import { referenceChipFill } from '@/components/ui/referenceChip/referenceChipFill';
 import { nativeReferenceChipGlyph } from '@/components/ui/referenceChip/nativeReferenceChip';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
+import { useNativeBackLayerInputBackEnabled } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { normalizeKeyboardKeyPressEvent, type KeyPressEvent as KeyboardKeyPressEvent } from '@/keyboard/events';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
 import type { CaretRect } from '@/hooks/ui/textInputCaretRect/useTextInputCaretRect.types';
 import { normalizeNativeMultiTextInputMaxHeight, resolveNativeMultiTextInputMinHeight } from './nativeMultiTextInputHeight';
@@ -136,6 +137,7 @@ function serializeReferences(references: readonly ComposerEditorReference[]): re
 export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextInputProps>((props, ref) => {
     const { theme } = useUnistyles();
     const resolveInk = useGlassBackedInk();
+    const forwardHardwareBack = useNativeBackLayerInputBackEnabled();
     const scaleSetting = useLocalSetting('uiFontScale');
     const uiFontScale = typeof scaleSetting === 'number' && Number.isFinite(scaleSetting) && scaleSetting > 0 ? scaleSetting : 1;
     const textStyle = React.useMemo(() => scaleTextStyle({
@@ -150,6 +152,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     });
     const [contentHeight, setContentHeight] = React.useState<number | null>(null);
     const inputRef = React.useRef<NativeComposerInputHandle | null>(null);
+    const dropCaretRef = React.useRef<number | null>(null);
     const textRef = React.useRef(props.value);
     const controlledValueRef = React.useRef(props.value);
     const selectionRef = React.useRef({ start: props.value.length, end: props.value.length });
@@ -192,7 +195,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         props.onStateChange?.({ text: textRef.current, selection });
     }, [props.onSelectionChange, props.onStateChange]);
 
-    const onChange = React.useCallback<NativeComposerInputProps['onChange']>((event) => {
+    const onChange = React.useCallback<NativeComposerInputProps['onComposerChange']>((event) => {
         const { text, selection, eventCount, references } = event.nativeEvent;
         recordGeometry(event.nativeEvent);
         eventCountRef.current = eventCount;
@@ -202,6 +205,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             phase: 'native-change', platform: Platform.OS, surface: 'agentInput',
             textLength: text.length, selection, valueLength: controlledValueRef.current.length,
         });
+        // Selection and chip bindings address this text. Publish it first so
+        // the document owner never rebases next-text ranges a second time.
+        props.onChangeText(text);
         publishSelection(selection);
         const restored = references.flatMap((reference, index) => {
             const occurrence = liveReferencesRef.current[index];
@@ -217,14 +223,13 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             liveReferencesRef.current = nextReferences;
             props.onReferencesChange?.(nextReferences);
         }
-        props.onChangeText(text);
     }, [recordGeometry, props.onChangeText, props.onReferencesChange, publishSelection]);
-    const onSelection = React.useCallback<NativeComposerInputProps['onSelection']>((event) => {
+    const onSelection = React.useCallback<NativeComposerInputProps['onComposerSelection']>((event) => {
         recordGeometry(event.nativeEvent);
         const selection = event.nativeEvent.selection;
         if (selection.start !== selectionRef.current.start || selection.end !== selectionRef.current.end) publishSelection(selection);
     }, [recordGeometry, publishSelection]);
-    const onContentHeightChange = React.useCallback<NativeComposerInputProps['onContentHeightChange']>((event) => {
+    const onContentHeightChange = React.useCallback<NativeComposerInputProps['onComposerContentHeightChange']>((event) => {
         const measured = event.nativeEvent.height;
         if (!Number.isFinite(measured)) return;
         const height = Math.max(0, Math.ceil(measured));
@@ -282,9 +287,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             liveReferencesRef.current = references;
             inputRef.current?.setTextAndSelection(text, nextSelection, serializeReferences(references));
             // Match native edits: the host must process new text before receiving its rebased bindings.
+            props.onChangeText(text);
             publishSelection(nextSelection);
             props.onReferencesChange?.(references);
-            props.onChangeText(text);
         },
         setSelection(selection) {
             if (textRef.current !== props.value) return;
@@ -304,7 +309,12 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             return () => { caretListenersRef.current.delete(listener); };
         },
         offsetAtPoint: async point => await inputRef.current?.offsetAtPoint(point.x, point.y) ?? null,
-        setDropCaret: offset => { inputRef.current?.setDropCaret(offset); },
+        setDropCaret: offset => {
+            // Idle drop targets clear on mount and cleanup; there is no native feedback to retire yet.
+            if (offset === null && dropCaretRef.current === null) return;
+            dropCaretRef.current = offset;
+            inputRef.current?.setDropCaret(offset);
+        },
     }), [props.value, props.onChangeText, props.onReferencesChange, publishSelection, boundReferences]);
 
     return <View style={{ width: '100%' }} onLayout={props.onLayout}>
@@ -322,6 +332,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             maxHeight={maxHeight}
             minHeight={minHeight}
             editable={props.editable !== false}
+            {...(Platform.OS === 'android' ? { forwardHardwareBack } : {})}
             placeholder={props.placeholder ?? ''}
             returnKeyType={props.submitBehavior === 'submit' || props.submitBehavior === 'blurAndSubmit' ? 'send' : 'default'}
             submitBehavior={props.accessibilityState?.expanded === true ? 'submit' : props.submitBehavior ?? 'newline'}
@@ -333,7 +344,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             referenceMenuLabels={{ open: t('common.open'), remove: t('common.remove') }}
             acceptsAttachmentDrops={props.editable !== false && Boolean(props.onAttachmentsDropped)}
             attachmentDropScope={props.attachmentDropScope ?? ''}
-            onAttachmentDrop={event => {
+            onComposerAttachmentDrop={event => {
                 const { scope, ...drop } = event.nativeEvent;
                 if (props.editable !== false && (scope ?? '') === (props.attachmentDropScope ?? '')) props.onAttachmentsDropped?.(drop);
             }}
@@ -341,28 +352,28 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             accessibilityHint={props.accessibilityHint}
             accessibilityRole={props.accessibilityRole}
             accessibilityState={props.accessibilityState}
-            onChange={onChange}
-            onSelection={onSelection}
-            onContentHeightChange={onContentHeightChange}
-            onKeyPress={event => {
+            onComposerChange={onChange}
+            onComposerSelection={onSelection}
+            onComposerContentHeightChange={onContentHeightChange}
+            onComposerKeyPress={event => {
                 // Submit-producing Enter is handled once, from the corresponding native submit event.
                 if (event.nativeEvent.submitting) return;
                 const key = normalizeKeyboardKeyPressEvent(event.nativeEvent);
                 if (key) props.onKeyPress?.({ ...key, inputState: { text: textRef.current, selection: selectionRef.current } });
             }}
-            onScroll={event => { recordGeometry(event.nativeEvent); props.onScrollYChange?.(event.nativeEvent.y); }}
-            onFocus={event => { if (event) recordGeometry(event.nativeEvent); props.onFocus?.(); }}
-            onBlur={props.onBlur}
-            onSubmitEditing={event => {
+            onComposerScroll={event => { recordGeometry(event.nativeEvent); props.onScrollYChange?.(event.nativeEvent.y); }}
+            onComposerFocus={event => { if (event) recordGeometry(event.nativeEvent); props.onFocus?.(); }}
+            onComposerBlur={props.onBlur}
+            onComposerSubmitEditing={event => {
                 const key = normalizeKeyboardKeyPressEvent(event?.nativeEvent ?? { key: 'Enter' });
                 if (key && props.onKeyPress?.({ ...key, inputState: { text: textRef.current, selection: selectionRef.current } })) return;
                 props.onSubmitEditing?.();
             }}
-            onReferencePress={event => {
+            onComposerReferencePress={event => {
                 if (props.onReferencePress) props.onReferencePress(event.nativeEvent.ref);
                 else boundReferences.find(reference => reference.ref === event.nativeEvent.ref)?.onOpen?.();
             }}
-            onDecorationPress={event => { void openExternalUrl(event.nativeEvent.url, { platformOS: Platform.OS }); }}
+            onComposerDecorationPress={event => { void openExternalUrl(event.nativeEvent.url); }}
         />
     </View>;
 });

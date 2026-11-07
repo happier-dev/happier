@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { WORKFLOW_OPERATION_ERROR_CODES_V1 } from '@happier-dev/protocol';
+import { WORKFLOW_OPERATION_ERROR_CODES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
@@ -29,6 +29,35 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  * never reach a person as prose the server chose or as the identifier itself.
  */
 describe('workflowProblemPresentation', () => {
+    it('explains missing requester custody without offering an automatic retry', () => {
+        const failure = WorkflowActionFailureV1Schema.parse({ ok: false,
+            errorCode: 'requester_custody_unavailable', error: 'requester_custody_unavailable' });
+        expect(resolveWorkflowProblemPresentation(new WorkflowActionError({
+            rawCode: failure.errorCode, message: failure.error, failure,
+        }))).toMatchObject({ code: 'requester_custody_unavailable',
+            message: 'workflows.problem.requesterCustodyUnavailable', repair: 'none', repairLabel: null });
+    });
+    it.each([
+        ['admission_unavailable', 'session.startFailure.cause.admission_unavailable'],
+        ['invalid_token', 'errors.authenticationFailed'],
+    ])('explains %s as authorization or authentication, not unreadable content', (code, message) => {
+        const presentation = resolveWorkflowProblemPresentation(actionError(code));
+        expect(presentation).toMatchObject({
+            code, message,
+            repair: 'none', repairLabel: null, accessibilitySemantics: 'alert',
+        });
+    });
+    it('presents renewed approval as review rather than a storage retry', () => {
+        const failure = WorkflowActionFailureV1Schema.parse(normalizeWorkflowActionThrownError(
+            Object.assign(new Error('private approval context'), { code: 'approval_required' }),
+        ));
+        const error = new WorkflowActionError({ rawCode: failure.errorCode, message: failure.error, failure });
+        expect(resolveWorkflowProblemPresentation(error)).toMatchObject({
+            code: 'approval_required', title: 'notifications.activity.permissionFallbackBody',
+            message: 'workflows.run.approvalWantedBody', repair: 'none', repairLabel: null,
+            accessibilitySemantics: 'alert',
+        });
+    });
     it('keeps the existing target failure and retry for content-free host admission diagnostics', () => {
         const failure = WorkflowActionFailureV1Schema.parse(actionStartTargetUnavailableV1(undefined,
             'agent_start_context', 'caller_agent_unavailable'));
@@ -40,6 +69,16 @@ describe('workflowProblemPresentation', () => {
                 { key: 'reason', label: expect.any(String), value: 'caller_agent_unavailable' },
             ],
         });
+    });
+    it.each([
+        ['workspace_unavailable', 'workflows.problem.workspaceUnavailable'],
+        ['workspace_conflict', 'workflows.problem.workspaceConflict'],
+        ['committed_revision_unavailable', 'workflows.problem.committedRevisionUnavailable'],
+    ])('explains the precise workspace preparation refusal %s without retry', (errorCode, message) => {
+        const failure = WorkflowActionFailureV1Schema.parse({ ok: false, errorCode: 'target_unavailable',
+            error: 'target_unavailable', details: { code: 'target_unavailable', reason: 'workspace_unavailable', errorCode } });
+        const error = new WorkflowActionError({ rawCode: failure.errorCode, message: failure.error, failure });
+        expect(resolveWorkflowProblemPresentation(error)).toMatchObject({ message, repair: 'none', repairLabel: null });
     });
     it('explains Account-wide role preparation and offers retry from the real strict failure projection', () => {
         const failure = WorkflowActionFailureV1Schema.parse(normalizeWorkflowActionThrownError(
@@ -134,8 +173,10 @@ describe('workflowProblemPresentation', () => {
             const presentation = resolveWorkflowProblemPresentation(actionError(code));
 
             expect(presentation.code).toBe(code);
-            expect(presentation.message).toMatch(/^(workflows|errors)\./);
-            expect(presentation.message).not.toContain(code);
+            expect(presentation.message).toMatch(/^(workflows|errors|session)\./);
+            // The text boundary returns keys; reused localized keys may contain
+            // their cause identifier, but a raw code is never the presentation.
+            expect(presentation.message).not.toBe(code);
             expect(presentation.message).not.toContain('server-internal reason');
             expect(presentation.title).not.toContain(code);
         }

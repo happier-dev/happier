@@ -51,7 +51,8 @@ export function refreshWorkflowRunSummaries(
                 ...(cursor ? { cursor } : {}), signal: abort.signal });
             if (!lifetime.isCurrent()) return;
             const state = storage.getState();
-            state.upsertWorkflowRuns(page.runs.map(run => workflowRunRowFromSummary(run, page.metadataByRunId[run.id] ?? null)));
+            state.upsertWorkflowRuns(page.runs.map(run => workflowRunRowFromSummary(run, page.metadataByRunId[run.id] ?? null,
+                undefined, page.callerAccessByRunId?.[run.id])));
             for (const run of page.runs) publishInvocationProvenance(run, page.invocationProvenance);
             cursor = page.nextCursor;
         } while (cursor);
@@ -104,6 +105,7 @@ export async function refreshWorkflowRunsByIds(
     });
     const listed: WorkflowRunListResultV1['runs'] = [];
     const metadataByRunId: WorkflowRunListResultV1['metadataByRunId'] = {};
+    const callerAccessByRunId: NonNullable<WorkflowRunListResultV1['callerAccessByRunId']> = {};
     const provenance: NonNullable<WorkflowRunListResultV1['invocationProvenance']> = [];
     let cursor: string | undefined;
     do {
@@ -112,6 +114,7 @@ export async function refreshWorkflowRunsByIds(
             ...(options.accountLifetime ? { accountLifetime: options.accountLifetime } : {}) });
         listed.push(...page.runs);
         Object.assign(metadataByRunId, page.metadataByRunId);
+        Object.assign(callerAccessByRunId, page.callerAccessByRunId);
         provenance.push(...(page.invocationProvenance ?? []));
         cursor = page.nextCursor;
     } while (cursor);
@@ -122,7 +125,8 @@ export async function refreshWorkflowRunsByIds(
     // two locked a perfectly readable unnamed Run behind "Content unavailable"
     // in the collection and in every Session card that reads the same row.
     const state = storage.getState();
-    state.upsertWorkflowRuns(listed.map(run => workflowRunRowFromSummary(run, metadataByRunId[run.id] ?? null)), scope);
+    state.upsertWorkflowRuns(listed.map(run => workflowRunRowFromSummary(run, metadataByRunId[run.id] ?? null,
+        undefined, callerAccessByRunId[run.id])), scope);
     for (const run of listed) publishInvocationProvenance(run, provenance, scope);
     const listedIds = new Set(listed.map(run => run.id));
     for (const runId of ids) if (!listedIds.has(runId)) state.removeWorkflowRun(runId, scope);

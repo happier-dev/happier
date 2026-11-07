@@ -1,11 +1,16 @@
 import type {
-    AcpConfigOptionOverridesV1,
-    AgentExecutionTargetV1,
-    PersistedBackendTargetRefV2,
-    PluginProjectedAgentConnectedAccountPurposeV2,
+    AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
+    AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type {
+    PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type {
+    PluginProjectedAgentConnectedAccountPurposeV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type {
     WindowsRemoteSessionLaunchMode,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
@@ -74,6 +79,8 @@ export type SessionAuthoringFieldUnavailableReason =
     | 'feature_disabled'
     /** The facts this control reads have not arrived yet; it says so instead of claiming there is nothing. */
     | 'loading'
+    /** The Profile reader settled with a refusal, rather than an empty inventory. */
+    | 'profile_catalog_unavailable'
     /** Another owner supplies this field's control and the host did not pass it. */
     | 'owned_by_host';
 
@@ -232,6 +239,7 @@ export type SessionAuthoringControlFacts = Readonly<{
     profilesEnabled?: boolean;
     /** The Account's profile read has not answered yet: an empty list is not an answer. */
     profilesLoading?: boolean;
+    profilesUnavailableReason?: Extract<ProfileCatalogSnapshotV1, { status: 'unavailable' }>['reason'];
     /** The exact Machine these facts describe, by its display name: the repair line names it. */
     machineName?: string | null;
     /** The exact run target runs Windows, so its launch controls apply. */
@@ -267,6 +275,7 @@ export function resolveSessionAuthoringFieldTitle(
         case 'permissionMode': return t('settingsSession.permissions.title');
         case 'acpSessionModeId': return t('agentInput.mode.sectionTitle');
         case 'profileId': return t('agentInput.profile.sectionTitle');
+        case 'approvalProfileId': return t('workflows.editor.approvalProfile');
         case 'sessionConfigOptionOverrides': return t('agentInput.actionMenu.settings');
         case 'transcriptStorage': return t('settingsSession.defaultStorage.title');
         case 'capabilitySelection': return t('capabilities.session.sheet.title');
@@ -539,10 +548,17 @@ export function resolveSessionAuthoringFieldControl(params: Readonly<{
             };
         }
 
+        case 'approvalProfileId':
+            return unavailable(field, 'owned_by_host');
+
         case 'profileId': {
             const profiles = facts.profiles ?? [];
             if (facts.profilesEnabled === false) return unavailable(field, 'feature_disabled');
-            if (profiles.length === 0) return unavailable(field, facts.profilesLoading === true ? 'loading' : 'owned_by_host');
+            if (profiles.length === 0) {
+                if (facts.profilesLoading === true) return unavailable(field, 'loading');
+                if (facts.profilesUnavailableReason) return unavailable(field, 'profile_catalog_unavailable');
+                return unavailable(field, 'owned_by_host');
+            }
             return {
                 field,
                 kind: 'options',
@@ -730,7 +746,7 @@ export function resolveSessionAuthoringFieldControl(params: Readonly<{
             // unavailable rather than borrowing another Agent's answer.
             if (agentId === null) return unavailable(field, 'requires_agent_target');
             const runtime = selectedAgentTarget?.runtimeBackendMode;
-            if (runtime === undefined) return unavailable(field, 'owned_by_host');
+            if (runtime === undefined) return unavailable(field, selectedAgentTarget ? 'agent_has_no_options' : 'owned_by_host');
             if (runtime.options.length === 0) return unavailable(field, 'agent_has_no_options');
             const authoredMode = values.runtimeDescriptorV1?.agentId === agentId
                 ? values.runtimeDescriptorV1.agent.backendMode
@@ -862,6 +878,7 @@ export function resolveSessionAuthoringFieldValue(params: Readonly<{
         // directly rather than resolving an option id.
         case 'capabilitySelection':
         case 'connectedServices':
+        case 'approvalProfileId':
             return params.values[params.selection.field] ?? null;
     }
 }

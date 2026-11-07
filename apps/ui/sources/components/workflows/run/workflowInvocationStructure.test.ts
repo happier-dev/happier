@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol';
-import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol';
+import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { summarizeWorkflowInvocationCoverage } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
-import { projectWorkflowInvocationStructure, projectWorkflowFlowRunStates, resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
+import { formatWorkflowOccurrenceLabel, projectWorkflowInvocationStructure, projectWorkflowFlowRunStates, resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 
 /**
@@ -38,6 +38,72 @@ function child(overrides: Readonly<{ id: string; parentRecordId: string; memberO
 }
 
 describe('projectWorkflowInvocationStructure', () => {
+    it('names cold item participants from accepted inputs without opening invocation bodies', () => {
+        const definition = definitionOf([{ kind: 'loop', id: 'panel', repetition: { kind: 'items',
+            items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+            body: [{ ...step('review'), execution: { participant: { kind: 'item', field: 'value' } } }] }]);
+        const loop = child({ id: 'panel-row', parentRecordId: root.id, memberOrdinal: '0', sequence: '1' });
+        const frame = child({ id: 'frame', parentRecordId: loop.id, memberOrdinal: '1', sequence: '2' });
+        const leaf = child({ id: 'review-row', parentRecordId: frame.id, memberOrdinal: '0', sequence: '3' });
+        const inputs = { participants: [
+            { kind: 'session', session: { serverId: 'home', sessionId: 'alex' } },
+            { kind: 'session', session: { serverId: 'home', sessionId: 'bea' } },
+        ] };
+        const project = (serverId: string) => projectWorkflowInvocationStructure({ definition,
+            invocations: [root, loop, frame, leaf], inputs, serverId,
+            sessionDisplayLabelsById: new Map([['alex', 'Alex'], ['bea', 'Bea']]) });
+        expect(project('home').get(leaf.id)?.occurrence).toEqual([
+            { kind: 'item', blockId: 'panel', index: 1, displayLabel: 'Bea' },
+        ]);
+        expect(project('another-home').get(leaf.id)?.occurrence).toEqual([
+            { kind: 'item', blockId: 'panel', index: 1 },
+        ]);
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: leaf.attempt,
+            logicalInvocationRecordId: leaf.id, invocationPath: { blockId: 'review', scope: [{ kind: 'iteration', blockId: 'panel', index: 1 }] },
+            execution: { kind: 'session', sessionId: 'spawned-reviewer', localInputId: 'review-input' } };
+        const model = { kind: 'model', launch: { title: 'Bea', executionTarget: { serverId: 'home', machineId: 'machine' },
+            directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'external.agent', localId: 'reviewer' } } } };
+        expect(projectWorkflowInvocationStructure({ definition, invocations: [root, loop, frame, leaf],
+            inputs: { participants: [model, model] }, serverId: 'home', progressByInvocationId: new Map([[leaf.id, progress]]),
+            invocationEvidenceById: new Map([[leaf.id, { index: leaf, progress }]]),
+            sessionDisplayLabelsById: new Map([['spawned-reviewer', 'Generated step Session title']]),
+        }).get(leaf.id)?.occurrence).toEqual([{ kind: 'item', blockId: 'panel', index: 1, displayLabel: 'Bea' }]);
+    });
+    it('names item-bound participants from the exact admitted Session and refuses stale or misbound names', () => {
+        const definition = definitionOf([{ kind: 'loop', id: 'panel', repetition: { kind: 'items',
+            items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+            body: [{ ...step('review'), execution: { participant: { kind: 'item', field: 'value' } } }] }]);
+        const loop = child({ id: 'panel-row', parentRecordId: root.id, memberOrdinal: '0', sequence: '1' });
+        const frame = child({ id: 'frame', parentRecordId: loop.id, memberOrdinal: '0', sequence: '2' });
+        const leaf = child({ id: 'review-row', parentRecordId: frame.id, memberOrdinal: '0', sequence: '3' });
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: '0',
+            logicalInvocationRecordId: leaf.id, invocationPath: { blockId: 'review', scope: [{ kind: 'iteration', blockId: 'panel', index: 0 }] },
+            execution: { kind: 'session', sessionId: 'external-reviewer', localInputId: 'review-input' } };
+        const frameProgress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'loop', attempt: frame.attempt,
+            logicalInvocationRecordId: frame.id, invocationPath: { blockId: 'panel', scope: progress.invocationPath.scope },
+            frame: { ownerBlockId: 'panel', source: { kind: 'item', index: '0', displayLabel: 'session' } } };
+        const project = (contentRevision = leaf.contentRevision, sessionId = 'external-reviewer', frameLabel = 'session', participantPath?: string[]) => {
+            const namedFrame: WorkflowProgressEnvelopeV1 = { ...frameProgress,
+                frame: { ownerBlockId: 'panel', source: { kind: 'item', index: '0', displayLabel: frameLabel } } };
+            const loopBlock = definition.blocks[0];
+            if (loopBlock?.kind !== 'loop') throw new Error('Expected the panel loop');
+            const scopedDefinition = participantPath === undefined ? definition : definitionOf([{ ...loopBlock,
+                body: [{ ...step('review'), execution: { participant: { kind: 'item', field: 'value', path: participantPath } } }] }]);
+            const structure = projectWorkflowInvocationStructure({ definition: scopedDefinition, invocations: [root, loop, frame, leaf],
+                progressByInvocationId: new Map([[frame.id, namedFrame], [leaf.id, progress]]),
+                invocationEvidenceById: new Map([[frame.id, { index: frame, progress: namedFrame }],
+                    [leaf.id, { index: { ...leaf, contentRevision }, progress }]]),
+                sessionDisplayLabelsById: new Map([[sessionId, 'Release reviewer']]) });
+            return projectWorkflowFlowRunStates({ invocations: [root, loop, frame, leaf], structure,
+                formatOccurrence: occurrence => formatWorkflowOccurrenceLabel(occurrence, projectWorkflowFlow(definition)) }).get('review')?.[0]?.occurrenceLabel;
+        };
+        expect(project()).toBe('Release reviewer');
+        const unnamed = formatWorkflowOccurrenceLabel([{ kind: 'item', blockId: 'panel', index: 0 }], projectWorkflowFlow(definition));
+        expect(project('stale')).toBe(unnamed);
+        expect(project(leaf.contentRevision, 'another-session')).toBe(unnamed);
+        expect(project(leaf.contentRevision, 'unloaded-session', 'External reviewer')).toBe('External reviewer');
+        expect(project(leaf.contentRevision, 'external-reviewer', 'Issue #1482', ['assignee'])).toBe('Issue #1482');
+    });
     it('names leaf occurrences from their exact opened item frame and drops stale frame labels', () => {
         const definition = definitionOf([{ kind: 'loop', id: 'files', repetition: { kind: 'items',
             items: { kind: 'literal', value: [] }, execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [step('inspect')] }]);

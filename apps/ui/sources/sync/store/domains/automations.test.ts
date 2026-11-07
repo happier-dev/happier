@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { createStore } from 'zustand/vanilla';
 import {
     AutomationDefinitionDetailSchema,
-    AutomationTriggerIdSchema,
     AutomationDefinitionListItemSchema,
     AutomationV3RunListItemSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
+import {
+    AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
 import {
     createAutomationDefinitionFromDetail,
@@ -20,7 +21,7 @@ import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 import { applyWorkflowTriggerSnapshotReceipt, createAutomationsDomain, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector } from './automations';
-import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import {
     createWorkflowRunsDomain,
     resolveAutomationRunProjections,
@@ -262,9 +263,56 @@ describe('shared workflow trigger observations', () => {
         })));
         expect(select(h.get())).toBe(before);
         h.get().upsertAutomation({ ...saved, lastRunAt: 10, updatedAt: saved.updatedAt + 1 });
-        expect(select(h.get())).not.toBe(before);
+        const changed = select(h.get());
+        expect(changed).not.toBe(before);
         h.get().removeAutomation(saved.id);
-        expect(select(h.get())).toBe('');
+        expect(select(h.get())).not.toBe(changed);
+    });
+    it('invalidates public trigger progress without moving the Automation timestamp', () => {
+        const h = createHarness();
+        const row = createAutomationDefinitionSummary({ ...eventDefinitionSummary, scopeSessionId: 'session-progress' });
+        h.get().upsertAutomation(row);
+        const select = createWorkflowTriggerChangeSelector('session-progress');
+        const before = select(h.get());
+        const updated = { ...row, triggers: row.triggers.map(trigger => ({ ...trigger, updatedAt: trigger.updatedAt + 1 })) };
+        h.get().upsertAutomation(updated);
+        const after = select(h.get());
+        expect(after).not.toBe(before);
+        h.get().upsertAutomation(structuredClone(updated));
+        expect(select(h.get())).toBe(after);
+    });
+
+    it('does not invalidate an opened query when initial Sync restates its exact trigger revisions', () => {
+        const h = createHarness();
+        const sessionId = 'cold-session';
+        const row = createAutomationDefinitionSummary({ ...eventDefinitionSummary, scopeSessionId: sessionId });
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: row.id, revision: row.templateVersion, enabled: row.enabled,
+            health: 'available', scopeSessionId: sessionId, triggers: eventDefinitionDetail.triggers });
+        h.get().applyWorkflowTriggerSetPage({ queryKey: `session:${sessionId}`, sets: [set] });
+        const select = createWorkflowTriggerChangeSelector(sessionId);
+        const before = select(h.get());
+        h.get().applyAutomations([row], null);
+        expect(select(h.get())).toBe(before);
+        // Trigger revisions can advance independently of the recipe revision.
+        h.get().upsertAutomation({ ...row, triggers: row.triggers.map(trigger => ({ ...trigger, revision: trigger.revision + 1 })) });
+        const changed = select(h.get());
+        expect(changed).not.toBe(before);
+        h.get().removeAutomation(row.id);
+        expect(select(h.get())).not.toBe(changed);
+    });
+    it.each(['unqueried', 'recipe', 'trigger', 'public-trigger', 'enabled'])('invalidates initial Sync for a %s trigger snapshot', (mismatch) => {
+        const h = createHarness();
+        const sessionId = 'cold-session';
+        const row = createAutomationDefinitionSummary({ ...eventDefinitionSummary, scopeSessionId: sessionId });
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: row.id, revision: row.templateVersion - (mismatch === 'recipe' ? 1 : 0),
+            enabled: mismatch === 'enabled' ? !row.enabled : row.enabled, health: 'available', scopeSessionId: sessionId,
+            triggers: eventDefinitionDetail.triggers.map(trigger => ({ ...trigger, revision: trigger.revision - (mismatch === 'trigger' ? 1 : 0),
+                updatedAt: trigger.updatedAt - (mismatch === 'public-trigger' ? 1 : 0) })) });
+        h.get().applyWorkflowTriggerSetPage({ queryKey: mismatch === 'unqueried' ? 'account_all' : `session:${sessionId}`, sets: [set] });
+        const select = createWorkflowTriggerChangeSelector(sessionId);
+        const before = select(h.get());
+        h.get().applyAutomations([row], null);
+        expect(select(h.get())).not.toBe(before);
     });
     it('keeps a newer write when a delayed list returns and leaves other queries untouched', () => {
         const h = createHarness();

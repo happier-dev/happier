@@ -51,17 +51,7 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
     );
     switch (reference.kind) {
         case 'literal':
-            // Only a declared Action field gives a literal execution meaning.
-            // An arbitrary authored string or object must keep its own value.
-            if (fieldName === 'target' && reference.value !== null && typeof reference.value === 'object'
-                && !Array.isArray(reference.value) && Object.keys(reference.value).length === 1
-                && Reflect.get(reference.value, 'kind') === 'detached') return t('workflows.page.sections.aBackgroundRun');
-            if (fieldName === 'permissionMode' && typeof reference.value === 'string') {
-                const mode = parsePermissionIntentAlias(reference.value);
-                if (mode === 'read-only') return t('executionRuns.newRun.permissionModes.readOnly');
-                if (mode === 'default') return t('executionRuns.newRun.permissionModes.default');
-            }
-            return formatWorkflowLiteralValue(reference.value);
+            return formatWorkflowExecutionLiteral(reference.value, fieldName) ?? formatWorkflowLiteralValue(reference.value);
         case 'input':
             return withPath(t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) }), reference.path);
         case 'result':
@@ -87,6 +77,24 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
         default:
             return t('workflows.input.unavailableValue');
     }
+}
+
+/**
+ * A declared execution field's literal in words ("A background run", "Read-only"),
+ * or null when the value carries no execution meaning. Only a declared Action field
+ * gives a literal that meaning; an arbitrary authored string or object keeps its own value.
+ * This wins over an Action spec's static option labels, which may be the wire value itself.
+ */
+export function formatWorkflowExecutionLiteral(value: JsonValue, fieldName: string | undefined): string | null {
+    if (fieldName === 'target' && value !== null && typeof value === 'object'
+        && !Array.isArray(value) && Object.keys(value).length === 1
+        && Reflect.get(value, 'kind') === 'detached') return t('workflows.page.sections.aBackgroundRun');
+    if (fieldName === 'permissionMode' && typeof value === 'string') {
+        const mode = parsePermissionIntentAlias(value);
+        if (mode === 'read-only') return t('executionRuns.newRun.permissionModes.readOnly');
+        if (mode === 'default') return t('executionRuns.newRun.permissionModes.default');
+    }
+    return null;
 }
 
 /** Literal data is readable too; typed loop outcomes never leak their wire objects. */

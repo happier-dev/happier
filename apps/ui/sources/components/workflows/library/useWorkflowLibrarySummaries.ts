@@ -15,7 +15,7 @@ export type WorkflowAutomationRunSummary = WorkflowRunAutomationSummariesResultV
 type SummaryKind = 'source' | 'automation';
 type Summary = WorkflowLibraryRunSummary | WorkflowAutomationRunSummary;
 type SummaryMap<T> = ReadonlyMap<string, T>;
-type SummaryRead<T> = Readonly<{ summaries: SummaryMap<T> | null; failed: boolean; retry: () => void }>;
+export type SummaryRead<T> = Readonly<{ summaries: SummaryMap<T> | null; failed: boolean; failedIds: ReadonlySet<string>; retry: () => void }>;
 type SummarySelection<T> = Readonly<{ kind: SummaryKind; empty: SummaryMap<T>; select: (summary: Summary) => T | undefined }>;
 const EMPTY_SUMMARIES: SummaryMap<WorkflowLibraryRunSummary> = new Map();
 const SOURCE_SELECTION: SummarySelection<WorkflowLibraryRunSummary> = {
@@ -36,7 +36,7 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
     const listeners = new Set<() => void>();
     const demands = new Set<readonly string[]>();
     const pending = new Set<string>();
-    const inFlight = new Set<string>();
+    const inFlight = new Map<string, AbortController>();
     let queued = false;
     let unsubscribeWake: (() => void) | null = null;
     const publish = () => { for (const listener of listeners) listener(); };
@@ -51,21 +51,22 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
             for (const kind of ['source', 'automation'] as const) {
                 const selected = keys.filter(key => key.startsWith(`${kind}:`));
                 if (selected.length === 0) continue;
-                for (const key of selected) { pending.delete(key); inFlight.add(key); }
-                void read(kind, selected);
+                const controller = new AbortController();
+                for (const key of selected) { pending.delete(key); inFlight.set(key, controller); }
+                void read(kind, selected, controller);
             }
         });
     }
 
-    async function read(kind: SummaryKind, keys: readonly string[]) {
+    async function read(kind: SummaryKind, keys: readonly string[], controller: AbortController) {
         const collected = new Map<string, Summary>();
         try {
             let remaining = keys.map(key => key.slice(kind.length + 1));
             while (remaining.length > 0) {
                 const page = kind === 'source'
-                    ? await summarizeWorkflowRuns({ sourceArtifactIds: remaining, recent: WORKFLOW_RUN_STRIP_LENGTH })
-                    : await summarizeWorkflowAutomationRuns({ automationIds: remaining });
-                if (!lifetime.isCurrent()) return;
+                    ? await summarizeWorkflowRuns({ sourceArtifactIds: remaining, recent: WORKFLOW_RUN_STRIP_LENGTH, signal: controller.signal })
+                    : await summarizeWorkflowAutomationRuns({ automationIds: remaining, signal: controller.signal });
+                if (!lifetime.isCurrent() || controller.signal.aborted) return;
                 if ('summaries' in page) {
                     for (const summary of page.summaries) collected.set(`source:${summary.sourceArtifactId}`, summary);
                     if (page.summaries.length === 0) break;
@@ -79,7 +80,7 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
         } catch {
             // Retain admitted page facts and last-known answers; unanswered ids fail below.
         } finally {
-            if (lifetime.isCurrent()) {
+            if (lifetime.isCurrent() && !controller.signal.aborted) {
                 const next = new Map(summaries);
                 let changed = false;
                 for (const key of keys) {
@@ -95,13 +96,15 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
                 }
                 if (changed) { summaries = next; publish(); }
             }
-            for (const key of keys) inFlight.delete(key);
+            for (const key of keys) if (inFlight.get(key) === controller) inFlight.delete(key);
             if (pending.size > 0) schedule();
         }
     }
 
     lifetime.onRetire(() => {
         unsubscribeWake?.(); unsubscribeWake = null;
+        for (const controller of inFlight.values()) controller.abort();
+        inFlight.clear();
         demands.clear(); pending.clear(); failed.clear();
         summaries = EMPTY_SUMMARIES;
         // Capturing a replacement scope can retire this lifetime during another consumer's render.
@@ -112,6 +115,18 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
         get: () => summaries,
         hasFailed: (key: string) => failed.has(key),
         retry(keys: readonly string[]) {
+            const superseded = new Set(keys.flatMap(key => {
+                const controller = inFlight.get(key);
+                return controller ? [controller] : [];
+            }));
+            const demanded = new Set([...demands].flat());
+            for (const [key, controller] of inFlight) {
+                if (!superseded.has(controller)) continue;
+                controller.abort();
+                inFlight.delete(key);
+                // Cancelling one shared batch also releases its other current borrowers.
+                if (demanded.has(key)) pending.add(key);
+            }
             for (const key of keys) pending.add(key);
             schedule();
         },
@@ -133,7 +148,11 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
             schedule();
             return () => {
                 demands.delete(keys);
-                if (demands.size === 0) { unsubscribeWake?.(); unsubscribeWake = null; pending.clear(); }
+                if (demands.size === 0) {
+                    unsubscribeWake?.(); unsubscribeWake = null; pending.clear();
+                    for (const controller of inFlight.values()) controller.abort();
+                    inFlight.clear();
+                }
             };
         },
     };
@@ -162,7 +181,9 @@ function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: Summ
         const get = (): SummaryRead<T> => {
             const current = owner?.get() ?? EMPTY_SUMMARIES;
             const readable = owner && lifetime?.isCurrent();
-            const nextFailed = Boolean(readable && keys.some(key => owner?.hasFailed(key)));
+            const nextFailedIds = readable ? ids.filter((_id, index) => owner?.hasFailed(keys[index]!)) : [];
+            const failedIds = snapshot && snapshot.failedIds.size === nextFailedIds.length
+                && nextFailedIds.every(id => snapshot!.failedIds.has(id)) ? snapshot.failedIds : new Set(nextFailedIds);
             if (ids.length === 0) selected = selector.empty;
             else if (!readable || keys.every(key => !current.has(key))) selected = null;
             else if (!selected || !ids.every((id, index) => {
@@ -175,7 +196,9 @@ function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: Summ
                     return summary ? [[id, summary] as const] : [];
                 }));
             }
-            if (!snapshot || snapshot.summaries !== selected || snapshot.failed !== nextFailed) snapshot = { summaries: selected, failed: nextFailed, retry };
+            if (!snapshot || snapshot.summaries !== selected || snapshot.failedIds !== failedIds) {
+                snapshot = { summaries: selected, failed: failedIds.size > 0, failedIds, retry };
+            }
             return snapshot;
         };
         return { owner, keys, get };

@@ -150,6 +150,24 @@ describe('AgentInput read-only document clamp', () => {
         expect(flat(screen.findHostByTestId('agent-input-read-only-frame')!.props.style).maxHeight).toBeUndefined();
     });
 
+    it('reads a placed reference as its inline chip inside the prompt, never as a separate line', async () => {
+        const { buildMentionRefV1 } = await import('@happier-dev/protocol/runtime/input/mentionRefV1');
+        const { formatInlineReferenceTokenV1 } = await import('@happier-dev/protocol/runtime/input/inlineReferenceTokenV1');
+        const ref = buildMentionRefV1('session', 'release-notes');
+        const tokenText = formatInlineReferenceTokenV1({ label: 'Release notes', ref });
+        const value = `Compare with ${tokenText} before answering`;
+        const start = 'Compare with '.length;
+        const screen = await renderReadOnly('document', { value, structuredInputMentions: [
+            { kind: 'session', ref, label: 'Release notes', tokenText, start, end: start + tokenText.length },
+        ] });
+        const whole = screen.getTextContent();
+        // One sentence: the chip label sits between the words around its token, and the raw token is gone.
+        expect(whole.indexOf('Compare with')).toBeLessThan(whole.indexOf('Release notes'));
+        expect(whole.indexOf('Release notes')).toBeLessThan(whole.indexOf('before answering'));
+        expect(whole.includes(tokenText)).toBe(false);
+        expect(whole.split('Release notes').length - 1).toBe(2); // the reading and its hidden clamp measure, never a third line
+    });
+
     it('leaves a read-only session composer unclamped', async () => {
         const screen = await renderReadOnly();
         expect(screen.findHostByTestId('agent-input-read-only-text')).toBeNull();

@@ -1,4 +1,4 @@
-import { normalizePluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1, normalizePluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginAccountCollectionContributionV1Schema } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { PluginCollectionRowIdV1Schema } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
@@ -6,11 +6,12 @@ import {
     PluginError,
     type JsonValue,
 } from '@happier-dev/plugin-sdk';
-import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionForDefinition,
     PluginAccountCollectionValue,
+    PluginCollectionQuery,
 } from '@happier-dev/plugin-sdk/collections';
 import type {
     PluginUiDataClient,
@@ -33,7 +34,8 @@ import {
     type ActivePluginCollectionUnavailableReasonV1,
 } from './activePluginCollectionClient';
 import { createActivePluginCollectionUiQueryPager } from './queryPluginCollectionUiQuery';
-import { registerActivePluginCollectionChangeWatch } from './pluginCollectionChangeWatch';
+import { captureActivePluginCollectionReadBasis, registerActivePluginCollectionChangeWatch } from './pluginCollectionChangeWatch';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { fetchCurrentChangesCursor } from '@/sync/api/session/apiChanges';
 import { ensureActivePluginAccountCollectionContract } from '@/sync/api/plugins/availability/ensureActivePluginAccountCollectionContract';
 
@@ -131,26 +133,72 @@ function unavailableError(reason: ActivePluginCollectionUnavailableReasonV1): Pl
  * schema surface AND the migration callbacks a declaration may carry. The
  * daemon binds its declared collections through exactly this call, so a surface
  * and its daemon side resolve the same contract digest for the same value.
+ *
+ * A definition is a plugin module's static value: plugins call
+ * `collection(DEFINITION)` per operation from a fresh binding per Action
+ * invocation, and each normalization digests the whole contract. So the
+ * result is held per definition object, as the daemon's binding does
+ * (`accountPluginDataStorage.ts`, `admitted.definitions`). Admission still
+ * checks the ref against the current release on every operation.
+ *
+ * The hosted-web bridge parses the declaration out of each message, so its
+ * objects are never reused. Those also hit by content: one entry per plugin
+ * Collection, keyed by the projected declaration's JSON text (a walk, not the
+ * contract digest). A changed declaration replaces the entry.
  */
-function normalizeCollectionDefinitionRef(
+type PreparedCollectionDefinition = ReturnType<typeof prepareCollectionDefinition>;
+const normalizedDefinitions = new WeakMap<object, Map<string, PreparedCollectionDefinition>>();
+const declaredDefinitions = new Map<string, Readonly<{ text: string; prepared: PreparedCollectionDefinition }>>();
+
+function normalizeCollectionDefinition(
     pluginId: string,
     definition: PluginAccountCollectionDefinition,
-): PluginCollectionContractRefV1 | null {
-    const contribution = PluginAccountCollectionContributionV1Schema.safeParse(
-        projectPluginAccountCollectionDeclaration(definition.id, definition),
-    );
+) {
+    let byPlugin = normalizedDefinitions.get(definition);
+    if (!byPlugin) {
+        byPlugin = new Map();
+        normalizedDefinitions.set(definition, byPlugin);
+    }
+    if (!byPlugin.has(pluginId)) byPlugin.set(pluginId, prepareDeclaredCollectionDefinition(pluginId, definition));
+    return byPlugin.get(pluginId)!;
+}
+
+function prepareDeclaredCollectionDefinition(
+    pluginId: string,
+    definition: PluginAccountCollectionDefinition,
+): PreparedCollectionDefinition {
+    const declaration = projectPluginAccountCollectionDeclaration(definition.id, definition);
+    let text: string;
+    try {
+        text = JSON.stringify(declaration);
+    } catch {
+        return prepareCollectionDefinition(pluginId, declaration);
+    }
+    const key = JSON.stringify([pluginId, String(definition.id)]);
+    const held = declaredDefinitions.get(key);
+    if (held?.text === text) return held.prepared;
+    const prepared = prepareCollectionDefinition(pluginId, declaration);
+    declaredDefinitions.set(key, { text, prepared });
+    return prepared;
+}
+
+function prepareCollectionDefinition(
+    pluginId: string,
+    declaration: ReturnType<typeof projectPluginAccountCollectionDeclaration>,
+) {
+    const contribution = PluginAccountCollectionContributionV1Schema.safeParse(declaration);
     if (!contribution.success) return null;
     try {
         const contract = normalizePluginAccountCollectionContractV1({
             pluginId,
             contribution: contribution.data,
         });
-        return {
+        return { contract, ref: {
             pluginId: contract.pluginId,
             collectionId: contract.collectionId,
             schemaVersion: contract.schemaVersion,
             contractDigest: contract.contractDigest,
-        };
+        } satisfies PluginCollectionContractRefV1 };
     } catch {
         return null;
     }
@@ -192,6 +240,13 @@ type PluginUiDataBindingInput = Readonly<{
 }>;
 
 function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
+    // New observations start after the last snapshot acquired by this binding.
+    // Incumbent observations advance only through their own matching read.
+    let acquisitionCursor: number | undefined;
+    const queryReadBasis = (request: PluginCollectionQuery) => {
+        const { cursor: _cursor, limit: _limit, ...selection } = request;
+        return { owner: input, key: stableJsonStringify({ ...selection, prefix: request.prefix ?? [] }) };
+    };
     const assertBindingCurrent = (signal?: AbortSignal) => {
         assertCurrent(input.accountLifetime, input.signal);
         assertCurrent(input.accountLifetime, signal);
@@ -267,10 +322,11 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
     const collection = <TDefinition extends PluginAccountCollectionDefinition>(
         definition: TDefinition,
     ): PluginAccountCollectionForDefinition<TDefinition> => {
-        const requested = normalizeCollectionDefinitionRef(input.pluginId, definition);
-        if (!requested) {
+        const normalized = normalizeCollectionDefinition(input.pluginId, definition);
+        if (!normalized) {
             throw dataError(COLLECTION_UNDECLARED_CODE, 'The requested Account Collection is not declared');
         }
+        const requested = normalized.ref;
         return Object.freeze<PluginAccountCollectionForDefinition<TDefinition>>({
             sharing: Object.freeze<PluginAccountCollectionForDefinition<TDefinition>['sharing']>({
                 async setGrant(rowId, request, options) {
@@ -298,7 +354,6 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
                     return await active.client.sharing.put(request, options);
                 },
             }),
-
             watch(request, listener) {
                 admit(requested);
                 if (!('kind' in request) && !definition.indexes.some(index => index.id === request.index)) {
@@ -309,6 +364,20 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
                 if (row?.success === false) {
                     throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection watch names an invalid row');
                 }
+                const indexSelection = 'kind' in request ? undefined : (() => {
+                    const index = normalized.contract.indexes.find(index => index.id === request.index)!;
+                    try {
+                        return { indexId: index.id, prefixes: (request.prefixes ?? [request.prefix ?? []]).map(prefix => {
+                            if (prefix.length > index.fields.length) throw new Error('Invalid index prefix');
+                            const encoded = encodePluginCollectionIndexTuplePrefixV1({ fields: prefix.map((value, position) => {
+                                const field = index.fields[position]!;
+                                return { value, direction: field.direction,
+                                    kind: getPluginCollectionScalarKindV1({ schema: normalized.contract.schema, field: field.field }) };
+                            }) });
+                            return [...encoded].map(byte => byte.toString(16).padStart(2, '0')).join('');
+                        }) };
+                    } catch { throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection watch has an invalid index prefix'); }
+                })();
                 const controller = new AbortController();
                 let disposed = false;
                 let retirement: Readonly<{ dispose(): void }> | undefined;
@@ -334,8 +403,12 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
                 watch = registerActivePluginCollectionChangeWatch({
                     pluginId: requested.pluginId,
                     collectionId: requested.collectionId,
+                    contractDigest: requested.contractDigest,
+                    ...(indexSelection ? { indexSelection } : {}),
                     ...(row?.success ? { rowId: row.data } : {}),
                     lifetime: input.accountLifetime,
+                    ...(!('kind' in request) ? { readBasis: queryReadBasis(request) } : {}),
+                    ...(acquisitionCursor === undefined ? {} : { acquisitionCursor }),
                     onInvalidated(invalidation) {
                         if (disposed) return;
                         try {
@@ -454,31 +527,40 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
                 throw unavailableError(outcome.reason);
             },
             async query(request, options) {
-                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
-                const outcome = await active.client.query({
-                    indexId: request.index,
-                    ...(request.prefix ? { prefix: request.prefix } : {}),
-                    ...(request.range ? { range: request.range } : {}),
-                    order: request.order,
-                    ...(request.cursor ? { cursor: request.cursor } : {}),
-                    ...(request.limit ? { limit: request.limit } : {}),
-                }, options);
-                admit(requested, options?.signal);
-                if (outcome.status === 'ready') {
-                    return Object.freeze({
-                        rows: outcome.rows.map((row) => Object.freeze({
-                            rowId: row.rowId,
-                            revision: row.revision,
-                            value: row.value,
-                        })),
-                        ...(outcome.nextCursor ? { nextCursor: outcome.nextCursor } : {}),
-                        changeCursor: outcome.changeCursor,
-                    });
-                }
-                if (outcome.status === 'rejected') {
-                    throw rejectedError(outcome);
-                }
-                throw unavailableError(outcome.reason);
+                const commitReadBasis = request.cursor === undefined ? captureActivePluginCollectionReadBasis({
+                    pluginId: requested.pluginId, collectionId: requested.collectionId,
+                    lifetime: input.accountLifetime, readBasis: queryReadBasis(request),
+                }) : undefined;
+                try {
+                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
+                    const outcome = await active.client.query({
+                        indexId: request.index,
+                        ...(request.prefix ? { prefix: request.prefix } : {}),
+                        ...(request.prefixes === undefined ? {} : { prefixes: request.prefixes }),
+                        ...(request.range ? { range: request.range } : {}),
+                        order: request.order,
+                        ...(request.cursor ? { cursor: request.cursor } : {}),
+                        ...(request.limit ? { limit: request.limit } : {}),
+                    }, options);
+                    admit(requested, options?.signal);
+                    if (outcome.status === 'ready') {
+                        acquisitionCursor = Math.max(acquisitionCursor ?? 0, outcome.changeCursor);
+                        commitReadBasis?.(outcome.changeCursor);
+                        return Object.freeze({
+                            rows: outcome.rows.map((row) => Object.freeze({
+                                rowId: row.rowId,
+                                revision: row.revision,
+                                value: row.value,
+                            })),
+                            ...(outcome.nextCursor ? { nextCursor: outcome.nextCursor } : {}),
+                            changeCursor: outcome.changeCursor,
+                        });
+                    }
+                    if (outcome.status === 'rejected') {
+                        throw rejectedError(outcome);
+                    }
+                    throw unavailableError(outcome.reason);
+                } finally { commitReadBasis?.(); }
             },
             async batch(operations, options) {
                 const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);

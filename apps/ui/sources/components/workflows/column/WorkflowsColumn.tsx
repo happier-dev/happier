@@ -40,6 +40,7 @@ import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
@@ -136,8 +137,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
             )}
         </View>;
     }
-    const headerAction = access.kind === 'workflows' || access.kind === 'triggersOnly'
-        ? <WorkflowsColumnActions canCreate={access.kind === 'workflows'} /> : null;
+    const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
     if (access.kind === 'workflows') {
         return <View testID="workflows-column" style={styles.column}>
             <WorkflowsColumnList surface={props.surface ?? 'plane'} view={view} onSelectView={setView} headerAction={headerAction} pathname={pathname} />
@@ -149,9 +149,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
             surface={props.surface ?? 'plane'}
             title={t('workflows.title')}
             headerAction={headerAction}
-        >
-            {access.kind === 'triggersOnly' ? <AccountTriggersSection first /> : null}
-        </CollectionList>
+        />
     </View>;
 });
 
@@ -195,6 +193,7 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
                 <View style={styles.viewBandLead}>{definitions ? header.strip : null}</View>
                 {viewSwitch}
             </View>
+            {definitions ? header.conditionRow : null}
             {header.overlays}
         </>}
         headerAction={<View style={styles.headerActions}>{definitions ? header.filterButton : null}{props.headerAction}</View>}
@@ -216,6 +215,8 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     // One Library (Q7): saved workflows and the Account's step-holding triggers, in the owner's one
     // order and count. An Account Workflow opens its settings popover where it stands.
     const accountEditor = useAccountWorkflowEditor({ read: accountWorkflows });
+    // One opener for every row: the library's rows keep their identity, so an update re-renders only changed rows.
+    const openHref = useEventCallback((href: string) => { router.push(href as never); });
     const split = React.useMemo(() => ({
         sharedWithYou: props.libraryView.split.sharedWithYou.filter((definition) => isVisible(definition.definitionId)),
         fromPlugins: props.libraryView.split.fromPlugins.filter((plugin) => isVisible(plugin.workflow)),
@@ -238,11 +239,9 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         {visibleLibraryRows.map((row) => 'definition' in row ? (
             <ColumnDefinitionRow key={row.key} definition={row.definition} summary={row.lastRunSummary}
                 selected={selectedDefinitionId === row.definition.definitionId}
-                onPress={() => router.push(row.openTarget.href as never)} />
+                href={row.openTarget.href} onOpen={openHref} />
         ) : (
-            <AccountWorkflowRowAnchor key={row.key} row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId}>
-                {(open) => <ColumnAccountWorkflowRow row={row} onPress={open} />}
-            </AccountWorkflowRowAnchor>
+            <ColumnAccountWorkflowEntry key={row.key} row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
         ))}
         {accountFailed ? <View style={styles.stale}>
             <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
@@ -266,6 +265,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')} countPlacement="title"
                 count={split.fromPlugins.length} />
             {split.fromPlugins.map((workflow) => <CollectionNavigationRow key={workflow.workflow}
+                rowRole="item"
                 href={`/workflows/${encodeURIComponent(workflow.workflow)}`} testID={`workflows-column:plugin:${workflow.workflow}`}
                 title={workflow.title} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === workflow.workflow}
                 onPress={() => router.push(`/workflows/${encodeURIComponent(workflow.workflow)}` as never)} />)}
@@ -287,9 +287,10 @@ function readDefinitionLife(summary: WorkflowLibraryRunSummary | undefined):
 }
 
 /** A saved workflow's Library row: its name, what makes it run by itself, and how its runs stand. */
-function ColumnDefinitionRow(props: Readonly<{ definition: WorkflowLibraryDefinition; summary: WorkflowLibraryRunSummary | undefined;
-    selected: boolean; onPress: () => void }>) {
-    const { definition } = props;
+const ColumnDefinitionRow = React.memo(function ColumnDefinitionRow(props: Readonly<{ definition: WorkflowLibraryDefinition;
+    summary: WorkflowLibraryRunSummary | undefined; selected: boolean; href: string; onOpen: (href: string) => void }>) {
+    const { definition, href, onOpen } = props;
+    const onPress = React.useCallback(() => onOpen(href), [onOpen, href]);
     const life = readDefinitionLife(props.summary);
     const title = formatWorkflowDefinitionLibraryTitle(definition);
     const subtitle = definitionSubtitle(definition);
@@ -298,8 +299,16 @@ function ColumnDefinitionRow(props: Readonly<{ definition: WorkflowLibraryDefini
         title={title} icon={<Icon name="tree-structure" />} selected={props.selected}
         {...(subtitle === null ? {} : { subtitle })}
         {...lifeProps(life, title, `workflow-definition-${definition.definitionId}`)}
-        onPress={props.onPress} />;
-}
+        onPress={onPress} />;
+});
+
+/** An Account Workflow's Library entry: its settings anchor around the row, re-rendered only when the row changes. */
+const ColumnAccountWorkflowEntry = React.memo(function ColumnAccountWorkflowEntry(props: Readonly<{ row: AccountWorkflowLibraryRow;
+    editor: ReturnType<typeof useAccountWorkflowEditor>; deepLink: boolean }>) {
+    const { row } = props;
+    const renderRow = React.useCallback((open: () => void) => <ColumnAccountWorkflowRow row={row} onPress={open} />, [row]);
+    return <AccountWorkflowRowAnchor row={row} editor={props.editor} deepLink={props.deepLink}>{renderRow}</AccountWorkflowRowAnchor>;
+});
 
 /**
  * An Account Workflow's Library row (Q7): the same row as a saved workflow's, its trigger as the quiet
@@ -364,6 +373,7 @@ function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null; i
         {entries.map((entry) => {
             const href = createWorkflowDefinitionRoute(entry.id);
             return <CollectionNavigationRow key={entry.id} href={href} testID={`workflows-column:builtin:${entry.id}`}
+                rowRole="item"
                 title={tLoose(entry.titleKey)} icon={<WorkflowPurposeGlyph purpose={entry.purpose} />} selected={props.selectedDefinitionId === entry.id}
                 onPress={() => router.push(href as never)} />;
         })}

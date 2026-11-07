@@ -1,9 +1,7 @@
-import { executeDefaultActionInCapturedAccount } from './defaultActionExecutor';
-import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { createUiSessionRead } from './sessionReadAction';
 import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
-import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceV1';
+import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
@@ -19,7 +17,6 @@ import {
     createWorkflowActionExecutor,
     createWorkflowDefinitionActions,
     createWorkflowAccountRunActionOwner,
-    removeWorkflowTriggersForDefinition,
     type WorkflowTriggerAutomationOperations,
 } from '@happier-dev/protocol/actions';
 import {
@@ -37,14 +34,16 @@ import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
-import { decodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import type { WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { isServerFeaturesProbeRetryable } from '@/sync/api/capabilities/serverFeaturesProbeRetryability';
 import { isExplicitlyRetryableError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { createWorkflowRunAccountStorage } from '@/sync/api/automations/apiWorkflowRunStorage';
+import { createUiDeploymentActionDeps } from '@/sync/api/deployments/deploymentActions';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import {
     AutomationApiError,
@@ -56,13 +55,16 @@ import {
     reconcileAutomationDefinition,
     runAutomationDefinitionNow,
 } from '@/sync/api/automations/apiAutomations';
-import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { deriveAccountScopedCryptoMaterialSnapshot, resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
-import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
-import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { invalidateAutomationReadAcquisitions } from '@/sync/api/automations/apiAutomationHttp';
+import { AutomationRunStateV3Schema } from '@happier-dev/protocol/automations/automationRunStateV3';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -80,6 +82,14 @@ import { withActionAccountRequestSignal, type LazyActionAccountContext } from '.
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
 import type { WorkflowActionTransport } from './workflowActionTransport';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { executeDefaultActionInCapturedAccount } from './defaultActionExecutor';
+import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
+import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
+import { prepareRequesterSessionForSpawn } from './requesterSessionSpawnPreparation';
+import { sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 function targetUnavailable(): never {
     throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
@@ -91,7 +101,7 @@ function targetUnavailable(): never {
  * runtime's native-goal ownership is host-dependent, so only that check reaches the Session's
  * Machine (the same `session.goal.get` live path the CLI host reads); a closed Session needs none.
  */
-function createUiTriggerSessionResolver(account: LazyActionAccountContext): NonNullable<WorkflowTriggerActionsDependencies['resolveSession']> {
+export function createUiTriggerSessionResolver(account: LazyActionAccountContext): NonNullable<WorkflowTriggerActionsDependencies['resolveSession']> {
     return async (sessionId, caller, options) => {
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, account.serverId)) targetUnavailable();
@@ -137,6 +147,39 @@ export function createUiWorkflowAction(params: Readonly<{
 }>): WorkflowActionExecute {
     const account = params.account;
     const executeRelay = createUiAccountAction(params);
+    // Account authoring stays local. Only shared targets need the existing
+    // private installation channel to retain the requester's own sign-in.
+    const deliverRequesterCustody = async (operation: 'retain' | 'retire',
+        input: Parameters<NonNullable<WorkflowAccountRunActionDeps['workflowRequesterCustody']>['retain']>[0]) => {
+        account.assertCurrent();
+        const readTransport = account.readTransport;
+        if (!readTransport) targetUnavailable();
+        const machine = (await readMachineRows({ readTransport,
+            machineIds: [input.machineId], signal: account.invocationSignal })).get(input.machineId);
+        account.assertCurrent();
+        if (!machine?.access) targetUnavailable();
+        if (machine.access.custodian.accountId === account.accountId) return;
+        const installationId = machine.installationId;
+        const installationPublicKey = readMachineInstallationPublicKey(machine.installationPublicKey);
+        if (!installationId || !installationPublicKey) targetUnavailable();
+        const requesterBootstrap = await prepareRequesterSessionForSpawn({ accountContext: account });
+        const payload = sealSessionRequesterBootstrapRpcRequestV1({ request: {
+            kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',
+            input: { executionTarget: { serverId: account.serverId, machineId: input.machineId },
+                scopeId: input.scopeId, ...(input.automationId ? { automationId: input.automationId } : {}), operation }, requesterBootstrap,
+        }, installationId, installationPublicKey, randomBytes: getRandomBytes });
+        const response = await machineRpcWithServerScope<unknown, typeof payload>({
+            machineId: input.machineId, serverId: account.serverId, accountId: account.accountId,
+            method: RPC_METHODS.SESSION_SPAWN_NEW, payload, requireEncryptedPayload: true,
+            signal: account.invocationSignal, operationTimeoutMs: null,
+        });
+        account.assertCurrent();
+        if (!response || typeof response !== 'object' || !('ok' in response) || response.ok !== true) targetUnavailable();
+    };
+    const workflowRequesterCustody: NonNullable<WorkflowAccountRunActionDeps['workflowRequesterCustody']> = {
+        retain: input => deliverRequesterCustody('retain', input),
+        retire: input => deliverRequesterCustody('retire', input),
+    };
     const resolveSession = createUiTriggerSessionResolver(account);
     const invokePullRequestBinding = async (
         input: Extract<SessionPullRequestBindingInputV1, { kind: 'attach' | 'removeTrigger' }> & Readonly<{ sessionId: string }>,
@@ -192,7 +235,7 @@ export function createUiWorkflowAction(params: Readonly<{
             const machineId = resolveUiAccountActionFallbackMachineId(account);
             if (!machineId) return [];
             const entry = await loadDaemonMergedProjectionCacheEntry({ machineId, serverId: account.serverId,
-                accountLifetime: account.accountLifetime, reuseFreshReady: true });
+                accountLifetime: account.accountLifetime, reuseFreshReady: true, sections: ['familiesById.workflows'] });
             account.assertCurrent();
             // A failed/retained projection does not become a current plugin source.
             // Account Artifacts remain readable when the serving daemon is absent.
@@ -201,7 +244,7 @@ export function createUiWorkflowAction(params: Readonly<{
                 workflow.pluginId ? [projectWorkflowPluginSourceV1({ pluginId: workflow.pluginId,
                     pluginVersion: workflow.pluginVersion, definition: workflow.definition })] : []);
         },
-        removeWorkflowTriggers: (definitionId) => removeWorkflowTriggersForDefinition(automations, definitionId),
+        removeWorkflowTriggers: (definitionId) => triggers.removeForWorkflow(definitionId),
         assertDefinitionWriteAllowed: (_definition, _context, caller) => {
             // Other callers retain the canonical host authorization/materializer.
             if (caller?.authority !== 'present_user') {
@@ -209,17 +252,13 @@ export function createUiWorkflowAction(params: Readonly<{
             }
         },
     });
+    const resolveMaterial = () => deriveAccountScopedCryptoMaterialSnapshot(account.credentials, account.serverId);
     const resolveEncryption = async (signal?: AbortSignal) => {
         account.assertCurrent();
         const resolved = await resolveValidatedAutomationAccountEncryptionV1({
             signal: signal ?? new AbortController().signal,
             resolveAccountEncryptionCurrentness: async (signal) => await fetchAccountEncryptionCurrentness(account.credentials, { request: account.request, signal }),
-            resolveAccountEncryptionMaterial: async () => createAccountScopedCryptoMaterialSnapshotV1({
-                accountEncryptionMode: 'e2ee',
-                material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials),
-                ...(isDataKeyAuthCredentials(account.credentials)
-                    ? { dataKeyPublicKey: decodeBase64(account.credentials.encryption.publicKey, 'base64') } : {}),
-            }),
+            resolveAccountEncryptionMaterial: async () => resolveMaterial(),
         });
         account.assertCurrent();
         if (resolved.kind === 'unavailable' && 'cause' in resolved && isExplicitlyRetryableError(resolved.cause)) throw resolved.cause;
@@ -246,7 +285,19 @@ export function createUiWorkflowAction(params: Readonly<{
         assertCurrent: account.assertCurrent,
         resolveAccountId: async () => { account.assertCurrent(); return account.accountId; },
         resolveEncryption,
+        resolveReadEncryption: async (signal): Promise<WorkflowRunReadEncryptionV1> => {
+            throwIfAborted(signal);
+            const { encryption } = await account.resolveAccountEncryption();
+            const current = await resolveAccountStorageContext(account.credentials, {
+                encryption, request: account.request, usage: 'identity',
+            });
+            account.assertCurrent();
+            throwIfAborted(signal);
+            return current.mode === 'plain' ? { witness: { mode: 'plain' } }
+                : { witness: { mode: 'e2ee' }, material: resolveMaterial() };
+        },
         normalizeAbsolutePath: resolveAbsolutePath,
+        sessionRead: createUiSessionRead(account),
         sessionList: async (input) => {
             account.assertCurrent();
             const result = await listSessionsForVoiceTool({ ...input, serverId: input.serverId ?? account.serverId });
@@ -256,7 +307,12 @@ export function createUiWorkflowAction(params: Readonly<{
         randomBytes: getRandomBytes,
     });
     const triggers = createAccountWorkflowTriggerActions({
+        workflowRequesterCustody,
+        sessionRead: createUiSessionRead(account),
         automations,
+        deploymentAction: createUiDeploymentActionDeps(account).deploymentAction,
+        nativeAccount: { accountId: account.accountId, serverId: account.serverId,
+            isCurrent: async () => account.credentialAuthorityKind === 'account' && account.accountLifetime.isCurrent() },
         sessionList: async (input) => {
             account.assertCurrent();
             const result = await listSessionsForVoiceTool({ ...input, serverId: account.serverId });
@@ -301,7 +357,7 @@ export function createUiWorkflowAction(params: Readonly<{
                 readArtifact: (definitionId, signal) => definitions.get({ definitionId, ...(signal ? { signal } : {}) }),
             });
             if (!resolved) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
-            return resolved.definition;
+            return resolved;
         },
         resolveWorkflowTeamIds: async (artifactId) => {
             const result = await account.artifactAccessGrants.list({ artifactId });
@@ -365,14 +421,18 @@ export function createUiWorkflowAction(params: Readonly<{
             }
         },
     });
-    const executeAccount = createWorkflowActionExecutor({
-        definitions, runs, triggers,
-        isWorkflowFeatureEnabled: async () => {
-            const snapshot = await getServerFeaturesSnapshot({ serverId: account.serverId });
-            if (isServerFeaturesProbeRetryable(snapshot)) throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
-            return snapshot.status === 'ready' && readServerEnabledBit(snapshot.features, 'workflows') === true;
-        },
-    });
+    const isWorkflowFeatureEnabled = async () => {
+        const [snapshot, settings] = await Promise.all([
+            getServerFeaturesSnapshot({ serverId: account.serverId }),
+            account.readSettings(),
+        ]);
+        const decision = resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'workflows', settings, snapshot });
+        if (decision?.state === 'unknown' && isServerFeaturesProbeRetryable(snapshot)) {
+            throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
+        }
+        return decision?.state === 'enabled';
+    };
+    const executeAccount = createWorkflowActionExecutor({ definitions, runs, triggers, isWorkflowFeatureEnabled });
     const unavailable = { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' } as const;
     return async (rawArgs) => {
         try { account.assertCurrent(); } catch { return unavailable; }
@@ -394,13 +454,16 @@ export function createUiWorkflowAction(params: Readonly<{
             || (isWorkflowHostAdmittedChildActionIdV1(args.actionId) && args.context.authority !== 'present_user');
         let result: unknown;
         try {
-            result = await (ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation
+            const accountOperation = ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation;
+            // Account reads are admitted by the Workflow executor; ordinary Machine operations
+            // consume the same UI policy before relaying. Scoped credentials keep host admission.
+            if (ordinaryAccountCredential && !accountOperation && !await isWorkflowFeatureEnabled()) return unavailable;
+            result = await (accountOperation
                 ? executeAccount(args) : executeRelay(args));
             if (ordinaryAccountCredential && !restrictedResource && args.actionId === 'workflow.run.invocations.get') {
                 const opened = WorkflowInvocationGetResultV1Schema.safeParse(result);
                 const retry = opened.success ? opened.data.invocation.recoveryAvailability?.retry : undefined;
-                if (opened.success && opened.data.invocation.progress.execution !== undefined
-                    && retry && !(retry.kind === 'unavailable' && retry.reason === 'run_not_interrupted')) {
+                if (opened.success && retry && !(retry.kind === 'unavailable' && retry.reason === 'run_not_interrupted')) {
                     const stored = await runStorage.execute({ operation: 'get', runId: args.input.runId },
                         args.signal ? { signal: args.signal } : undefined).catch(error => {
                         account.assertCurrent();
@@ -411,18 +474,16 @@ export function createUiWorkflowAction(params: Readonly<{
                         return undefined;
                     });
                     const run = WorkflowRunSummaryV1Schema.safeParse(stored && typeof stored === 'object' && 'run' in stored ? stored.run : undefined);
-                    const machine = run.success && run.data.id === args.input.runId && run.data.state === 'interrupted'
-                        && areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, account.serverId)
-                        ? resolveVisibleMachinesForActiveServerFromState(storage.getState()).find(machine => machine.id === run.data.machineId) : undefined;
                     const target = args.context.externalActionTarget;
-                    if (machine && (!target || (target.kind === 'machine' && target.machineId === machine.id))
-                        && isMachineReachable(account, machine)) {
+                    if (run.success && run.data.id === args.input.runId && run.data.state === 'interrupted'
+                        && (!target || (target.kind === 'machine' && target.machineId === run.data.machineId))) {
                         // The Machine's existing Run owner observes exact native input/conversation
-                        // facts. A native refusal cannot withdraw already-authorized Account
-                        // history; only a successful read can enrich conservative availability.
+                        // facts. Its transport reads the exact captured-Home Machine and authorizes
+                        // access; a cold or stale presentation inventory cannot decide availability.
+                        // A native refusal keeps the already-authorized Account history readable.
                         try {
                             const observed = await executeRelay({ ...args, context: { ...args.context,
-                                externalActionTarget: { kind: 'machine', machineId: machine.id } } });
+                                externalActionTarget: { kind: 'machine', machineId: run.data.machineId } } });
                             if (!ActionExecuteFailureSchema.safeParse(observed).success) result = observed;
                         } catch (error) {
                             account.assertCurrent();
@@ -458,6 +519,33 @@ export function createUiWorkflowAction(params: Readonly<{
             }
             // Pending human approval is not an admission receipt; preserve its existing relay result.
         }
+        if (args.actionId === 'workflow.run.cancel') {
+            const control = WorkflowActionOutputSchemasV1['workflow.run.cancel'].safeParse(result);
+            if (control.success) publishCancelledRun(account, control.data.run);
+        }
         return result as Awaited<ReturnType<WorkflowActionExecute>>;
     };
+}
+
+/**
+ * A committed cancel reaches readers the same way occurrence controls do: pre-cancel
+ * Automation read acquisitions are superseded, and the bounded Run projection that
+ * occurrence surfaces read carries the returned lifecycle facts. Approval replay runs
+ * through this same owner.
+ */
+function publishCancelledRun(account: LazyActionAccountContext, run: WorkflowRunSummaryV1): void {
+    invalidateAutomationReadAcquisitions(account);
+    if (!areServerAccountScopesEqual(account.accountLifetime.scope, getActiveServerAccountScope())) return;
+    const stored = storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]?.automation;
+    const state = AutomationRunStateV3Schema.safeParse(run.state);
+    if (!stored || !state.success || stored.revision >= run.revision) return;
+    const finishedAt = run.finishedAt === null ? null : Date.parse(run.finishedAt);
+    const updatedAt = Date.parse(run.updatedAt);
+    storage.getState().upsertAutomationRun({
+        ...stored,
+        state: state.data,
+        revision: run.revision,
+        finishedAt: finishedAt !== null && Number.isFinite(finishedAt) ? finishedAt : stored.finishedAt,
+        updatedAt: Number.isFinite(updatedAt) ? Math.max(updatedAt, stored.updatedAt) : stored.updatedAt,
+    });
 }

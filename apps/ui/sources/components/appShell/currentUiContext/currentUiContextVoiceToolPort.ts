@@ -1,8 +1,8 @@
 import * as React from 'react';
+import type { Disposable } from '@happier-dev/plugin-sdk';
 
-import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { UiContributedActionExecuteRequestV1Schema, UiContributedActionExecuteResponseV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
 import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -17,10 +17,7 @@ import type {
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import {
-    resolvePluginUiClientActionRegistration,
-} from '@/components/plugins/reactNative/clientExecutableContributions';
+import { useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
     usePluginSurfaceDestinationNavigationBinding,
     type PluginSurfaceDestinationNavigationBinding,
@@ -33,23 +30,27 @@ import {
     type DispatchPluginSurfaceActionInput,
     type PluginSurfaceActionDispatchOutcome,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import type { PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
+import { observeCurrentContributedAction } from './contributedActionObservation';
 import {
     createPluginUiProjectedActionResolver,
     isPluginProjectedActionExecutable,
     type PluginUiProjectionModel,
+    type PluginUiActionProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { projectedActionToDefinition } from './contributedActionDefinition';
-import {
-    readPluginUiContributionOrigin,
-    type PluginUiContributionOriginV1,
-} from '@/sync/domains/plugins/ui/projectionUnion';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { unavailable } from './currentUiContextVoiceToolBinding';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { resolveCurrentContributedAction as resolveCurrentAction, isResolvedContributedActionCurrent as isResolvedActionCurrent,
+    hasCurrentClientActionRegistration, type CurrentContributedAction as CurrentUiContextVoiceResolvedAction } from './contributedActionInvocation';
 export { bindCurrentUiContextVoiceToolPortToAdmission } from './currentUiContextVoiceToolBinding';
 
 import {
@@ -69,6 +70,7 @@ export type CurrentUiContextVoiceInvocationOutcome =
 
 export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
     commandId: string;
+    input?: PluginUiJsonValueV1;
     signal?: AbortSignal;
     spokenActionRequest?: DispatchPluginSurfaceActionInput['spokenActionRequest'];
 }>;
@@ -115,6 +117,11 @@ export type CurrentUiContextVoiceToolPort = CurrentUiContextReader & Readonly<{
     invokeAction?: (
         input: CurrentUiContextVoiceActionInvocationInput,
     ) => Promise<CurrentUiContextVoiceInvocationOutcome>;
+    /** Ordinary host dependency observation, not a Voice-attempt capability. */
+    observeAction?: (input: CurrentUiContextVoiceActionInvocationInput & Readonly<{
+        invalidate(): void;
+        isCurrent(): boolean;
+    }>) => Promise<Disposable>;
 }>;
 
 type CurrentUiContextVoiceToolPortInput = Readonly<{
@@ -124,6 +131,7 @@ type CurrentUiContextVoiceToolPortInput = Readonly<{
     reader: CurrentUiContextReader;
     /** Reads the latest AppShell projection at an effect boundary. */
     readProjection: () => PluginUiProjectionModel | null;
+    clientExecutableAdmission?: PluginUiClientActionAdmissionSource;
     /** Reads the incumbent app-target navigation binding at an effect boundary. */
     readNavigationBinding: () => PluginSurfaceDestinationNavigationBinding | null;
 }>;
@@ -151,19 +159,31 @@ function isVoiceListedAction(
 }
 
 /**
- * Reads one listed Voice Action's declared schemas from its projecting
- * machine, for the exact projected occurrence. The listing never carries them.
+ * Reads schemas for the exact listed occurrence: admitted Account declaration
+ * or the existing projecting-Machine reader. The listing never carries them.
  */
 async function readCurrentContributedActionSchemas(
     readProjection: () => PluginUiProjectionModel | null,
     id: string,
     signal: AbortSignal | undefined,
 ): Promise<CurrentUiContextVoiceActionSchemas | null> {
+    if (signal?.aborted) return null;
     const identity = parseQualifiedPluginActionId(id);
     if (!identity) return null;
     const action = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity);
     const resolved = action ? isVoiceListedAction(readProjection, action) : null;
     if (!resolved) return null;
+    if (resolved.kind === 'account') {
+        const lifetime = resolved.accountRegistration.registration.accountLifetime;
+        const selected = !resolved.action.accountActionDeclaration && lifetime
+            ? await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution(identity.pluginId) : null;
+        if (signal?.aborted || !isResolvedActionCurrent(readProjection, identity, resolved)) return null;
+        const declaration = resolved.action.accountActionDeclaration ?? (selected?.kind === 'available'
+            && selected.custodyId === resolved.action.occurrenceId
+            ? selected.manifest.contributes.actions.find(action => action.id === identity.localId) : undefined);
+        return declaration ? Object.freeze({ inputSchema: declaration.inputSchema ?? {},
+            ...(declaration.resultSchema === undefined ? {} : { outputSchema: declaration.resultSchema }) }) : null;
+    }
     const read = await machinePluginActionSchemasRead(resolved.origin.machineId, {
         serverId: resolved.origin.serverId,
         expectedOccurrenceId: resolved.action.occurrenceId,
@@ -214,88 +234,28 @@ function isResolvedCommandCurrent(
         && current.command === resolved.command;
 }
 
-type CurrentUiContextVoiceResolvedAction = Readonly<{
-    action: PluginProjectedActionV2;
-    origin: PluginUiContributionOriginV1;
-}>;
-
-/**
- * Actions remain projection-owned facts. The Voice bridge only admits an exact
- * current origin that can be used by the shared dispatcher; it does not infer
- * target availability, materialize a client Action, or retain an old lookup.
- */
-function resolveCurrentAction(
-    readProjection: () => PluginUiProjectionModel | null,
-    identity: PluginContributionIdentityV1,
-): CurrentUiContextVoiceResolvedAction | null {
-    const action = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity);
-    const origin = action ? readPluginUiContributionOrigin(action) : null;
-    if (
-        !action
-        || !origin
-        || origin.phase !== 'current'
-        || origin.interactionEnabled !== true
-    ) {
-        return null;
-    }
-    return Object.freeze({
-        action,
-        origin,
-    });
-}
-
-/**
- * Client Actions become discoverable only after the one generic executable
- * composition has committed their exact target and origin.
- * Daemon Actions retain the dispatcher-owned availability path.
- */
-function hasCurrentClientActionRegistration(
-    resolved: CurrentUiContextVoiceResolvedAction,
-): boolean {
-    const { action, origin } = resolved;
-    if (action.execution.target !== 'client') return true;
-    return resolvePluginUiClientActionRegistration({
-        action,
-        platform: resolvePluginUiClientExecutablePlatform(),
-    }) !== null;
-}
-
-function isResolvedActionCurrent(
-    readProjection: () => PluginUiProjectionModel | null,
-    identity: PluginContributionIdentityV1,
-    resolved: CurrentUiContextVoiceResolvedAction,
-): boolean {
-    const current = resolveCurrentAction(readProjection, identity);
-    return current !== null
-        && current.action === resolved.action
-        && current.origin.machineId === resolved.origin.machineId
-        && current.origin.serverId === resolved.origin.serverId
-        && (
-            current.origin.executionOrigin === resolved.origin.executionOrigin
-            || (
-                current.origin.executionOrigin !== null
-                && resolved.origin.executionOrigin !== null
-                && arePluginMachineExecutionOriginsEqual(
-                    current.origin.executionOrigin,
-                    resolved.origin.executionOrigin,
-                )
-            )
-        )
-        && hasCurrentClientActionRegistration(current);
-}
-
 /**
  * AppShell-side bridge for the provider-local current-context reader. It owns
  * no navigation state or Action policy: opaque commands are re-resolved at the
  * reader and then delegated to the incumbent navigation/Action owners.
  */
 export function createCurrentUiContextVoiceToolPort(
-    input: CurrentUiContextVoiceToolPortInput,
+    providedInput: CurrentUiContextVoiceToolPortInput,
 ): CurrentUiContextVoiceToolPort {
+    const context = providedInput.hostAction?.context;
+    const scope = context?.serverId && context.expectedAccountId ? {
+        serverId: resolveServerProfileScopeIdForIdentifier(context.serverId), accountId: context.expectedAccountId,
+    } : null;
+    // A mounted reader supplies presentation, never a substitute Account or
+    // Action origin for a host invocation that already captured its scope.
+    const input = scope ? { ...providedInput,
+        readProjection: () => readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true }),
+    } : providedInput;
     const invokeProjectedAction = async (
         request: CurrentUiContextVoiceActionInvocationInput,
         isCallerCurrent: () => boolean,
         includeCurrentUiContext: boolean,
+        readObservation?: DispatchPluginSurfaceActionInput['readObservation'],
     ): Promise<CurrentUiContextVoiceInvocationOutcome> => {
         if (request.signal?.aborted) return unavailable();
         const resolved = resolveCurrentAction(input.readProjection, request.action);
@@ -354,23 +314,37 @@ export function createCurrentUiContextVoiceToolPort(
             }
         };
         try {
+            const resource = input.hostAction?.context?.resourceActionInvocation;
+            const retainedInvocation = input.hostAction?.context?.contributedActionInvocation;
+            const origin = PluginActionSurfaceV2Schema.safeParse(input.hostAction?.context?.actionCaller?.kind === 'plugin'
+                ? input.hostAction.context.actionCaller.originSurface : undefined);
             const outcome = await dispatchPluginSurfaceAction({
                 action: request.action,
                 ...(request.spokenActionRequest ? { spokenActionRequest: request.spokenActionRequest } : {}),
+                ...(input.hostAction?.context?.invocationServices?.connectedAccountPurposeBinding
+                    ? { connectedAccountPurposeBinding: input.hostAction.context.invocationServices.connectedAccountPurposeBinding } : {}),
+                ...(input.hostAction?.context?.invocationServices?.managedBootstrapCredential
+                    ? { managedBootstrapCredential: input.hostAction.context.invocationServices.managedBootstrapCredential } : {}),
                 ...(request.input === undefined ? {} : { input: request.input }),
+                ...retainedInvocation?.caller,
+                ...(resource ? { resourceCaller: resource.resourceCaller,
+                    callerPluginId: resource.resourceCaller?.pluginId,
+                    requiredReadOnly: resource.requiredReadOnly, readObservation: resource.readObservation } : {}),
+                ...(readObservation ? { requiredReadOnly: true, readObservation } : {}),
                 resolveContributedAction: (identity) => (
                     createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(identity)
                 ),
                 invocationSurface: input.invocationSurface ?? 'voice',
+                ...(origin.success && origin.data !== 'plugin' ? { originSurface: origin.data } : {}),
                 hostAction: {
                     execute: input.hostAction?.execute ?? createFrontDoorActionExecute(),
                     context: { ...input.hostAction?.context,
-                        ...(resolved.origin.serverId ? { serverId: resolved.origin.serverId } : {}),
+                        ...(input.hostAction?.context?.sessionTargetsV1 ? {} : resolved.origin.serverId ? { serverId: resolved.origin.serverId } : {}),
                         ...(sessionId ? { defaultSessionId: sessionId } : {}),
                     },
                 },
                 pluginUiProjection: input.readProjection(),
-                clientAction: {
+                clientAction: retainedInvocation?.clientAction ?? {
                     ...(sessionId ? { sessionId } : {}),
                     ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}),
                     openSurface,
@@ -382,9 +356,9 @@ export function createCurrentUiContextVoiceToolPort(
                         }
                         : {}),
                 },
-                ...(resolved.action.execution.target === 'daemon'
+                ...(resolved.kind === 'machine' && resolved.action.execution.target === 'daemon'
                     ? {
-                        contributedAction: {
+                        contributedAction: retainedInvocation?.contributedAction ?? {
                             ...(sessionId ? { sessionId } : {}),
                             ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}),
                             machineId: resolved.origin.machineId,
@@ -392,8 +366,8 @@ export function createCurrentUiContextVoiceToolPort(
                         },
                     }
                     : {}),
-                signal: mergedSignal.signal,
-                isCurrent,
+                signal: resource ? resource.signal : retainedInvocation?.signal ?? mergedSignal.signal,
+                isCurrent: () => isCurrent() && resource?.isCurrent?.() !== false && retainedInvocation?.isCurrent?.() !== false,
             });
             if (outcome.ok) return { ok: true, result: outcome.result };
             if (outcome.reason === 'plugin_ui_action_outcome_unknown') {
@@ -416,6 +390,11 @@ export function createCurrentUiContextVoiceToolPort(
     ): Promise<CurrentUiContextVoiceInvocationOutcome> => (
         invokeProjectedAction(request, () => true, false)
     );
+
+    const observeAction: NonNullable<CurrentUiContextVoiceToolPort['observeAction']> = request => observeCurrentContributedAction({
+        request, readProjection: input.readProjection, admission: input.clientExecutableAdmission, scope,
+        invoke: (observation, signal, isCurrent) => invokeProjectedAction({ ...request, signal }, isCurrent, false, observation),
+    });
 
     const invokeCurrentUiCommand = async (
         request: CurrentUiContextVoiceCommandInvocationInput,
@@ -475,7 +454,9 @@ export function createCurrentUiContextVoiceToolPort(
                 if (!isCurrent() || mergedSignal.signal.aborted) return stale();
                 // The local update may itself republish this mount. Preserve
                 // its known settlement; the callback fences its effect boundary.
-                return await resolved.command.invoke({ signal: mergedSignal.signal });
+                return await resolved.command.invoke({ signal: mergedSignal.signal,
+                    context: input.hostAction?.context ?? { surface: input.invocationSurface ?? 'voice' },
+                    ...(request.input === undefined ? {} : { input: request.input }) });
             } catch {
                 return isCurrent() ? internalError() : stale();
             } finally {
@@ -508,6 +489,7 @@ export function createCurrentUiContextVoiceToolPort(
                 ...(resolved.command.input === undefined ? {} : { input: resolved.command.input }),
                 ...(resolved.command.subPath === undefined ? {} : { subPath: resolved.command.subPath }),
                 ...(resolved.command.instanceKey === undefined ? {} : { instanceKey: resolved.command.instanceKey }),
+                ...(resolved.command.presentation === undefined ? {} : { presentation: resolved.command.presentation }),
             });
             // A known success remains authoritative even if the publishing
             // mount retires while navigation settles. The same holds for a
@@ -570,6 +552,7 @@ export function createCurrentUiContextVoiceToolPort(
         ),
         invokeCurrentUiCommand,
         invokeAction,
+        observeAction,
     });
 }
 
@@ -581,11 +564,9 @@ export function createCurrentUiContextVoiceToolPort(
  */
 function useCurrentUiContextToolPortFactory() {
     const reader = useOptionalCurrentUiContextReader();
-    const appShellProjection = useAppShellPluginUiProjection();
+    const appShellProjection = useAppShellPluginUiProjectionSubscription();
     const navigationBinding = usePluginSurfaceDestinationNavigationBinding();
-    const projectionRef = React.useRef(appShellProjection.pluginUiProjection);
     const navigationBindingRef = React.useRef(navigationBinding);
-    projectionRef.current = appShellProjection.pluginUiProjection;
     navigationBindingRef.current = navigationBinding;
 
     return React.useCallback(
@@ -594,11 +575,21 @@ function useCurrentUiContextToolPortFactory() {
                 reader,
                 invocationSurface,
                 hostAction,
-                readProjection: () => projectionRef.current,
+                readProjection: () => appShellProjection.getSnapshot().pluginUiProjection,
+                clientExecutableAdmission: {
+                    read: () => {
+                        const value = appShellProjection.getSnapshot();
+                        return { projection: value.pluginUiProjection, platform: resolvePluginUiClientExecutablePlatform(),
+                            declarationPhase: value.phase, hasEstablishingMembers: value.hasEstablishingMembers,
+                            mountedActionProjections: value.mountedActionProjections,
+                            activation: value.clientExecutableActivation, accountLifetime: value.accountLifetime };
+                    },
+                    subscribe: appShellProjection.subscribe,
+                },
                 readNavigationBinding: () => navigationBindingRef.current,
             })
             : null,
-        [reader],
+        [reader, appShellProjection],
     );
 }
 
@@ -620,7 +611,7 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
         if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters', actionHandlerInvocation: 'notStarted' };
         const request = parsed.data;
         const resolved = resolveCurrentAction(input.readProjection, request.action);
-        if (!input.isCurrent() || context?.signal.aborted || !resolved || resolved.action.execution.target !== 'client'
+        if (!input.isCurrent() || context?.signal.aborted || !resolved || resolved.kind !== 'machine' || resolved.action.execution.target !== 'client'
             || resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId
             || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId || !hasCurrentClientActionRegistration(resolved)) {
             return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' };

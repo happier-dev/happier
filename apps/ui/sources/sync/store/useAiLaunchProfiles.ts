@@ -8,7 +8,9 @@ import { loadAccountSettings, readAccountSettingsPersistenceMutationToken,
     subscribeAccountSettingsPersistenceMutations } from '@/sync/domains/state/accountSettingsPersistence';
 import { loadAuthoringMemoryProjection } from '@/sync/domains/state/authoringMemoryPersistence';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { useProfileCatalog } from './useProfileCatalog';
+import { useProfileCatalog, useProfileCatalogSelection } from './useProfileCatalog';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import type { ProfileCatalogSnapshot } from './settings/profileCatalogSnapshot';
 
 /** Profile consumers subscribe only to the existing Artifact store's profile documents. */
 export function useLaunchProfileArtifacts() {
@@ -22,7 +24,8 @@ export function useAiLaunchProfiles(_retainedSource?: unknown) {
 }
 
 export function useAiLaunchProfilesForLegacyUi(_retainedSource?: unknown) {
-    return useAiLaunchProfilesWithReadState().profiles;
+    const profiles = useAiLaunchProfiles();
+    return React.useMemo(() => profiles.map(projectAiLaunchProfileForLegacyUi), [profiles]);
 }
 
 /**
@@ -33,12 +36,16 @@ export function useAiLaunchProfilesWithReadState() {
     const scope = getStorage()(useShallow((state) => state.settingsScope));
     const catalog = useHomeAiLaunchProfileCatalog(scope);
     const profiles = React.useMemo(() => catalog.profiles.map(projectAiLaunchProfileForLegacyUi), [catalog.profiles]);
-    return { profiles, loading: catalog.status === 'loading' && profiles.length === 0 };
+    return { profiles, loading: catalog.status === 'loading' && profiles.length === 0, unavailableReason: catalog.unavailableReason };
 }
 
 /** Background-Home readers use the same captured mode-aware store, never the focused Account's rows. */
 export function useHomeAiLaunchProfiles(scope: AccountSettingsScope | null) {
-    return useHomeAiLaunchProfileCatalog(scope).profiles;
+    const [data, artifactsById, source, legacyProfiles] = useProfileCatalogSelection(scope, useShallow((snapshot: ProfileCatalogSnapshot | null) =>
+        [snapshot?.data, snapshot?.artifactsById, snapshot?.source, snapshot?.legacyProfiles] as const));
+    return React.useMemo(() => readUiProfileCatalogSnapshot({ catalog: { status: 'loading' }, data,
+        artifactsById: artifactsById ?? new Map(), source, legacyProfiles }).profiles,
+    [data, artifactsById, source, legacyProfiles]);
 }
 
 /** The same profile projection, with its owner's coverage retained for inherited Context readers. */
@@ -46,6 +53,7 @@ export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null
     profiles: ReturnType<typeof readUiProfileCatalogSnapshot>['profiles'];
     selectedProfile: ReturnType<typeof readUiSelectedProfileCatalogProfile>;
     status: 'loading' | 'ready' | 'partial' | 'unavailable';
+    unavailableReason?: Extract<ProfileCatalogSnapshotV1, { status: 'unavailable' }>['reason'];
     source: 'destination' | 'legacy' | null;
     stale: boolean;
     /** Complete readable rows, including retained answers while their owner refreshes. */
@@ -73,6 +81,7 @@ export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null
     [rows, artifactsById, source, legacyProfiles]);
     const profiles = projection.profiles;
     const status = !scope ? 'unavailable' as const : snapshot?.catalog.status ?? 'loading';
+    const unavailableReason = snapshot?.catalog.status === 'unavailable' ? snapshot.catalog.reason : undefined;
     const hasCompleteData = snapshot?.dataComplete === true && projection.unreadableCount === 0;
     const stale = snapshot?.stale ?? true;
     const selectedProfile = React.useMemo(() => {
@@ -82,6 +91,6 @@ export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null
         const memory = { lastUsedProfile: liveEvidence ? liveEvidence[2] : loadAuthoringMemoryProjection(evidenceScope)?.lastUsedProfile ?? null };
         return readUiSelectedProfileCatalogProfile(readUiVisibleProfileCatalogSnapshot(snapshot, settings, memory), settings, selectedProfileId);
     }, [snapshot, evidenceScope?.serverId, evidenceScope?.accountId, liveEvidence, persistedEvidence, hasCompleteData, selectedProfileId]);
-    return React.useMemo(() => ({ profiles, selectedProfile, status, source: source ?? null, stale, hasCompleteData }),
-        [profiles, selectedProfile, status, source, stale, hasCompleteData]);
+    return React.useMemo(() => ({ profiles, selectedProfile, status, unavailableReason, source: source ?? null, stale, hasCompleteData }),
+        [profiles, selectedProfile, status, unavailableReason, source, stale, hasCompleteData]);
 }

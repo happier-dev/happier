@@ -267,6 +267,30 @@ describe('Automations · Latest runs on Home', () => {
         expect(screen.findByTestId('home-automations.empty')).toBeTruthy();
     });
 
+    it('with no workflows yet, hands the frame its scene and one way to a new workflow', async () => {
+        server.automations = [];
+        const screen = await renderSection();
+
+        const state = screen.tree.root.findAll((node) => node.props.testID === 'home-automations.empty' && 'kind' in node.props)[0];
+        expect(state?.props.scene).toBe('noAutomations');
+        // The frame step sizes it: the body names no size.
+        expect(state?.props.size).toBeUndefined();
+        // One action on the card: the footer's Open does not compete with it.
+        expect(screen.findByTestId('home-automations.open')).toBeNull();
+        screen.pressByTestId('home-automations.empty-action');
+        expect(server.pushed).toEqual(['/workflows/new']);
+    });
+
+    it('with workflows that have not run yet, keeps the way to them instead of offering a new one', async () => {
+        server.automations = [automation('fresh', 'Weekly notes', null)];
+        const screen = await renderSection();
+
+        expect(screen.findByTestId('home-automations.empty')).toBeTruthy();
+        expect(screen.findByTestId('home-automations.empty-action')).toBeNull();
+        screen.pressByTestId('home-automations.open');
+        expect(server.pushed).toEqual(['/automations']);
+    });
+
     it('answers from Automations this device already knows while its refresh is still out', async () => {
         server.pending = new Promise<void>(() => {});
         act(() => {

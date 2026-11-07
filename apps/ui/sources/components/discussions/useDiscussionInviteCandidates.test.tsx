@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
@@ -22,8 +23,9 @@ import { selectSessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useSettlingHomeServerId } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -31,7 +33,7 @@ vi.mock('socket.io-client', async (importOriginal) => (
 
 let boundary: SessionListQuerySourceHarness;
 beforeEach(async () => { boundary = await createSessionListQuerySourceHarness(); });
-afterEach(async () => { standardCleanup(); await boundary.dispose(); });
+afterEach(async () => { setScreenSharingPrivacyActive(false); await standardCleanup(); await boundary.dispose(); });
 const user = (id: string) => ({ id, firstName: id, lastName: null, avatar: null, username: id, bio: null, status: 'none', publicKey: null });
 async function captureHome(serverId: string) {
     const hook = await renderHook(() => useServerCredentialAccountScopeBindings([serverId]));
@@ -40,6 +42,137 @@ async function captureHome(serverId: string) {
 }
 
 describe('Discussion Invite source composition', () => {
+    it('projects Bot identity from the one Session inventory and regroups promotion without another read', async () => {
+        const home = boundary.serverIds[1]!;
+        const accountLifetime = await captureHome(home);
+        boundary.http.answer(home, '/v1/share-principals', { body: { items: [], nextCursor: null } });
+        const records = [
+            createPlainSessionCurrentProjectionRecordFixture({ id: 'release-bot', metadata: { host: 'laptop', path: '/work', bot: { kind: 'bot' } } }),
+            createPlainSessionCurrentProjectionRecordFixture({ id: 'review-session' }),
+        ].map(record => ({ ...record, viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: record.id })) }));
+        boundary.http.answer(home, '/v2/sessions/query', { body: createSessionListSourceFixture({ sessions: records,
+            nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }) });
+        const choose = vi.fn();
+        const hook = await renderHook(() => ({
+            candidates: useDiscussionInviteCandidates({ accountLifetime, availability: 'available', enabled: true }),
+            picker: useExecutableParticipantSections({ accountLifetime, enabled: true, sessionsContext: 'Reviewer', onChoose: choose }),
+        }));
+        await vi.waitFor(() => expect(hook.getCurrent().picker.sessions.status).toBe('ready'));
+        const groups = () => hook.getCurrent().picker.sections.filter(section => section.id !== 'agents-models');
+        expect(groups().map(section => [section.id, section.options.map(option => option.id)]))
+            .toEqual([['agents-sessions', ['session:review-session']], ['agents-bots', ['session:release-bot']]]);
+        const findCandidate = (id: string) => hook.getCurrent().candidates.candidates.find(candidate =>
+            candidate.kind === 'session' && candidate.selection.session.sessionId === id);
+        const bot = findCandidate('release-bot');
+        expect(bot).toMatchObject({ kind: 'session', bot: true,
+            selection: { kind: 'session', session: { serverId: home, sessionId: 'release-bot' } } });
+        const botOption = groups()[1]!.options[0]!;
+        expect(botOption.titleAccessory).toBeDefined();
+        await act(async () => botOption.onSelect?.());
+        expect(choose).toHaveBeenCalledWith({ kind: 'session', session: { serverId: home, sessionId: 'release-bot' } });
+        const reads = () => boundary.http.requests.filter(request => request.serverId === home
+            && (request.path === '/v2/sessions/query' || request.path.startsWith('/v2/sessions/'))).length;
+        expect(boundary.http.requests.filter(request => request.serverId === home && request.path === '/v2/sessions/query')).toHaveLength(1);
+        const beforeReads = reads();
+        const beforeCandidates = hook.getCurrent().candidates.candidates;
+        const row = storage.getState().sessionListRowsByServerId[home]!['review-session']!;
+        await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
+            ...state.sessionListRowsByServerId, [home]: { ...state.sessionListRowsByServerId[home],
+                'review-session': { ...row, metadata: { ...row.metadata!, bot: { kind: 'bot' } } } },
+        } })));
+        expect(groups().find(section => section.id === 'agents-sessions')).toBeUndefined();
+        expect(groups()[0]?.options.map(option => option.id).sort()).toEqual(['session:release-bot', 'session:review-session']);
+        expect(findCandidate('release-bot')).toBe(bot);
+        expect(hook.getCurrent().candidates.candidates).not.toBe(beforeCandidates);
+        await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
+            ...state.sessionListRowsByServerId, [home]: { ...state.sessionListRowsByServerId[home], 'review-session': row },
+        } })));
+        expect(groups().map(section => section.id)).toEqual(['agents-sessions', 'agents-bots']);
+        expect(reads()).toBe(beforeReads);
+        await act(async () => {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [home]: ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic(home, 'release-bot', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        expect(groups().flatMap(group => group.options.map(option => option.id))).toEqual(['session:review-session']);
+        await act(async () => setScreenSharingPrivacyActive(false));
+        expect(groups().flatMap(group => group.options.map(option => option.id))).toContain('session:release-bot');
+        await hook.unmount();
+    });
+
+    it('updates participant readiness from exact-Home presence while equal heartbeats stay quiet', async () => {
+        const home = boundary.serverIds[1]!;
+        const accountLifetime = await captureHome(home);
+        const foreign = await captureHome(boundary.serverIds[0]!);
+        boundary.http.answer(home, '/v1/share-principals', { body: { items: [], nextCursor: null } });
+        const now = Date.now();
+        await publishMachineInventoryForTest(accountLifetime.scope, [createMachineFixture({ id: 'run-host', active: true, activeAt: now })]);
+        await publishMachineInventoryForTest(foreign.scope, [createMachineFixture({ id: 'run-host', active: true, activeAt: now })]);
+        let renders = 0;
+        const onChoose = vi.fn();
+        const hook = await renderHook(() => {
+            renders += 1;
+            return useExecutableParticipantSections({ accountLifetime, enabled: true, sessionsContext: 'Reviewer', onChoose });
+        });
+        const row = () => hook.getCurrent().sections.flatMap(section => section.options).find(option => option.id === 'model:run-host');
+        await vi.waitFor(() => expect(row()?.readiness).toMatchObject({ status: 'ready' }));
+        const baseline = renders;
+        try {
+            await act(async () => {
+                for (let tick = 1; tick <= 10; tick += 1) storage.getState().applyMachineActivityUpdates([
+                    { id: 'run-host', active: true, activeAt: now + tick },
+                ], { sourceServerId: home, sourceAccountId: accountLifetime.scope.accountId });
+                recordMachineRequestFailed({ ...foreign.scope, machineId: 'run-host' });
+            });
+            expect(renders).toBe(baseline);
+            expect(row()?.readiness).toMatchObject({ status: 'ready' });
+            await act(async () => recordMachineRequestFailed({ ...accountLifetime.scope, machineId: 'run-host' }));
+            expect(row()?.readiness).toMatchObject({ status: 'offline' });
+            await act(async () => clearMachineRequestReachabilityForTest());
+            expect(row()?.readiness).toMatchObject({ status: 'ready' });
+            vi.useFakeTimers({ toFake: ['Date'] });
+            const expiredAt = now + 100_000;
+            vi.setSystemTime(expiredAt);
+            await act(async () => {
+                storage.getState().applyMachineActivityUpdates([{ id: 'run-host', active: false, activeAt: now + 10 }],
+                    { sourceServerId: home, sourceAccountId: accountLifetime.scope.accountId });
+                storage.getState().applyMachineActivityUpdates([{ id: 'run-host', active: true, activeAt: expiredAt }],
+                    { sourceServerId: foreign.scope.serverId, sourceAccountId: foreign.scope.accountId });
+            });
+            expect(row()?.readiness).toMatchObject({ status: 'offline' });
+        } finally { vi.useRealTimers(); clearMachineRequestReachabilityForTest(); }
+    });
+
+    it.each(['codex', 'test.vendor/reviewer'])('indexes the published Session catalog for %s on the selected Run machine', async agentId => {
+        const home = boundary.serverIds[1]!;
+        const accountLifetime = await captureHome(home);
+        boundary.http.answer(home, '/v1/share-principals', { body: { items: [], nextCursor: null } });
+        const { buildSessionModelsSeedRequest } = await import('@/sync/domains/models/sessionModelsSeed');
+        const seed = buildSessionModelsSeedRequest({ agentId, currentTargetKey: 'catalog-target', preflightTargetKey: 'catalog-target',
+            preflightModels: { availableModels: [{ id: 'gpt-review', name: 'GPT review' }], supportsFreeform: false },
+            currentModelId: 'gpt-review', hasCuratedStaticModels: false, updatedAt: 1 });
+        if (!seed) throw new Error('Expected the model catalog producer to accept its matching target');
+        boundary.setRows(home, ['prior-agent']);
+        const session = createSessionFixture({ id: 'prior-agent', serverId: home, encryptionMode: 'plain',
+            seq: 2, metadataVersion: 2, metadataLayoutVersion: 1,
+            metadata: parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId } }, 1),
+            ownerMetadataView: { machineId: 'old-host', path: '/work', host: 'old-host' },
+            composerOptionsInput: { sessionModelsV1: { v: 1, ...seed } },
+            access: createSessionAccessFixture('owner') });
+        await publishMachineInventoryForTest(accountLifetime.scope, [
+            createMachineFixture({ id: 'old-host', active: false, activeAt: 0 }),
+            createMachineFixture({ id: 'run-host', active: true, activeAt: Date.now() }),
+        ]);
+        const hook = await renderHook(() => useExecutableParticipantSections({ accountLifetime, enabled: true,
+            preferredMachineId: 'run-host', query: 'GPT review', sessionsContext: 'Reviewer', onChoose: vi.fn() }));
+        const row = () => hook.getCurrent().sections.flatMap(section => section.options)
+            .find(option => option.id === `model:run-host:${agentId}`);
+        await vi.waitFor(() => expect(hook.getCurrent().sessions.status).toBe('ready'));
+        await act(async () => storage.getState().applySessions([session]));
+        await vi.waitFor(() => expect(row()?.readiness).toMatchObject({ status: 'ready' }));
+        expect(row()?.searchText).toContain('GPT review');
+    });
+
     it('omits retired model targets and puts scoped available Machines before retained unavailable setup choices', async () => {
         const home = boundary.serverIds[1]!;
         const accountLifetime = await captureHome(home);
@@ -66,6 +199,7 @@ describe('Discussion Invite source composition', () => {
                 sessionsContext: 'Reviewer', onChoose: vi.fn() }));
             const options = () => hook.getCurrent().sections.find(section => section.id === 'agents-models')?.options ?? [];
             const ids = ['model:y-ready', 'model:z-ready', 'model:a-offline', 'model:b-unknown', 'model:c-failed'];
+            await vi.waitFor(() => expect(hook.getCurrent().sessions.status).toBe('ready'));
             expect(options().map(option => option.id)).toEqual(ids);
             expect(options().map(option => option.readiness && 'status' in option.readiness ? option.readiness.status : null))
                 .toEqual(['ready', 'ready', 'offline', 'unknown', 'offline']);
@@ -82,7 +216,12 @@ describe('Discussion Invite source composition', () => {
         const accountLifetime = await captureHome(home);
         boundary.setRows(home, ['same-id', 'readable']);
         boundary.http.answer(home, '/v1/teams/list', { body: { items: [], nextCursor: null } });
-        const hook = await renderHook(() => useDiscussionInviteCandidates({ accountLifetime, availability: 'available', enabled: true }));
+        let candidatePublications = 0;
+        const hook = await renderHook(() => {
+            const source = useDiscussionInviteCandidates({ accountLifetime, availability: 'available', enabled: true });
+            React.useEffect(() => { candidatePublications += 1; }, [source.candidates]);
+            return source;
+        });
         await vi.waitFor(() => expect(hook.getCurrent().candidates.filter(candidate => candidate.kind === 'session')).toHaveLength(2));
         const readable = createSessionFixture({ id: 'readable', serverId: home, encryptionMode: 'e2ee', metadataLayoutVersion: 1,
             encryptedContentAvailability: 'ready', metadata: parseDecryptedSessionMetadata({ v: 1 }, 1),
@@ -111,16 +250,24 @@ describe('Discussion Invite source composition', () => {
         expect(readableSessionDisplayTitle(lockedSource)).toBeNull();
         expect(lockedCandidate).toMatchObject({ label: sessionDisplayTitle(lockedSource), titleReadable: false });
         const lockedLabel = sessionDisplayTitle(lockedSource)!;
-        await act(async () => { storage.setState(state => ({ sessions: { ...state.sessions,
-            'same-id': { ...state.sessions['same-id']!, metadata: { name: 'Changed other Home', host: 'other', path: '/other' } },
-        } })); });
+        const publicationsBeforeForeignUpdate = candidatePublications;
+        for (let update = 0; update < 10; update += 1) {
+            await act(async () => { storage.setState(state => ({ sessions: { ...state.sessions,
+                'same-id': { ...state.sessions['same-id']!, metadata: { name: 'Changed other Home', host: 'other', path: '/other' } },
+            } })); });
+        }
         expect(hook.getCurrent().candidates).toBe(candidates);
+        expect(candidatePublications).toBe(publicationsBeforeForeignUpdate);
         await act(async () => { storage.setState(state => ({ sessionListRowsByServerId: {
             ...state.sessionListRowsByServerId, [home]: { ...state.sessionListRowsByServerId[home],
                 'same-id': buildSessionListRenderableFromSession({ ...locked, encryptedContentAvailability: 'ready',
                     metadata: parseDecryptedSessionMetadata({ v: 1, summary: { text: lockedLabel, updatedAt: 1 } }, 1) }),
             },
         } })); });
+        expect(hook.getCurrent().candidates).not.toBe(candidates);
+        expect(candidatePublications).toBe(publicationsBeforeForeignUpdate + 1);
+        expect(hook.getCurrent().candidates.find(candidate => candidate.key === readableCandidate?.key)).toBe(readableCandidate);
+        expect(hook.getCurrent().candidates.find(candidate => candidate.key === lockedCandidate?.key)).not.toBe(lockedCandidate);
         // A readable title may deliberately have the same words as the locked label.
         expect(hook.getCurrent().candidates.find(candidate => candidate.kind === 'session' && candidate.selection.session.sessionId === 'same-id'))
             .toMatchObject({ key: lockedCandidate?.key, label: lockedLabel, titleReadable: true });
@@ -142,6 +289,7 @@ describe('Discussion Invite source composition', () => {
         const choose = vi.fn();
         const hook = await renderHook(() => useExecutableParticipantSections({ accountLifetime, enabled: true,
             modelOptions: [selected], sessionsContext: 'Answers with its own setup', onChoose: choose }));
+        await vi.waitFor(() => expect(hook.getCurrent().sessions.status).toBe('ready'));
         const option = hook.getCurrent().sections.flatMap(section => section.kind === 'static' ? section.options : [])
             .find(option => option.id === 'model:offline-target');
         expect(option).toMatchObject({ readiness: { status: 'offline', machineId: 'offline-target' }, repair: null });
@@ -199,7 +347,8 @@ describe('Discussion Invite source composition', () => {
             .find(option => option.id === 'session:same-id')!;
         expect(unnamedOption.subtitle).toContain(formatAsOfTime(activityAt));
         expect(unnamedOption.subtitle).not.toContain('review-box');
-        expect((unnamedOption.icon as React.ReactElement<{ name?: string }>).props.name).toBe('robot');
+        // Without a recorded Agent it keeps the Agent catalog's own neutral mark, not a hand-picked glyph.
+        expect((unnamedOption.icon as React.ReactElement<{ agentId?: string | null }>).props.agentId).toBeNull();
     });
     it('uses captured-Home people paging and the real existing Session roster without borrowing the focused Home', async () => {
         const [homeA, homeB] = boundary.serverIds as [string, string, string];
@@ -298,12 +447,15 @@ describe('Discussion Invite source composition', () => {
             return { accountLifetime, hook };
         };
 
-        it('shows a terminal first-page refusal on the settling applied Home and retries exactly that request', async () => {
+        it.each([
+            { status: 400, reason: 'invalid_query' },
+            { status: 200, reason: 'response' },
+        ])('shows a terminal first-page HTTP $status failure on the settling applied Home and retries exactly that request', async ({ status, reason }) => {
             const home = boundary.focusedHome();
             const accountLifetime = await captureHome(home);
             boundary.http.answer(home, '/v1/teams/list', { body: { items: [], nextCursor: null } });
             const gate = createDeferred<void>();
-            boundary.http.answer(home, '/v2/sessions/query', { status: 400, body: {}, respondAfter: gate.promise });
+            boundary.http.answer(home, '/v2/sessions/query', { status, body: {}, respondAfter: gate.promise });
             const hook = await renderHook(() => ({
                 ...useExecutableParticipantSections({ accountLifetime, enabled: true,
                     sessionsContext: 'Reviewer', onChoose: vi.fn() }),
@@ -319,7 +471,7 @@ describe('Discussion Invite source composition', () => {
             expect(hook.getCurrent().settlingHome).toBe(home);
             await act(async () => gate.resolve());
             await vi.waitFor(() => expect(hook.getCurrent().sessions.state).toMatchObject({
-                phase: 'error', failureReason: 'invalid_query', failedOperation: 'replace', appliedQueryKey: null,
+                phase: 'error', failureReason: reason, failedOperation: 'replace', appliedQueryKey: null,
             }));
             expect(find(hook.getCurrent().sections, 'discussion-invite-sessions-loading')).toBeUndefined();
             const retry = find(hook.getCurrent().sections, 'discussion-invite-sessions-retry');
@@ -334,7 +486,7 @@ describe('Discussion Invite source composition', () => {
 
             await act(async () => { boundary.socket(home).connect(); });
             await vi.waitFor(() => expect(storage.getState().socketStatus).toBe('connected'));
-            boundary.http.answer(home, '/v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+            boundary.http.answer(home, '/v2/sessions/query', { body: createSessionListSourceFixture({
                 sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({ id: 'recovered-terminal' }),
                     viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: 'recovered-terminal' })) }],
                 nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,

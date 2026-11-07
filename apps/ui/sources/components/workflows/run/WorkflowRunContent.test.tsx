@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 import {
   flushHookEffects,
@@ -37,9 +40,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import {
-  WorkflowMaterializedLeafV1Schema,
+  WorkflowMaterializedLeafV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import {
   WorkflowProgressEnvelopeV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import {
   createSessionFixture,
@@ -65,6 +69,11 @@ vi.mock(
   }),
 );
 
+// Hoist the Socket SDK boundary before the static screen import loads runtime consumers.
+vi.mock('socket.io-client', async (importOriginal) =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary();
+
 const virtualizedListState = vi.hoisted(() => ({
   boundary: null as
     | import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState
@@ -75,16 +84,32 @@ const virtualizedListState = vi.hoisted(() => ({
   scrollToOffset: vi.fn(),
 }));
 const viewport = vi.hoisted(() => ({ window: { width: 1200, height: 800 } }));
+const arrivalCosts = vi.hoisted(() => new Map<string, {
+  read(): { renders: number; commits: number }; reset(): void;
+}>());
 const retireContents: Array<() => Promise<void>> = [];
 let restorePopoverGlobals: (() => void) | null = null;
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
     await import('@/dev/testkit/mocks/reactNative');
-  return createReactNativeWebMock({
+  const native = await createReactNativeWebMock({
     // Responsive owners read Dimensions directly; keep it on the same viewport as the hook.
     Dimensions: { get: () => ({ ...viewport.window, scale: 2, fontScale: 1 }) },
     useWindowDimensions: () => viewport.window,
   });
+  const ReactRuntime = await import('react');
+  const { createRenderCommitCounter, useRenderCommitCounter } = await import('@/dev/testkit/performance/counts');
+  // Count actual row host work while retaining the real Map and Steps producers.
+  const View = ReactRuntime.forwardRef<React.ComponentRef<typeof native.View>, React.ComponentProps<typeof native.View>>((props, ref) => {
+    const counter = ReactRuntime.useMemo(() => {
+      const counter = createRenderCommitCounter();
+      if (props.testID) arrivalCosts.set(props.testID, counter);
+      return counter;
+    }, [props.testID]);
+    useRenderCommitCounter(counter);
+    return ReactRuntime.createElement(native.View, { ...props, ref });
+  });
+  return { ...native, View };
 });
 // Radix supplies the DOM portal primitives; modal custody and chrome stay real.
 vi.mock('@/utils/web/radixCjs', async () => {
@@ -133,6 +158,25 @@ afterEach(async () => {
 });
 
 type ContentProps = React.ComponentProps<typeof WorkflowRunContent>;
+
+it('detail-navigation.T1/T2/T6 exposes run pages through the mounted owner without invocation or operation effects', async () => {
+  const { readShellColumnActionOwner } = await import('@/sync/ops/actions/scopeActionFamily');
+  const changed = vi.fn();
+  const selected = vi.fn();
+  const started = vi.fn();
+  const screen = await renderContent({ active: true, onChangeView: changed, onSelectInvocation: selected, onRunAgain: started });
+  expect(readShellColumnActionOwner('main')?.tabs).toEqual(['flow', 'steps', 'activity']);
+  await act(async () => readShellColumnActionOwner('main')?.selectTab?.('steps'));
+  expect(changed).toHaveBeenCalledExactlyOnceWith('steps');
+  await screen.update(<WorkflowRunContent {...screen.contentProps} view="steps" />);
+  expect(readShellColumnActionOwner('main')?.activeTab).toBe('steps');
+  expect(screen.findHostByTestId('workflow-run-view:steps')?.props.accessibilityState?.selected).toBe(true);
+  await act(async () => readShellColumnActionOwner('main')?.selectTab?.('steps'));
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(selected).not.toHaveBeenCalled();
+  expect(started).not.toHaveBeenCalled();
+  await screen.unmount();
+});
 
 function flattenTestStyle(style: unknown): Record<string, unknown> {
   if (typeof style === 'function') return flattenTestStyle(style({}));
@@ -275,6 +319,44 @@ it('does no Map-only projection work for a 500-item Run while Activity is shown,
       { invocationId: 'item-498', lifecycle: 'completed' },
     ]);
   } finally { mapProjection.mockRestore(); }
+});
+
+it.each(['flow', 'steps'] as const)('measures a 500-item %s arrival without waking it for unrelated state', async view => {
+  arrivalCosts.clear();
+  const definition = createWorkflowDefinitionFixture({ blocks: Array.from({ length: 500 }, (_, index) => ({
+    kind: 'wait', id: `budget-${index}`, document: { text: `Review ${index}`, references: [], attachments: [] },
+  })) });
+  const root = createWorkflowInvocationIndexFixture({ id: 'budget-root' });
+  const invocations = [root, ...Array.from({ length: 500 }, (_, index) => createWorkflowInvocationIndexFixture({
+    id: `budget-item-${index}`, parentRecordId: root.id, memberOrdinal: String(index), sequence: String(index + 1),
+    lifecycle: index === 499 ? 'running' : 'completed',
+  }))];
+  const screen = await renderContent({ definition, invocations, view });
+  const reset = () => { for (const counter of arrivalCosts.values()) counter.reset(); };
+  const read = () => [...arrivalCosts].filter(([id]) => id.includes('budget-') && !id.includes('budget-499'))
+    .reduce((sum, [, counter]) => sum + counter.read().renders, 0);
+  reset();
+  await act(async () => { getStorage().setState({ socketStatus: 'disconnected' }); });
+  expect(read()).toBe(0);
+  const changed = invocations.map(row => row.id === 'budget-item-499'
+    ? createWorkflowInvocationIndexFixture({ ...row, lifecycle: 'completed', contentRevision: '1' }) : row);
+  let commits = 0;
+  await screen.update(<React.Profiler id="arrival" onRender={() => { commits += 1; }}>
+    <WorkflowRunContent {...screen.contentProps} invocations={invocations} />
+  </React.Profiler>);
+  reset(); commits = 0;
+  await screen.update(<React.Profiler id="arrival" onRender={() => { commits += 1; }}>
+    <WorkflowRunContent {...screen.contentProps} invocations={changed} />
+  </React.Profiler>);
+  const measured = { view, items: 500, commits, unrelatedRowHostRenders: read(),
+    changedRows: [...arrivalCosts].filter(([id, counter]) => id.includes('budget-499') && counter.read().renders > 0).length };
+  console.info('FIN-FLOWBUDGET Run arrival', measured);
+  expect(measured.changedRows).toBeGreaterThan(0);
+  expect(measured.commits).toBeLessThanOrEqual(2);
+  expect(measured.unrelatedRowHostRenders).toBe(0);
+  // The changed lifecycle must survive the real projection, not a quiet-path-only optimization.
+  expect(screen.findAll(node => typeof node.props.testID === 'string' && node.props.testID.includes('budget-499'))
+    .some(node => node.findAllByType(WorkflowLifecycleStatus).some(status => status.props.lifecycle === 'completed'))).toBe(true);
 });
 
 it('renders For-each value names and stopped occurrence facts through the real Run body', async () => {
@@ -437,39 +519,37 @@ async function layoutPopoverContent(
 }
 
 describe('WorkflowRunContent', () => {
-  it('gives a step that worked in the bare home folder no workspace row, and reads its result before its input', async () => {
+  it('labels the run Pause control with what it does, "Pause at boundary" (07 §2.3 item 6)', async () => {
     const screen = await renderContent({
-      selectedInvocationId: 'inv-1',
-      workspaceHomeDirectory: '/Users/alice',
-      selectedInvocationProgress: {
-        kind: 'happier.workflow-progress.v1',
-        invocationPath: { blockId: 'analyze', scope: [] },
-        blockKind: 'step',
-        attempt: '0',
-        logicalInvocationRecordId: 'inv-1',
-        input: 'Return the single word FIRST.',
-        result: 'FIRST',
-        workspace: { descriptor: { machineId: 'machine-1', directory: '/Users/alice', checkoutRootPath: '/Users/alice' } },
-      },
+      run: createWorkflowRunSummaryFixture({ state: 'running', availability: { cancel: true, pause: true } }),
+      onPause: vi.fn(),
+      onCancel: vi.fn(),
     });
-    // "Workspace ~" told nothing (FIN-DESIGN-REVIEW H4).
-    expect(screen.findByTestId('workflow-run-workspace')).toBeNull();
-    const text = screen.getTextContent();
-    expect(text.indexOf('FIRST')).toBeGreaterThan(-1);
-    expect(text.lastIndexOf('Return the single word')).toBeGreaterThan(text.indexOf('workflows.input.result'));
+    expect(screen.findByTestId('workflow-run-pause')).not.toBeNull();
+    // The visible words, not only the accessible name.
+    expect(screen.getTextContent()).toContain('workflows.run.pauseAtBoundary');
+    expect(screen.getTextContent()).not.toMatch(/workflows\.run\.pause(?!AtBoundary)/);
   });
-
-  it('makes Stop the one primary of an interrupted Run with nothing to resume (FIN-DESIGN-REVIEW H3)', async () => {
+  it('keeps one primary when a paused Run also has a hold: Resume leads and Review stays secondary', async () => {
     const screen = await renderContent({
       run: createWorkflowRunSummaryFixture({
-        state: 'interrupted',
-        availability: { cancel: true, pause: false, resumeBoundary: false },
+        state: 'paused',
+        availability: { cancel: true, pause: false, resumeBoundary: true },
       }),
-      onCancel: vi.fn(),
+      onResume: vi.fn(),
+      invocations: [
+        createWorkflowInvocationIndexFixture({
+          id: 'held',
+          parentRecordId: 'root',
+          lifecycle: 'waiting_for_review',
+        }),
+      ],
+      invocationProgressById: openedLeafProgress('held'),
       selectedInvocationId: null,
     });
+    expect(screen.findByTestId('workflow-run-needs-you')).not.toBeNull();
     expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
-      .map((button) => button.props.testID)).toEqual(['workflow-run-cancel']);
+      .map((button) => button.props.testID)).toEqual(['workflow-run-resume']);
   });
   it('keeps the Paused mark calm while Needs you carries the hold (FIN-DESIGN-REVIEW L2)', async () => {
     const pausedRun = createWorkflowRunSummaryFixture({
@@ -491,6 +571,18 @@ describe('WorkflowRunContent', () => {
     expect(held.findByTestId('workflow-run-needs-you')).not.toBeNull();
     expect(calm).toBeDefined();
     expect(markColor(held)).toBe(calm);
+  });
+  it('makes Stop the one primary of an interrupted Run with nothing to resume (FIN-DESIGN-REVIEW H3)', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({
+        state: 'interrupted',
+        availability: { cancel: true, pause: false, resumeBoundary: false },
+      }),
+      onCancel: vi.fn(),
+      selectedInvocationId: null,
+    });
+    expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
+      .map((button) => button.props.testID)).toEqual(['workflow-run-cancel']);
   });
   it('retires stale holds when the Run settles after Stop', async () => {
     const screen = await renderContent({
@@ -609,7 +701,7 @@ describe('WorkflowRunContent', () => {
     expect(screen.findByTestId('workflow-run-publication-request-first')).toBeNull();
   });
   it.each([1200, 390])(
-    'keeps source actions on the tab row at width %s',
+    'places source actions in the phone menu and on the wide tab row at width %s',
     async (width) => {
       viewport.window = { width, height: 844 };
       for (const kind of ['edit', 'open', 'sourceless', 'deleted'] as const) {
@@ -635,10 +727,19 @@ describe('WorkflowRunContent', () => {
             screen.findByTestId('workflow-run-save-as-workflow'),
           ).toBeNull();
         } else {
-          expect(
-            screen.findByTestId(`workflow-run-${actionId}`),
-          ).not.toBeNull();
+          if (width === 390) {
+            expect(screen.findByTestId(`workflow-run-${actionId}`)).toBeNull();
+            await screen.pressByTestIdAsync('workflow-run-overflow');
+            await layoutPopoverContent(screen);
+          }
+          expect(screen.findByTestId(`workflow-run-${actionId}`)).not.toBeNull();
           await screen.pressByTestIdAsync(`workflow-run-${actionId}`);
+          if (width === 390) {
+            // The web menu closes before its action runs on the next macrotask.
+            await act(async () => {
+              await new Promise((resolve) => { setTimeout(resolve, 0); });
+            });
+          }
           expect(
             kind === 'sourceless' ? onSave : onSource,
           ).toHaveBeenCalledOnce();
@@ -672,6 +773,18 @@ describe('WorkflowRunContent', () => {
     });
     await screen.pressByTestIdAsync('workflow-run-save-as-workflow');
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('explains missing requester custody even when the Run never started a step', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({
+        state: 'failed',
+        errorCode: 'requester_custody_unavailable',
+      }),
+      invocations: [],
+    });
+
+    expect(screen.getTextContent()).toContain('workflows.problem.requesterCustodyUnavailable');
   });
 
   it('explains a terminal failure from its exact failed leaf without attention or selection', async () => {
@@ -1205,6 +1318,42 @@ describe('WorkflowRunContent', () => {
     expect(
       screen.findByTestId('workflow-run-replacement-input'),
     ).not.toBeNull();
+  });
+
+  it('keeps what needs you in a phone dock in thumb reach, not a section above the Map (phone-P1)', async () => {
+    viewport.window = { width: 390, height: 844 };
+    const onSelectInvocation = vi.fn();
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'running', availability: { cancel: true, pause: true } }),
+      invocations: [
+        createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'root', lifecycle: 'waiting_for_review' }),
+      ],
+      invocationProgressById: openedLeafProgress('held'),
+      selectedInvocationId: null,
+      onSelectInvocation,
+    });
+    expect(screen.findByTestId('workflow-run-needs-you')).toBeNull();
+    const dock = screen.findByTestId('workflow-run-needs-you-dock');
+    expect(dock).not.toBeNull();
+    expect(screen.getTextContent()).toContain('workflows.a11y.needsYou:{"count":1}');
+    await screen.pressByTestIdAsync('workflow-run-needs-you-dock-review');
+    expect(onSelectInvocation.mock.calls[0]?.[0]).toBe('held');
+  });
+
+  it('keeps one primary on a phone page whose paused Run has a hold: the dock Review yields to Resume', async () => {
+    viewport.window = { width: 390, height: 844 };
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'paused', availability: { cancel: true, pause: false, resumeBoundary: true } }),
+      onResume: vi.fn(),
+      invocations: [
+        createWorkflowInvocationIndexFixture({ id: 'held', parentRecordId: 'root', lifecycle: 'waiting_for_review' }),
+      ],
+      invocationProgressById: openedLeafProgress('held'),
+      selectedInvocationId: null,
+    });
+    expect(screen.findByTestId('workflow-run-needs-you-dock')).not.toBeNull();
+    expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
+      .map((button) => button.props.testID)).toEqual(['workflow-run-resume']);
   });
 
   it('leaves phone selection to the exact pushed invocation page rather than opening a detail modal', async () => {
@@ -1805,7 +1954,7 @@ describe('WorkflowRunContent', () => {
       selectedInvocationProgress: progress,
       renderReviewCard,
     });
-    expect(screen.findByTestId('workflow-run-view:flow')).toBeTruthy();
+    expect(screen.findByTestId('workflow-run-view:flow')).toBeNull(); // Cockpit navigation belongs to the mounted phone host.
     expect(screen.findByTestId('workflow-run-selected-header')).toBeNull();
     expect(screen.visibleModals()).toHaveLength(1);
     const firstId = screen.visibleModals()[0].id;
@@ -1820,7 +1969,7 @@ describe('WorkflowRunContent', () => {
       );
     });
     expect(screen.findAllByType(WorkflowReviewCard)).toHaveLength(0);
-    expect(screen.findByTestId('workflow-run-view:flow')).toBeTruthy();
+    expect(screen.findByTestId('workflow-run-view:flow')).toBeNull(); // Cockpit navigation belongs to the mounted phone host.
     await screen.pressByTestIdAsync('workflow-run-open-review');
     expect(screen.visibleModals()).toHaveLength(1);
     const reopenedId = screen.visibleModals()[0].id;
@@ -2305,7 +2454,7 @@ describe('WorkflowRunContent', () => {
   });
 
   it.each(['flow', 'steps', 'activity'] as const)(
-    'uses offline Stop facts for the header and physical step in %s',
+    'keeps the cancelled header separate from offline physical stop custody in %s',
     async (view) => {
       const invocation = createWorkflowInvocationIndexFixture({
         id: 'stopping',
@@ -2320,15 +2469,16 @@ describe('WorkflowRunContent', () => {
         }),
         machineName: 'Build box',
         machineReachable: false,
+        deleteBlockedByCustody: true,
         invocations: [invocation],
         invocationProgressById: openedLeafProgress('stopping'),
       });
-      // One message per state: the page header owns the Stop cause; the physical step keeps only its mark.
-      expect(
-        screen
-          .getTextContent()
-          .split('workflows.run.stopWhenMachineReconnects'),
-      ).toHaveLength(2);
+      expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
+      expect(screen.getTextContent()).toContain('workflows.recovery.waitingForStop');
+      // The physical step's mark retains its own accessible offline Stop state.
+      expect(screen.root.findAll(node => typeof node.type === 'string'
+        && typeof node.props.accessibilityLabel === 'string'
+        && node.props.accessibilityLabel.startsWith('workflows.run.stopWhenMachineReconnects')).length).toBeGreaterThan(0);
       expect(screen.getTextContent()).not.toContain(
         'workflows.invocationState.cancel_requested',
       );
@@ -2447,6 +2597,7 @@ describe('WorkflowRunContent', () => {
   it('switches to Flow without losing the selected invocation identity', async () => {
     const onChangeView = vi.fn();
     const screen = await renderContent({
+      active: true,
       selectedInvocationId: 'inv-1',
       invocations: [
         createWorkflowInvocationIndexFixture({
@@ -2457,7 +2608,8 @@ describe('WorkflowRunContent', () => {
       onChangeView,
     });
 
-    screen.findByTestId('workflow-run-view:flow')?.props.onPress();
+    const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
+    await act(async () => { await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: 'flow' }); });
 
     expect(onChangeView).toHaveBeenCalledWith('flow');
   });
@@ -2864,11 +3016,39 @@ describe('WorkflowRunContent', () => {
     expect(text).toContain('workflows.recovery.choicesOnReconnect');
     // Said once: the card owns "when choices appear", so the outcome region does not repeat it.
     expect(screen.findByTestId('workflow-run-machine-unavailable')).toBeNull();
-    expect(
-      screen.findByTestId('workflow-run-invocation-input-value')?.props
-        .children,
-    ).toBe('Check the quiet habit');
+    expect(screen.findByTestId('workflow-run-invocation-input-value')).not.toBeNull();
+    expect(text).toContain('Check the quiet habit');
     expect(text).not.toContain('"references"');
+  });
+
+  it('names the Run\'s own way forward when a step whose target stopped answering has no recovery choice', async () => {
+    const render = async (overrides: Partial<ContentProps>) => {
+      const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'failed' });
+      const progress = {
+        kind: 'happier.workflow-progress.v1' as const,
+        invocationPath: { blockId: 'analyze', scope: [] },
+        blockKind: 'step' as const,
+        attempt: '0',
+        logicalInvocationRecordId: invocation.id,
+        reason: { code: 'target_unavailable', message: null },
+      };
+      const screen = await renderContent({
+        invocations: [invocation],
+        selectedInvocationId: invocation.id,
+        selectedInvocationProgress: progress as never,
+        invocationProgressById: new Map([[invocation.id, progress as never]]),
+        ...overrides,
+      });
+      return screen.findAllByType(Item)
+        .find((item) => item.props.testID === 'workflow-run-recovery-cause')?.props.subtitle;
+    };
+    // Still open: no proof the step stopped, so nothing restarts it here; the Run's Stop is the way on.
+    expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'running' }), onCancel: vi.fn() }))
+      .toBe('workflows.recovery.unconfirmedStop workflows.recovery.nextStop');
+    // Ended: Run again is the way on.
+    expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'failed', availability: { cancel: false } as never }),
+      onRunAgain: vi.fn() }))
+      .toBe('workflows.recovery.unconfirmedStop workflows.recovery.nextRunAgain');
   });
 
   it('heads an uncertain step with its effects and an unexplained failed step with cause not recorded', async () => {
@@ -3043,8 +3223,9 @@ describe('WorkflowRunContent', () => {
    * than looking like the end of history, and a loaded Run with no rows says
    * nothing has started — not the collection's "runs appear here" copy.
    */
-  it('states a still-loading outline and an empty loaded outline distinctly', async () => {
+  it.each(['activity', 'flow', 'steps'] as const)('states a still-loading %s outline and an empty loaded outline distinctly', async view => {
     const loading = await renderContent({
+      view,
       invocationsLoaded: false,
       invocationHistoryComplete: false,
     });
@@ -3054,7 +3235,7 @@ describe('WorkflowRunContent', () => {
     expect(loading.findByTestId('workflow-run-invocations-empty')).toBeNull();
     await loading.unmount();
 
-    const empty = await renderContent({ invocationsLoaded: true });
+    const empty = await renderContent({ invocationsLoaded: true, view: 'activity' });
     expect(empty.findByTestId('workflow-run-invocations-loading')).toBeNull();
     expect(
       empty.findByTestId('workflow-run-invocations-empty')?.props.children,
@@ -3116,7 +3297,11 @@ describe('WorkflowRunContent', () => {
     expect(
       lost.findByTestId('workflow-run-machine-unavailable'),
     ).not.toBeNull();
-    expect(lost.getTextContent()).toContain('workflows.run.machineUnavailable');
+    // The line leads with its cause, then what waits on it (one cause per line, 07 S12 Off).
+    expect(lost.findByTestId('workflow-run-machine-unavailable')?.props.children).toEqual(expect.arrayContaining([
+      'workflows.run.machineUnavailable:{"machine":"Mac Studio"}',
+    ]));
+    expect(lost.getTextContent()).toContain('workflows.run.machineUnavailableBody');
     await lost.unmount();
 
     const settled = await renderContent({
@@ -3164,6 +3349,28 @@ describe('WorkflowRunContent', () => {
       },
     });
     expect(container.findByTestId('workflow-run-invocation-usage')).toBeNull();
+  });
+
+  it('gives a step that worked in the bare home folder no workspace row, and reads its result before its input', async () => {
+    const screen = await renderContent({
+      selectedInvocationId: 'inv-1',
+      workspaceHomeDirectory: '/Users/alice',
+      selectedInvocationProgress: {
+        kind: 'happier.workflow-progress.v1',
+        invocationPath: { blockId: 'analyze', scope: [] },
+        blockKind: 'step',
+        attempt: '0',
+        logicalInvocationRecordId: 'inv-1',
+        input: 'Return the single word FIRST.',
+        result: 'FIRST',
+        workspace: { descriptor: { machineId: 'machine-1', directory: '/Users/alice', checkoutRootPath: '/Users/alice' } },
+      },
+    });
+    // "Workspace ~" told nothing (FIN-DESIGN-REVIEW H4).
+    expect(screen.findByTestId('workflow-run-workspace')).toBeNull();
+    const text = screen.getTextContent();
+    expect(text.indexOf('FIRST')).toBeGreaterThan(-1);
+    expect(text.lastIndexOf('Return the single word')).toBeGreaterThan(text.indexOf('workflows.input.result'));
   });
 
   it('shows a nested working directory separately from its recorded checkout root', async () => {
@@ -3247,6 +3454,25 @@ describe('WorkflowRunContent', () => {
     expect(screen.getTextContent()).toContain('workflows.run.stop');
   });
 
+  it('presents canonical cancellation separately from unresolved stop confirmation', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'running', workflowCustodyState: 'pending' }),
+      cancelRequested: true,
+      pendingControl: null,
+    });
+    await screen.update(<WorkflowRunContent {...screen.contentProps}
+      run={createWorkflowRunSummaryFixture({ state: 'cancelled', revision: 8,
+        workflowCustodyState: 'pending', availability: { cancel: false, pause: false } })}
+      cancelRequested={false}
+      deleteBlockedByCustody
+    />);
+
+    expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
+    expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
+    expect(screen.findByTestId('workflow-run-custody-pending')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('workflows.recovery.waitingForStop');
+  });
+
   it('resolves exactly one primary action when a terminal Run can also be run again', async () => {
     const onRunAgain = vi.fn();
     const screen = await renderContent({
@@ -3294,19 +3520,44 @@ describe('WorkflowRunContent', () => {
   });
 
   it('offers the canonical Steps view when a successful Run has no final output', async () => {
+    const connection = await serveActionHomes({ homes: [{ key: 'navigation', serverUrl: 'https://workflow-run-navigation.test', accountId: 'run-navigation-account' }],
+      route: request => createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+    onTestFinished(() => connection.dispose());
     const onChangeView = vi.fn();
     const screen = await renderContent({
+      active: true,
+      serverId: connection.homes.navigation!.id,
       run: createWorkflowRunSummaryFixture({
         state: 'succeeded',
         availability: { cancel: false, pause: false },
       }),
       onChangeView,
     });
+    await flushHookEffects();
     expect(screen.findByTestId('workflow-run-inspect-steps') !== null).toBe(
       true,
     );
     await screen.pressByTestIdAsync('workflow-run-inspect-steps');
     expect(onChangeView).toHaveBeenCalledWith('steps');
+  });
+
+  it('leads a stopped Run with Run workflow again, not Inspect steps (07 §6.1)', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({
+        state: 'cancelled',
+        workflowCustodyState: 'settled',
+        availability: { cancel: false, pause: false },
+      }),
+      onChangeView: vi.fn(),
+      onRunAgain: vi.fn(),
+    });
+    expect(
+      screen
+        .findAllByType(ToolbarButton)
+        .filter((button) => button.props.tone === 'primary')
+        .map((button) => button.props.testID),
+    ).toEqual(['workflow-run-run-again']);
+    expect(screen.findByTestId('workflow-run-inspect-steps')).toBeNull();
   });
 
   it('states how many interventions the Needs-you section holds', async () => {
@@ -4326,6 +4577,67 @@ describe('WorkflowRunContent', () => {
       );
     },
   );
+
+  it.each(['failed', 'interrupted'] as const)(
+    'settles a %s Run outcome once: a reserved cause line and no undecided actions until the first failure resolves, no primary swap after',
+    async (state) => {
+      const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'failed' });
+      const progress = {
+        kind: 'happier.workflow-progress.v1' as const,
+        invocationPath: { blockId: 'analyze', scope: [] },
+        blockKind: 'step' as const,
+        attempt: '0',
+        logicalInvocationRecordId: invocation.id,
+        reason: { code: 'storage_unavailable', message: 'The Run store could not be written.' },
+      };
+      const base: ContentProps = {
+        active: false,
+        run: createWorkflowRunSummaryFixture({ id: 'run-1', state, availability: { cancel: false, pause: false } }),
+        definition: createWorkflowDefinitionFixture(),
+        invocations: [invocation],
+        invocationsLoaded: true,
+        invocationHistoryComplete: true,
+        invocationProgressById: new Map([[invocation.id, progress]]),
+        firstFailedInvocationId: null,
+        firstFailedInvocationResolution: 'loading',
+        selectedInvocationId: null,
+        onSelectInvocation: vi.fn(),
+        view: 'activity',
+        onChangeView: vi.fn(),
+        onRunAgain: vi.fn(),
+      };
+      const screen = await renderContent(base);
+      const primaries = () => screen.findAllByType(ToolbarButton)
+        .filter((button) => button.props.tone === 'primary').map((button) => button.props.testID);
+      // Unsettled: the outcome sentence is stable, the cause has its place, and a terminal Run offers nothing
+      // that could swap later (an interrupted Run's primary never depends on the failure).
+      expect(screen.findByTestId('workflow-run-outcome')).not.toBeNull();
+      expect(primaries()).toEqual(state === 'failed' ? [] : ['workflow-run-run-again']);
+      if (state === 'failed') expect(screen.findAllByType(ToolbarButton)).toHaveLength(0);
+      expect(screen.findByTestId('workflow-run-failure-reason-pending')).not.toBeNull();
+      expect(screen.findByTestId('workflow-run-failure-reason')).toBeNull();
+
+      await screen.update(React.createElement(WorkflowRunContent, {
+        ...base, firstFailedInvocationId: invocation.id, firstFailedInvocationResolution: 'resolved',
+      }));
+      // Settled: the cause fills the reserved place, and the primary is decided once.
+      expect(screen.findByTestId('workflow-run-failure-reason-pending')).toBeNull();
+      expect(screen.findByTestId('workflow-run-failure-reason')?.props.children).toContain('The Run store could not be written.');
+      expect(primaries()).toEqual(state === 'failed' ? ['workflow-run-see-failures'] : ['workflow-run-run-again']);
+    },
+  );
+
+  it('decides a failed Run whose first-failure lookup failed once, as Run workflow again', async () => {
+    const onRunAgain = vi.fn();
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'failed', availability: { cancel: false, pause: false } }),
+      firstFailedInvocationResolution: 'error',
+      onRunAgain,
+    });
+    expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
+      .map((button) => button.props.testID)).toEqual(['workflow-run-run-again']);
+    expect(screen.findByTestId('workflow-run-failure-reason-pending')).toBeNull();
+  });
 
   it('offers See failures for a terminally failed Run and preserves its completed work', async () => {
     const onSelectInvocation = vi.fn();

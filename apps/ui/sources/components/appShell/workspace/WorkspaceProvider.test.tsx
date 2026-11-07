@@ -6,20 +6,25 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createSessionFixture, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
-import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
+import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { storage } from '@/sync/domains/state/storage';
 import { hrefForDestinationRef, readDestinationInstanceTitle, resolveCompactAppDestinations, resolveDestinationRefFromHref, useActivateAppDestination, useCompactAppDestinations, useDestinationInstanceTitles, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
 import { useHydrateSessionForRoute, useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
-import { AppPaneProvider } from '../panes/AppPaneProvider';
+import { AppPaneProvider, useAppPaneContext } from '../panes/AppPaneProvider';
+import { qualifyPaneScopeId } from '../panes/paneScopeIdentity';
+import { useOpenAppRightSidebarTab } from '../rightSidebar/appScopeRightSidebarNavigation';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ConnectedAccountActionApprovalNotice } from '@/components/settings/connectedServices/ConnectedAccountActionApprovalNotice';
 import { t } from '@/text';
 import { DestinationInstanceHost, useDestinationInstanceKey, useDestinationParams, useDestinationRouter } from './DestinationInstanceHost';
-import { buildBotTemplateEditorRoute } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
-import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceProvider } from './WorkspaceProvider';
+import { buildBotTemplateRecipientRoute, readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
+import { buildBotTemplateEditorRoute } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
+import { useCurrentRouteParams, useCurrentRoutePathname } from './currentRouteLocation';
 import { WorkspaceAppShellProvider } from './WorkspaceAppShellProvider';
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { DesktopDestinationWindow } from '@/desktop/window/DesktopDestinationWindow';
@@ -44,14 +49,21 @@ import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard, type Acti
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { KeyboardShortcutProvider, useKeyboardCommand, type KeyboardCommandId } from '@/keyboard';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
-import { parseWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey, writeScopedWorkspaceLayout } from './workspacePersistence';
+import { parseWorkspaceLayout, readScopedWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey } from './workspacePersistence';
+import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { AppShellTitleStrip } from '@/components/navigation/shell/appRail/AppShellTitleStrip';
+import { useAppShellLocation } from '@/components/navigation/shell/appRail/useAppShellLocation';
+import { useColumnDestinations } from '@/components/appShell/destinations/ColumnDestinationRows';
 import { reconcileWorkspaceSyncedTabs } from './workspaceSyncedTabs';
 import { registerWorkspaceRouteContext } from './workspaceRouteContext';
 import { Redirect, Stack } from './destinationRoute';
 import { WorkspaceRouteEntry } from './createWorkspaceRouteEntry';
+import { usePluginPageDestinationHandler, usePluginPageLaunch } from '@/components/plugins/pages/pluginPageNavigation';
+import { readPluginPageSubPath, resolvePluginPages } from '@/components/plugins/pages/pluginPages';
+import { createPluginSurfaceDestinationNavigationBinding, useRegisterPluginSurfaceDestinationNavigationOwner } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { WorkspaceRootStack } from './WorkspaceRootStack';
 import { openInWorkspace } from './useWorkspaceOpenActions';
 import { applyCloseDetailsTab, applyOpenDetailsTab, createEmptyPaneDetailsState } from '../panes/details/workspace/detailsWorkspaceReducer';
@@ -60,10 +72,13 @@ import { usePhoneWorkspaceTabs } from './usePhoneWorkspaceTabs';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ApprovalRequestV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { createRetainedPresentationSlotsStore, RetainedPresentationSlotBinder, RetainedPresentationSlotsProvider } from '@/components/ui/presentation/retainedPresentationSlots';
+import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 const boundary = vi.hoisted(() => ({ layouts: {} as Record<string, unknown>, mirrors: [] as string[], scope: { serverId: 'home-a', accountId: 'alice' }, dataReady: true,
-    platform: 'ios', pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' } as Record<string, string | string[]>,
-    renderScene: null as (() => React.ReactNode) | null }));
+    platform: 'ios', tablet: false, pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' } as Record<string, string | string[]>,
+    segments: null as string[] | null, renderScene: null as (() => React.ReactNode) | null }));
 const nativeWindow = { handlers: new Map<string, (event: { payload: unknown }) => void>() };
 // Keep Sync and record readers real; this layout suite has no connected Home transport.
 vi.mock('socket.io-client', async importOriginal =>
@@ -88,7 +103,7 @@ vi.mock('@/auth/context/AuthContext', () => ({ useOptionalAuth: () => null, useA
 // Native has no browser History; Expo is the genuine platform URL boundary here.
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Platform: { get OS() { return boundary.platform; }, select: (values: Record<string, unknown>) => values[boundary.platform] ?? values.default } });
+    return createReactNativeWebMock({ Platform: { get OS() { return boundary.platform; }, get isPad() { return boundary.tablet; }, select: (values: Record<string, unknown>) => values[boundary.platform] ?? values.default } });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -101,6 +116,7 @@ vi.mock('@expo/vector-icons', async () => {
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const module = createExpoRouterMock({ pathname: () => boundary.pathname, params: () => boundary.params,
+        segments: () => boundary.segments ?? boundary.pathname.split('/').filter(Boolean),
         router: { replace: (href: unknown) => { boundary.mirrors.push(String(href)); } } }).module;
     // Expo is the navigator boundary. Observe whether its admitted options mount a modal scene;
     // workspace admission, hydration, route entries and destination resolution remain real.
@@ -214,12 +230,6 @@ function RetainedDirtyEditor(props: Readonly<{ tabId: string; focused: boolean; 
     </DestinationInstanceHost>;
 }
 
-function ColdAccountNavigator(props: Readonly<{ children: React.ReactNode }>) {
-    const { state, descriptors, NavigationContent } = useNavigationBuilder(StackRouter, props);
-    return <NavigationContent>{descriptors[state.routes[state.index].key].render()}</NavigationContent>;
-}
-const ColdAccountStack = createNavigatorFactory(ColdAccountNavigator)();
-
 function RetainedWorkspaceResource(props: Readonly<{ acquire: () => () => void }>) {
     React.useEffect(props.acquire, [props.acquire]);
     return React.createElement('RetainedWorkspaceResourceView');
@@ -238,6 +248,12 @@ function PendingNewSessionAuthoring(props: Readonly<{ scope: ServerAccountScope;
         persistDraftNow: () => writeNewSessionAuthoringDraftToRepository({ ...props, draft }) });
     return React.createElement('PendingNewSessionAuthoring', { selectProfile });
 }
+
+function ColdAccountNavigator(props: Readonly<{ children: React.ReactNode }>) {
+    const { state, descriptors, NavigationContent } = useNavigationBuilder(StackRouter, props);
+    return <NavigationContent>{descriptors[state.routes[state.index].key].render()}</NavigationContent>;
+}
+const ColdAccountStack = createNavigatorFactory(ColdAccountNavigator)();
 
 /** Real event dispatch beneath the external browser URL/history fixtures. */
 function installBrowserBoundary(input: Record<string, unknown> & { history: object }) {
@@ -294,34 +310,114 @@ async function installDelayedDraftRecordBoundary() {
 }
 
 describe('consumed workspace navigation owner', () => {
-    it('retains the nested Settings child when its URL mirror becomes a ready workspace', async () => {
-        boundary.platform = 'web'; boundary.pathname = '/settings/server/add'; boundary.params = {};
-        boundary.dataReady = false;
-        installBrowserBoundary({ location: { pathname: boundary.pathname, search: '', hash: '' },
-            history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'join' } });
-        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
-        function Overview() { return React.createElement('JoinSettingsOverview'); }
-        function AddHome() { return React.createElement('JoinAddHomeForm'); }
-        function Mirror() { return <ColdAccountStack.Navigator>
-            <ColdAccountStack.Screen name="index" component={Overview} />
-            <ColdAccountStack.Screen name="add" component={AddHome} />
-        </ColdAccountStack.Navigator>; }
-        function Settings() { return <WorkspaceRouteEntry Body={Overview} mirror={<Mirror />} />; }
-        const render = () => <WorkspaceProvider enabled catalog={catalog}>
-            <BaseNavigationContainer initialState={{ routes: [{ name: 'settings', state: { routes: [{ name: 'add' }] } }] }}>
-                <ColdAccountStack.Navigator><ColdAccountStack.Screen name="settings" component={Settings} /></ColdAccountStack.Navigator>
-            </BaseNavigationContainer>
-        </WorkspaceProvider>;
-        const screen = await renderScreen(render());
+    it('delivers an app-scope page open above the workspace after its Expo mirror stops at the root', async () => {
+        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const previousState = storage.getState();
+        const previousSegments = boundary.segments;
+        const runtime = await activateStorageAccountScope({ serverId: 'home-a', accountId: 'alice' }, storage);
+        let unmountScreen: (() => Promise<void>) | undefined;
         try {
-            expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
-            boundary.dataReady = true;
-            await screen.update(render());
-            expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
-            expect(screen.tree.findAllByType('JoinSettingsOverview' as never)).toHaveLength(0);
-        } finally { await screen.unmount(); }
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected admitted Account');
+            storage.setState({ isDataReady: true });
+            boundary.platform = 'web';
+            boundary.pathname = '/plugins/acme.notes/notes';
+            boundary.params = { pluginId: 'acme.notes', localId: 'notes' };
+            boundary.segments = ['plugins', '[pluginId]', '[localId]'];
+            const location = { pathname: boundary.pathname, search: '', hash: '' };
+            const show = (_state: unknown, _unused: string, href?: string | URL | null) => {
+                if (href) location.pathname = new URL(href, 'https://workspace.test').pathname;
+            };
+            installBrowserBoundary({ location, history: { state: null, pushState: show, replaceState: show, go() {} },
+                sessionStorage: { getItem: () => 'main' } });
+            const declaration = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.notes', destinationId: 'notes',
+                rendererId: 'notes-renderer', container: 'appPage', target: { kind: 'app' } });
+            if (!declaration) throw new Error('Expected admitted app page');
+            const placement: PluginUiSurfacePlacementProjection = {
+                id: 'surface:notes-app', pluginId: 'acme.notes', contributionKind: 'surfacePlacement',
+                descriptorId: 'notes', binding: declaration, target: declaration.target,
+                renderer: { kind: 'hostedWeb', contributionId: 'notes-renderer' },
+                display: { developerFallback: 'Notes' },
+                availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+                hostAccountOrigin: { serverId: 'home-a', accountId: 'alice', custodyId: 'notes-occurrence',
+                    sourceCustody: { kind: 'account_release', pluginId: 'acme.notes', version: '1.0.0',
+                        archiveDigestSha256: `sha256:${'a'.repeat(64)}` } },
+            };
+            const pages = resolvePluginPages({ target: { kind: 'app' }, placements: [placement] });
+            const binding = createPluginSurfaceDestinationNavigationBinding({ targetKind: 'app', placements: [placement], accountLifetime: lifetime });
+            function AppPageOwner() {
+                const handler = usePluginPageDestinationHandler({ pages });
+                const owner = React.useMemo(() => ({ container: 'appPage' as const, handler }), [handler]);
+                useRegisterPluginSurfaceDestinationNavigationOwner(owner, binding);
+                return null;
+            }
+            const catalog = resolveCompactAppDestinations({ pages, builtins: {
+                externalSessions: false, inbox: false, workflows: false, friends: false,
+            } });
+            // The real app registers this owner above WorkspaceProvider. Its router
+            // must reach the mounted workspace rather than the unchanged Expo root.
+            const screen = await renderScreen(<><AppPageOwner /><WorkspaceProvider enabled catalog={catalog}>
+                {navigation => React.createElement('WorkspaceOwner', { navigation })}
+            </WorkspaceProvider></>);
+            unmountScreen = () => screen.unmount();
+            const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+            const state = navigation().state;
+            const tabId = state.groups[state.focusedGroupId].activeTabId;
+            await act(async () => { navigation().navigationForTab(tabId).replace('/plugins/acme.notes/notes/entry/a'); });
+            expect(location.pathname).toBe('/plugins/acme.notes/notes/entry/a');
+            expect(boundary.pathname).toBe('/plugins/acme.notes/notes');
+            await act(async () => {
+                expect(await binding.openSurface({ destination: { pluginId: 'acme.notes', localId: 'notes' } })).toEqual({ ok: true });
+            });
+            await vi.waitFor(() => expect(location.pathname).toBe('/plugins/acme.notes/notes'));
+            expect(navigation().state.tabs[tabId].target.params.subPath).toBeUndefined();
+        } finally {
+            await unmountScreen?.();
+            runtime.dispose();
+            storage.setState(previousState, true);
+            boundary.segments = previousSegments;
+        }
     });
 
+    it('keeps capability consumers still when only the app destination catalog changes', async () => {
+        boundary.platform = 'web'; boundary.tablet = true; boundary.pathname = '/'; boundary.params = {};
+        installBrowserBoundary({ location: { pathname: '/', search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} } });
+        let activeRenders = 0;
+        const observed: boolean[] = [];
+        function ActiveProbe() { activeRenders++; observed.push(useWorkspaceNavigationActive()); return null; }
+        const child = <><ActiveProbe /><WorkspaceRecordProbe /></>;
+        const value = {
+            interactionEnabled: true, pluginBrowserProjection: null, phase: 'current' as const,
+            machineId: null, serverId: 'home-a', platform: 'web' as const, accountLifetime: null,
+            clientExecutableActivation: { status: 'ready' as const },
+            reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1 },
+        };
+        const render = (pluginUiProjection: typeof value.pluginUiProjection) => <AppShellPluginUiProjectionValueProvider
+            value={{ ...value, pluginUiProjection }}><WorkspaceAppShellProvider>{child}</WorkspaceAppShellProvider>
+        </AppShellPluginUiProjectionValueProvider>;
+        const screen = await renderScreen(render(value.pluginUiProjection));
+        const before = activeRenders;
+        const catalog = (screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue).catalog;
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.startup', destinationId: 'startup',
+            rendererId: 'startup-renderer', container: 'appPage', target: { kind: 'app' } });
+        if (!binding) throw new Error('Expected admitted app-page binding');
+        const placement: PluginUiSurfacePlacementProjection = {
+            id: 'surface:startup-app', pluginId: 'acme.startup', contributionKind: 'surfacePlacement',
+            descriptorId: 'startup', binding, target: binding.target,
+            renderer: { kind: 'hostedWeb', contributionId: 'startup-renderer' },
+            display: { developerFallback: 'Startup page' },
+            availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+        };
+        await screen.update(render({ ...value.pluginUiProjection, generation: 2, surfacePlacementsById: { [placement.id]: placement } }));
+        const next = (screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue).catalog;
+        expect(next).not.toBe(catalog);
+        expect(next?.some(row => row.kind === 'plugin' && row.destination.pluginId === 'acme.startup')).toBe(true);
+        expect(observed.at(-1)).toBe(true);
+        expect(activeRenders - before).toBe(0);
+    });
 
     it('keeps the dirty editor decision and pending NewSession authoring durable through full Close', async () => {
         boundary.platform = 'web';
@@ -603,6 +699,487 @@ describe('consumed workspace navigation owner', () => {
         expect(location.pathname).toBe('/desktop/window');
         expect(parseWorkspaceLayout(boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'destination-layout' })])?.tabs['saved-tab']?.target.params.id).toBe('A2');
     });
+    it.each([['ios', false], ['android', false], ['ios', true]] as const)(
+        'keeps offline authenticated %s navigation usable without admitting private tabs (tablet=%s)', async (platform, tablet) => {
+        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        boundary.platform = platform; boundary.tablet = tablet; boundary.pathname = '/'; boundary.params = {};
+        const runtime = await activateStorageAccountScope(boundary.scope, storage);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected locally restored Account');
+        boundary.dataReady = false;
+        const retained = createWorkspaceState({ id: 'private-tab', target: { kind: 'session', params: { id: 'private-session' } }, pinned: true, preview: false });
+        boundary.layouts = { [workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'main' })]: serializeWorkspaceLayout(retained) };
+        const savedLayouts = boundary.layouts;
+        const value = {
+            interactionEnabled: false, pluginBrowserProjection: null, phase: 'current' as const,
+            machineId: null, serverId: 'home-a', platform: 'web' as const, accountLifetime: lifetime,
+            clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables: () => {},
+            reloadConnectedAccountProjection: () => {}, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
+        };
+        const SettingsBody = () => React.createElement('OfflineConnectionRecovery');
+        function Home(props: Readonly<{ navigation: { navigate(name: string): void } }>) {
+            return React.createElement('OfflineHomeNavigator', { recover: () => props.navigation.navigate('settings/server') });
+        }
+        function Settings() { return <WorkspaceRouteEntry Body={SettingsBody} />; }
+        const render = () => <AppShellPluginUiProjectionValueProvider value={value}>
+            <BaseNavigationContainer><WorkspaceAppShellProvider>
+                <WorkspaceRecordProbe />
+                <ColdAccountStack.Navigator><ColdAccountStack.Screen name="index" component={Home} />
+                    <ColdAccountStack.Screen name="settings/server" component={Settings} /></ColdAccountStack.Navigator>
+            </WorkspaceAppShellProvider></BaseNavigationContainer>
+        </AppShellPluginUiProjectionValueProvider>;
+        const screen = await renderScreen(render());
+        try {
+            // Expo publishes the native URL as its stack moves to the recovery route.
+            boundary.pathname = '/settings/server';
+            await act(async () => { screen.tree.findByType('OfflineHomeNavigator' as never).props.recover(); });
+            expect(screen.tree.findAllByType('OfflineConnectionRecovery' as never)).toHaveLength(1);
+            const navigation = screen.tree.findByType('WorkspaceOwner' as never).props.navigation as WorkspaceNavigationContextValue;
+            expect(navigation.active).toBe(false);
+            expect(navigation.state.tabs['private-tab']).toBeUndefined();
+            expect(boundary.layouts).toEqual(savedLayouts);
+            expect(storage.getState().isDataReady).toBe(false);
+            await act(async () => { retireActiveServerAccountScopeLifetime(); });
+            await screen.update(render());
+            expect(screen.tree.findAllByType('OfflineConnectionRecovery' as never)).toHaveLength(0);
+            expect(screen.tree.findAllByType('WorkspaceOwner' as never)).toHaveLength(0);
+            expect(boundary.layouts).toEqual(savedLayouts);
+        } finally { await screen.unmount(); runtime.dispose(); }
+    });
+
+    it('retains the nested Settings child when its URL mirror becomes a ready workspace', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/settings/server/add'; boundary.params = {};
+        boundary.dataReady = false;
+        installBrowserBoundary({ location: { pathname: boundary.pathname, search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'join' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        function Overview() { return React.createElement('JoinSettingsOverview'); }
+        function AddHome() { return React.createElement('JoinAddHomeForm'); }
+        function Mirror() { return <ColdAccountStack.Navigator>
+            <ColdAccountStack.Screen name="index" component={Overview} />
+            <ColdAccountStack.Screen name="add" component={AddHome} />
+        </ColdAccountStack.Navigator>; }
+        function Settings() { return <WorkspaceRouteEntry Body={Overview} mirror={<Mirror />} />; }
+        const render = () => <WorkspaceProvider enabled catalog={catalog}>
+            <BaseNavigationContainer initialState={{ routes: [{ name: 'settings', state: { routes: [{ name: 'add' }] } }] }}>
+                <ColdAccountStack.Navigator><ColdAccountStack.Screen name="settings" component={Settings} /></ColdAccountStack.Navigator>
+            </BaseNavigationContainer>
+        </WorkspaceProvider>;
+        const screen = await renderScreen(render());
+        try {
+            expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
+            boundary.dataReady = true;
+            await screen.update(render());
+            expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
+            expect(screen.tree.findAllByType('JoinSettingsOverview' as never)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps the authenticated cold Doc URL pending through first Account establishment before admitting its navigator', async () => {
+        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const scope = boundary.scope;
+        boundary.platform = 'web';
+        boundary.pathname = '/artifacts/cold-doc';
+        boundary.params = { id: 'cold-doc' };
+        boundary.dataReady = false;
+        storage.setState({ profileScope: null });
+        retireActiveServerAccountScopeLifetime();
+        installBrowserBoundary({ location: { pathname: boundary.pathname, search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'cold-doc' } });
+        const routes: string[] = [];
+        function Home() { return React.createElement('ColdAccountHome'); }
+        function Doc() { return React.createElement('ColdAccountDoc'); }
+        function App() {
+            return <WorkspaceAppShellProvider><ColdAccountStack.Navigator>
+                <ColdAccountStack.Screen name="index" component={Home} />
+                <ColdAccountStack.Screen name="artifacts/[id]" component={Doc} />
+            </ColdAccountStack.Navigator></WorkspaceAppShellProvider>;
+        }
+        const value = {
+            interactionEnabled: false, pluginBrowserProjection: null, phase: 'current' as const,
+            machineId: null, serverId: 'home-a', platform: 'web' as const,
+            clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables: () => {},
+            reloadConnectedAccountProjection: () => {}, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
+        };
+        const render = (accountLifetime: ReturnType<typeof captureActiveServerAccountScopeLifetime>, ready = true) => (
+            <AppShellPluginUiProjectionValueProvider declarationReady={ready} value={{ ...value, accountLifetime }}>
+                <BaseNavigationContainer initialState={{ routes: [{ name: 'app', state: { routes: [{ name: 'artifacts/[id]', params: { id: 'cold-doc' } }] } }] }}
+                    onStateChange={state => {
+                        const app = state?.routes[state.index];
+                        const leaf = app?.state?.routes[app.state.index ?? 0];
+                        if (leaf) routes.push(leaf.name);
+                    }}>
+                    <ColdAccountStack.Navigator><ColdAccountStack.Screen name="app" component={App} /></ColdAccountStack.Navigator>
+                </BaseNavigationContainer>
+            </AppShellPluginUiProjectionValueProvider>
+        );
+        const screen = await renderScreen(render(null));
+        const runtime: { current: Awaited<ReturnType<typeof activateStorageAccountScope>> | null } = { current: null };
+        try {
+            // The first profile can be retired by the supplied-Home refresh before core
+            // readiness. Registering its navigator early loses the parsed child on withdrawal.
+            await act(async () => { runtime.current = await activateStorageAccountScope(scope, storage); });
+            const first = captureActiveServerAccountScopeLifetime();
+            await screen.update(render(first));
+            await act(async () => { retireActiveServerAccountScopeLifetime(); storage.setState({ profileScope: null }); });
+            await screen.update(render(first, false));
+            expect(screen.tree.findAllByType('ColdAccountDoc' as never)).toHaveLength(0);
+            await act(async () => { runtime.current?.dispose(); runtime.current = await activateStorageAccountScope(scope, storage); });
+            const current = captureActiveServerAccountScopeLifetime();
+            await screen.update(render(current, false));
+            await act(async () => { boundary.dataReady = true; });
+            await screen.update(render(current));
+            expect(screen.tree.findAllByType('ColdAccountDoc' as never)).toHaveLength(1);
+            expect(screen.tree.findAllByType('ColdAccountHome' as never)).toHaveLength(0);
+            expect(routes).not.toContain('index');
+        } finally { await screen.unmount(); runtime.current?.dispose(); }
+    });
+
+    it.each(['push', 'replace'] as const)('navigates a hosted entry Home destination in its current tab with %s', async method => {
+        boundary.platform = 'web'; boundary.pathname = '/settings/server/add'; boundary.params = {};
+        const location = { pathname: boundary.pathname, search: '', hash: '' };
+        const entries = [location.pathname];
+        const visit = (href?: string | URL | null) => {
+            if (!href) return;
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+        };
+        const history = { state: null as unknown,
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) {
+                this.state = state;
+                visit(href);
+                entries[entries.length - 1] = location.pathname;
+            },
+            pushState(state: unknown, _unused: string, href: string) {
+                this.state = state;
+                visit(href);
+                entries.push(location.pathname);
+            },
+            go() {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled={false} entry catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const before = navigation().state;
+        const tabId = before.groups[before.focusedGroupId].activeTabId;
+        await act(async () => { navigation().navigationForTab(tabId)[method]('/settings/server/home-a'); });
+        expect(location.pathname).toBe('/settings/server/home-a');
+        expect(navigation().state.groups[before.focusedGroupId].activeTabId).toBe(tabId);
+        expect(Object.keys(navigation().state.tabs)).toEqual(Object.keys(before.tabs));
+        expect(hrefForDestinationRef(catalog, navigation().state.tabs[tabId].target)).toBe('/settings/server/home-a');
+        expect(entries).toEqual(method === 'push'
+            ? ['/settings/server/add', '/settings/server/home-a'] : ['/settings/server/home-a']);
+    });
+
+    it('writes a params-only change to the browser URL without an Expo navigator update', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { serverId: 'home-a' };
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const writes: string[] = [];
+        const visit = (href?: string | URL | null) => {
+            if (!href) return;
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+            writes.push(`${url.pathname}${url.search}`);
+        };
+        const history = { state: null as unknown,
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) { this.state = state; visit(href); },
+            pushState(state: unknown, _unused: string, href: string) { this.state = state; visit(href); },
+            go() {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const state = navigation().state;
+        const tabId = state.groups[state.focusedGroupId].activeTabId;
+        boundary.mirrors = []; writes.length = 0;
+        await act(async () => { navigation().navigationForTab(tabId).setParams!({ right: 'files' }); });
+        expect(writes.at(-1)).toBe('/session/A1?serverId=home-a&right=files');
+        expect(navigation().state.tabs[tabId].target.params.right).toBe('files');
+        expect(boundary.mirrors).toEqual([]);
+        // A different route pattern still moves the Expo navigator.
+        await act(async () => { navigation().navigationForTab(tabId).replace('/session/A1/files?serverId=home-a'); });
+        expect(boundary.mirrors.at(-1)).toMatch(/^\/session\/A1\/files\?/);
+    });
+
+    it('switches between Sessions with one browser write and no Expo navigator update, keeping back/forward', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.segments = ['(app)', 'session', '[id]']; onTestFinished(() => { boundary.segments = null; });
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const entries: Array<{ state: unknown; href: string }> = [{ state: null, href: '/session/A1?serverId=home-a' }];
+        let index = 0;
+        const writes: string[] = [];
+        const show = (href: string) => {
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+        };
+        const history = {
+            get state() { return entries[index]!.state; },
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) {
+                const next = href ? String(href) : entries[index]!.href;
+                entries[index] = { state, href: next }; show(next); writes.push(`replace ${next}`);
+            },
+            pushState(state: unknown, _unused: string, href: string) {
+                entries.splice(index + 1, entries.length, { state, href }); index += 1; show(href); writes.push(`push ${href}`);
+            },
+            go(delta: number) {
+                index += delta; show(entries[index]!.href);
+                window.dispatchEvent(Object.assign(new Event('popstate'), { state: entries[index]!.state }));
+            },
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const routes: Array<Readonly<{ pathname: string; id: unknown }>> = [];
+        function CurrentRouteReader() {
+            const pathname = useCurrentRoutePathname();
+            const params = useCurrentRouteParams<{ id?: string }>();
+            routes.push({ pathname, id: params.id });
+            return null;
+        }
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CurrentRouteReader /></>}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        boundary.mirrors = []; writes.length = 0;
+
+        await act(async () => { navigation().openHref('/session/A2?serverId=home-a'); });
+        // The workspace adds one browser entry; Expo's mirror keeps its same-pattern route.
+        expect(writes.filter(write => write.startsWith('push '))).toEqual(['push /session/A2?serverId=home-a']);
+        expect(`${location.pathname}${location.search}`).toBe('/session/A2?serverId=home-a');
+        expect(boundary.mirrors).toEqual([]);
+        expect(routes.at(-1)).toEqual({ pathname: '/session/A2', id: 'A2' });
+
+        await act(async () => { history.go(-1); });
+        expect(`${location.pathname}${location.search}`).toBe('/session/A1?serverId=home-a');
+        expect(routes.at(-1)).toEqual({ pathname: '/session/A1', id: 'A1' });
+        await act(async () => { history.go(1); });
+        expect(routes.at(-1)).toEqual({ pathname: '/session/A2', id: 'A2' });
+        const focused = navigation().state;
+        expect(focused.tabs[focused.groups[focused.focusedGroupId].activeTabId].target.params.id).toBe('A2');
+        expect(boundary.mirrors).toEqual([]);
+    });
+
+    it.each([
+        { source: { pluginId: 'happier.posthog', localId: 'posthog-error-tracking' }, kindId: 'error-issue',
+            collisionScope: 'posthog:https://127.0.0.1:42851:00000000-0000-4000-8000-0000000000d1',
+            entryId: '00000000-0000-4000-8000-000000000001' },
+        { source: { pluginId: 'happier.sentry', localId: 'sentry-issues' }, kindId: 'error-issue',
+            collisionScope: 'https://127.0.0.1:33087\u001f42', entryId: '101' },
+    ])('preserves the $source.pluginId entry through the hosted root-to-detail location settlement', async entryRef => {
+        boundary.platform = 'web';
+        boundary.pathname = '/plugins/happier.triage/triage';
+        boundary.segments = ['plugins', '[pluginId]', '[localId]'];
+        boundary.params = { pluginId: 'happier.triage', localId: 'triage' };
+        const location = { pathname: boundary.pathname, search: '', hash: '' };
+        const show = (_state: unknown, _unused: string, href?: string | URL | null) => {
+            if (!href) return;
+            const url = new URL(href, 'https://workspace.test');
+            location.pathname = url.pathname; location.search = url.search;
+        };
+        installBrowserBoundary({ location, history: { state: null, pushState: show, replaceState: show, go() {} },
+            sessionStorage: { getItem: () => 'main' } });
+        const catalog: readonly CompactAppDestination[] = [{ kind: 'plugin', container: 'appPage',
+            id: 'plugin:happier.triage:triage', destination: { pluginId: 'happier.triage', localId: 'triage' },
+            title: 'PRs & Issues', icon: 'note', placement: { kind: 'rail', region: 'plugins' },
+            activation: 'navigate', order: 10, routePath: boundary.pathname, availability: 'available' }];
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const state = navigation().state;
+        const tabId = state.groups[state.focusedGroupId].activeTabId;
+        const subPath = buildTriageEntryRouteSegmentV1(entryRef);
+        const href = buildPluginAppPageRoutePath({ pluginId: 'happier.triage', localId: 'triage', subPath });
+        boundary.mirrors = [];
+        await act(async () => { navigation().navigationForTab(tabId).replace(href as never); });
+        const settled = navigation().state.tabs[tabId].target.params.subPath;
+        expect(readTriageEntryRouteSegmentV1(readPluginPageSubPath(settled)!)).toEqual(entryRef);
+        expect(location.pathname).toBe(href);
+        // The hosted plugin page already owns this location. Sending its catch-all through Expo's
+        // serializer drops the host's outer escape layer and a later browser read loses the origin.
+        expect(boundary.mirrors).toEqual([]);
+        const reread = resolveDestinationRefFromHref(catalog, location.pathname)!;
+        expect(readTriageEntryRouteSegmentV1(readPluginPageSubPath(reread.params.subPath)!)).toEqual(entryRef);
+    });
+
+    it('keeps the rebound slot when closing its previous destination in the same commit', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const store = createRetainedPresentationSlotsStore();
+        let subscriptions = 0;
+        const acquire = () => { subscriptions += 1; return () => { subscriptions -= 1; }; };
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>{navigation => {
+            const tab = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
+            return <RetainedPresentationSlotsProvider store={store}>
+                {React.createElement('WorkspaceOwner', { navigation })}
+                <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname="/session/A1"
+                    focused visible navigation={navigation.navigationForTab(tab.id)}>
+                    <RetainedPresentationSlotBinder slotId="rebound-details">
+                        <RetainedWorkspaceResource acquire={acquire} />
+                    </RetainedPresentationSlotBinder>
+                </DestinationInstanceHost>
+            </RetainedPresentationSlotsProvider>;
+        }}</WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const resource = screen.root.findByType(RetainedWorkspaceResource);
+        await act(async () => { navigation().openHref('/session/A2?serverId=home-a', { mode: 'newTab' }); });
+        const group = navigation().state.groups[navigation().state.focusedGroupId];
+        await act(async () => { navigation().closeTab(group.id, group.activeTabId); });
+        expect(store.getPortalSnapshot().map(entry => entry.slotId)).toEqual(['rebound-details']);
+        expect(subscriptions).toBe(1);
+        expect(screen.root.findByType(RetainedWorkspaceResource)).toBe(resource);
+    });
+
+    it('retires a controlled Details destination resource on workspace close after a parked route handoff', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const store = createRetainedPresentationSlotsStore();
+        let subscriptions = 0;
+        const acquire = () => { subscriptions += 1; return () => { subscriptions -= 1; }; };
+        let presented = true;
+        let retainedId: string | undefined;
+        const render = () => <WorkspaceProvider enabled catalog={catalog}>{navigation => {
+            retainedId ??= navigation.state.groups[navigation.state.focusedGroupId].activeTabId;
+            const tab = navigation.state.tabs[retainedId];
+            return <RetainedPresentationSlotsProvider store={store}>
+                {React.createElement('WorkspaceOwner', { navigation })}
+                {presented && tab ? <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname="/session/A1"
+                    focused visible navigation={navigation.navigationForTab(tab.id)}>
+                    <RetainedPresentationSlotBinder slotId="controlled-details">
+                        <RetainedWorkspaceResource acquire={acquire} />
+                    </RetainedPresentationSlotBinder>
+                </DestinationInstanceHost> : null}
+            </RetainedPresentationSlotsProvider>;
+        }}</WorkspaceProvider>;
+        const screen = await renderScreen(render());
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const resource = screen.root.findByType(RetainedWorkspaceResource);
+        expect(subscriptions).toBe(1);
+        await act(async () => { navigation().openHref('/session/A2?serverId=home-a', { mode: 'newTab' }); });
+        presented = false;
+        await screen.update(render());
+        expect(screen.root.findByType(RetainedWorkspaceResource)).toBe(resource);
+        expect(subscriptions).toBe(1);
+        presented = true;
+        await screen.update(render());
+        expect(screen.root.findByType(RetainedWorkspaceResource)).toBe(resource);
+        presented = false;
+        await screen.update(render());
+        const group = Object.values(navigation().state.groups).find(candidate => candidate.tabIds.includes(retainedId!))!;
+        await act(async () => { navigation().closeTab(group.id, retainedId!); });
+        expect(navigation().state.tabs[retainedId!]).toBeUndefined();
+        expect(subscriptions).toBe(0);
+        expect(store.getPortalSnapshot()).toEqual([]);
+    });
+
+    it('keeps the selected column across entity routers and changes it only through rail activation', async () => {
+        primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
+            features: { workflows: { enabled: true } }, capabilities: {},
+        }) } });
+        onTestFinished(resetServerFeaturesClientForTests);
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: true, workflows: true, friends: false,
+        } });
+        function SectionProbe() {
+            const navigation = useOptionalWorkspaceNavigation();
+            const { location } = useAppShellLocation();
+            if (!navigation) throw new Error('Expected workspace');
+            const state = navigation.state;
+            const tab = state.tabs[state.groups[state.focusedGroupId].activeTabId];
+            const pathname = hrefForDestinationRef(catalog, tab.target)!.split(/[?#]/, 1)[0];
+            return <>
+                {React.createElement('SectionProbe', { navigation, section: location.railEntryId })}
+                <RailActivationProbe />
+                <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={pathname}
+                    focused visible navigation={navigation.navigationForTab(tab.id)}><HostedProbe /></DestinationInstanceHost>
+            </>;
+        }
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}><SectionProbe /></WorkspaceProvider>);
+        const probe = () => screen.root.findByType('SectionProbe').props;
+        const router = () => probe().navigation.navigationForTab(
+            probe().navigation.state.groups[probe().navigation.state.focusedGroupId].activeTabId,
+        );
+        expect(probe().section).toBe('sessions');
+        await act(async () => { router().push('/workflows/definition-1'); });
+        expect(probe().section).toBe('sessions');
+        const workflows = catalog.find(destination => destination.id === 'workflows')!;
+        await act(async () => { screen.root.findByType('RailActivation').props.activate(workflows); });
+        expect(probe().section).toBe('workflows');
+        await act(async () => { router().push('/workflows/runs/run-1'); });
+        await act(async () => { router().push('/session/A1?serverId=home-a'); });
+        expect(probe().section).toBe('workflows');
+    });
+
+    it('selects the destination column in the first workspace commit before Expo mirrors its URL', async () => {
+        boundary.pathname = '/search';
+        boundary.params = {};
+        primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
+            features: { search: { enabled: true } }, capabilities: {},
+        }) } });
+        onTestFinished(resetServerFeaturesClientForTests);
+        storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, search: true } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false, search: true,
+        } });
+        const columns: Array<{ destination: string; column: string | null; currentId: string | null }> = [];
+        function ShellProbe() {
+            const navigation = useOptionalWorkspaceNavigation();
+            const { location } = useAppShellLocation();
+            const { currentId } = useColumnDestinations('sessions');
+            if (!navigation) throw new Error('Expected workspace');
+            const target = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId].target;
+            React.useLayoutEffect(() => {
+                columns.push({ destination: target.kind, column: location.column.kind === 'builtin' ? location.column.id : null, currentId });
+            }, [target, location, currentId]);
+            return React.createElement('WorkspaceOwner', { navigation });
+        }
+        const element = () => <WorkspaceProvider enabled catalog={catalog}><ShellProbe /></WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        columns.length = 0;
+        await act(async () => { expect(navigation().openHref('/machines/machine-a?serverId=home-a')).toBe(true); });
+        expect(boundary.pathname).toBe('/search');
+        expect.soft(navigation().active).toBe(true);
+        expect(columns).toEqual([{ destination: 'machines', column: 'machines', currentId: 'machines' }]);
+        // Catching up the URL mirror must not select another column or re-layout the same destination.
+        columns.length = 0;
+        boundary.pathname = '/machines/machine-a';
+        boundary.params = { id: 'machine-a', serverId: 'home-a' };
+        await screen.update(element());
+        expect(columns).toEqual([]);
+        // Search is an Expo-owned overlay, not a retained workspace destination.
+        boundary.pathname = '/search';
+        boundary.params = {};
+        await screen.update(element());
+        expect(navigation().active).toBe(false);
+        expect(columns).toEqual([{ destination: 'machines', column: null, currentId: 'search' }]);
+    });
+
+    it('does not carry a pending overlay departure across an Account replacement', async () => {
+        boundary.pathname = '/search';
+        boundary.params = {};
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false, search: true,
+        } });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        await act(async () => { expect(navigation().openHref('/machines/machine-a?serverId=home-a')).toBe(true); });
+        expect(boundary.pathname).toBe('/search');
+        expect(navigation().active).toBe(true);
+        await act(async () => { boundary.scope = { serverId: 'home-a', accountId: 'bob' }; });
+        expect(navigation().active).toBe(false);
+    });
 
     it('retains the initial settings navigator while its first Account catalog is published, but withdraws a retired Account', async () => {
         const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
@@ -641,6 +1218,53 @@ describe('consumed workspace navigation owner', () => {
             await act(async () => { retireActiveServerAccountScopeLifetime(); });
             await screen.update(render(lifetime, false));
             expect(screen.tree.findAllByType('InitialAccountNavigator' as never)).toHaveLength(0);
+        } finally {
+            await screen.unmount();
+            runtime.dispose();
+        }
+    });
+
+    it('keeps the authenticated public-link navigator through Account runtime readmission', async () => {
+        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+        const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const runtime = await activateStorageAccountScope(boundary.scope, storage);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected admitted Account');
+        boundary.platform = 'web';
+        boundary.pathname = '/join/invitation';
+        boundary.params = {};
+        boundary.dataReady = false;
+        installBrowserBoundary({ location: { pathname: boundary.pathname, search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'public-entry' } });
+        const value = {
+            interactionEnabled: false, pluginBrowserProjection: null, phase: 'current' as const,
+            machineId: null, serverId: 'home-a', platform: 'web' as const,
+            clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables: () => {},
+            reloadConnectedAccountProjection: () => {}, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
+        };
+        let mounts = 0;
+        function Navigator() {
+            const [admittedTeam, setAdmittedTeam] = React.useState<string | null>(null);
+            React.useEffect(() => { mounts++; }, []);
+            return React.createElement('PublicEntryNavigator', { admittedTeam, setAdmittedTeam });
+        }
+        const render = (accountLifetime: typeof lifetime, ready = true) => (
+            <AppShellPluginUiProjectionValueProvider declarationReady={ready} value={{ ...value, accountLifetime }}>
+                <WorkspaceAppShellProvider><Navigator /></WorkspaceAppShellProvider>
+            </AppShellPluginUiProjectionValueProvider>
+        );
+        const screen = await renderScreen(render(lifetime));
+        const navigator = () => screen.tree.findByType('PublicEntryNavigator' as never);
+        try {
+            await act(async () => { navigator().props.setAdmittedTeam('team-1'); });
+            await act(async () => { retireActiveServerAccountScopeLifetime(); });
+            await screen.update(render(lifetime, false));
+            expect(navigator().props.admittedTeam).toBe('team-1');
+            const readmitted = captureActiveServerAccountScopeLifetime();
+            if (!readmitted) throw new Error('Expected readmitted Account');
+            await screen.update(render(readmitted));
+            expect(navigator().props.admittedTeam).toBe('team-1');
+            expect(mounts).toBe(1);
         } finally {
             await screen.unmount();
             runtime.dispose();
@@ -686,7 +1310,7 @@ describe('consumed workspace navigation owner', () => {
         expect(firstTargets).toEqual([{ kind: 'plugin:acme.notes:notes', params: { pluginId: 'acme.notes', localId: 'notes' } }]);
     });
 
-    it('admits the original plugin URL once when an unscoped navigator receives its first Account catalog', async () => {
+    it('delivers the cold explicit plugin launch after the first Account catalog transfers the route to its retained host', async () => {
         const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const previousState = storage.getState();
@@ -695,8 +1319,9 @@ describe('consumed workspace navigation owner', () => {
         if (!lifetime) throw new Error('Expected admitted Account');
         storage.setState({ isDataReady: true, localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {} } });
         boundary.platform = 'web';
-        boundary.pathname = '/plugins/acme.notes/notes';
-        boundary.params = { pluginId: 'acme.notes', localId: 'notes' };
+        const localSubPath = 'entries/github:1117388084/710';
+        boundary.pathname = '/plugins/acme.notes/notes/entries/github%3A1117388084/710';
+        boundary.params = { pluginId: 'acme.notes', localId: 'notes', subPath: localSubPath.split('/') };
         const href = boundary.pathname;
         const urlWrites: string[] = [];
         const history = { state: null as unknown,
@@ -708,28 +1333,51 @@ describe('consumed workspace navigation owner', () => {
                 history.state = state;
                 if (url != null) urlWrites.push(String(url));
             }, go() {} };
+        const readNavigationTiming = vi.fn(() => [{ type: 'navigate' }]);
         installBrowserBoundary({ location: { pathname: href, search: '', hash: '' }, history,
+            performance: { getEntriesByType: readNavigationTiming },
             sessionStorage: { getItem: () => 'first-account-plugin' } });
         const binding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.notes', destinationId: 'notes',
             rendererId: 'notes-renderer', container: 'appPage', target: { kind: 'app' } });
         if (!binding) throw new Error('Expected admitted app-page binding');
         const placement: PluginUiSurfacePlacementProjection = {
             id: 'surfacePlacement:acme.notes:notes', pluginId: 'acme.notes', contributionKind: 'surfacePlacement',
-            descriptorId: 'notes', binding, target: binding.target,
+            descriptorId: 'notes', binding, target: binding.target, occurrenceId: 'notes-occurrence',
             renderer: { kind: 'hostedWeb', contributionId: 'notes-renderer' }, display: { developerFallback: 'Notes' },
             availability: { state: 'available', reason: 'available', diagnostics: [] }, headerActions: [],
+            hostAccountOrigin: { serverId: 'home-a', accountId: 'alice', custodyId: 'notes-occurrence',
+                sourceCustody: { kind: 'account_release', pluginId: 'acme.notes', version: '1.0.0',
+                    archiveDigestSha256: `sha256:${'a'.repeat(64)}` } },
         };
+        expect(readPluginUiAccountExecutableOrigin(placement)).not.toBeNull();
         const pluginProjection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
             surfacePlacementsById: { [placement.id]: placement } };
         const admittedKinds: string[] = [];
         let navigatorMounts = 0;
+        let rendererReady = false;
+        const routeReads: Array<Readonly<{ hosted: boolean; explicit: boolean }>> = [];
+        function PageBody() {
+            const params = useDestinationParams<{ subPath?: string | string[] }>();
+            const launch = usePluginPageLaunch({ pluginId: 'acme.notes', localId: 'notes',
+                subPath: readPluginPageSubPath(params.subPath) });
+            const hosted = useDestinationInstanceKey() !== null;
+            React.useEffect(() => { routeReads.push({ hosted, explicit: launch !== null }); }, [hosted, launch]);
+            // The native artifact boundary has not completed loading during
+            // catalog admission. Reading the route is not renderer delivery.
+            return rendererReady ? React.createElement('LoadedPluginArtifact', { launch }) : null;
+        }
         function Probe() {
             const navigation = useOptionalWorkspaceNavigation();
             if (!navigation) throw new Error('Expected workspace');
             const tab = navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId];
             React.useLayoutEffect(() => { navigatorMounts++; }, []);
             React.useLayoutEffect(() => { admittedKinds.push(tab.target.kind); }, [tab.target.kind]);
-            return React.createElement('FirstAccountPluginWorkspace', { navigation });
+            return <>
+                {React.createElement('FirstAccountPluginWorkspace', { navigation })}
+                <WorkspaceRouteEntry Body={PageBody} />
+                {navigation.active ? <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={href}
+                    focused visible navigation={navigation.navigationForTab(tab.id)}><PageBody /></DestinationInstanceHost> : null}
+            </>;
         }
         const value = { interactionEnabled: false, pluginBrowserProjection: null, phase: 'current' as const,
             machineId: null, serverId: 'home-a', platform: 'web' as const,
@@ -743,13 +1391,24 @@ describe('consumed workspace navigation owner', () => {
         );
         const screen = await renderScreen(render(null));
         try {
+            expect(readNavigationTiming).toHaveBeenCalledWith('navigation');
+            expect(lifetime.isCurrent()).toBe(true);
             await screen.update(render(lifetime, false));
             expect(navigatorMounts).toBe(1);
+            // Account-owned page declarations precede complete catalog
+            // admission. Renderer custody must not require a Machine supply.
+            await screen.update(render(lifetime, false, true));
+            expect(lifetime.isCurrent()).toBe(true);
             await screen.update(render(lifetime, true, true));
+            rendererReady = true;
+            await screen.update(render(lifetime, true, true));
+            expect(screen.tree.findByType('LoadedPluginArtifact' as never).props.launch,
+                `Cold route reads before artifact delivery: ${JSON.stringify(routeReads)}`)
+                .toMatchObject({ pageId: 'plugin:acme.notes:notes', subPath: localSubPath, input: undefined });
             const navigation: WorkspaceNavigationContextValue = screen.tree.findByType('FirstAccountPluginWorkspace' as never).props.navigation;
             const state = navigation.state;
             expect(state.tabs[state.groups[state.focusedGroupId].activeTabId].target).toEqual({
-                kind: 'plugin:acme.notes:notes', params: { pluginId: 'acme.notes', localId: 'notes' },
+                kind: 'plugin:acme.notes:notes', params: { pluginId: 'acme.notes', localId: 'notes', subPath: localSubPath },
             });
             expect(Object.values(state.tabs).some(tab => tab.target.kind === 'newTab')).toBe(false);
             expect(admittedKinds.filter(kind => kind === 'plugin:acme.notes:notes')).toHaveLength(1);
@@ -878,7 +1537,8 @@ describe('consumed workspace navigation owner', () => {
             {Object.values(navigation.state.tabs).map(tab => <DestinationInstanceHost key={tab.id} tabId={tab.id}
                 ref={tab.target} pathname={hrefForDestinationRef(catalog, tab.target)?.split('?')[0] ?? ''}
                 focused={tab.id === navigation.state.groups[navigation.state.focusedGroupId].activeTabId}
-                visible={tab.id === navigation.state.groups[navigation.state.focusedGroupId].activeTabId}>
+                visible={tab.id === navigation.state.groups[navigation.state.focusedGroupId].activeTabId}
+                navigation={navigation.navigationForTab(tab.id)}>
                 {tab.target.params.id === 'gone' ? <MissingSessionRouteTitle /> : <>
                     {pageTitle ? <PageHeader title={pageTitle} alwaysShowTitle /> : null}
                     <MissingSessionDataReader />
@@ -892,7 +1552,7 @@ describe('consumed workspace navigation owner', () => {
         await act(async () => { navigation().activateTab(navigation().state.focusedGroupId, activeId); });
         const titles = screen.root.findByType('DestinationTitles').props.titles as ReadonlyMap<string, string>;
         expect(titles.get(missingId)).toBe(t('errors.sessionDeleted'));
-        expect(navigation().destinationTitles?.[activeId]?.title).not.toBe(t('errors.sessionDeleted'));
+        expect(navigation().readDestinationTitles?.()[activeId]?.title).not.toBe(t('errors.sessionDeleted'));
         expect(titles.get(activeId)).toBe(expected === 'Home' ? t('common.home') : expected === 'Boards' ? t('boards.title') : expected);
         expect(document.title).toBe(titles.get(activeId));
     });
@@ -972,6 +1632,29 @@ describe('consumed workspace navigation owner', () => {
         await act(async () => { boundary.scope = { serverId: 'home-b', accountId: 'alice' }; });
         expect([...screen.root.findByType('DestinationTitles').props.titles.values()]).not.toContain(`${request.summary} · ${t('approvals.status.canceled')}`);
     });
+    it('publishes a page title to its title readers without re-rendering whole-workspace readers', async () => {
+        boundary.platform = 'web';
+        boundary.pathname = '/workflows/wf-typing';
+        boundary.params = { id: 'wf-typing' };
+        installBrowserBoundary({ location: { pathname: boundary.pathname, search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
+        let broadRenders = 0;
+        // A whole-workspace reader (the shell, the strip host, the composer drop target) reads
+        // tabs, groups and commands; a title is not one of its facts.
+        function BroadReader() { broadRenders++; return React.createElement('WorkspaceOwner', { navigation: useOptionalWorkspaceNavigation() }); }
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={catalog}><BroadReader /></WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const tabId = navigation().state.groups[navigation().state.focusedGroupId].activeTabId;
+        const ref = navigation().state.tabs[tabId].target;
+        const before = broadRenders;
+        // One keystroke each: the editor's name is the tab's page title.
+        for (const title of ['p', 'p0', 'p03']) {
+            await act(async () => { navigation().publishDestinationTitle?.(tabId, ref, title); });
+        }
+        expect(document.title).toBe('p03');
+        expect(broadRenders - before).toBe(0);
+    });
     it('settles a deleted Session in the actual strip and window title without removing the closable tab', async () => {
         boundary.platform = 'web';
         boundary.pathname = '/session/gone';
@@ -1017,19 +1700,25 @@ describe('consumed workspace navigation owner', () => {
         } });
         // Public links have no shell, but an authenticated Account can explicitly
         // enter one. This is the same presentation transition the invitation uses.
-        const entryProps = { entry: true };
-        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} {...entryProps} catalog={catalog}>
+        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} entry={!enabled} catalog={catalog}>
             {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CapabilityArrivalProbe /></>}
         </WorkspaceProvider>;
         const screen = await renderScreen(element(false));
         const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
         expect(navigation().active).toBe(false);
         await act(async () => { screen.root.findByType('CapabilityArrival').props.open(); });
+        // The child route can acknowledge Expo's requested pathname before
+        // Account restoration admits it. That acknowledgement must not release
+        // the explicit destination to the parent's following index publication.
+        if (!ready) {
+            boundary.pathname = '/settings/teams/home-a/team-1';
+            await screen.update(element(false));
+        }
         // Expo's nested Settings navigator first publishes its index while its
         // child mounts. Browser custody must already retain the explicit Team.
         await act(async () => {
             boundary.pathname = '/settings';
-            if (location.pathname.startsWith('/join/')) history.replaceState(history.state, '', boundary.pathname);
+            history.replaceState(history.state, '', boundary.pathname);
             boundary.dataReady = true;
         });
         await screen.update(element(true));
@@ -1037,6 +1726,13 @@ describe('consumed workspace navigation owner', () => {
         const target = state.tabs[state.groups[state.focusedGroupId].activeTabId].target;
         expect(hrefForDestinationRef(catalog, target)).toBe('/settings/teams/home-a/team-1');
         expect(location.pathname).toBe('/settings/teams/home-a/team-1');
+
+        // A deliberate workspace action supersedes that pending child even
+        // before Expo acknowledges it; the mirror repair must not trap people.
+        await act(async () => { expect(navigation().openHref('/')).toBe(true); });
+        expect(location.pathname).toBe('/');
+        await act(async () => { expect(navigation().openHref('/settings')).toBe(true); });
+        expect(location.pathname).toBe('/settings');
     });
     it('does not promote a generic chrome header over the destination identity', async () => {
         boundary.pathname = '/session/A1/info';
@@ -1049,7 +1745,8 @@ describe('consumed workspace navigation owner', () => {
             const tab = navigation.state.tabs[group.activeTabId];
             return <>
                 <DestinationTitlesProbe navigation={navigation} catalog={catalog} />
-                <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={boundary.pathname} focused visible>
+                <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={boundary.pathname} focused visible
+                    navigation={navigation.navigationForTab(tab.id)}>
                     <Stack.Screen options={options} />
                 </DestinationInstanceHost>
             </>;
@@ -1236,9 +1933,40 @@ describe('consumed workspace navigation owner', () => {
             localSettings: { ...initialStorageState.localSettings, workspaceLayoutV1: {}, titleStripThemeToggleVisible: false } }, true);
     });
     afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); boundary.mirrors = [];
-        boundary.platform = 'ios'; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
-        boundary.renderScene = null;
+        boundary.platform = 'ios'; boundary.tablet = false; boundary.pathname = '/session/A1'; boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.segments = null; boundary.renderScene = null;
         clearActiveUnsavedChangesGuard(); vi.unstubAllGlobals(); });
+    it('adopts legacy App Details before the first panel selection in the admitted workspace instance', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/settings'; boundary.params = {};
+        installBrowserBoundary({ location: { pathname: '/settings', search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} },
+            sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        let pane!: ReturnType<typeof useAppPaneContext>;
+        let open!: ReturnType<typeof useOpenAppRightSidebarTab>;
+        function Probe() { pane = useAppPaneContext(); open = useOpenAppRightSidebarTab(); return null; }
+        const screen = await renderScreen(<AppPaneProvider><WorkspaceProvider enabled catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<Probe /></>}
+        </WorkspaceProvider></AppPaneProvider>);
+        await act(async () => {
+            pane.dispatch({ type: 'openDetailsTab', scopeId: 'app', openAs: 'pinned',
+                tab: { key: 'legacy-board', kind: 'board', title: 'Board', resource: { kind: 'board' } } });
+            pane.dispatch({ type: 'releaseScope', scopeId: 'app' });
+        });
+        const legacyDetails = pane.getReadState().scopes.app.details;
+        await act(async () => { open({ pluginId: 'happier.inspector', localId: 'inspector-panel' }); });
+        const navigation = screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const destination = navigation.findOpenHref?.('/plugins/panels?pluginId=happier.inspector&destinationId=inspector-panel');
+        expect(destination).toBeTruthy();
+        const scopeId = qualifyPaneScopeId('app', destination!.tabId);
+        expect(pane.getReadState().scopes[scopeId].details).toBe(legacyDetails);
+        expect(pane.getReadState().scopes[scopeId].right.selectedDestination).toEqual({ kind: 'plugin',
+            destination: { pluginId: 'happier.inspector', localId: 'inspector-panel' } });
+        expect(pane.getReadState().scopes.app).toBeUndefined();
+        expect((await import('@/sync/domains/state/filePaneUiState')).paneUiState.read('app')).toBeUndefined();
+    });
     it('does not commit a hydration fallback when a ready settings route is re-admitted after remount', async () => {
         boundary.platform = 'web'; boundary.pathname = '/settings'; boundary.params = {};
         const history = { state: null as unknown,
@@ -1629,6 +2357,25 @@ describe('consumed workspace navigation owner', () => {
         expect(requestDecision).toHaveBeenCalledOnce();
         expect(boundary.mirrors).toEqual([operation === 'home' ? '/' : `/session/${operation === 'back' ? 'A2' : 'A3'}?serverId=home-a`]);
     });
+    it.each([false, true])('opens Bot template Review while retaining its Session (phone=%s)', async phone => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const source = { kind: 'artifact', serverId: 'home-a', artifactId: 'template-release' } as const;
+        const sessionRef = { serverId: 'home-a', sessionId: 'A1' };
+        const destination = buildBotTemplateRecipientRoute(source, 'home-a', sessionRef);
+        const screen = await renderScreen(<WorkspaceProvider enabled={!phone} phone={phone} catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const before = navigation().state;
+        const sessionTabId = before.groups[before.focusedGroupId].activeTabId;
+        await act(async () => { navigation().navigationForTab(sessionTabId).pushRetainingCurrent!(destination); });
+        const after = navigation().state;
+        const review = after.tabs[after.groups[after.focusedGroupId].activeTabId];
+        expect(review.id).not.toBe(sessionTabId);
+        expect(readBotTemplateRecipientRoute(review.target.params)).toEqual({ source, serverId: 'home-a', sessionRef });
+        expect(after.tabs[sessionTabId]).toMatchObject({ target: before.tabs[sessionTabId].target, preview: false });
+        expect(catalog.find(item => item.id === review.target.kind)?.visibility).toBe('hidden');
+    });
     it.each([false, true])('expands a private template into its page while retaining the Session (phone=%s)', async phone => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
         const destination = buildBotTemplateEditorRoute({ draftArtifactId: 'private-draft',
@@ -1801,6 +2548,59 @@ describe('consumed workspace navigation owner', () => {
         expect(navigation().state).toBe(before);
         expect(navigation().state.tabs[editorTabId!].target.params.id).toBe('replacement');
     });
+    it.each([true, false])('retains a cold Session Info URL while Expo mirrors its parent (ready=%s)', async ready => {
+        boundary.platform = 'web';
+        const infoPath = '/session/A1/info';
+        boundary.pathname = '/session/A1';
+        boundary.params = { id: 'A1', serverId: 'home-a' };
+        boundary.dataReady = ready;
+        const location = { pathname: infoPath, search: '?serverId=home-a', hash: '' };
+        const history = { state: null as unknown,
+            replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
+                history.state = state;
+                if (!href) return;
+                const next = new URL(href, 'https://happier.test');
+                location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+            },
+            pushState: (state: unknown, unused: string, href: string) => history.replaceState(state, unused, href), go: () => {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        let mounts = 0;
+        let disposals = 0;
+        function Info() {
+            React.useEffect(() => { mounts += 1; return () => { disposals += 1; }; }, []);
+            return React.createElement('ColdInfo');
+        }
+        const element = () => <WorkspaceProvider enabled catalog={catalog}>{navigation => {
+            const group = navigation.state.groups[navigation.state.focusedGroupId];
+            const tab = navigation.state.tabs[group.activeTabId];
+            const href = hrefForDestinationRef(catalog, tab.target);
+            return <>{React.createElement('WorkspaceProbe', { navigation })}
+                {navigation.active && href?.split('?')[0] === infoPath && <Info />}
+            </>;
+        }}</WorkspaceProvider>;
+        const screen = await renderScreen(element());
+        const currentHref = () => {
+            const navigation = screen.root.findByType('WorkspaceProbe').props.navigation as WorkspaceNavigationContextValue;
+            return hrefForDestinationRef(catalog, navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId].target);
+        };
+        await act(async () => { boundary.dataReady = true; await screen.update(element()); });
+        expect(currentHref()).toBe(`${infoPath}?serverId=home-a`);
+        // The nested navigator emits its parent before acknowledging the cold leaf.
+        await act(async () => { history.replaceState(history.state, '', '/session/A1?serverId=home-a'); });
+        expect(location.pathname).toBe(infoPath);
+        expect(currentHref()).toBe(`${infoPath}?serverId=home-a`);
+        expect(mounts).toBe(1);
+        expect(disposals).toBe(0);
+        // Once Expo acknowledges Info, deliberate navigation to the parent is valid.
+        await act(async () => { boundary.pathname = infoPath; await screen.update(element()); });
+        await act(async () => { history.pushState({}, '', '/session/A1?serverId=home-a'); });
+        expect(currentHref()).toBe('/session/A1?serverId=home-a');
+        expect(disposals).toBe(1);
+    });
     it('admits the current browser location when readiness arrives before the Expo URL mirror', async () => {
         boundary.platform = 'web';
         boundary.pathname = '/session/A1';
@@ -1835,6 +2635,58 @@ describe('consumed workspace navigation owner', () => {
         const group = navigation.state.groups[navigation.state.focusedGroupId];
         expect(navigation.state.tabs[group.activeTabId].target.params.id).toBe('A2');
         expect(location.pathname).toBe('/session/A2');
+    });
+    it('restores active tabs, focused split and MRU through a durable write and cold reload of an ambiguous URL', async () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        boundary.platform = 'web';
+        boundary.pathname = '/';
+        boundary.params = {};
+        const history = { state: null as unknown,
+            replaceState(data: unknown) { this.state = data; }, pushState(data: unknown) { this.state = data; } };
+        installBrowserBoundary({ location: { pathname: '/', search: '', hash: '' }, history,
+            sessionStorage: { getItem: () => 'r71-window' } });
+        const element = () => <WorkspaceProvider enabled catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>;
+        let screen = await renderScreen(element());
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const blank = (id: string) => ({ id, target: { kind: 'newTab', params: {} }, pinned: true, preview: false });
+        await act(async () => {
+            navigation().dispatch({ type: 'openTab', groupId: 'group:1', tab: blank('left-a') });
+            navigation().dispatch({ type: 'openTab', groupId: 'group:1', tab: blank('left-b') });
+            navigation().dispatch({ type: 'openSplitTab', groupId: 'group:1', tab: blank('right-a'),
+                newGroupId: 'right', axis: 'row', placement: 'after', availableSizePx: 1200,
+                minimumFirstSizePx: 200, minimumSecondSizePx: 200 });
+            navigation().dispatch({ type: 'openTab', groupId: 'right', tab: blank('right-b') });
+            navigation().activateTab('group:1', 'left-a');
+            navigation().activateTab('group:1', 'left-b');
+            navigation().activateTab('right', 'right-a');
+        });
+        const expected = navigation().state;
+        expect(expected.focusedGroupId).toBe('right');
+        expect(expected.groups['group:1'].activeTabId).toBe('left-b');
+        expect(expected.groups.right.mru.slice(0, 2)).toEqual(['right-a', 'right-b']);
+        const key = workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'main' });
+        const storageKey = `ui-state:workspace-layouts-v1:${key}`;
+        const raw = getPersistenceStorage().getString(storageKey)!;
+        expect(JSON.parse(raw)).toEqual(serializeWorkspaceLayout(expected));
+        // The predecessor settings reader admits precisely the same active/focus/MRU fields.
+        expect(readScopedWorkspaceLayout({ [key]: JSON.parse(raw) }, key)).toEqual(expected);
+        await screen.unmount();
+        // Simulate process reload at the isolated device-KV boundary, not a warm owner cache.
+        clearPersistenceStorage();
+        getPersistenceStorage().set(storageKey, raw);
+        history.state = null;
+        expect(workspaceLayoutsState.readStrict(key)).toEqual(serializeWorkspaceLayout(expected));
+        screen = await renderScreen(element());
+        expect(navigation().state.groups).toEqual(expected.groups);
+        expect(navigation().state.focusedGroupId).toBe(expected.focusedGroupId);
+        expect(navigation().state.root).toEqual(expected.root);
+        expect(navigation().state.tabs).toEqual(expected.tabs);
+        expect(getPersistenceStorage().getString(storageKey)).toBe(raw);
+        await screen.unmount();
     });
     it('admits the initial route over a restored layout without persisting until an explicit navigation', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
@@ -1878,7 +2730,7 @@ describe('consumed workspace navigation owner', () => {
                 pinned: false, preview: true } });
         const key = workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'main' });
         // Use the app's writer, JSON storage round-trip and exact reader, not a copied layout shape.
-        boundary.layouts = JSON.parse(JSON.stringify(writeScopedWorkspaceLayout({}, key, saved)));
+        boundary.layouts = JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(saved) }));
         expect(parseWorkspaceLayout(boundary.layouts[key])).toEqual(saved);
         const persisted = boundary.layouts;
         boundary.platform = 'web';

@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { useShallow } from 'zustand/react/shallow';
-import { WorkflowTriggerUpdateRequestV1Schema, type SessionTriggerAddRequestV1, type SessionTriggerUpdateRequestV1, type SessionTriggerPullRequestLinksV1, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { WorkflowTriggerUpdateRequestV1Schema, type SessionTriggerAddRequestV1, type SessionTriggerUpdateRequestV1, type SessionTriggerPullRequestLinksV1, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 
-import { getStorage, useActiveServerAccountScopeLifetime, useSessionMachineId } from '@/sync/domains/state/storage';
+import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
-import { watchActivePluginCollectionChanges } from '@/sync/api/plugins/data/pluginCollectionChangeWatch';
+import { observeCurrentUiContextContributedAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector } from '@/sync/store/domains/automations';
 import {
     addSessionTrigger,
@@ -15,17 +17,16 @@ import {
     removeWorkflowTrigger,
     type WorkflowTriggerWriteResult,
 } from '@/sync/domains/workflows/workflowTriggerActions';
-import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readMachineControlTargetForSession, resolveMachineControlTargetForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 
 const ACCOUNT_TRIGGERS = { scope: 'account_all' } as const;
 
 export type SessionTriggersRead = Readonly<{
     status: 'loading' | 'ready' | 'failed';
+    observationFailure: Readonly<{ code: string; phase: 'observe'; retryable: boolean }> | null;
     /** The last sets the owner returned; kept while a refresh or a failed read is pending. */
     sets: readonly WorkflowTriggerSetV1[];
-    lastRunAtByAutomationId: Readonly<Record<string, number | null>>;
     /** The session's Machine, used for native capability observations and Action options. */
     machineId: string | null;
     pullRequestLinks: SessionTriggerPullRequestLinksV1 | Readonly<{ status: 'loading' }>;
@@ -41,33 +42,27 @@ export type SessionTriggersRead = Readonly<{
  * displaying an Account Habit here never changes its scope or execution placement.
  *
  * The Account's Automation projection is only a change signal here: when the session's scoped rows
- * change (an agent added a trigger, a run finished) the list is read again; its `lastRunAt` gives
- * each row its last outcome.
+ * change (an agent added a trigger, a run finished) the list is read again.
+ * The shared Run summary reader supplies each row's last started Run and outcome.
  */
 export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     const accountLifetime = useActiveServerAccountScopeLifetime();
-    // The Work shell can mount from a list row before its owner metadata arrives.
-    // Retry the same Account read when either owner routing fact hydrates.
-    const sessionMachineId = useSessionMachineId(sessionId);
-    const sessionDirectory = getStorage()((state) => {
-        const session = state.sessions[sessionId];
-        return session ? readSessionOwnerMetadataView(session)?.path?.trim() ?? null : null;
-    });
+    // Info can mount from an admitted list row without hydrating Session detail.
+    // These Account reads need only the Session id and the Account lifetime.
+    const sessionMachineId = getStorage()((state) => resolveMachineControlTargetForSessionFromState(state, sessionId)?.machineId ?? null);
     const scope = accountLifetime?.scope ?? null;
     const linkScopeKey = scope ? serverAccountScopedResourceKey(scope, sessionId) : null;
     const selector = React.useMemo(() => createWorkflowTriggerSetSelector(`session:${sessionId}`), [sessionId]);
     const sets = getStorage()(selector);
-    const accountRead = useWorkflowTriggerSets(ACCOUNT_TRIGGERS);
     const changeSelector = React.useMemo(() => createWorkflowTriggerChangeSelector(sessionId), [sessionId]);
     const changeSignal = getStorage()(changeSelector);
-    const lastRunAtByAutomationId = getStorage()(useShallow((state) => Object.fromEntries(
-        sets.map((set) => [set.automationId, state.automations[set.automationId]?.lastRunAt ?? null]),
-    )));
 
-    const [state, setState] = React.useState<Readonly<{ scopeKey: string | null; status: SessionTriggersRead['status'] }>>(
-        () => ({ scopeKey: linkScopeKey, status: 'loading' }),
-    );
     const [attempt, setAttempt] = React.useState(0);
+    const [observerAttempt, setObserverAttempt] = React.useState(0);
+    const accountRead = useWorkflowTriggerSets(ACCOUNT_TRIGGERS);
+    const [observerFailure, setObserverFailure] = React.useState<Readonly<{
+        scopeKey: string; failure: NonNullable<SessionTriggersRead['observationFailure']>;
+    }> | null>(null);
     const [links, setLinks] = React.useState<Readonly<{ scopeKey: string | null; value: SessionTriggersRead['pullRequestLinks'] }>>(
         () => ({ scopeKey: linkScopeKey, value: { status: 'loading' } }),
     );
@@ -79,38 +74,58 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     React.useEffect(() => {
         if (linkScopeKey === null) return;
         if (!accountLifetime) return;
-        const watch = watchActivePluginCollectionChanges({
-            pluginId: 'happier.channels', collectionId: 'channel-state', accountLifetime,
-            onInvalidated: () => setAttempt((value) => value + 1),
+        const controller = new AbortController();
+        const retirement = accountLifetime.onRetire(() => controller.abort());
+        const observer = observeCurrentUiContextContributedAction({
+            action: { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 },
+            input: { kind: 'get', sessionId }, defaultSessionId: sessionId, signal: controller.signal,
+            isCurrent: () => !controller.signal.aborted && accountLifetime.isCurrent(),
+            invalidate: () => setAttempt(value => value + 1),
+        }, { execute: createFrontDoorActionExecute(), context: {
+            surface: 'ui', serverId: accountLifetime.scope.serverId,
+            expectedAccountId: accountLifetime.scope.accountId, defaultSessionId: sessionId, signal: controller.signal,
+        } });
+        // A failed dependency attachment does not discard the independently
+        // readable trigger sets. Retry reattaches through the same public owner.
+        void observer.then(() => {
+            if (!controller.signal.aborted && accountLifetime.isCurrent()) {
+                setObserverFailure(null);
+            }
+        }, (error: unknown) => {
+            if (controller.signal.aborted || !accountLifetime.isCurrent()) return;
+            setObserverFailure({ scopeKey: linkScopeKey, failure: {
+                code: isPluginError(error) ? error.code : 'internal_error', phase: 'observe',
+                retryable: isPluginError(error) && error.retryable === true,
+            } });
         });
-        return () => watch?.dispose();
-    }, [accountLifetime, linkScopeKey]);
+        return () => {
+            controller.abort(); retirement.dispose();
+            void observer.then(subscription => subscription.dispose()).catch(() => {});
+        };
+    }, [accountLifetime, observerAttempt, linkScopeKey, sessionId]);
 
     React.useEffect(() => {
         if (!accountLifetime) return;
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
-        setState((current) => (current.scopeKey === linkScopeKey ? current : { scopeKey: linkScopeKey, status: 'loading' }));
         listSessionTriggers({ sessionId }, { ...options(), signal: controller.signal })
             .then((result) => {
                 if (!controller.signal.aborted && accountLifetime.isCurrent()) {
                     setLinks({ scopeKey: linkScopeKey, value: result.pullRequestLinks });
-                    setState({ scopeKey: linkScopeKey, status: 'ready' });
                 }
             })
             .catch(() => {
-                if (!controller.signal.aborted && accountLifetime.isCurrent()) setState({ scopeKey: linkScopeKey, status: 'failed' });
+                if (!controller.signal.aborted && accountLifetime.isCurrent()) {
+                    setLinks({ scopeKey: linkScopeKey, value: { status: 'unavailable', code: 'target_unavailable' } });
+                }
             });
         return () => { controller.abort(); retirement.dispose(); };
-    }, [accountLifetime, attempt, changeSignal, linkScopeKey, options, sessionDirectory, sessionId, sessionMachineId]);
+    }, [accountLifetime, attempt, changeSignal, linkScopeKey, options, sessionId]);
 
     const applyWrite = React.useCallback((result: WorkflowTriggerWriteResult) => {
         setAttempt((value) => value + 1);
-        setState((current) => (current.scopeKey === linkScopeKey
-            ? { ...current, status: 'ready' }
-            : current));
         return result;
-    }, [linkScopeKey]);
+    }, []);
 
     const add = React.useCallback<SessionTriggersRead['add']>(
         async (request) => applyWrite(await addSessionTrigger({ ...request, sessionId }, options())),
@@ -136,16 +151,17 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
         },
         [applyWrite, options, sessionId, sets],
     );
-    const retry = React.useCallback(() => { setAttempt((value) => value + 1); accountRead.retry(); }, [accountRead.retry]);
+    const retry = React.useCallback(() => {
+        setAttempt(value => value + 1); setObserverAttempt(value => value + 1); accountRead.retry();
+    }, [accountRead.retry]);
 
-    const owned = linkScopeKey !== null && state.scopeKey === linkScopeKey;
+    const observationFailure = observerFailure?.scopeKey === linkScopeKey ? observerFailure.failure : null;
     return {
-        machineId: readMachineControlTargetForSession(sessionId)?.machineId ?? null,
+        observationFailure,
+        machineId: sessionMachineId,
         pullRequestLinks: linkScopeKey !== null && links.scopeKey === linkScopeKey ? links.value : { status: 'loading' },
-        status: !owned ? 'loading' : state.status === 'failed' || accountRead.status === 'failed' ? 'failed'
-            : state.status === 'loading' || accountRead.status === 'loading' ? 'loading' : 'ready',
+        status: linkScopeKey === null ? 'loading' : accountRead.status,
         sets,
-        lastRunAtByAutomationId,
         retry,
         add,
         update,

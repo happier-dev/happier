@@ -1,20 +1,27 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    WorkflowRunRecipientCensusResponseV1Schema, WorkflowProgressEnvelopeV1Schema,
-    materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+    WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { WorkflowProgressEnvelopeV1Schema} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import {
+    materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationRunCause';
+import { HappierStatusDot } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
 
@@ -25,11 +32,22 @@ const { workflowRunRowFromSummary, workflowRunStoreKey } = await import('@/sync/
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { SessionWritesHereSection } = await import('@/components/workflows/triggers/SessionWritesHereSection');
-const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
+const { useScheduledWorkflowRows } = await import('@/components/workflows/triggers/ScheduledWorkflowSection');
+const { resetWorkflowLibraryReadsForTests, useWorkflowRunWindow } = await import('@/components/workflows/library/workflowLibraryReads');
 const { WorkViewportContext } = await import('@/components/sessions/work/WorkItemRow');
 const { WorkflowRunItemBody } = await import('./WorkflowRunItemBody');
 const { SessionTriggerHistoryScope } = await import('@/components/workflows/triggers/SessionTriggerHistoryScope');
 const { WorkflowTriggerRunHistory } = await import('@/components/workflows/triggers/WorkflowTriggerRunHistory');
+const { WorkflowTriggerSection } = await import('@/components/workflows/triggers/WorkflowTriggerSection');
+const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('@/components/workflows/triggers/workflowTriggerDraft');
+const { useAccountWorkflowEditor } = await import('@/components/workflows/triggers/AccountTriggersSection');
+const { ToolbarButton } = await import('@/components/ui/buttons/ToolbarButton');
+
+function SessionWritesHereTestHost(props: Readonly<{ sessionId: string; serverId: string }>) {
+    const scheduled = useScheduledWorkflowRows(props.sessionId);
+    const read = useWorkflowRunWindow(`destination:${props.sessionId}`);
+    return <SessionWritesHereSection {...props} scheduled={scheduled} read={read} />;
+}
 const route = '/v3/automations/runs/workflow-storage';
 const resultText = 'Kept the useful fact.\nArchived its predecessor.';
 let previous = storage.getState();
@@ -41,6 +59,10 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: routerPush } }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+// The portal is the native/DOM boundary; the trigger form and History action stay real.
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal,
+        { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
 
 afterEach(async () => {
     clearMachineRequestReachabilityForTest();
@@ -54,7 +76,7 @@ afterEach(async () => {
     publishAppliedActiveServerSnapshot(previousSnapshot);
 });
 
-async function initializeRun() {
+async function initializeRun(triggerId?: string) {
     singleton = await loadSyncSingletonForTests();
     previous = storage.getState();
     previousSnapshot = getActiveServerSnapshot();
@@ -64,7 +86,10 @@ async function initializeRun() {
     storage.getState().activateProfileScope({ serverId: id, accountId: 'account-1' });
     storage.setState({ settings: { ...storage.getState().settings, experiments: true, featureToggles: { automations: true } } });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    const summary = createWorkflowRunSummaryFixture({ id: 'habit-run', state: 'succeeded', revision: 3, origin: { kind: 'direct' } });
+    const cause = triggerId ? AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId, triggerRevision: 1, triggerKind: 'schedule',
+        occurrenceKey: 'A'.repeat(43), occurredAt: 1, evidence: { scheduledFor: 1 } }) : null;
+    const summary = createWorkflowRunSummaryFixture({ id: 'habit-run', state: 'succeeded', revision: 3,
+        origin: cause ? { kind: 'automation', automationId: 'auto-1', cause } : { kind: 'direct' } });
     storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(summary, null)]);
     const definition = createWorkflowDefinitionFixture({
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
@@ -76,9 +101,12 @@ async function initializeRun() {
     });
     const materialized = await materializeWorkflowAcceptedSnapshotV1({
         definition, admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
-        context: { source: { kind: 'inline' }, inputs: {}, machineId: summary.machineId, executionTarget: { kind: 'session' },
+        context: { source: cause ? { kind: 'automation', automationId: 'auto-1', definitionId: 'saved-workflow',
+                revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: { kind: 'person', accountId: 'account-1' } } : { kind: 'inline' },
+            inputs: {}, machineId: summary.machineId, executionTarget: { kind: 'session' },
             workspaceTarget: { project: { machineId: summary.machineId, directory: '/repo', checkoutRootPath: '/repo' } },
-            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+            ...(cause ? { actionCaller: { kind: 'automationRun' as const, runId: summary.id, automationId: 'auto-1', cause } }
+                : { origin: { kind: 'direct' as const } }), authorization: { principal: { kind: 'host' } } },
     });
     if (!materialized.ok) throw new Error(`fixture_materialization_failed:${materialized.error.code}`);
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
@@ -101,6 +129,10 @@ async function initializeRun() {
             if (input.operation === 'run-key.census') return { body: keyCensus };
             if (input.operation === 'invocations.list') return { body: { invocations: [], parentRevision: run.revision } };
             if (input.operation === 'list') {
+                if (triggerId && (!('request' in input) || input.request === null || typeof input.request !== 'object'
+                    || !('triggerId' in input.request) || input.request.triggerId !== triggerId)) {
+                    return { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, rootProgressByRunId: {} } };
+                }
                 const index = createWorkflowInvocationIndexFixture({ id: 'habit-root', runId: run.id, contentRevision: '8' });
                 const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
                     invocationPath: { blockId: '$root', scope: [] }, blockKind: 'root', attempt: '0', logicalInvocationRecordId: index.id,
@@ -120,6 +152,115 @@ async function initializeRun() {
 }
 
 describe('opened habit History result', () => {
+    it('opens a saved workflow schedule History on demand with its frozen editor attribution', async () => {
+        await initializeRun('timer');
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'auto-1', revision: 1, enabled: true, health: 'available',
+            // The current definition changed since this occurrence; History must read the accepted source.
+            sourceSavedBy: { kind: 'agent', accountId: 'account-1' },
+            triggers: ['timer', 'sibling-timer'].map(id => ({ id, revision: 1, enabled: true, kind: 'schedule', nextRunAt: null,
+                createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
+                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } })) });
+        const before = http.requests.length;
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="saved-workflow" set={set}
+            draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
+            runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+        await flushHookEffects();
+        expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
+        expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
+        const history = screen.findHostByTestId('saved-workflow-trigger:saved:timer-history');
+        expect(history).not.toBeNull();
+        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
+        const reads = http.requests.slice(before).filter(request => request.path === route && request.input !== null
+            && typeof request.input === 'object' && 'operation' in request.input && request.input.operation === 'list');
+        expect(reads.length).toBeGreaterThan(0);
+        for (const request of reads) expect(request.input).toMatchObject({ request: { triggerId: 'timer' } });
+        const beforeSibling = http.requests.length;
+        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:sibling-timer-history');
+        await waitForHomeGovernance(() => expect(http.requests.slice(beforeSibling).some(request => request.path === route)).toBe(true));
+        await flushHookEffects();
+        const siblingReads = http.requests.slice(beforeSibling).filter(request => request.path === route
+            && request.input !== null && typeof request.input === 'object' && 'operation' in request.input
+            && request.input.operation === 'list');
+        expect(siblingReads.length).toBeGreaterThan(0);
+        for (const request of siblingReads) expect(request.input).toMatchObject({ request: { triggerId: 'sibling-timer' } });
+        expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
+        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer');
+        expect(screen.findHostByTestId('saved-workflow-trigger-popover-history')).not.toBeNull();
+        await screen.pressByTestIdAsync('saved-workflow-trigger-popover-history');
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
+    });
+    it('opens an inline Account workflow occurrence from its settings History action', async () => {
+        await initializeRun('timer');
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'auto-1', revision: 1, enabled: true, health: 'available',
+            target: { kind: 'inline', definition: createWorkflowDefinitionFixture() },
+            triggers: [{ id: 'timer', revision: 1, enabled: true, kind: 'schedule', nextRunAt: null,
+                createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
+                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } }] });
+        const read = { sets: [set], status: 'ready' as const, retry: () => {}, acknowledge: () => {} };
+        function InlineAccountWorkflow() {
+            const anchorRef = React.useRef<View>(null);
+            const editor = useAccountWorkflowEditor({ read });
+            return <>
+                <View ref={anchorRef}><ToolbarButton testID="inline-workflow-settings" label="Open settings"
+                    onPress={() => { void editor.open({ automationId: set.automationId, triggerId: set.triggers[0]!.id }, anchorRef); }} /></View>
+                {editor.popover}
+            </>;
+        }
+        const screen = await renderScreen(<InlineAccountWorkflow />);
+        const before = http.requests.length;
+        await screen.pressByTestIdAsync('inline-workflow-settings');
+        expect(screen.findHostByTestId('workflows-column-trigger-popover-history')).not.toBeNull();
+        expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
+        await screen.pressByTestIdAsync('workflows-column-trigger-popover-history');
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
+    });
+    it.each(['list', 'work'] as const)('mounts the held request outside navigation in its %s row without loading a closed body', async (presentation) => {
+        const { home } = await initializeRun();
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+            id: 'habit-run', revision: 4, state: 'waiting_for_review', invocationAttentionRequired: true,
+            heldStep: { invocationId: 'review-step', label: 'Review changes' },
+        }))]);
+        const before = http.requests.length;
+        const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} presentation={presentation} />);
+        const trigger = screen.findHostByTestId('workflow-run-request-peek:habit-run');
+        expect(trigger).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-request-peek:habit-run:peek')).toBeNull();
+        for (let node = trigger?.parent; node; node = node.parent) {
+            if (typeof node.type !== 'string') continue;
+            expect(node.props.testID).not.toBe('workflow-run-row:habit-run');
+        }
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey('habit-run')]?.detail).toBeUndefined();
+        expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
+    });
+    it.each([
+        { name: 'running offline', state: 'running', offline: true, dot: false, spinning: false },
+        { name: 'live running', state: 'running', offline: false, dot: false, spinning: true },
+        { name: 'acknowledged failure', state: 'failed', offline: false, dot: false, spinning: false },
+        { name: 'review hold', state: 'waiting_for_review', offline: false, dot: true, spinning: false },
+        { name: 'pending Stop', state: 'cancelled', offline: false, dot: false, spinning: true },
+    ] as const)('draws the calm row mark for $name (ruling 2026-11-01)', async ({ state, offline, dot, spinning }) => {
+        const { home } = await initializeRun();
+        const machine = createMachineFixture({ id: 'machine-1', active: !offline,
+            activeAt: offline ? Date.now() - 120_000 : Date.now() });
+        storage.setState({ machines: { [machine.id]: machine } });
+        captureMachinePresenceObservation({ serverId: home.id, accountId: 'account-1' })([machine.id]);
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+            id: 'habit-run', revision: 4, state, failureUnseen: false,
+            attentionRequired: state === 'waiting_for_review', invocationAttentionRequired: state === 'waiting_for_review',
+            workflowCustodyState: state === 'cancelled' ? 'pending' : 'settled',
+        }))]);
+        const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} />);
+        const spinner = screen.findHostByTestId('session-row-attention-indicator-spinner-workflow-run-habit-run');
+        expect(Boolean(spinner)).toBe(spinning);
+        const id = 'session-row-attention-indicator-dot-workflow-run-habit-run';
+        expect(Boolean(screen.findHostByTestId(id))).toBe(dot);
+        // A row mark is a plain dot: the state's shape lives in the word, never a glyph on the row.
+        expect(screen.findAllByType(HappierStatusDot).find(node => node.props.testID === id)?.props.glyph).toBeUndefined();
+    });
     it('does not call pending Stop offline after its Home withdraws Machine presence', async () => {
         const { home } = await initializeRun();
         const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
@@ -150,6 +291,30 @@ describe('opened habit History result', () => {
         await act(async () => storage.setState({ machines: { [machine.id]: { ...machine, active: true, activeAt: Date.now() } } }));
         expect(screen.getTextContent()).toContain('workflows.run.stopping');
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
+    });
+    it.each(['list', 'work'] as const)('does not re-render its %s row for a Machine heartbeat that keeps presence', async (presentation) => {
+        const { home } = await initializeRun();
+        const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } });
+        storage.setState({ machines: { [machine.id]: machine } });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+            id: 'habit-run', revision: 4, state: 'running' }))]);
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="row" onRender={() => { commits += 1; }}>
+            <WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} presentation={presentation} />
+        </React.Profiler>);
+        await flushHookEffects();
+        const settled = commits;
+        // A live Machine republishes its record on every heartbeat (activeAt, updatedAt, daemon state).
+        for (let beat = 1; beat <= 3; beat += 1) {
+            await act(async () => storage.setState({ machines: { [machine.id]: { ...machine,
+                activeAt: (machine.activeAt ?? 0) + beat * 1000, updatedAt: (machine.updatedAt ?? 0) + beat } } }));
+        }
+        expect(commits - settled).toBe(0);
+        await act(async () => storage.setState({ machines: { [machine.id]: { ...machine,
+            metadata: { ...machine.metadata!, displayName: 'Release box' } } } }));
+        expect(commits - settled).toBe(1);
+        expect(screen).toBeTruthy();
     });
     it.each(['work', 'list'] as const)('retains the Run source Home when opening its %s row', async (presentation) => {
         const { home } = await initializeRun();
@@ -217,7 +382,7 @@ describe('opened habit History result', () => {
         const mount = (scoped: boolean) => {
             const lists = <>
                 <WorkflowTriggerRunHistory automationId="auto-1" triggerId="timer" />
-                <SessionWritesHereSection sessionId="first-session" serverId={home.id} />
+                <SessionWritesHereTestHost sessionId="first-session" serverId={home.id} />
             </>;
             return renderScreen(<WorkViewportContext.Provider value={viewport}>
                 {scoped ? <SessionTriggerHistoryScope>{lists}</SessionTriggerHistoryScope> : lists}
@@ -252,10 +417,10 @@ describe('opened habit History result', () => {
             return () => {};
         } };
         const first = await renderScreen(<WorkViewportContext.Provider value={viewport}>
-            <SessionWritesHereSection sessionId="first-session" serverId={home.id} />
+            <SessionWritesHereTestHost sessionId="first-session" serverId={home.id} />
         </WorkViewportContext.Provider>);
         const second = await renderScreen(<WorkViewportContext.Provider value={viewport}>
-            <SessionWritesHereSection sessionId="second-session" serverId={home.id} />
+            <SessionWritesHereTestHost sessionId="second-session" serverId={home.id} />
         </WorkViewportContext.Provider>);
         expect(first.getTextContent()).toContain('Check');
         expect(first.getTextContent()).not.toContain('workflows.invocationState.completed');
@@ -310,8 +475,10 @@ describe('opened habit History result', () => {
         expect(http.requestsFor(route)).toEqual([]);
         const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id}
             {...{ includeResult: true }} />);
-        await flushHookEffects({ cycles: 40 });
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('Kept the useful fact. Archived its predecessor.');
+        // The real Action executor loads asynchronously; await its observable result.
+        await waitForHomeGovernance(() => {
+            expect(JSON.stringify(screen.tree.toJSON())).toContain('Kept the useful fact. Archived its predecessor.');
+        });
         expect(storage.getState().workflowRunsById[workflowRunStoreKey('habit-run')]?.detail)
             .toMatchObject({ result: detail.result, finalOutputInvocationId: 'chosen-output' });
         expect(http.requestsFor(route).filter(request => request.input && typeof request.input === 'object'
@@ -324,16 +491,19 @@ describe('opened habit History result', () => {
         serve({ refuse: true });
         const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id}
             {...{ includeResult: true }} />);
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('workflows.contentUnavailable');
+        await waitForHomeGovernance(() => {
+            expect(JSON.stringify(screen.tree.toJSON())).toContain('workflows.contentUnavailable');
+        });
         expect(storage.getState().workflowRunsById[workflowRunStoreKey('habit-run')]?.detail).toBeUndefined();
         serve();
         const stopPropagation = vi.fn();
         await act(async () => {
             invokeTestInstanceHandler(screen.findHostByTestId('workflow-run-result:habit-run:retry'), 'onPress', withPressEvent ? { stopPropagation } : undefined);
         });
-        await flushHookEffects({ cycles: 40 });
         expect(stopPropagation).toHaveBeenCalledTimes(withPressEvent ? 1 : 0);
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('Kept the useful fact. Archived its predecessor.');
+        await waitForHomeGovernance(() => {
+            expect(JSON.stringify(screen.tree.toJSON())).toContain('Kept the useful fact. Archived its predecessor.');
+        });
     });
 
     it('discards an exact-result response after the Account changes', async () => {
@@ -342,7 +512,9 @@ describe('opened habit History result', () => {
         serve({ respondAfter: pending.promise });
         const screen = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id}
             {...{ includeResult: true }} />);
-        expect(http.requestsFor(route).map(request => request.input)).toEqual([{ operation: 'get', runId: 'habit-run' }]);
+        await waitForHomeGovernance(() => {
+            expect(http.requestsFor(route).map(request => request.input)).toEqual([{ operation: 'get', runId: 'habit-run' }]);
+        });
         await act(async () => {
             storage.setState({ profileScope: { serverId: home.id, accountId: 'other-account' }, workflowRunsById: {} });
             pending.resolve();

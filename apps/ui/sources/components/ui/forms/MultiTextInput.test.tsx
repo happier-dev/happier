@@ -27,6 +27,7 @@ beforeEach(() => {
     // jsdom has no layout; keep that boundary explicit while the editor and DOM events stay real.
     Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] });
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect(25, 35, 0, 18) });
+    vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
 });
 afterEach(async () => {
     await act(async () => root?.unmount());
@@ -197,6 +198,52 @@ describe('MultiTextInput web surface', () => {
         expect(onSelectionChange).not.toHaveBeenCalled();
     });
 
+    it.each([{ start: 6, end: 6 }, { start: 6, end: 11 }])('keeps a restored selection through focus, replacement and refocus: %j', async selection => {
+        const onChangeText = vi.fn();
+        const view = await render({ value: 'hello world!', onChangeText });
+        await act(async () => view.ref.current!.setSelection(selection));
+        // An inactive row has no DOM selection. Focusing must publish the editor's
+        // restored range to the browser before the next native edit reads it.
+        await act(async () => { window.getSelection()?.removeAllRanges(); view.ref.current!.focus(); });
+        expect(document.activeElement).toBe(view.input);
+        expect(window.getSelection()?.anchorOffset).toBe(selection.start);
+        expect(window.getSelection()?.focusOffset).toBe(selection.end);
+        expect(window.getSelection()?.toString()).toBe(selection.start === selection.end ? '' : 'world');
+        await paste(view.input, 'new');
+        const expected = selection.start === selection.end ? 'hello newworld!' : 'hello new!';
+        expect(onChangeText).toHaveBeenLastCalledWith(expected);
+        await view.update({ value: expected });
+        await act(async () => { view.ref.current!.blur(); window.getSelection()?.removeAllRanges(); view.ref.current!.focus(); });
+        await paste(view.input, '?');
+        expect(view.ref.current!.getText()).toBe(selection.start === selection.end ? 'hello new?world!' : 'hello new?!');
+    });
+
+    it('keeps a restored active range through focus and IME commit, then edits at the committed caret', async () => {
+        const onChangeText = vi.fn(), onStateChange = vi.fn();
+        const view = await render({ value: 'hello world!', onChangeText, onStateChange });
+        await act(async () => { view.ref.current!.setSelection({ start: 6, end: 11 }); view.ref.current!.focus(); });
+        const editor = (view.input as TiptapEditorHTMLElement).editor!;
+        await act(async () => {
+            view.input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+            editor.view.dispatch(editor.state.tr.insertText('ni'));
+        });
+        await view.update({ value: 'hello world!' });
+        await act(async () => view.ref.current!.setSelection({ start: 6, end: 11 }));
+        expect(view.ref.current!.getText()).toBe('hello ni!');
+        expect(onChangeText).not.toHaveBeenCalled();
+        await act(async () => {
+            editor.view.dispatch(editor.state.tr.insertText('你', 7, 9));
+            view.input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+            await Promise.resolve();
+        });
+        expect(onChangeText.mock.calls).toEqual([['hello 你!']]);
+        expect(onStateChange).toHaveBeenLastCalledWith({ text: 'hello 你!', selection: { start: 7, end: 7 } });
+        await view.update({ value: 'hello 你!' });
+        await act(async () => { view.ref.current!.blur(); view.ref.current!.focus(); });
+        await paste(view.input, '?');
+        expect(view.ref.current!.getText()).toBe('hello 你?!');
+    });
+
     it('keeps uncommitted IME composition inside the editor and reports the committed document once', async () => {
         const onChangeText = vi.fn(), onStateChange = vi.fn(), onSelectionChange = vi.fn();
         const view = await render({ value: 'hi ', onChangeText, onStateChange, onSelectionChange });
@@ -315,6 +362,32 @@ describe('MultiTextInput web surface', () => {
             expect(onContentHeightChange).toHaveBeenCalledTimes(reports);
             expect(view.host.scrollTop).toBe(200);
             expect(view.host.style.maxHeight).toBe('144px');
+        } finally { vi.unstubAllGlobals(); }
+    });
+
+    it('publishes no content height while a retained pane hides it (display: none reports every observed box 0×0)', async () => {
+        const observers: Array<() => void> = [];
+        vi.stubGlobal('ResizeObserver', class {
+            constructor(callback: () => void) { observers.push(callback); }
+            observe() {}
+            disconnect() {}
+        });
+        try {
+            const onContentHeightChange = vi.fn();
+            const view = await render({ value: 'hello', onContentHeightChange });
+            Object.defineProperty(view.host, 'scrollHeight', { configurable: true, value: 120 });
+            await act(async () => { observers.forEach(notify => notify()); });
+            expect(onContentHeightChange).toHaveBeenLastCalledWith(120);
+            const reports = onContentHeightChange.mock.calls.length;
+            // Hidden: the browser lays nothing out, so the host has no box and no scroll height.
+            let hidden = true;
+            Object.defineProperty(view.host, 'checkVisibility', { configurable: true, value: () => !hidden });
+            Object.defineProperty(view.host, 'scrollHeight', { configurable: true, value: 0 });
+            await act(async () => { observers.forEach(notify => notify()); });
+            hidden = false;
+            Object.defineProperty(view.host, 'scrollHeight', { configurable: true, value: 120 });
+            await act(async () => { observers.forEach(notify => notify()); });
+            expect(onContentHeightChange).toHaveBeenCalledTimes(reports);
         } finally { vi.unstubAllGlobals(); }
     });
 

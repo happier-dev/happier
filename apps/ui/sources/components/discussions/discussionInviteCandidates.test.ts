@@ -3,7 +3,7 @@ import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protoco
 import { buildExecutableParticipantPickerOption } from '@/components/sessions/authoring/executableParticipantPicker';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import type { SessionAccessCandidateRowModel } from '@/components/sessions/access/sessionAccessEditorTypes';
-import { buildDiscussionInviteCandidates } from './discussionInviteCandidates';
+import { buildDiscussionInviteCandidates, type DiscussionInviteCandidatesInput } from './discussionInviteCandidates';
 import { createSessionAccessFixture } from '@/dev/testkit';
 
 const scope = { serverId: 'home-a', accountId: 'owner' };
@@ -26,16 +26,30 @@ function model(serverId = scope.serverId) {
 
 describe('Discussion Invite candidates', () => {
     it('preserves canonical title readability independently of the display label', () => {
-        const candidates = buildDiscussionInviteCandidates({ scope, people: [], modelOptions: [], sessions: [
+        const input = { scope, people: [], modelOptions: [], sessions: [
             { address: { serverId: scope.serverId, sessionId: 'locked' }, label: 'Encrypted session', titleReadable: false,
                 access: createSessionAccessFixture() },
             { address: { serverId: scope.serverId, sessionId: 'readable' }, label: 'Encrypted session', titleReadable: true,
                 access: createSessionAccessFixture() },
-        ] });
+        ] } satisfies DiscussionInviteCandidatesInput;
+        const candidates = buildDiscussionInviteCandidates(input);
         expect(candidates).toMatchObject([
             { kind: 'session', titleReadable: false, label: 'Encrypted session' },
             { kind: 'session', titleReadable: true, label: 'Encrypted session' },
         ]);
+        const repeated = buildDiscussionInviteCandidates({ ...input,
+            sessions: input.sessions.map(row => ({ ...row, address: { ...row.address } })),
+        }, candidates);
+        expect(repeated).toBe(candidates);
+        const reordered = buildDiscussionInviteCandidates({ ...input, sessions: [...input.sessions].reverse() }, candidates);
+        expect(reordered[0]).toBe(candidates[1]);
+        expect(reordered[1]).toBe(candidates[0]);
+        const changed = buildDiscussionInviteCandidates({ ...input,
+            sessions: input.sessions.map((row, index) => index === 0 ? { ...row, titleReadable: true } : row),
+        }, candidates);
+        expect(changed[0]).not.toBe(candidates[0]);
+        expect(changed[0]).toMatchObject({ titleReadable: true });
+        expect(changed[1]).toBe(candidates[1]);
     });
 
     it('deduplicates people and existing Agents against the Discussion roster, never the source Session grants', () => {

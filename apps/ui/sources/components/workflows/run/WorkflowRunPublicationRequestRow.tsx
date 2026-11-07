@@ -21,6 +21,8 @@ export const WorkflowRunPublicationRequestRow = React.memo(
       serverId: string | null | undefined;
       onOpen: () => void;
       testID: string;
+      /** What waits on this request in the Run (the item it belongs to), so sibling requests read apart. */
+      context?: string;
     }>,
   ) {
     const artifact = useArtifact(props.artifactId);
@@ -43,7 +45,8 @@ export const WorkflowRunPublicationRequestRow = React.memo(
       <ActionApprovalPendingNotice
         testID={props.testID}
         message={t('approvals.waitingForYou')}
-        summary={named ? title.title : null}
+        // The item leads, so two requests from one Action read apart ("Alex · Invite a participant…").
+        summary={named ? (props.context ? `${props.context} \u00b7 ${title.title}` : title.title) : null}
         openLabel={t('inbox.work.detail.openApproval')}
         onOpenApproval={props.onOpen}
       />

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 
-import type { AgentExecutionTargetV1 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { stripBackendTargetSourceKind } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -18,9 +18,11 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useAiLaunchProfilesWithReadState } from '@/sync/store/useAiLaunchProfiles';
-import { useSetting, useSettings, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
+import { useSetting, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { getPreferredLanguage } from '@/text';
 import { resolveWindowsTerminalAvailable } from '@/capabilities/windowsTerminalAvailability';
 
@@ -59,12 +61,10 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     const serverId = params.serverId ?? null;
     const directory = params.directory?.trim() ?? '';
     const selectedMachine = useServerScopedMachine(serverId, machineId);
-    const settings = useSettings();
     const preferredLanguage = getPreferredLanguage();
     const { snapshot: acpCatalog } = useAcpCatalogForServer(params.serverId);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const lastUsedAgent = useSetting('lastUsedAgent');
-    const lastUsedBackendTarget = useSetting('lastUsedBackendTarget');
+    const { lastUsedAgent, lastUsedBackendTarget } = useLastUsedBackendSelection();
     const useProfiles = useSetting('useProfiles') === true;
     // The same scoped feature decisions New Session consults for this spawn target.
     const spawnFeatureScope = React.useMemo(
@@ -74,15 +74,16 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     const directTranscriptsEnabled = useFeatureEnabled('sessions.direct', spawnFeatureScope);
 
     const daemonProjection = useDaemonMergedProjectionInputs({
+        sections: ['agentsById', 'settingsById', 'familiesById.pluginUi', 'resourcesById'],
         machineId,
         serverId,
         enabled: machineId !== null,
     });
     const projectionInputs = daemonProjection.phase === 'ready' ? daemonProjection.inputs : null;
     const pluginUiProjection = projectionInputs?.pluginUiProjection ?? null;
+    const localizePluginText = usePluginLocalizedTextResolver({ projection: pluginUiProjection, locale: preferredLanguage });
 
-    const agentTargets = React.useMemo<readonly SessionAuthoringAgentTargetOption[]>(() => {
-        const entries = getResolvedBackendCatalogEntries({
+    const backendEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
             acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey,
@@ -92,9 +93,11 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             ...(projectionInputs?.discoveredBackendIds === undefined
                 ? {}
                 : { discoveredBackendIds: projectionInputs.discoveredBackendIds }),
-        });
+        }), [acpCatalog, backendEnabledByTargetKey, projectionInputs]);
+    const settings = useAgentUiSettings({ agentIds: backendEntries.map(entry => entry.agentId), machineId, domain: 'transcriptStorage' });
+    const agentTargets = React.useMemo<readonly SessionAuthoringAgentTargetOption[]>(() => {
         const options: SessionAuthoringAgentTargetOption[] = [];
-        for (const entry of entries) {
+        for (const entry of backendEntries) {
             // A configured backend with no machine projection has no resolvable
             // Agent contribution. Offering it would author a target the ingress
             // normalizer rejects, so it is left out rather than guessed.
@@ -112,12 +115,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
                     agentId: entry.agentId,
                     setting: runtimeBackendModeDescriptor.settingKey,
                     projectionInputs,
-                    localize: (pluginId, value) => resolvePluginLocalizedText({
-                        projection: pluginUiProjection,
-                        pluginId,
-                        value,
-                        locale: preferredLanguage,
-                    }),
+                    localize: localizePluginText,
                 })
                 : null;
             const allowedRuntimeBackendModes = runtimeBackendModeDescriptor
@@ -168,7 +166,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             });
         }
         return options;
-    }, [acpCatalog, backendEnabledByTargetKey, directTranscriptsEnabled, machineId, pluginUiProjection, preferredLanguage, projectionInputs, settings]);
+    }, [backendEntries, directTranscriptsEnabled, localizePluginText, machineId, projectionInputs, settings]);
 
     /**
      * Which Agent New Session would preselect here, resolved by that same owner
@@ -198,7 +196,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
         projectionInputs,
     ]);
 
-    const { profiles: launchProfiles, loading: profilesLoading } = useAiLaunchProfilesWithReadState();
+    const { profiles: launchProfiles, loading: profilesLoading, unavailableReason: profilesUnavailableReason } = useAiLaunchProfilesWithReadState();
     const profiles = React.useMemo(() => {
         if (!useProfiles) return [];
         return launchProfiles.map((profile) => ({
@@ -253,10 +251,11 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
         profiles,
         profilesEnabled: useProfiles,
         profilesLoading,
+        profilesUnavailableReason,
         machineName,
         targetIsWindows,
         windowsTerminalAvailable,
         connectedServices,
         ...(mcp === undefined ? {} : { mcp }),
-    }), [agentTargets, connectedServices, contextualDefaultAgentTarget, directory, machineId, machineName, mcp, profiles, profilesLoading, serverId, targetIsWindows, useProfiles, windowsTerminalAvailable]);
+    }), [agentTargets, connectedServices, contextualDefaultAgentTarget, directory, machineId, machineName, mcp, profiles, profilesLoading, profilesUnavailableReason, serverId, targetIsWindows, useProfiles, windowsTerminalAvailable]);
 }

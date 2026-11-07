@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationDefinitionListItemSchema,
     AutomationV3RunListItemSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
 
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -142,7 +142,7 @@ describe('fetchAndApplyAutomations', () => {
         await fetchAndApplyAutomations({
             credentials, requestContext,
             applyAutomations,
-            loadedAutomationRunIds: ['event-1'],
+            getDemandedAutomationRunIds: () => ['event-1'],
             refreshAutomationRunsWindow,
         });
 
@@ -204,7 +204,7 @@ describe('fetchAndApplyAutomations', () => {
         await fetchAndApplyAutomations({
             credentials, requestContext,
             applyAutomations,
-            loadedAutomationRunIds,
+            getDemandedAutomationRunIds: () => loadedAutomationRunIds,
             refreshAutomationRunsWindow,
         });
 
@@ -224,7 +224,7 @@ describe('fetchAndApplyAutomations', () => {
         await fetchAndApplyAutomations({
             credentials, requestContext,
             applyAutomations,
-            loadedAutomationRunIds: ['event-1'],
+            getDemandedAutomationRunIds: () => ['event-1'],
             refreshAutomationRunsWindow,
             shouldContinue: () => false,
         });

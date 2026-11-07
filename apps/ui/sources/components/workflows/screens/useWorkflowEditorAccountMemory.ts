@@ -9,6 +9,7 @@ import type { AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authori
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 const EMPTY_WORKSPACES: readonly WorkspaceRefV1[] = Object.freeze([]);
 
@@ -53,14 +54,19 @@ export function useWorkflowEditorAccountMemory(accountLifetime?: ServerAccountSc
         })().catch(() => { /* A failed memory read never borrows the focused Account's placement. */ });
         return () => { disposed = true; controller.abort(); retirement.dispose(); account?.dispose(); };
     }, [accountLifetime, readWorkspaces]);
-    const apply = React.useCallback(async (delta: AuthoringMemoryDelta) => {
-        if (accountLifetime === undefined) return applyActive(delta);
-        if (!accountLifetime?.isCurrent() || owner?.lifetime !== accountLifetime) throw new Error('authoring_memory_unavailable');
-        await owner.memory.applyDelta(delta);
+    // Remembering a personal target is a convenience, never part of definition Save.
+    // An unavailable addressed reader cannot borrow the focused Account's writer.
+    const remember = React.useCallback((delta: AuthoringMemoryDelta) => {
+        if (accountLifetime === undefined) {
+            fireAndForget(applyActive(delta), { tag: 'WorkflowEditor.rememberTarget' });
+            return;
+        }
+        if (!accountLifetime?.isCurrent() || owner?.lifetime !== accountLifetime) return;
+        fireAndForget(owner.memory.applyDelta(delta), { tag: 'WorkflowEditor.rememberTarget' });
     }, [accountLifetime, applyActive, owner]);
     const memory = state.lifetime === accountLifetime ? state.memory : authoringMemoryDefaults;
     return accountLifetime === undefined
-        ? { recentMachinePaths: activeRecent, workflowProjectTargetsByDefinitionId: activeProjects, workspaceRefs: readWorkspaces ? activeWorkspaceRefs : EMPTY_WORKSPACES, apply }
+        ? { recentMachinePaths: activeRecent, workflowProjectTargetsByDefinitionId: activeProjects, workspaceRefs: readWorkspaces ? activeWorkspaceRefs : EMPTY_WORKSPACES, remember }
         : { recentMachinePaths: memory.recentMachinePaths, workflowProjectTargetsByDefinitionId: memory.workflowProjectTargetsByDefinitionId,
-            workspaceRefs: readWorkspaces && workspaces?.lifetime === accountLifetime ? workspaces.refs : EMPTY_WORKSPACES, apply };
+            workspaceRefs: readWorkspaces && workspaces?.lifetime === accountLifetime ? workspaces.refs : EMPTY_WORKSPACES, remember };
 }

@@ -1,8 +1,107 @@
-import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { describe, expect, it, vi } from 'vitest';
-import { publishHomeAccountChangeForRouting, publishHomeAccountChange, subscribeHomeAccountChange, getHomeAccountChangeDemandedServerIds, publishHomeAccountChangeWake } from './homeAccountChange';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import * as changePlanner from './changesPlanner';
+import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import {
+    getHomeAccountChangeDemandedServerIds,
+    isHomeAdministrationAccountChange,
+    publishHomeAccountChange,
+    publishHomeAccountChangeForRouting,
+    publishHomeAccountChangeWake,
+    subscribeHomeAccountChange,
+} from './homeAccountChange';
 
 describe('Home Account change subscriptions', () => {
+    it('scopes early and consumed Artifact changes while retaining coarse recovery and legacy wakes', () => {
+        const observer = vi.fn();
+        const template = deriveArtifactStoredKindV1({ kind: BOT_TEMPLATE_ARTIFACT_KIND_V1 });
+        const document = deriveArtifactStoredKindV1({ title: 'A normal Doc has no header kind' });
+        const dispose = subscribeHomeAccountChange(observer, { artifactKinds: [BOT_TEMPLATE_ARTIFACT_KIND_V1],
+            includeCatchUpPending: true, reconnect: 'refresh' });
+        try {
+            for (const source of ['socket', 'catch-up-pending'] as const) {
+                publishHomeAccountChangeWake('artifact-home', { t: 'account-change', changeKinds: ['artifact'],
+                    entityIds: ['unknown-document'], artifactKinds: [document] }, source);
+            }
+            const documentPlan = changePlanner.planSyncActionsFromChanges([
+                { kind: 'artifact', entityId: 'unknown-document', cursor: 1, changedAt: 0, hint: { artifactKinds: [document] } },
+                { kind: 'session', entityId: 'session', cursor: 2, changedAt: 0 },
+            ]);
+            publishHomeAccountChange('artifact-home', ['unknown-document', 'session'], { changeKinds: ['artifact', 'session'],
+                artifactKinds: changePlanner.plannedArtifactKinds(documentPlan), feedPageConsumed: true });
+            expect(observer).not.toHaveBeenCalled();
+            publishHomeAccountChangeWake('artifact-home', { t: 'account-change', changeKinds: ['artifact'],
+                entityIds: ['new-share'], artifactKinds: [template] }, 'socket');
+            expect(observer).toHaveBeenCalledTimes(1);
+            // Mixed known kinds must wake both the old and new kind after a type transition.
+            publishHomeAccountChange('artifact-home', ['transition'], { changeKinds: ['artifact'],
+                artifactKinds: [document, template], feedPageConsumed: true });
+            expect(observer).toHaveBeenCalledTimes(2);
+            const partialPlan = changePlanner.planSyncActionsFromChanges([
+                { kind: 'artifact', entityId: 'document', cursor: 3, changedAt: 0, hint: { artifactKinds: [document] } },
+                { kind: 'artifact', entityId: 'legacy', cursor: 4, changedAt: 0 },
+            ]);
+            publishHomeAccountChange('artifact-home', ['document', 'legacy'], { changeKinds: ['artifact'],
+                artifactKinds: changePlanner.plannedArtifactKinds(partialPlan), feedPageConsumed: true });
+            expect(observer).toHaveBeenCalledTimes(3);
+            for (const artifactKinds of [undefined, [], ['invalid']]) {
+                publishHomeAccountChangeWake('artifact-home', { t: 'account-change', changeKinds: ['artifact'],
+                    entityIds: ['legacy'], artifactKinds }, 'socket');
+            }
+            publishHomeAccountChange('artifact-home', undefined, { source: 'snapshot' });
+            publishHomeAccountChange('artifact-home', undefined, { source: 'connected', changesCatchUp: true });
+            expect(observer).toHaveBeenCalledTimes(8);
+        } finally { dispose(); }
+    });
+    it('routes a primary reconnect wake by each observer\'s reconnect class, and a secondary Home reconnect to all', () => {
+        // A current app: one covered reader, one reader of data outside the changes feed, one reader whose
+        // last read is current. A primary reconnect's changes catch-up delivers what changed while away.
+        const reads = { covered: 0, refresh: 0, recover: 0 };
+        let recoverReadCurrent = true;
+        const releases = [
+            subscribeHomeAccountChange(() => { reads.covered += 1; }),
+            subscribeHomeAccountChange(() => { reads.refresh += 1; }, { reconnect: 'refresh' }),
+            subscribeHomeAccountChange(() => { reads.recover += 1; }, { reconnect: { readNotCurrent: () => !recoverReadCurrent } }),
+        ];
+        try {
+            publishHomeAccountChange('primary-home', undefined, { source: 'connected', changesCatchUp: true });
+            expect(reads).toEqual({ covered: 0, refresh: 1, recover: 0 });
+            // A reader whose last read failed during the outage still recovers on the reconnect.
+            recoverReadCurrent = false;
+            publishHomeAccountChange('primary-home', undefined, { source: 'connected', changesCatchUp: true });
+            expect(reads).toEqual({ covered: 0, refresh: 2, recover: 1 });
+            // The catch-up's own page still wakes covered readers.
+            publishHomeAccountChange('primary-home', ['self'], { changeKinds: ['account'], feedPageConsumed: true });
+            expect(reads.covered).toBe(1);
+            // A secondary Home has no changes catch-up: every reader re-reads.
+            recoverReadCurrent = true;
+            publishHomeAccountChange('secondary-home', undefined, { source: 'connected' });
+            expect(reads).toEqual({ covered: 2, refresh: 4, recover: 3 });
+        } finally { for (const release of releases) release(); }
+    });
+    it('routes Session-only wakes without waking unrelated Home catalogs', () => {
+        const event = publishHomeAccountChangeForRouting('session-home', ['session-a'], {
+            source: 'socket', changeKinds: ['session'], sessionSystemRecords: [] });
+        expect(event).toMatchObject({ accountSettingsAffects: false, profileCatalogAffects: false,
+            workflowTriggersAffect: false, workflowDefinitionsAffect: false });
+        // Kind-only routing cannot exclude Session accounting without a detailed hint.
+        expect(event.usageQueryAffects).toBe(true);
+        expect(publishHomeAccountChangeForRouting('session-home', undefined, { source: 'socket' }))
+            .toMatchObject({ accountSettingsAffects: true, workflowTriggersAffect: true });
+        expect(publishHomeAccountChangeForRouting('session-home', ['unknown-plugin'], {
+            source: 'socket', changeKinds: ['pluginDomain'] }).workflowTriggersAffect).toBe(true);
+    });
+    it('retains exact saved Workflow candidates with the definition owner identity vocabulary', () => {
+        const observer = vi.fn();
+        const dispose = subscribeHomeAccountChange(observer);
+        try {
+            const ids = ['11111111-1111-4111-8111-111111111111', 'retained-saved-definition'];
+            publishHomeAccountChange('workflow-home', ids, { changeKinds: ['artifact'], feedPageConsumed: true });
+            expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ changedWorkflowDefinitionIds: ids }));
+        } finally { dispose(); }
+    });
     it('retains the exact accounting relevance fact independently of private evidence', () => {
         const observer = vi.fn();
         const dispose = subscribeHomeAccountChange(observer);
@@ -72,16 +171,10 @@ describe('Home Account change subscriptions', () => {
         } finally { releaseSource(); releaseGeneric(); }
         expect(getHomeAccountChangeDemandedServerIds()).toEqual(beforeDemand);
     });
-    it('routes Session-only wakes without waking unrelated Home catalogs', () => {
-        const event = publishHomeAccountChangeForRouting('session-home', ['session-a'], {
-            source: 'socket', changeKinds: ['session'], sessionSystemRecords: [] });
-        expect(event).toMatchObject({ accountSettingsAffects: false, profileCatalogAffects: false,
-            workflowTriggersAffect: false, workflowDefinitionsAffect: false });
-        // Kind-only routing cannot exclude Session accounting without a detailed hint.
-        expect(event.usageQueryAffects).toBe(true);
-        expect(publishHomeAccountChangeForRouting('session-home', undefined, { source: 'socket' }))
-            .toMatchObject({ accountSettingsAffects: true, workflowTriggersAffect: true });
-        expect(publishHomeAccountChangeForRouting('session-home', ['unknown-plugin'], {
-            source: 'socket', changeKinds: ['pluginDomain'] }).workflowTriggersAffect).toBe(true);
+
+    it('treats a linked-identity change as Home administration eligibility input', () => {
+        const event = (entityIds: string[]) => ({ serverId: 'home-a', entityIds }) as Parameters<typeof isHomeAdministrationAccountChange>[0];
+        expect(isHomeAdministrationAccountChange(event([ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1]))).toBe(true);
+        expect(isHomeAdministrationAccountChange(event(['unrelated-row']))).toBe(false);
     });
 });

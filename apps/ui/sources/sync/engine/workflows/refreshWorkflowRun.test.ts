@@ -2,12 +2,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import type { WorkflowRunAcceptedContextV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { applyPlannedChangeActions } from '@/sync/runtime/orchestration/changesApplier';
+import { runSocketReconnectCatchUpViaChanges } from '@/sync/runtime/orchestration/socketReconnectViaChanges';
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -38,12 +41,13 @@ beforeEach(async () => {
 });
 afterEach(async () => { standardCleanup(); await home.reset(); storage.setState(previous); publishAppliedActiveServerSnapshot(applied, available); });
 
-async function serveRun(metadata?: { title: string }, unopened = false) {
+async function serveRun(metadata?: { title: string }, unopened = false,
+    source: WorkflowRunAcceptedContextV1['source'] = { kind: 'inline' }, access: 'owner' | 'view' = 'owner') {
     const materialized = await materializeWorkflowAcceptedSnapshotV1({
         definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait',
             document: { text: 'Continue', references: [], attachments: [] } }] }),
         admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
-        context: { source: { kind: 'inline' }, inputs: {}, machineId: run.machineId,
+        context: { source, inputs: {}, machineId: run.machineId,
             executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: run.machineId, directory: '/repo', checkoutRootPath: '/repo' } },
             origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } }, ...(metadata ? { metadata } : {}) },
     });
@@ -51,13 +55,90 @@ async function serveRun(metadata?: { title: string }, unopened = false) {
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: run.ownerAccountId, runId: run.id }, acceptedSnapshot: materialized.snapshot }));
     const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: run.id, ownerAccountId: run.ownerAccountId,
-        access: 'owner', encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
+        access, encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
         ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
     home.answer(serverId, route, { body: { runs: [run], acceptedEnvelopesByRunId: { [run.id]: unopened ? '{}' : acceptedEnvelope },
         keyCensusByRunId: { [run.id]: keyCensus } } });
 }
 
 describe('refreshWorkflowRunById through the real Account summary and store owners', () => {
+    it.each(['available', 'unreadable', 'incomplete'] as const)('FIX257 checkpoints a Workflow invalidation only after %s materialization', async kind => {
+        await serveRun(undefined, kind === 'unreadable');
+        if (kind === 'incomplete') home.answer(serverId, route, { body: { runs: [{ id: run.id }] } });
+        let cursor = '506279';
+        let firstPageReads = 0;
+        const outcomes: Awaited<ReturnType<typeof applyPlannedChangeActions>>[] = [];
+        const resume = () => runSocketReconnectCatchUpViaChanges({
+            credentials: { token: 'synthetic' }, accountId: run.ownerAccountId, afterCursor: cursor,
+            changesPageLimit: 200,
+            fetchChanges: async ({ afterCursor }) => {
+                if (afterCursor === '506279') {
+                    firstPageReads++;
+                    return { status: 'ok', changes: [{ cursor: 521547, kind: 'account',
+                        entityId: `workflow-run:${run.id}`, changedAt: 1, hint: null }], nextCursor: '521547' };
+                }
+                return { status: 'ok', changes: [], nextCursor: afterCursor ?? '0' };
+            },
+            checkpointCursor: next => { cursor = next; return true; },
+            snapshotRefresh: async () => ({ status: 'complete' }),
+            applyPlanned: async planned => {
+                const outcome = await applyPlannedChangeActions({ planned, credentials: { token: 'synthetic' },
+                    isSessionMessagesLoaded: () => false, invalidate: {}, refreshWorkflowRuns: refreshWorkflowRunsByIds,
+                    invalidateMessagesForSession: async () => {}, invalidateScmStatusForSession: () => {},
+                    applyTodoSocketUpdates: async () => {}, kvBulkGet: async () => ({ values: [] }) });
+                outcomes.push(outcome);
+                return outcome;
+            },
+        });
+        await resume();
+        if (kind === 'incomplete') {
+            expect(outcomes).toEqual([expect.objectContaining({ status: 'partial', safeAdvanceCursor: null,
+                blockedCursor: '521547', blockedReason: 'partial-materialization' })]);
+            expect(cursor).toBe('506279');
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]).toBeUndefined();
+            return;
+        }
+        expect(outcomes).toEqual([expect.objectContaining({ status: 'complete', safeAdvanceCursor: '521547' })]);
+        expect(cursor).toBe('521547');
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]?.summary?.id).toBe(run.id);
+        if (kind === 'unreadable') expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]?.metadata)
+            .toEqual({ kind: 'unavailable', reason: 'content_unavailable' });
+        const readsAfterMaterialization = firstPageReads;
+        for (let wake = 0; wake < 96; wake++) await resume();
+        expect(firstPageReads - readsAfterMaterialization).toBe(0);
+        expect(home.requestsFor(route)).toHaveLength(1);
+    });
+
+    it('publishes access upgrades and downgrades independently of the parent revision', async () => {
+        for (const access of ['view', 'owner', 'view'] as const) {
+            await serveRun(undefined, false, { kind: 'inline' }, access);
+            await refreshWorkflowRunById(run.id);
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)])
+                .toMatchObject({ revision: run.revision, callerAccess: { canEdit: access === 'owner' } });
+        }
+        expect(home.requestsFor(route).map(request => request.input)).toEqual(Array.from({ length: 3 }, () =>
+            expect.objectContaining({ operation: 'list', request: { runIds: [run.id], invocationProvenance: [] } })));
+    });
+    it('names an accepted built-in from the lean list and suppresses unchanged title publications', async () => {
+        await serveRun(undefined, false, { kind: 'catalog', ref: 'builtin:fresh-opinions', version: 1 });
+        await refreshWorkflowRunById(run.id);
+        const first = storage.getState().workflowRunsById[workflowRunStoreKey(run.id)];
+        expect(first?.metadata).toEqual({ kind: 'available', value: { title: 'Fresh opinions' } });
+        let notifications = 0;
+        const unsubscribe = storage.subscribe(() => { notifications++; });
+        try {
+            await refreshWorkflowRunById(run.id);
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]).toBe(first);
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]?.metadata).toBe(first?.metadata);
+            expect(notifications).toBe(0);
+            // One batch per explicit refresh; neither definitions nor full Run bodies are requested.
+            expect(home.requestsFor(route).map(request => request.input)).toEqual([
+                expect.objectContaining({ operation: 'list', request: { runIds: [run.id], invocationProvenance: [] } }),
+                expect.objectContaining({ operation: 'list', request: { runIds: [run.id], invocationProvenance: [] } }),
+            ]);
+        } finally { unsubscribe(); }
+    });
+
     it('hydrates an inactive restored Run title through the batched summary owner without opening its page', async () => {
         await serveRun({ title: 'Restored release check' });
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });

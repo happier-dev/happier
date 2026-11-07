@@ -9,6 +9,12 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+import { AgentInputInlineReferenceChip } from './AgentInputDocumentPreviewText';
+import {
+    splitAgentInputDocumentPreviewText,
+    type AgentInputDocumentPreviewReference,
+} from './agentInputDocumentPreviewTypes';
+
 /** A reading card shows about three lines of its prompt before "More" (DESIGN-4 M4, lab `editor-E1`). */
 const READING_CLAMP_LINES = 3;
 
@@ -50,6 +56,15 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+/** The written text with each placed reference as the composer's own inline chip, in place of its token. */
+function readingContent(value: string, references: readonly AgentInputDocumentPreviewReference[] | undefined): React.ReactNode {
+    if (!references || references.length === 0) return value;
+    return splitAgentInputDocumentPreviewText(value, references).map((segment) => segment.kind === 'text'
+        ? segment.text
+        : <AgentInputInlineReferenceChip key={`r${segment.reference.start}`} reference={segment.reference}
+            token={value.slice(segment.reference.start, segment.reference.end)} />);
+}
+
 /**
  * A read-only composer's text. In a reading document (`clamp`) a long prompt is calm: three whole lines
  * at the composer's line height, clipped (never an ellipsis after a sentence's period), with an inline
@@ -63,13 +78,16 @@ export function AgentInputReadOnlyText(props: Readonly<{
     style: StyleProp<TextStyle>;
     accessibilityLabel?: string;
     clamp: boolean;
+    /** Placed references, drawn inline as chips (never as separate lines under the text). */
+    references?: readonly AgentInputDocumentPreviewReference[];
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const [expanded, setExpanded] = React.useState(false);
     const [lineHeight, setLineHeight] = React.useState<number | null>(null);
     const [fullHeight, setFullHeight] = React.useState<number | null>(null);
+    const content = readingContent(props.value, props.references);
     if (!props.clamp) {
-        return <Text selectable accessibilityLabel={props.accessibilityLabel} style={props.style}>{props.value}</Text>;
+        return <Text selectable accessibilityLabel={props.accessibilityLabel} style={props.style}>{content}</Text>;
     }
     // Never commit a zero (or unmeasured) clamp: a text that cannot be measured is shown whole (DESIGN-6 N13).
     const clampHeight = lineHeight === null || !(lineHeight > 0) ? null : lineHeight * READING_CLAMP_LINES;
@@ -82,7 +100,7 @@ export function AgentInputReadOnlyText(props: Readonly<{
                 <View testID="agent-input-read-only-frame"
                     style={[styles.frame, !expanded && overflows && clampHeight !== null ? { maxHeight: clampHeight } : null]}>
                     <Text testID="agent-input-read-only-text" selectable accessibilityLabel={props.accessibilityLabel} style={style}>
-                        {props.value}
+                        {content}
                     </Text>
                 </View>
                 {overflows ? (
@@ -103,7 +121,7 @@ export function AgentInputReadOnlyText(props: Readonly<{
             <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.measure}>
                 <Text testID="agent-input-read-only-measure" style={style}
                     onLayout={(event: LayoutChangeEvent) => setFullHeight(event.nativeEvent.layout.height)}>
-                    {props.value}
+                    {content}
                 </Text>
                 {/* A visible glyph, never whitespace: react-native-web collapses a whitespace-only
                     single line to 0 px, which once clamped every reading card to nothing. */}

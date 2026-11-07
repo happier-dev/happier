@@ -1,7 +1,10 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { JsonValue, TriggerTargetV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
+import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
@@ -34,10 +37,11 @@ import { findWorkflowActionSpec } from '@/components/workflows/presentation/work
 import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
 import { useWorkflowExistingSessionOptions } from '@/components/workflows/screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState, workflowSessionOptionState } from '@/components/workflows/presentation/workflowSessionChoice';
+import { workflowSessionOptionRow } from '@/components/workflows/presentation/workflowSessionOptionRow';
 import { useSessionDisplayNameSource } from '@/sync/store/hooks';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { WorkflowRunInputs } from '@/components/workflows/run/WorkflowRunComposer';
-import { buildWorkflowRunStartInputs, projectWorkflowRunInputFields, type WorkflowRunInputFieldState } from '@/sync/domains/workflows/workflowAuthoring';
+import { type WorkflowRunInputFieldState } from '@/sync/domains/workflows/workflowAuthoring';
 
 import { formatTriggerInterval, formatTriggerSummary, weekdayName } from './formatTriggerSummary';
 import {
@@ -46,6 +50,9 @@ import {
     buildTriggerDefinition,
     buildInitialTriggerDefinition,
     buildTriggerTarget,
+    readTriggerThen,
+    projectSessionTriggerWorkflowInputFields,
+    buildSessionTriggerWorkflowInputs,
     createDefaultThen,
     createDefaultWhen,
     type SessionTriggerWhenKind,
@@ -63,6 +70,7 @@ import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
 import type { WorkflowReferenceOption } from '../presentation/workflowReferenceOptions';
 import { TriggerPluginEventRows } from './TriggerPluginEventRows';
+import { WorkflowRequesterDisclosure } from '../presentation/WorkflowRequesterDisclosure';
 
 /** A choice the popover lists but cannot offer here, with the reason it says instead. */
 export type TriggerKindAvailability = Readonly<Partial<Record<SessionTriggerWhenKind, string>>>;
@@ -97,15 +105,21 @@ type TriggerPopoverBaseProps = Readonly<{
     subtitle?: string;
     /** Reviewed legacy edit: opening never writes; the disclosure stays above Done. */
     submitNotice?: string;
-    /** Explicit consent uses Save rather than the usual Done. */
+    /** Explicit consent uses Save rather than the usual Done; a new one that creates a Workflow says Create. */
     submitLabel?: string;
     /** A retained manual Automation has no firing definition; saving must not invent one, and Delete removes the whole set. */
     manual?: boolean;
     onRunNow?: () => Promise<void>;
+    /**
+     * Turn a saved trigger on or off from its settings, where a Workflow's other settings live (Q7: a
+     * Library row carries no switch). The owner writes it and closes the popover.
+     */
     onToggleEnabled?: Readonly<{ enabled: boolean; onPress: () => void }>;
     onHistory?: () => void;
     /** A new trigger's starting When (the "When this turn finishes…" entry binds it to that turn). */
     initialWhen?: TriggerWhenValue;
+    /** Contextual Action targets prefill the existing Action fields without creating a trigger. */
+    initialActionTargets?: readonly TriggerTargetV1[];
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
     /**
@@ -166,6 +180,10 @@ export function TriggerAnchoredPopoverShell(props: TriggerPopoverShellProps): Re
             // Keep both steps on the launching row's edge. Side-auto placement put the event
             // step over the document when the settings pane had no room to its right.
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
+            // T1 is a designed panel wider than the column or pane it is opened from: it floats over the
+            // page at its own width (hanging from the row's start edge when its end edge leaves no room)
+            // rather than being squeezed into the scope's width, which clipped "Runs on" and the Session.
+            boundaryRef={null}
         >
             {({ maxHeight, placement, presentation }) => props.children({
                 maxHeight,
@@ -215,6 +233,7 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         gap: theme.space.s8,
     },
+    deleteLabel: { color: theme.colors.state.danger.foreground },
     failure: {
         color: theme.colors.state.danger.foreground,
         paddingHorizontal: theme.space.s16,
@@ -316,9 +335,12 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const [when, setWhen] = React.useState<TriggerWhenValue>(() => props.initial?.when ?? props.initialWhen
         ?? createDefaultWhen(props.whenKinds[0] ?? 'turnEnds', props.pullRequestLinks));
     const triggerScope = props.creatingSession ? 'session' : props.scope ?? (props.sessionId !== null ? 'session' : 'account');
+    // Standalone Account enrollment has no executable target. A Session or
+    // saved workflow's trigger still belongs to its host's execution contract.
     const observationOnly = triggerScope === 'account' && props.showThen !== false && when.kind === 'pluginEvent'
         ? when.observationOnly : undefined;
-    const [then, setThen] = React.useState<TriggerThenValue>(() => props.initial?.then ?? createDefaultThen('sendPrompt'));
+    const [then, setThen] = React.useState<TriggerThenValue>(() => props.initial?.then
+        ?? (props.initialActionTargets?.[0] ? readTriggerThen(props.initialActionTargets[0], { kind: 'detached_run' }) : createDefaultThen('sendPrompt')));
     const enabled = props.initial?.enabled ?? true;
     const [pending, setPending] = React.useState(false);
     const [failure, setFailure] = React.useState<string | null>(null);
@@ -328,7 +350,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const workflow = useTriggerWorkflowDefinition(!observationOnly && then.kind === 'runWorkflow' ? then.ref : null,
         props.libraryWorkflowsAvailable !== false, props.accountLifetime);
     const inlineDefinition = !observationOnly && then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
-    const inputFields = React.useMemo(() => projectWorkflowRunInputFields({
+    const inputFields = React.useMemo(() => projectSessionTriggerWorkflowInputFields({
+        when,
         inputs: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],
         values: then.kind === 'runWorkflow' || then.kind === 'kept' ? then.inputs : {},
         rawTextValues: rawInputText,
@@ -336,13 +359,16 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             serverId: originServerId, sessionId: props.sessionId,
         } } : {}),
         deferOriginSessionDefault: props.creatingSession === true,
-    }), [inlineDefinition, workflow.definition, then, rawInputText, props.sessionId, props.creatingSession, originServerId]);
+    }), [when, inlineDefinition, workflow.definition, then, rawInputText, props.sessionId, props.creatingSession, originServerId]);
     const inputPresentation = resolveWorkflowBuiltinInputPresentation(then.kind === 'runWorkflow' ? then.ref : null);
     const changeThen = (next: TriggerThenValue) => {
         if (next.kind !== then.kind || (next.kind === 'runWorkflow' && then.kind === 'runWorkflow' && next.ref !== then.ref)) {
             setRawInputText({});
         }
-        setThen(next);
+        const actionDefault = next.kind === 'doAction' ? props.initialActionTargets?.map(target => readTriggerThen(target))
+            .find(value => value.kind === 'doAction' && value.actionId === next.actionId) : undefined;
+        setThen(next.kind === 'doAction' && actionDefault?.kind === 'doAction'
+            ? { ...next, input: { ...actionDefault.input, ...next.input } } : next);
     };
 
     const trigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
@@ -379,7 +405,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 
     const submit = () => {
         if (!complete) return;
-        const inputs = observationOnly ? {} : then.kind === 'runWorkflow' || inlineDefinition !== null ? buildWorkflowRunStartInputs(inputFields) ?? {}
+        const inputs = observationOnly ? {} : then.kind === 'runWorkflow' || inlineDefinition !== null ? buildSessionTriggerWorkflowInputs({ when,
+            fields: inputFields, declarations: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],
+            retainedInputs: then.kind === 'runWorkflow' || then.kind === 'kept' ? then.inputs : {} })
             : then.kind === 'kept' ? then.inputs : {};
         const submittedThen = then.kind === 'runWorkflow' || then.kind === 'kept' ? { ...then, inputs } : then;
         const value = { when, then: submittedThen, enabled };
@@ -396,6 +424,10 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             title: t(`workflows.triggers.kind.${kind}`),
             ...(reason === undefined ? {} : { subtitle: reason, disabled: true }),
         };
+    });
+    const whenOptions = props.whenKinds.map((kind) => {
+        const reason = props.unavailableKinds?.[kind];
+        return { id: kind, label: t(`workflows.triggers.kind.${kind}`), ...(reason === undefined ? {} : { unavailableReason: reason }) };
     });
     const thenItems: DropdownMenuItem[] = [...TRIGGER_THEN_KINDS.map((kind) => ({
         id: kind,
@@ -423,7 +455,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         >
             {({ maxHeight, placement, presentation }) => eventEditing && when.kind === 'pluginEvent' ? (
                 <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
-                    machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed} initialEventEditSeed={props.initialEventEditSeed}
+                    machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed}
+                    initialEventEditSeed={props.initialEventEditSeed}
                     eventEdit={props.eventEdit} activityEvent={props.activityEvent}
                     editing onEditingChange={setEventEditing} editorMaxHeight={maxHeight} />
             ) : (
@@ -440,7 +473,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                         <RoundButton
                                             testID={`${props.testID}-submit`}
                                             size="small"
-                                            title={t('workflows.triggers.popover.addTrigger')}
+                                            title={props.submitLabel ?? t('workflows.triggers.popover.addTrigger')}
                                             disabled={!complete}
                                             loading={pending}
                                             onPress={submit}
@@ -454,25 +487,16 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     {props.onRunNow ? <RoundButton size="small" display="secondary" testID={`${props.testID}-run-now`}
                                         title={t('workflows.editor.runNow')} disabled={pending}
                                         onPress={() => run(props.onRunNow!, false)} /> : null}
-                                    {props.onSaveAsWorkflow && target?.kind === 'inline' ? (
-                                        <RoundButton size="small" display="inverted"
-                                        testID={`${props.testID}-save-as-workflow`}
-                                            title={t('workflows.triggers.popover.saveAsWorkflow')}
-                                            accessibilityLabel={`${t('workflows.triggers.popover.saveAsWorkflow')}. ${t('workflows.triggers.popover.saveAsWorkflowDescription')}`}
-                                            onPress={() => {
-                                                props.onSaveAsWorkflow?.(target);
-                                                props.onRequestClose();
-                                            }}
-                                        />
-                                    ) : null}
                                     {props.onToggleEnabled ? <RoundButton size="small" display="inverted" testID={`${props.testID}-toggle`}
                                         title={t(props.onToggleEnabled.enabled ? 'workflows.triggers.popover.turnOff' : 'workflows.triggers.popover.turnOn')}
                                         disabled={pending} onPress={props.onToggleEnabled.onPress} /> : null}
                                     {props.onDelete ? (
                                         <View style={styles.footEnd}>
-                                            <RoundButton size="small" display="destructive"
+                                            {/* Last and quiet, as T1 draws it: red words, no outline beside Run now. */}
+                                            <RoundButton size="small" display="inverted"
+                                                textStyle={styles.deleteLabel}
                                                 testID={`${props.testID}-delete`}
-                                                title={t(props.manual ? 'workflows.triggers.popover.deleteTriggerSet' : 'workflows.triggers.popover.deleteTrigger')}
+                                                title={t(props.manual ? 'workflows.page.deleteWorkflow' : 'workflows.triggers.popover.deleteTrigger')}
                                                 disabled={pending}
                                                 onPress={() => run(props.onDelete!)}
                                             />
@@ -496,8 +520,22 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 : props.subtitle === undefined ? {} : { description: props.subtitle })}
                             {...(isNew || presentation === 'sheet' ? {} : { action: completion })}
                         >
-                            {props.manual ? <Item mode="info" title={t('workflows.triggers.popover.when')}
-                                detail={t('workflows.triggers.summary.manual')} showChevron={false} /> : <FieldSelect
+                            {props.manual || when.kind === 'runLifecycle' ? <Item mode="info" title={t('workflows.triggers.popover.when')}
+                                detail={when.kind === 'runLifecycle' ? formatTriggerSummary(when) : t('workflows.triggers.summary.manual')} showChevron={false} />
+                                // Two to four short choices stay visible side by side; longer lists keep the field select.
+                                : props.whenKinds.length >= 2 && props.whenKinds.length <= 4 ? <SegmentedChoiceItem<SessionTriggerWhenKind>
+                                testID={`${props.testID}-when`}
+                                testIDPrefix={`${props.testID}-when`}
+                                // The same stacked field anatomy as Repeat beneath it, so the two choices read alike.
+                                accessoryLayout="stacked"
+                                labelSize="field"
+                                title={t('workflows.triggers.popover.when')}
+                                {...(whenDescription(when.kind, sessionScoped) === undefined
+                                    ? {} : { subtitle: whenDescription(when.kind, sessionScoped) })}
+                                options={whenOptions}
+                                value={when.kind}
+                                onChange={(kind) => setWhen(createDefaultWhen(kind, props.pullRequestLinks))}
+                            /> : <FieldSelect
                                 testID={`${props.testID}-when`}
                                 title={t('workflows.triggers.popover.when')}
                                 {...(whenDescription(when.kind, sessionScoped) === undefined
@@ -512,7 +550,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                             {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID} when={when} onChange={setWhen} /> : null}
                             {!props.manual && when.kind === 'pluginEvent' ? <TriggerPluginEventRows
                                 testID={props.testID} when={when} onChange={setWhen} machineId={props.machineId ?? null}
-                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed} initialEventEditSeed={props.initialEventEditSeed}
+                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed}
+                                initialEventEditSeed={props.initialEventEditSeed}
                                 onEditingChange={setEventEditing} /> : null}
                             {(when.kind === 'prComment' || when.kind === 'ciFailed') && props.sessionId !== null ? (
                                 <SessionTriggerPullRequestPicker
@@ -573,10 +612,27 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                         <Item title={t('workflows.loadFailedTitle')} subtitle={t('workflows.loadFailedBody')}
                                             detail={t('workflows.retry')} onPress={workflow.retry} />
                                     ) : null}
+                                    {/* Its own steps open as a workflow to review: a destination, so a row
+                                        under the steps that says what happens, not one more foot button. No
+                                        icon: one would shift every row of the popover onto an icon column. */}
+                                    {!isNew && props.onSaveAsWorkflow && target?.kind === 'inline' ? (
+                                        <Item
+                                            testID={`${props.testID}-save-as-workflow`}
+                                            title={t('workflows.triggers.popover.saveAsWorkflow')}
+                                            subtitle={t('workflows.triggers.popover.saveAsWorkflowDescription')}
+                                            onPress={() => {
+                                                props.onSaveAsWorkflow?.(target);
+                                                props.onRequestClose();
+                                            }}
+                                        />
+                                    ) : null}
                                 </>
                             ) : null}
                             {props.afterRows ?? null}
                         </ItemGroup>
+                        {/* Placement rows already present this review; Session hosts supply only their Machine. */}
+                        {!props.setRows && !observationOnly ? <WorkflowRequesterDisclosure machineId={props.machineId}
+                            serverId={props.serverId} accountLifetime={props.accountLifetime} retention="trigger" /> : null}
                         {failure === null ? null : (
                             <Text testID={`${props.testID}-failure`} accessibilityLiveRegion="polite" style={styles.failure}>{failure}</Text>
                         )}
@@ -886,7 +942,7 @@ function RunsInRows(props: Readonly<{
                     onOpenChange={setSessionOpen}
                     title={t('workflows.triggers.then.session')}
                     items={[...sessionMenu.leadingItems, ...(stored === null ? [] : [stored]),
-                        ...existingSessions.map((option) => ({ id: option.sessionId, title: option.label }))]}
+                        ...existingSessions.map((option) => ({ id: option.sessionId, title: option.label, ...workflowSessionOptionRow(option) }))]}
                     {...(sessionMenu.emptyLabel === undefined ? {} : { emptyLabel: sessionMenu.emptyLabel })}
                     selectedId={props.runsIn.sessionId}
                     keepsOpen={keepsOpen}
@@ -909,10 +965,12 @@ function RunsInRows(props: Readonly<{
  */
 function useStoredSessionItem(params: Readonly<{ sessionId: string; serverId: string | null; offered: boolean; settled: boolean }>): DropdownMenuItem | null {
     const nameSource = useSessionDisplayNameSource(params.sessionId, params.serverId);
+    const isSessionVisible = useSessionRecordingVisibility();
+    const visible = isSessionVisible({ sessionId: params.sessionId, serverId: params.serverId });
     const { deleted } = useSessionReferenceTarget(params.sessionId, params.serverId);
     if (params.sessionId.length === 0 || params.offered) return null;
-    const name = nameSource === null ? null : getSessionName(nameSource);
-    const unavailable = deleted || params.settled;
+    const name = !visible ? t('workflows.conversation.savedSession') : nameSource === null ? null : getSessionName(nameSource);
+    const unavailable = deleted || (visible && params.settled);
     return {
         id: params.sessionId,
         title: name ?? (unavailable ? t('workflows.conversation.unavailableSession') : t('workflows.conversation.savedSession')),

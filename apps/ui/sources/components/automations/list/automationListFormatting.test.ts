@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    AutomationOccurrenceKeyV1Schema,
-    AutomationRunCauseSchema,
-    AutomationRunStateV3Schema,
+    AutomationOccurrenceKeyV1Schema} from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import {
+    AutomationRunCauseSchema} from '@happier-dev/protocol/automations/run-cause';
+import {
+    AutomationRunStateV3Schema} from '@happier-dev/protocol/automations/automationRunStateV3';
+import {
     AutomationTriggerListItemSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 
 import { setPreferredLanguageFromSettings } from '@/text';
 import {
@@ -195,10 +198,17 @@ describe('immutable Run cause presentation', () => {
 });
 
 describe('formatAutomationRunStateLabel', () => {
+    it.each(['interrupted', 'waiting_for_review'] as const)('presents the canonical Workflow %s state instead of retained running', (workflowRunState) => {
+        expect(formatAutomationRunStateLabel({ state: 'running', workflowRunState }))
+            .not.toBe(formatAutomationRunStateLabel({ state: 'running' }));
+        expect(formatAutomationRunStateLabel({ state: 'running', workflowRunState }))
+            .toBe(workflowRunState === 'interrupted' ? 'Interrupted' : 'Needs you');
+    });
+
     it('gives every canonical Run state a product label instead of the raw state token', () => {
         const labels = AutomationRunStateV3Schema.options.map((state) => ({
             state,
-            label: formatAutomationRunStateLabel(state),
+            label: formatAutomationRunStateLabel({ state }),
         }));
 
         expect(labels).toEqual([
@@ -224,7 +234,7 @@ describe('formatAutomationRunStateLabel', () => {
     it('resolves every Run state through the active locale', () => {
         setPreferredLanguageFromSettings('es');
 
-        const labels = AutomationRunStateV3Schema.options.map((state) => formatAutomationRunStateLabel(state));
+        const labels = AutomationRunStateV3Schema.options.map((state) => formatAutomationRunStateLabel({ state }));
 
         expect(labels).toEqual([
             'En cola',

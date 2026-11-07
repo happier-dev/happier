@@ -1,13 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Socket } from 'socket.io-client';
+import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { act } from 'react-test-renderer';
+import React from 'react';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
-    AutomationDefinitionDetailSchema, AutomationV3RunListItemSchema, AutomationV3RunDetailSchema, MachinePoolViewV1Schema,
-    sealAutomationRunResultStoredEnvelopeV1,
+    AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema, AutomationV3RunDetailSchema,
     type AutomationDefinitionDetail,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationApiV3';
+import { MachinePoolViewV1Schema} from '@happier-dev/protocol/machines/pools/v1';
+import {
+    sealAutomationRunResultStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
 import { workflowRunRowFromAutomationRun, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
@@ -22,7 +29,24 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { executeOccurrenceRunAction } from '@/components/workflows/run/occurrenceRunActions';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '@happier-dev/protocol/actions';
+import { WorkflowRunControlResultV1Schema } from '@happier-dev/protocol/workflows';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Platform: { OS: 'web' } });
@@ -39,9 +63,14 @@ const { sync } = await import('./sync');
 const requests: Array<{ origin: string; path: string; method: string; authorization: string | null; body: unknown }> = [];
 const replies = new Map<string, () => Promise<Response> | Response>();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let homeSocket: Socket | undefined;
+let updateSequence = 100;
 const initialStorage = storage.getState();
 const otherHomeUrl = 'https://sync-lifetime-other.example.test';
 const otherHomeCleanups: Array<() => void | Promise<void>> = [];
+const occurrencePolicy = [...AUTOMATION_OCCURRENCE_ACTION_IDS, 'workflow.run.cancel' as const].reduce((settings, actionId) => setActionApprovalOverride({
+    settings, actionId, surface: 'ui', approvalRequired: false,
+}), normalizeActionsSettingsV1({ v: 1, actions: {} }));
 
 function answer(path: string, value: unknown, method = 'GET', origin?: string) {
     replies.set(`${origin ? `${origin} ` : ''}${method} ${path}`, () => Response.json(value));
@@ -62,6 +91,7 @@ async function restoreAccount(accountId: string) {
     connection = await restoreServerAccountForTest({
         serverUrl: 'https://sync-lifetime.example.test', accountId,
         additionalRequestOrigins: [otherHomeUrl],
+        configureSocket: socket => { homeSocket = socket; },
         request: async (url, init) => {
             const { origin, pathname: path } = new URL(String(url));
             const method = init?.method ?? 'GET';
@@ -70,11 +100,11 @@ async function restoreAccount(accountId: string) {
             const reply = replies.get(`${origin} ${method} ${path}`) ?? replies.get(`${method} ${path}`);
             if (reply) return await reply();
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(
-                createRootLayoutFeaturesResponse({ features: { automations: { enabled: true } } }));
+                createRootLayoutFeaturesResponse({ features: { automations: { enabled: true }, workflows: { enabled: true } } }));
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
-            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: { actionsSettingsV1: occurrencePolicy } }, version: 1 });
             if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v2/sessions/query') return Response.json({
                 sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
             });
@@ -113,6 +143,7 @@ beforeEach(async () => {
     requests.length = 0;
 });
 afterEach(async () => {
+    await standardCleanup();
     for (const cleanup of otherHomeCleanups.splice(0).reverse()) await cleanup();
     await connection?.dispose();
     connection = undefined;
@@ -166,6 +197,34 @@ function eventDetail(templateVersion: number): AutomationDefinitionDetail {
             target: { kind: 'existingSession', sessionId: 'session-event-1' },
         },
     });
+}
+
+function automationSummary() {
+    const { executionRecipe: _recipe, triggers, ...fields } = eventDetail(3);
+    return AutomationDefinitionListItemSchema.parse({ ...fields,
+        triggers: triggers.map(trigger => {
+            if (trigger.kind !== 'pluginEvent') return trigger;
+            const { triggerDefinitionEnvelope: _definition, ...row } = trigger;
+            return row;
+        }),
+    });
+}
+
+function emitAutomationUpdate(body: ApiUpdateContainer['body'], socket = homeSocket) {
+    expect(socket?.listenersAny().length).toBeGreaterThan(0);
+    const update = { id: `automation-${++updateSequence}`, seq: updateSequence, createdAt: 4, body };
+    for (const listener of socket!.listenersAny()) listener('update', update);
+}
+
+function emitRunUpdate() {
+    emitAutomationUpdate({ t: 'automation-run-updated', automationId: runSummary.automationId,
+        runId: runSummary.id, state: 'running', scheduledAt: 1, startedAt: 5, finishedAt: null,
+        updatedAt: 5, machineId: 'machine-1', attempt: 1 });
+}
+
+// Wait for the real queue; only its inputs/HTTP boundary are driven by these tests.
+function drainAutomationQueue() {
+    return (Reflect.get(sync, 'automationsSync') as { awaitQueue(): Promise<unknown> }).awaitQueue();
 }
 
 const eventRunDetail = AutomationV3RunDetailSchema.parse({
@@ -239,7 +298,167 @@ const runSummary = AutomationV3RunListItemSchema.parse({
     updatedAt: eventRunDetail.updatedAt,
 });
 
+function createCancellationResponse(ownerAccountId: string, revision = runSummary.revision + 1) {
+    return WorkflowRunControlResultV1Schema.parse({
+        run: createWorkflowRunSummaryFixture({
+            id: eventRunDetail.id, ownerAccountId, revision, state: 'cancelled', workflowCustodyState: null,
+            origin: { kind: 'automation', automationId: eventRunDetail.automationId },
+            finishedAt: '2026-10-30T20:00:00.000Z',
+            availability: { pause: false, cancel: false },
+        }),
+        intent: 'cancelled',
+    });
+}
+
 describe('Sync Server/Account lifetime reset boundary', () => {
+    it('reopens the Home history consumer freshly and releases its demand while hidden or unmounted', async () => {
+        const { AutomationsLatestRunsSection } = await import('@/components/automations/home/AutomationsLatestRunsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        storage.setState({ settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } } });
+        const summary = { ...automationSummary(), lastRunAt: 1 };
+        answer('/v3/automations', { automations: [summary], nextCursor: null });
+        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        await sync.refreshAutomations();
+        const widget = (presented: boolean) => React.createElement(PluginSurfaceFocusEligibilityProvider, {
+            active: presented, children: React.createElement(AutomationsLatestRunsSection, {}),
+        });
+        const screen = await renderScreen(widget(true));
+        await vi.waitFor(() => expect(storage.getState().automationRunIdsByAutomationId[summary.id]).toEqual([runSummary.id]));
+        await drainAutomationQueue();
+        await screen.update(widget(false));
+        requests.length = 0;
+        emitRunUpdate();
+        await drainAutomationQueue();
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+        answer(runPath(), { runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null });
+        await screen.update(widget(true));
+        await drainAutomationQueue();
+        await vi.waitFor(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(runSummary.id)]?.automation?.revision).toBe(3));
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(1);
+        await screen.unmount();
+        requests.length = 0;
+        emitRunUpdate();
+        await drainAutomationQueue();
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+    });
+
+    it('refreshes presented history once and keeps retained closed windows inert until reopening', async () => {
+        const summary = automationSummary();
+        answer('/v3/automations', { automations: [summary], nextCursor: null });
+        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        await sync.refreshAutomations();
+        await sync.fetchAutomationRuns(summary.id);
+        const first = await renderHook(() => useAutomationRuns(summary.id));
+        const second = await renderHook(() => useAutomationRuns(summary.id));
+        await first.unmount();
+        requests.length = 0;
+        await sync.refreshAutomations();
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(1);
+        await second.unmount();
+        requests.length = 0;
+        answer(runPath(), { runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null });
+        emitRunUpdate();
+        await drainAutomationQueue();
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+        expect(storage.getState().automationRunIdsByAutomationId[summary.id]).toEqual([runSummary.id]);
+        const reopened = await renderHook(() => useAutomationRuns(summary.id));
+        await act(async () => { await sync.refreshAutomations(); });
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(1);
+        expect(reopened.getCurrent()[0]?.revision).toBe(3);
+        requests.length = 0;
+        const pending = hold('/v3/automations');
+        const refresh = sync.refreshAutomations();
+        await pending.started;
+        await reopened.unmount();
+        pending.release({ automations: [summary], nextCursor: null });
+        await refresh;
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+    });
+
+    it.each(['socket', 'changes'] as const)('keeps status-only %s wakes out of cached Run windows while reading current summaries', async source => {
+        const summary = automationSummary();
+        answer('/v3/automations', { automations: [summary], nextCursor: null });
+        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        await sync.refreshAutomations();
+        await sync.fetchAutomationRuns(summary.id);
+        await renderHook(() => useAutomationRuns(summary.id));
+        requests.length = 0;
+        answer('/v3/automations', { automations: [{ ...summary, name: 'Current status', updatedAt: 4 }], nextCursor: null });
+        answer('/v2/changes', { changes: [{ cursor: 1, kind: 'automation', entityId: 'automation-source-status', changedAt: 4 }], nextCursor: 1 });
+        const deliver = async (body: ApiUpdateContainer['body']) => {
+            emitAutomationUpdate(body);
+            await vi.waitFor(() => expect(storage.getState().automations[summary.id]?.name).toBe('Current status'));
+            // Observe the real queue's terminal boundary, without replacing its command.
+            await drainAutomationQueue();
+        };
+        await deliver(source === 'socket' ? { t: 'automation-source-status-updated' } : { t: 'account-change' });
+        expect(requests.filter(request => request.path === '/v3/automations')).toHaveLength(1);
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+        expect(requests.filter(request => request.path === `/v3/automations/${summary.id}`)).toHaveLength(0);
+        // A real Run event still restates its current window, including a changed revision.
+        answer(runPath(), { runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null });
+        answer('/v3/automations', { automations: [{ ...summary, name: 'Current status', updatedAt: 5 }], nextCursor: null });
+        if (source === 'changes') {
+            answer('/v2/changes', { changes: [
+                { cursor: 2, kind: 'automation', entityId: 'automation-source-status', changedAt: 5 },
+                { cursor: 3, kind: 'automation', entityId: summary.id, changedAt: 5 },
+            ], nextCursor: 3 });
+            emitAutomationUpdate({ t: 'account-change' });
+        } else emitRunUpdate();
+        await vi.waitFor(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(runSummary.id)]?.automation?.revision).toBe(3));
+        await drainAutomationQueue();
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(1);
+    });
+
+    it('retains a stronger Run wake arriving during a status-only HTTP read', async () => {
+        const summary = automationSummary();
+        answer('/v3/automations', { automations: [summary], nextCursor: null });
+        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        await sync.refreshAutomations();
+        await sync.fetchAutomationRuns(summary.id);
+        await renderHook(() => useAutomationRuns(summary.id));
+        requests.length = 0;
+        const pending = hold('/v3/automations');
+        emitAutomationUpdate({ t: 'automation-source-status-updated' });
+        await pending.started;
+        emitRunUpdate();
+        answer('/v3/automations', { automations: [{ ...summary, updatedAt: 5 }], nextCursor: null });
+        answer(runPath(), { runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null });
+        pending.release({ automations: [summary], nextCursor: null });
+        await drainAutomationQueue();
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(runSummary.id)]?.automation?.revision).toBe(3);
+        expect(requests.filter(request => request.path === '/v3/automations')).toHaveLength(2);
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(1);
+    });
+
+    it('retries status-only and full Automation demand without losing or inventing Run reads', async () => {
+        const summary = automationSummary();
+        answer('/v3/automations', { automations: [summary], nextCursor: null });
+        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        await sync.refreshAutomations();
+        await sync.fetchAutomationRuns(summary.id);
+        await renderHook(() => useAutomationRuns(summary.id));
+        requests.length = 0;
+        let attempts = 0;
+        replies.set('GET /v3/automations', () => ++attempts === 1 ? new Response('{}', { status: 503 })
+            : Response.json({ automations: [{ ...summary, name: 'Retried status' }], nextCursor: null }));
+        emitAutomationUpdate({ t: 'automation-source-status-updated' });
+        await vi.waitFor(() => expect(attempts).toBeGreaterThan(0));
+        await drainAutomationQueue();
+        expect(storage.getState().automations[summary.id]?.name).toBe('Retried status');
+        expect(requests.filter(request => request.path === '/v3/automations')).toHaveLength(2);
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+        let runAttempts = 0;
+        replies.set(`GET ${runPath()}`, () => ++runAttempts === 1 ? new Response('{}', { status: 503 })
+            : Response.json({ runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null }));
+        emitRunUpdate();
+        await vi.waitFor(() => expect(runAttempts).toBeGreaterThan(0));
+        await drainAutomationQueue();
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(runSummary.id)]?.automation?.revision).toBe(3);
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(2);
+    });
+
     it('retires synchronously before advancing generation and never waits for consumer cleanup', () => {
         const lifetime = captureActiveServerAccountScopeLifetime()!;
         const generation = Reflect.get(sync, 'serverScopeGeneration');
@@ -406,19 +625,22 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         { name: 'inspection', path: `${runPath()}/${eventRunDetail.id}`, method: 'GET',
             invoke: (accountLifetime: ServerAccountScopeLifetime | null) => sync.getAutomationRunDetailInspection(
                 eventRunDetail.automationId, eventRunDetail.id, { accountLifetime }) },
-        { name: 'cancel', path: `/v3/automations/runs/${eventRunDetail.id}/cancel`, method: 'POST',
-            invoke: (accountLifetime: ServerAccountScopeLifetime | null) => sync.cancelAutomationRun(eventRunDetail.id, { accountLifetime }) },
+        { name: 'cancel', path: '/v3/automations/runs/workflow-storage', method: 'POST',
+            invoke: (accountLifetime: ServerAccountScopeLifetime | null) => executeOccurrenceRunAction('workflow.run.cancel', {
+                runId: eventRunDetail.id, expectedRevision: eventRunDetail.revision,
+            }, accountLifetime) },
         { name: 'retry handoff', path: `/v3/automations/runs/${eventRunDetail.id}/retry-reply-handoff`, method: 'POST',
-            invoke: (accountLifetime: ServerAccountScopeLifetime | null) => sync.retryAutomationReplyHandoff(eventRunDetail.id, { accountLifetime }) },
+            invoke: (accountLifetime: ServerAccountScopeLifetime | null) => executeOccurrenceRunAction('automation.run.reply_handoff.retry', { runId: eventRunDetail.id }, accountLifetime) },
         { name: 'deliver again', path: `/v3/automations/runs/${eventRunDetail.id}/deliver-result-again`, method: 'POST',
-            invoke: (accountLifetime: ServerAccountScopeLifetime | null) => sync.deliverAutomationResultAgain({
+            invoke: (accountLifetime: ServerAccountScopeLifetime | null) => executeOccurrenceRunAction('automation.run.result.redeliver', {
                 runId: eventRunDetail.id, expectedRevision: runSummary.revision,
-            }, { accountLifetime }) },
+            }, accountLifetime) },
     ] as const;
 
     it.each(occurrenceOperations)('refuses $name for an unresolved, unknown or mismatched Home without active-Home fallback', async operation => {
         const account = await captureOtherHomeAccount();
-        answer(operation.path, operation.method === 'GET' ? eventRunDetail : { run: runSummary }, operation.method);
+        answer(operation.path, operation.method === 'GET' ? eventRunDetail
+            : operation.name === 'cancel' ? createCancellationResponse('account-a') : { run: runSummary }, operation.method);
         const invalidLifetimes = [
             null,
             { ...account.accountLifetime, scope: { serverId: 'unknown-home', accountId: 'account-b' } },
@@ -434,10 +656,10 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         storage.getState().setAutomationRuns(eventRunDetail.automationId, [runSummary], null);
         const incumbent = storage.getState().workflowRunsById;
         const updated = { ...runSummary, revision: 9, state: 'cancelled', finishedAt: 2, updatedAt: 2 };
-        answer(operation.path, { run: updated }, operation.method, otherHomeUrl);
+        answer(operation.path, operation.name === 'cancel' ? createCancellationResponse(account.accountId, 9) : { run: updated }, operation.method, otherHomeUrl);
         // A same-id active Run deliberately returns another revision if the transport is mis-bound.
-        answer(operation.path, { run: runSummary }, operation.method);
-        await expect(operation.invoke(account.accountLifetime)).resolves.toEqual(updated);
+        answer(operation.path, operation.name === 'cancel' ? createCancellationResponse('account-a', runSummary.revision) : { run: runSummary }, operation.method);
+        await expect(operation.invoke(account.accountLifetime)).resolves.toBe(true);
         expect(requests.filter(request => request.path === operation.path)).toEqual([
             expect.objectContaining({ origin: otherHomeUrl, authorization: `Bearer ${account.credentials.token}` }),
         ]);
@@ -455,7 +677,8 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         }, { token: `e30.${Buffer.from(JSON.stringify({ sub: 'replacement-account-b' })).toString('base64url')}.signature` });
         if (!replacement) throw new Error('Other Home credentials could not be replaced');
         otherHomeCleanups.push(async () => { await replacement.rollback(); });
-        pending.release(operation.method === 'GET' ? eventRunDetail : { run: runSummary });
+        pending.release(operation.method === 'GET' ? eventRunDetail
+            : operation.name === 'cancel' ? createCancellationResponse(account.accountId) : { run: runSummary });
         await rejected;
         expect(sync.getCredentials()?.token).toBe(connection!.credentials.token);
         expect(storage.getState().workflowRunsById[workflowRunStoreKey(eventRunDetail.id)]).toBeUndefined();
@@ -479,19 +702,26 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         } finally { await binding.unmount(); }
     });
 
-    it('projects a current cancellation through the incumbent Automation Run cache owner', async () => {
-        answer(`/v3/automations/runs/${eventRunDetail.id}/cancel`, {
-            run: { ...runSummary, state: 'cancelled', finishedAt: 2, updatedAt: 2 },
-        }, 'POST');
-        await expect(sync.cancelAutomationRun(eventRunDetail.id)).resolves.toMatchObject({ id: eventRunDetail.id, state: 'cancelled' });
-        expect(storage.getState().workflowRunsById[workflowRunStoreKey(eventRunDetail.id)]?.automation).toMatchObject({ id: eventRunDetail.id, state: 'cancelled' });
+    it('submits current cancellation through Workflow storage without fabricating an occurrence projection', async () => {
+        storage.getState().setAutomationRuns(eventRunDetail.automationId, [runSummary], null);
+        const incumbent = storage.getState().workflowRunsById;
+        answer('/v3/automations/runs/workflow-storage', createCancellationResponse('account-a'), 'POST');
+        await expect(executeOccurrenceRunAction('workflow.run.cancel', {
+            runId: eventRunDetail.id, expectedRevision: eventRunDetail.revision,
+        }, captureActiveServerAccountScopeLifetime())).resolves.toBe(true);
+        expect(requests.filter(request => request.path === '/v3/automations/runs/workflow-storage')).toEqual([
+            expect.objectContaining({ method: 'POST', body: { operation: 'cancel',
+                runId: eventRunDetail.id, expectedRevision: eventRunDetail.revision,
+            } }),
+        ]);
+        expect(storage.getState().workflowRunsById).toBe(incumbent);
     });
 
     it('projects reply handoff recovery through the incumbent Automation Run cache owner', async () => {
         answer(`/v3/automations/runs/${eventRunDetail.id}/retry-reply-handoff`, {
             run: { ...runSummary, revision: runSummary.revision + 1, replyHandoffState: 'ready', replyHandoffDueAt: 2, updatedAt: 2 },
         }, 'POST');
-        await expect(sync.retryAutomationReplyHandoff(eventRunDetail.id)).resolves.toMatchObject({ id: eventRunDetail.id, replyHandoffState: 'ready' });
+        await expect(executeOccurrenceRunAction('automation.run.reply_handoff.retry', { runId: eventRunDetail.id }, captureActiveServerAccountScopeLifetime())).resolves.toBe(true);
         expect(storage.getState().workflowRunsById[workflowRunStoreKey(eventRunDetail.id)]?.automation).toMatchObject({ id: eventRunDetail.id, replyHandoffState: 'ready' });
     });
 

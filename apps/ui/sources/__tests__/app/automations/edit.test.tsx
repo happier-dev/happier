@@ -4,7 +4,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema } from '@happier-dev/protocol';
+import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { createDeferred, createRootLayoutFeaturesResponse, invokeTestInstanceHandler, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -13,7 +13,7 @@ import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccount
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
-import { createWorkflowAutomationDetailFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { createWorkflowAutomationDetailFixture, selectWorkflowAutomationDetailsFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { buildWorkflowProjectMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
@@ -44,6 +44,7 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { SessionTriggersRoute } = await import('@/app/(app)/session/[id]/triggers');
 const { WorkflowsRoute } = await import('@/app/(app)/workflows');
 const { SessionTriggersSection } = await import('@/components/workflows/triggers/SessionTriggersSection');
+const { useSessionTriggers } = await import('@/components/workflows/triggers/useSessionTriggers');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { ModalProvider } = await import('@/modal');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
@@ -188,7 +189,7 @@ describe('retired Automation routes', () => {
         expect(readTriggerWorkflowSeed(id, { serverId: serverA, accountId: 'account-a' })).toBeNull();
     });
     it('duplicates an addressed catalog definition into B without borrowing A placement', async () => {
-        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
+        const { getBuiltinWorkflowCatalogV1} = await import('@happier-dev/protocol/workflows/builtins/catalog');
         const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
         const { WorkflowAccountLifetimeProvider } = await import('@/components/workflows/workflowAccountScope');
         const { WorkflowBuiltinEditorHostScreen } = await import('@/components/workflows/screens/WorkflowCatalogEditorHostScreen');
@@ -331,32 +332,49 @@ describe('retired Automation routes', () => {
         await waitForHomeGovernance(() => expect(timeField()?.props.value).toBe('19:00'));
         await act(async () => { timeField()!.props.onCommit('21:37'); });
         const credentialsRead = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
+        const credentials = await credentialsRead('https://other-automation.test', { serverId: serverB });
+        if (!credentials) throw new Error('Expected the synthetic B Home credential');
+        const mountedPopover = screen.findAllByType(TriggerPopover)[0]!;
+        const binding = mountedPopover.props.accountLifetime;
+        const deleteWithRetiredBinding = mountedPopover.props.onDelete;
         const recheck = createDeferred<void>();
         let rechecking = false;
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        await act(async () => { await upsertServerProfile({ serverUrl: 'https://other-automation.test', name: 'B renamed' }); });
+        expect(binding.isCurrent()).toBe(true);
+        expect(screen.findAllByType(TriggerPopover)[0]?.props.accountLifetime).toBe(binding);
+        expect(timeField()?.props.value).toBe('21:37');
+        expect(homes.requests.filter(request => request.path === '/v3/automations/automation-42' && request.input !== null)).toEqual([]);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(toggleId)).not.toBeNull());
+        await act(async () => { invokeTestInstanceHandler(screen.findAllByType(Switch).find(node => node.props.testID === toggleId), 'onValueChange', false); });
+        // Native trigger updates default to direct in the declaration owner;
+        // retained-content deletion defaults to policy confirmation.
+        await waitForHomeGovernance(() => expect(homes.requests.some(request => request.serverId === serverB
+            && request.path === '/v3/automations/automation-42' && request.input !== null)).toBe(true));
+        expect(screen.findByTestId('web-modal-confirm')).toBeNull();
+        expect(homes.requests.filter(request => request.serverId === serverB
+            && request.path === '/v3/automations/automation-42' && request.input !== null)).toEqual([
+            expect.objectContaining({ method: 'PUT', input: expect.objectContaining({ expectedTemplateVersion: 1,
+                triggers: [expect.objectContaining({ kind: 'existing', triggerId: 'scheduled', enabled: false })] }) }),
+        ]);
+        expect(homes.requests.filter(request => request.serverId === serverA
+            && request.path === '/v3/automations/automation-42' && request.input !== null)).toEqual([]);
+        expect(storage.getState().workflowTriggerSetsById['automation-42']).toBeUndefined();
+        const writes = () => homes.requests.filter(request => request.path === '/v3/automations/automation-42' && request.input !== null);
+        const writesBeforeRetirement = writes().length;
         const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url, options) => {
             if (url === 'https://other-automation.test') { rechecking = true; await recheck.promise; }
             return credentialsRead(url, options);
         });
         try {
-            const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
-            await act(async () => { await upsertServerProfile({ serverUrl: 'https://other-automation.test', name: 'B renamed' }); });
+            await act(async () => {
+                expect(await TokenStorage.setCredentialsForServerUrl('https://other-automation.test', { serverId: serverB }, credentials)).toBe(true);
+            });
+            expect(binding.isCurrent()).toBe(false);
             await waitForHomeGovernance(() => expect(rechecking).toBe(true));
-            expect(timeField()?.props.value).toBe('21:37');
-            await expect(screen.findAllByType(TriggerPopover)[0]!.props.onDelete()).rejects.toMatchObject({ rawCode: 'action_account_scope_changed' });
-            expect(homes.requests.filter(request => request.path === '/v3/automations/automation-42' && request.input !== null)).toEqual([]);
+            await expect(deleteWithRetiredBinding()).rejects.toMatchObject({ rawCode: 'action_account_scope_changed' });
+            expect(writes()).toHaveLength(writesBeforeRetirement);
         } finally { recheck.resolve(); credentialBoundary.mockRestore(); }
-        await waitForHomeGovernance(() => expect(screen.findAllByType(TriggerPopover)[0]?.props.accountLifetime?.isCurrent()).toBe(true));
-        expect(timeField()?.props.value).toBe('21:37');
-        await waitForHomeGovernance(() => expect(screen.findByTestId(toggleId)).not.toBeNull());
-        await act(async () => { invokeTestInstanceHandler(screen.findAllByType(Switch).find(node => node.props.testID === toggleId), 'onValueChange', false); });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).not.toBeNull());
-        await act(async () => { invokeTestInstanceHandler(screen.findAll(node => node.props.testID === 'web-modal-confirm'
-            && typeof node.props.onPress === 'function')[0], 'onPress'); });
-        await waitForHomeGovernance(() => expect(homes.requests.some(request => request.serverId === serverB
-            && request.path === '/v3/automations/automation-42' && request.input !== null)).toBe(true));
-        expect(homes.requests.filter(request => request.serverId === serverA
-            && request.path === '/v3/automations/automation-42' && request.input !== null)).toEqual([]);
-        expect(storage.getState().workflowTriggerSetsById['automation-42']).toBeUndefined();
     });
     it('opens a session-scoped set in that session rather than the Account column', async () => {
         route.params = { id: 'automation-42' };
@@ -405,15 +423,11 @@ describe('retired Automation routes', () => {
             return AutomationDefinitionListItemSchema.parse({ ...listed,
                 triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger) });
         });
-        const methods: string[] = [];
-        homes.answer(serverA, '/v3/automations', { select: (_input, request) => {
-            methods.push(request.init?.method ?? 'GET');
-            return { body: { automations: listRows, nextCursor: null } };
-        } });
-        for (const row of rows) homes.answer(serverA, `/v3/automations/${row.id}`, { select: (_input, request) => {
-            methods.push(request.init?.method ?? 'GET');
-            return { body: row };
-        } });
+        homes.answer(serverA, 'GET /v3/automations', { body: { automations: listRows, nextCursor: null } });
+        homes.answer(serverA, 'POST /v3/automations/query', {
+            select: input => ({ body: selectWorkflowAutomationDetailsFixture(rows, input) }),
+        });
+        const requestsBeforeMount = homes.requests.length;
         // Like the canonical Popover DOM tests, use the browser renderer for the
         // real sheet's composed refs rather than manufacturing host identities.
         portal?.restore(); portal = undefined;
@@ -421,7 +435,11 @@ describe('retired Automation routes', () => {
         document.body.appendChild(container);
         const root = createRoot(container);
         try {
-            await React.act(async () => root.render(<AccountBoundary><SessionTriggersSection sessionId="session-1" /></AccountBoundary>));
+            function SessionTriggerReadHost() {
+                const read = useSessionTriggers('session-1');
+                return <SessionTriggersSection sessionId="session-1" read={read} />;
+            }
+            await React.act(async () => root.render(<AccountBoundary><SessionTriggerReadHost /></AccountBoundary>));
             await waitForHomeGovernance(async () => {
                 await React.act(async () => {});
                 expect(document.querySelector('[data-testid="session-work-trigger-popover"]')).not.toBeNull();
@@ -429,7 +447,19 @@ describe('retired Automation routes', () => {
             expect(document.querySelector('[data-testid="session-work-trigger-popover"]')).not.toBeNull();
             expect([...document.querySelectorAll<HTMLInputElement>('[aria-label="workflows.triggers.popover.at"]')]
                 .filter(node => node.value === '19:00').length).toBeGreaterThan(0);
-            expect(methods.filter(method => method !== 'GET')).toEqual([]);
+            const automationRequests = homes.requests.slice(requestsBeforeMount)
+                .filter(request => request.path.startsWith('/v3/automations'));
+            expect(automationRequests).toEqual(expect.arrayContaining([expect.objectContaining({
+                path: '/v3/automations/query', method: 'POST', input: expect.objectContaining({ details: true, scopeSessionId: 'session-1' }),
+            }), expect.objectContaining({
+                path: '/v3/automations/runs/workflow-storage', method: 'POST',
+                input: expect.objectContaining({ operation: 'summaries', request: { automationIds: ['other-automation', 'automation-42'] } }),
+            })]));
+            // Both private detail pages and Run summaries are reads carried by POST.
+            expect(automationRequests.filter(request => request.method !== 'GET'
+                && !(request.method === 'POST' && (request.path === '/v3/automations/query'
+                    || (request.path === '/v3/automations/runs/workflow-storage' && request.input !== null
+                        && typeof request.input === 'object' && 'operation' in request.input && request.input.operation === 'summaries'))))).toEqual([]);
             expect(rpcRequests.filter(request => /session\.trigger\.(add|update|remove)$/.test(request.method))).toEqual([]);
         } finally {
             await React.act(async () => root.unmount());

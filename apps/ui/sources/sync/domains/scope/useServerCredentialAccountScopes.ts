@@ -40,6 +40,7 @@ type UnboundScopeResolution =
     | Readonly<{ kind: 'unavailable' }>
     | Readonly<{ kind: 'signed_out' }>;
 type BoundScopeResolution = Readonly<{ kind: 'bound'; scope: ServerAccountScope }>;
+type ScopeResolutionLifetime = Readonly<{ revision: number; isCurrent: () => boolean }>;
 
 type ScopeEntry =
     | Readonly<{ resolution: UnboundScopeResolution }>
@@ -117,10 +118,14 @@ function useCredentialScopeEntries(
         // The exact set and Sync's existing admission revision are the binding inputs.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [embedded, embedScopeRevision, serverIdsKey]);
-    const revisionsRef = React.useRef(new Map<string, number>());
+    const resolutionLifetimesRef = React.useRef(new Map<string, ScopeResolutionLifetime>());
     const retirementCallbacksRef = React.useRef(new Map<string, Set<() => void>>());
     const mountedRef = React.useRef(true);
-    const [entries, setEntries] = React.useState<ReadonlyMap<string, ScopeEntry>>(() => new Map());
+    // The first render already reads every requested Home as resolving, so the effect's resolving
+    // publication below is not a state change and costs no render.
+    const [entries, setEntries] = React.useState<ReadonlyMap<string, ScopeEntry>>(
+        () => new Map(embedded ? [] : normalizedServerIds.map((serverId) => [serverId, RESOLVING_ENTRY] as const)),
+    );
     /** Homes whose latest settled read failed on this device's secure storage. */
     const unreadableServerIdsRef = React.useRef(new Set<string>());
     const committedHomesRef = React.useRef<ReadonlyMap<string, string | null> | null>(null);
@@ -162,9 +167,18 @@ function useCredentialScopeEntries(
             });
         };
 
-        const invalidate = (serverId: string, replacement: ScopeEntry | null = RESOLVING_ENTRY): number => {
-            const revision = (revisionsRef.current.get(serverId) ?? 0) + 1;
-            revisionsRef.current.set(serverId, revision);
+        const invalidate = (serverId: string, replacement: ScopeEntry | null = RESOLVING_ENTRY): ScopeResolutionLifetime => {
+            const revision = (resolutionLifetimesRef.current.get(serverId)?.revision ?? 0) + 1;
+            const requestedServerUrl = credentialTargets.get(serverId);
+            const lifetime: ScopeResolutionLifetime = {
+                revision,
+                // Cleanup retires this read permanently, including effect replay on remount.
+                isCurrent: replacement === null ? () => false : () => mountedRef.current
+                    && resolutionLifetimesRef.current.get(serverId)?.revision === revision
+                    && committedHomesRef.current?.has(serverId) === true
+                    && committedHomesRef.current.get(serverId) === requestedServerUrl,
+            };
+            resolutionLifetimesRef.current.set(serverId, lifetime);
             const retirements = retirementCallbacksRef.current.get(serverId);
             retirementCallbacksRef.current.delete(serverId);
             for (const retire of retirements ?? []) {
@@ -175,15 +189,10 @@ function useCredentialScopeEntries(
                 }
             }
             if (replacement) publishEntry(serverId, replacement);
-            return revision;
+            return lifetime;
         };
 
-        const resolveBinding = async (requestedServerId: string, revision: number): Promise<void> => {
-            const requestedServerUrl = credentialTargets.get(requestedServerId);
-            const isCurrent = () => mountedRef.current
-                && revisionsRef.current.get(requestedServerId) === revision
-                && committedHomesRef.current?.has(requestedServerId) === true
-                && committedHomesRef.current.get(requestedServerId) === requestedServerUrl;
+        const resolveBinding = async (requestedServerId: string, { revision, isCurrent }: ScopeResolutionLifetime): Promise<void> => {
             const resolution = await resolveServerCredentialAccountScope(requestedServerId);
             if (!isCurrent()) return;
             if (resolution.kind === 'unavailable') unreadableServerIdsRef.current.add(requestedServerId);
@@ -236,19 +245,19 @@ function useCredentialScopeEntries(
 
         for (const serverId of normalizedServerIds) {
             const previous = entries.get(serverId);
-            // Changing the selected Home set does not change the credentials of a retained Home.
-            // Its live binding and every consumer's cursor remain current until its own retirement.
-            if (previous && 'binding' in previous && previous.binding?.isCurrent()) continue;
+            // Pending and settled reads belong to the exact lookup target, even
+            // when no credential was bound. A sibling's selection cannot restart them.
+            if (resolutionLifetimesRef.current.get(serverId)?.isCurrent()) continue;
             // An actual lookup-target change retires authority immediately.
             // Keep its identity while resolving the new credential; metadata-only
             // publications retain the current binding through the guard above.
+            // A binding-less entry is already the retained identity; republishing a copy would only
+            // render every reader of it again.
             const retainedEntry: ScopeEntry = previous
-                ? previous.resolution.kind === 'bound'
-                    ? Object.freeze({ resolution: previous.resolution })
-                    : Object.freeze({ resolution: previous.resolution })
+                ? 'binding' in previous ? Object.freeze({ resolution: previous.resolution }) : previous
                 : RESOLVING_ENTRY;
-            const revision = invalidate(serverId, retainedEntry);
-            void resolveBinding(serverId, revision);
+            const lifetime = invalidate(serverId, retainedEntry);
+            void resolveBinding(serverId, lifetime);
         }
 
         const unsubscribe = subscribeHomeCredentialChange((event) => {
@@ -256,8 +265,8 @@ function useCredentialScopeEntries(
             for (const serverId of trackedServerIds) {
                 if (!areServerProfileIdentifiersEquivalent(event.serverId, serverId, resolveScopeId)) continue;
                 projectionLifecycleRef.current?.onCredentialMutation?.(serverId);
-                const revision = invalidate(serverId);
-                void resolveBinding(serverId, revision);
+                const lifetime = invalidate(serverId);
+                void resolveBinding(serverId, lifetime);
             }
         });
 
@@ -267,8 +276,8 @@ function useCredentialScopeEntries(
             if (!trackedServerIds.has(retryServerId)) return;
             if (!unreadableServerIdsRef.current.has(retryServerId)) return;
             unreadableServerIdsRef.current.delete(retryServerId);
-            const revision = invalidate(retryServerId);
-            void resolveBinding(retryServerId, revision);
+            const lifetime = invalidate(retryServerId);
+            void resolveBinding(retryServerId, lifetime);
         });
 
         return () => {
@@ -365,10 +374,15 @@ export function useServerCredentialAccountScopeBinding(
     projectionLifecycle?: ServerCredentialAccountScopeProjectionLifecycle,
 ): ServerCredentialAccountScopeBindingState {
     const normalized = normalizeCredentialScopeServerId(serverId);
-    const requested = React.useMemo(() => (normalized ? [normalized] : []), [normalized]);
+    // A reader below a scope that already resolves this Home shares that resolution (and its lifetime)
+    // instead of reading the credential again. A projection lifecycle keeps its own observed resolution.
+    const inheritedScope = React.useContext(InheritedServerCredentialAccountScopeContext);
+    const inherited = !projectionLifecycle && normalized && inheritedScope?.serverId === normalized ? inheritedScope.state : null;
+    const inherits = inherited !== null;
+    const requested = React.useMemo(() => (normalized && !inherits ? [normalized] : []), [inherits, normalized]);
     const entries = useCredentialScopeEntries(requested, projectionLifecycle);
     const entry = normalized ? entries.get(normalized) : undefined;
-    return React.useMemo(() => {
+    const own = React.useMemo(() => {
         if (!normalized) return Object.freeze({ resolution: UNKNOWN_HOME, binding: null });
         if (!entry) return Object.freeze({ resolution: RESOLVING, binding: null });
         return Object.freeze({
@@ -376,4 +390,23 @@ export function useServerCredentialAccountScopeBinding(
             binding: 'binding' in entry ? entry.binding ?? null : null,
         });
     }, [entry, normalized]);
+    return inherited ?? own;
+}
+
+const InheritedServerCredentialAccountScopeContext = React.createContext<Readonly<{
+    serverId: string;
+    state: ServerCredentialAccountScopeBindingState;
+}> | null>(null);
+
+/**
+ * Publishes one Home's already-resolved credential state to the readers below it (a Session
+ * destination's Board, approvals, plugin and hosted-HTML runtimes), so they share its one resolution.
+ */
+export function ServerCredentialAccountScopeBindingProvider(props: React.PropsWithChildren<Readonly<{
+    serverId: string | null;
+    state: ServerCredentialAccountScopeBindingState;
+}>>): React.ReactElement {
+    const serverId = normalizeCredentialScopeServerId(props.serverId);
+    const value = React.useMemo(() => serverId ? { serverId, state: props.state } : null, [props.state, serverId]);
+    return React.createElement(InheritedServerCredentialAccountScopeContext.Provider, { value }, props.children);
 }

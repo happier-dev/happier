@@ -3,7 +3,7 @@ import React from 'react';
 import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema, WorkflowRunGetResultV1Schema, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import {
     resolveWorkflowProblemPresentation,
@@ -46,6 +46,8 @@ export type WorkflowRunNowRequest = Readonly<{
     runId?: string;
     source: WorkflowRunStartRequestV1['source'];
     metadata?: WorkflowRunStartRequestV1['metadata'];
+    /** Immutable birth relationship for a Machine created for this task. */
+    managedCreation?: WorkflowRunStartRequestV1['managedCreation'];
     /** Declared-input values collected by the input sheet, in the Protocol shape. */
     inputs?: WorkflowRunStartRequestV1['inputs'];
     /** Reviewed run-layer overrides; admission resolves and freezes them. */
@@ -100,6 +102,9 @@ export type WorkflowRunNowController = Readonly<{
      * surface's current values, so a review must show this one.
      */
     retainedRequest: WorkflowRunNowRetainedRequest | null;
+    /** Authored review custody; reads/writes do not publish Account-wide render updates. */
+    reviewedSetup: () => WorkflowReviewedSetup | null;
+    retainReviewedSetup: (setup: WorkflowReviewedSetup) => void;
     /**
      * Admits the reviewed draft and returns the exact admitted handle, so the
      * caller navigates to the Run the server settled rather than guessing it
@@ -124,6 +129,7 @@ function prepareWorkflowRunNowRequest(request: WorkflowRunNowRequest & Readonly<
         runId: request.runId,
         source: request.source,
         ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+        ...(request.managedCreation === undefined ? {} : { managedCreation: request.managedCreation }),
         ...(request.inputs === undefined ? {} : { inputs: request.inputs }),
         ...(request.roleOverrides === undefined ? {} : { roleOverrides: request.roleOverrides }),
         ...(request.executionTarget === undefined || request.executionTarget.kind === 'session'
@@ -168,26 +174,56 @@ type PendingAdmission = {
     unresolved: boolean;
 };
 
+/** Data authored in Start; origin adapters and presentation lifetimes are acquired anew on mount. */
+export type WorkflowReviewedSetup = Readonly<{
+    source: WorkflowRunStartRequestV1['source'];
+    retainedDraft: string;
+    values: Readonly<Record<string, JsonValue | undefined>>;
+    rawTextValues: Readonly<Record<string, string>>;
+    roleOverrides?: Readonly<WorkflowRunStartRequestV1['roleOverrides']>;
+    visibleTeamId?: string;
+}>;
+
+type StartIntent = {
+    admission?: PendingAdmission;
+    reviewedSetup?: WorkflowReviewedSetup;
+};
+
 /**
  * Reviewed requests outlive a route, just as the shared transient-command guard
- * does. Only pending/unknown admission data stays here, until settlement or the
- * captured Account's retirement; this is neither a Run cache nor reload custody.
+ * does. Reviewed setup and pending/unknown admission data stay here until acceptance
+ * or the captured Account's retirement; this is neither a Run cache nor reload custody.
  */
 const admissionsByAccount = new Map<string, ReturnType<typeof createAdmissionState>>();
 
 function createAdmissionState() {
-    const byIntent = new Map<string, PendingAdmission>();
+    const byIntent = new Map<string, StartIntent>();
     const byRunId = new Map<string, PendingAdmission>();
     const refusals = new Map<string, WorkflowProblemPresentation>();
-    const listeners = new Set<() => void>();
-    let version = 0;
+    const listeners = new Map<string, Set<() => void>>();
+    const versions = new Map<string, number>();
+    const publish = (key: string) => {
+        versions.set(key, (versions.get(key) ?? 0) + 1);
+        for (const listener of listeners.get(key) ?? []) listener();
+    };
     return {
         byIntent, byRunId, refusals,
         activeLifetime: null as ActiveServerAccountScopeLifetime | null,
-        subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        snapshot: () => version,
-        publish: () => { version++; for (const listener of listeners) listener(); },
-        clear: () => { byIntent.clear(); byRunId.clear(); refusals.clear(); version++; for (const listener of listeners) listener(); },
+        subscribe: (key: string, listener: () => void) => {
+            let current = listeners.get(key);
+            if (!current) { current = new Set(); listeners.set(key, current); }
+            current.add(listener);
+            return () => {
+                current.delete(listener);
+                if (current.size === 0) listeners.delete(key);
+            };
+        },
+        snapshot: (key: string) => versions.get(key) ?? 0,
+        publish,
+        clear: () => {
+            byIntent.clear(); byRunId.clear(); refusals.clear();
+            for (const key of listeners.keys()) publish(key);
+        },
     };
 }
 
@@ -272,21 +308,28 @@ export function useWorkflowRunNowController(
     intentKey?: string,
 ): WorkflowRunNowController {
     const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
-    const command = useTransientCommandAcknowledgement<WorkflowRunStartResultV1>('workflow.runNow', lifetime);
     const instanceKey = React.useId();
     const key = intentKey ?? instanceKey;
     const state = lifetime?.isCurrent() ? admissionStateFor(lifetime) : EMPTY_ADMISSION_STATE;
-    React.useSyncExternalStore(state.subscribe, state.snapshot, state.snapshot);
+    const subscribe = React.useCallback((listener: () => void) => state.subscribe(key, listener), [key, state]);
+    const snapshot = React.useCallback(() => state.snapshot(key), [key, state]);
+    React.useSyncExternalStore(subscribe, snapshot, snapshot);
+    const pendingAdmission = state.byIntent.get(key)?.admission;
+    const pendingRunId = pendingAdmission?.runId ?? null;
+    const command = useTransientCommandAcknowledgement<WorkflowRunStartResultV1>('workflow.runNow', lifetime, pendingRunId);
     const clearRefusal = React.useCallback(() => {
-        if (state.refusals.delete(key)) state.publish();
+        if (state.refusals.delete(key)) state.publish(key);
     }, [key, state]);
     React.useEffect(() => () => {
         // A known refusal is presentation-local. Unknown custody remains
         // recoverable when this source is opened again under the same Account.
-        if (!state.byIntent.has(key)) state.refusals.delete(key);
-    }, [key, state]);
-    const pendingAdmission = state.byIntent.get(key);
-    const pendingRunId = pendingAdmission?.runId ?? null;
+        const intent = state.byIntent.get(key);
+        if (!intent?.admission) {
+            state.refusals.delete(key);
+            // Direct instance consumers have no remount identity to rejoin.
+            if (intentKey === undefined) state.byIntent.delete(key);
+        }
+    }, [intentKey, key, state]);
     const retained = pendingAdmission?.request;
     const retainedUnresolved = pendingAdmission?.unresolved === true;
     const retainedRequest = React.useMemo(() => projectRetainedRequest(retained, retainedUnresolved), [retained, retainedUnresolved]);
@@ -303,6 +346,13 @@ export function useWorkflowRunNowController(
     return React.useMemo(() => ({
         pendingRunId,
         retainedRequest,
+        reviewedSetup: () => state.byIntent.get(key)?.reviewedSetup ?? null,
+        retainReviewedSetup: (setup) => {
+            if (!lifetime?.isCurrent()) return;
+            const intent = state.byIntent.get(key) ?? {};
+            intent.reviewedSetup = setup;
+            state.byIntent.set(key, intent);
+        },
         stateFor: command.stateFor,
         isPending: (runId) => {
             const state = command.stateFor(runId);
@@ -322,16 +372,18 @@ export function useWorkflowRunNowController(
             if (requestLifetime === null || !requestLifetime.isCurrent()) return null;
             const requestState = admissionStateFor(requestLifetime);
             requestState.refusals.delete(key);
-            const admission = (intentKey !== undefined || request.runId === undefined ? requestState.byIntent.get(key) : undefined)
+            const intent = requestState.byIntent.get(key) ?? {};
+            const admission = (intentKey !== undefined || request.runId === undefined ? intent.admission : undefined)
                 ?? (request.runId === undefined ? undefined : requestState.byRunId.get(request.runId))
                 ?? { runId: request.runId ?? randomUUID(), request: null, unresolved: false };
-            requestState.byIntent.set(key, admission);
+            intent.admission = admission;
+            requestState.byIntent.set(key, intent);
             requestState.byRunId.set(admission.runId, admission);
-            requestState.publish();
+            requestState.publish(key);
             const runId = admission.runId;
             const canPresentRefusal = () => requestLifetime.isCurrent()
                 && request.isInvocationCurrent?.() !== false
-                && requestState.byIntent.get(key) === admission;
+                && requestState.byIntent.get(key)?.admission === admission;
             let didSubmit = false;
             let accepted = false;
             let submitted: PreparedWorkflowRunNowRequest | null = null;
@@ -344,7 +396,7 @@ export function useWorkflowRunNowController(
                     });
                     if (admission.request !== submitted) {
                         admission.request = submitted;
-                        requestState.publish();
+                        requestState.publish(key);
                     }
                     try { return await startWorkflowRun(submitted, requestLifetime); }
                     catch (error) {
@@ -363,7 +415,7 @@ export function useWorkflowRunNowController(
                         catch (error) {
                             if (canPresentRefusal() && requestState.byRunId.get(runId) === admission) {
                                 requestState.refusals.set(key, resolveWorkflowProblemPresentation(unresolvedAdmission()));
-                                requestState.publish();
+                                requestState.publish(key);
                             }
                             throw error;
                         }
@@ -391,7 +443,7 @@ export function useWorkflowRunNowController(
                     const problem = resolveWorkflowProblemPresentation(admission.unresolved ? unresolvedAdmission() : error);
                     if (request.refusal === 'inline') {
                         requestState.refusals.set(key, problem);
-                        requestState.publish();
+                        requestState.publish(key);
                     }
                     else await Modal.alert(problem.title, problem.message);
                 },
@@ -400,21 +452,25 @@ export function useWorkflowRunNowController(
             if (canPresentRefusal() && admission.unresolved && state === 'idle' && requestState.byRunId.get(runId) === admission
                 && requestState.refusals.get(key)?.code !== 'workflow_outcome_unresolved') {
                 requestState.refusals.set(key, resolveWorkflowProblemPresentation(unresolvedAdmission()));
-                requestState.publish();
+                requestState.publish(key);
             }
             // A duplicate press returns null while the first is still pending;
             // only acceptance, a definitive refusal or retired scope releases its id.
             if (didSubmit && !admission.unresolved && state !== 'submitting' && state !== 'reconciling') {
                 requestState.byRunId.delete(runId);
                 for (const [intent, pending] of requestState.byIntent) {
-                    if (pending === admission) {
-                        requestState.byIntent.delete(intent);
-                        if (accepted) requestState.refusals.delete(intent);
+                    if (pending.admission === admission) {
+                        delete pending.admission;
+                        if (accepted) {
+                            delete pending.reviewedSetup;
+                            requestState.refusals.delete(intent);
+                        }
+                        if (!pending.reviewedSetup) requestState.byIntent.delete(intent);
+                        requestState.publish(intent);
                     }
                 }
-                requestState.publish();
             }
             return result;
         },
-    }), [accountLifetime, clearRefusal, command, intentKey, key, lifetime, pendingRunId, refusal, retainedRequest]);
+    }), [accountLifetime, clearRefusal, command, intentKey, key, lifetime, pendingRunId, refusal, retainedRequest, state]);
 }

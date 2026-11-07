@@ -1,10 +1,18 @@
 import * as React from 'react';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import type { WorkflowDefinitionV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol';
+import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowDefinitionV1} from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowMaterializedLeafV1} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import type { WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { resolveWorkflowAcceptedStepSelectionV1, WorkflowStepSelectionErrorV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 
 import { useWorkflowAuthoringComposerCustody } from '@/components/sessions/authoring/authoringComposerCustody';
+import { resolveSessionAuthoringAgentId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { WorkflowBlockListEditor, type WorkflowDocumentPresentation } from '@/components/workflows/editor/WorkflowBlockListEditor';
+import type { WorkflowDocumentStepSlots } from '@/components/workflows/editor/workflowDocumentPresentation';
 import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import {
@@ -18,10 +26,30 @@ import { Text } from '@/components/ui/text/Text';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
 import { t } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
 
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
+import { readWorkflowLoopOccurrenceItem } from './workflowInvocationStructure';
 import { workflowRunStyles as styles } from './workflowRunStyles';
+
+type StepOccurrenceFact = Readonly<{
+    invocation: WorkflowRunInvocationIndexV1;
+    progress: WorkflowProgressEnvelopeV1 | undefined;
+    label: string | null;
+}>;
+
+type StepPresentation = Readonly<{
+    context: object;
+    facts: readonly StepOccurrenceFact[];
+    selectedInvocationId: string | null;
+    slots: WorkflowDocumentStepSlots;
+}>;
+
+const NO_OCCURRENCE_FACTS: readonly StepOccurrenceFact[] = [];
+const NO_INVOCATIONS: readonly WorkflowRunInvocationIndexV1[] = [];
+const ignoreDocumentEdit = () => {};
 
 function WorkflowRunOccurrenceSelector(props: Readonly<{
     invocationStatusContext?: WorkflowInvocationLifecycleContext;
@@ -83,6 +111,11 @@ export function WorkflowRunSteps(props: Readonly<{
     serverId?: string | null;
     definition: WorkflowDefinitionV1;
     frozenChildren?: Readonly<Record<string, WorkflowDefinitionV1>>;
+    materializedLeaves?: readonly WorkflowMaterializedLeafV1[];
+    inputs?: Readonly<Record<string, JsonValue>>;
+    sessionDisplayLabelsById?: ReadonlyMap<string, string>;
+    /** Accepted definition identity, distinct from this call site's occurrence path. */
+    sourceKey?: string;
     workflowPath?: readonly string[];
     invocations: readonly WorkflowRunInvocationIndexV1[];
     progressById?: ReadonlyMap<string, WorkflowProgressEnvelopeV1>;
@@ -93,14 +126,32 @@ export function WorkflowRunSteps(props: Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const workflowPath = props.workflowPath ?? [];
-    const sourceKey = resolveWorkflowFlowScopedNodeId('$root', workflowPath);
+    const scopeKey = resolveWorkflowFlowScopedNodeId('$root', workflowPath);
+    const sourceKey = props.sourceKey ?? '$root';
+    const presentEngine = useRoleEnginePresentation(props.serverId);
     const draft = React.useMemo(() => buildWorkflowEditorDraftFromDefinition({
-        draftId: `run:${props.runId}:${sourceKey}`, name: '', definition: props.definition,
-    }), [props.definition, props.runId, sourceKey]);
+        draftId: `run:${props.runId}:${scopeKey}`, name: '', definition: props.definition,
+    }), [props.definition, props.runId, scopeKey]);
+    const acceptedByBlockId = React.useMemo(() => new Map(props.materializedLeaves
+        ?.filter(leaf => leaf.sourceKey === sourceKey).map(leaf => [leaf.blockId, leaf])), [props.materializedLeaves, sourceKey]);
     const blocksById = React.useMemo(() => new Map(walkWorkflowBlocks(draft.blocks).map((block) => [block.id, block])), [draft.blocks]);
     const blockIds = React.useMemo(() => [...blocksById.keys()], [blocksById]);
     const custody = useWorkflowAuthoringComposerCustody({ draftId: draft.draftId, blockIds });
     const validation = React.useMemo(() => validateWorkflowEditorDraft(draft), [draft]);
+    const preferredLanguage = usePreferredLanguage();
+    const selectInvocation = useEventCallback(props.onSelectInvocation);
+    // A container consumes its descendants' live slots; a sibling does not.
+    const ancestorsByBlock = React.useMemo(() => {
+        const result = new Map<string, string[]>();
+        for (const block of blocksById.values()) {
+            for (const descendant of walkWorkflowBlocks([block])) {
+                const ancestors = result.get(descendant.id) ?? [];
+                ancestors.push(block.id);
+                result.set(descendant.id, ancestors);
+            }
+        }
+        return result;
+    }, [blocksById]);
     const byBlock = React.useMemo(() => {
         const result = new Map<string, WorkflowRunInvocationIndexV1[]>();
         for (const invocation of props.invocations) {
@@ -112,15 +163,43 @@ export function WorkflowRunSteps(props: Readonly<{
             result.set(blockId, entries);
         }
         return result;
-    }, [props.invocations, props.structure, sourceKey]);
+    }, [props.invocations, props.structure, scopeKey]);
     const selectedEntry = props.selectedInvocationId === null ? undefined : props.structure.get(props.selectedInvocationId);
     const selectedBlockId = selectedEntry?.blockId && selectedEntry.nodeId === resolveWorkflowFlowScopedNodeId(selectedEntry.blockId, workflowPath)
         ? selectedEntry.blockId : null;
-    const presentation: WorkflowDocumentPresentation = {
-        editable: false,
-        note: workflowPath.length === 0 ? <Text style={styles.sectionLabel}>{t('workflows.run.frozenVersion')}</Text> : null,
-        step: (blockId) => {
-            const occurrences = byBlock.get(blockId) ?? [];
+    const presentationContext = React.useMemo(() => ({}), [draft, acceptedByBlockId, props.frozenChildren,
+        props.inputs, props.sessionDisplayLabelsById, presentEngine, props.invocationStatusContext,
+        props.runId, props.machineId, props.serverId, props.testIDPrefix, sourceKey, preferredLanguage]);
+    const previousPresentations = React.useRef(new Map<string, StepPresentation>());
+    const factsByBlock = new Map<string, StepOccurrenceFact[]>();
+    for (const invocation of props.invocations) {
+        const entry = props.structure.get(invocation.id);
+        if (entry === undefined) continue;
+        const path = entry.occurrence.filter(coordinate => coordinate.kind === 'workflow');
+        if (!workflowPath.every((id, index) => path[index]?.blockId === id)) continue;
+        const localBlockId = path.length > workflowPath.length ? path[workflowPath.length]?.blockId : entry.blockId;
+        if (localBlockId == null) continue;
+        const fact = { invocation, progress: props.progressById?.get(invocation.id), label: props.occurrenceLabel(entry) };
+        for (const ancestor of ancestorsByBlock.get(localBlockId) ?? []) {
+            const facts = factsByBlock.get(ancestor) ?? [];
+            facts.push(fact);
+            factsByBlock.set(ancestor, facts);
+        }
+    }
+    const nextPresentations = new Map<string, StepPresentation>();
+    const renderStep = (blockId: string): WorkflowDocumentStepSlots => {
+            const facts = factsByBlock.get(blockId) ?? NO_OCCURRENCE_FACTS;
+            const selectedInvocationId = facts.some(fact => fact.invocation.id === props.selectedInvocationId) ? props.selectedInvocationId : null;
+            const previous = previousPresentations.current.get(blockId);
+            if (previous?.context === presentationContext && previous.selectedInvocationId === selectedInvocationId
+                && previous.facts.length === facts.length && facts.every((fact, index) => {
+                    const before = previous.facts[index]!;
+                    return before.invocation === fact.invocation && before.progress === fact.progress && before.label === fact.label;
+                })) {
+                nextPresentations.set(blockId, previous);
+                return previous.slots;
+            }
+            const occurrences = byBlock.get(blockId) ?? NO_INVOCATIONS;
             const selected = occurrences.find((entry) => entry.id === props.selectedInvocationId);
             const block = blocksById.get(blockId);
             const child = block?.kind === 'workflow' ? props.frozenChildren?.[block.workflowRef] : undefined;
@@ -135,6 +214,54 @@ export function WorkflowRunSteps(props: Readonly<{
             const onlyEntry = only === null ? undefined : props.structure.get(only.id);
             const onlyAttempt = only === null ? null : describeWorkflowInvocationAttempt(only.attempt);
             const displayedOccurrence = selected ?? only;
+            const leaf = block?.kind === 'step' ? acceptedByBlockId.get(blockId) : undefined;
+            const progress = displayedOccurrence == null ? undefined : props.progressById?.get(displayedOccurrence.id);
+            const execution = progress?.execution;
+            const sessionId = execution?.kind === 'session' || execution?.kind === 'session_ready' ? execution.sessionId : null;
+            const participantChoices = leaf?.participantBindings?.selections;
+            let exactSelection: WorkflowMaterializedLeafV1 | undefined;
+            if (leaf && progress) {
+                // Scope coordinates select the frozen item, not a roster position: admission
+                // deduplicates choices, and the same participant may occur several times.
+                let item: JsonValue | undefined;
+                const scope = progress.invocationPath.scope;
+                let localStart = scope.length;
+                while (localStart > 0 && scope[localStart - 1]?.kind !== 'workflow') localStart -= 1;
+                const localScope = scope.slice(localStart);
+                for (const coordinate of localScope) {
+                    if (coordinate.kind !== 'iteration') continue;
+                    const owner = blocksById.get(coordinate.blockId);
+                    if (owner?.kind !== 'loop' || owner.repetition.kind !== 'items') continue;
+                    item = readWorkflowLoopOccurrenceItem({ loop: owner, index: coordinate.index, inputs: props.inputs, outerItem: item });
+                }
+                try { exactSelection = resolveWorkflowAcceptedStepSelectionV1(leaf, item, props.inputs); }
+                catch (error) { if (!(error instanceof WorkflowStepSelectionErrorV1)) throw error; }
+            }
+            const choices: readonly Pick<WorkflowMaterializedLeafV1, 'selection' | 'participant' | 'role'>[] = exactSelection
+                ? [exactSelection] : progress && (leaf?.participantBindings || leaf?.engineBindings || leaf?.sessionBindings)
+                    ? [] : participantChoices ?? leaf?.engineBindings?.selections ?? (leaf ? [leaf] : []);
+            const identities = choices.map(choice => {
+                const target = choice.selection.agentTarget;
+                const engine = target == null ? null : presentEngine({ agentTargetKey: resolveBackendTargetKeyV2(target),
+                    ...(choice.selection.modelSelection ? { modelId: choice.selection.modelSelection.ref.modelId } : {}) });
+                const participant = choice.participant;
+                const participantSessionLabel = participant?.kind === 'session'
+                    ? (participant.session.serverId === props.serverId ? props.sessionDisplayLabelsById?.get(participant.session.sessionId) : undefined)
+                        ?? t('session.collaboration.discussion.participants.session') : null;
+                // A continued Session need not carry an Agent selection or a participant binding.
+                // Its exact execution correspondence can still name the conversation that ran.
+                const sessionLabel = participantSessionLabel ?? (choice.role === undefined && target == null && sessionId !== null
+                    ? props.sessionDisplayLabelsById?.get(sessionId) : null);
+                const name = sessionLabel ?? choice.role?.name ?? engine?.label ?? t('workflows.input.unavailable');
+                return { selection: choice.selection, name,
+                    label: sessionLabel ?? ([choice.role?.name, engine?.label].filter(Boolean).join(' · ') || name) };
+            });
+            const enginePresentation = leaf === undefined ? undefined : {
+                agentType: identities.length === 1 ? resolveSessionAuthoringAgentId({ agentTarget: identities[0]!.selection.agentTarget }) ?? undefined : undefined,
+                agentLabel: [...new Set(identities.map(identity => identity.name))].join(', ') || t('workflows.input.unavailable'),
+                engineLabel: [...new Set(identities.map(identity => identity.label))].join(', ') || t('workflows.input.unavailable'),
+                modelMode: identities.length === 1 ? identities[0]!.selection.modelSelection?.ref.modelId : undefined,
+            };
             const elapsed = formatWorkflowInvocationElapsedLabel(displayedOccurrence === null
                 ? undefined : props.progressById?.get(displayedOccurrence.id)?.timing);
             // The single occurrence opens from the step's footer, worded for what it opens (lab
@@ -145,7 +272,7 @@ export function WorkflowRunSteps(props: Readonly<{
                 accessibilityRole="button"
                 selected={only.id === props.selectedInvocationId}
                 current={only.id === props.selectedInvocationId ? 'page' : undefined}
-                onPress={() => props.onSelectInvocation(only.id)}
+                onPress={() => selectInvocation(only.id)}
                 style={({ pressed }) => [styles.actionTarget, pressed ? styles.pressed : null]}
             >
                 <Text style={onlyNeedsYou ? styles.action : styles.quietAction}>{[
@@ -154,7 +281,8 @@ export function WorkflowRunSteps(props: Readonly<{
                     describeWorkflowOpenWorkLabel({ lifecycle: only.lifecycle, blockKind: block?.kind ?? null, selected: only.id === props.selectedInvocationId }),
                 ].filter(Boolean).join(' · ')}</Text>
             </HappierPressable>;
-            return {
+            const slots: WorkflowDocumentStepSlots = {
+                ...(enginePresentation === undefined ? {} : { enginePresentation }),
                 ...(block?.kind === 'workflow' ? { nestedDefinition: child ?? null } : {}),
                 settled: displayedOccurrence !== null && isTerminalWorkflowInvocationLifecycle(displayedOccurrence.lifecycle),
                 state: displayedOccurrence === null ? null : <>
@@ -164,30 +292,39 @@ export function WorkflowRunSteps(props: Readonly<{
                 </>,
                 occurrenceSelector: occurrences.length > 1 ? <WorkflowRunOccurrenceSelector
                     invocations={occurrences} selectedInvocationId={props.selectedInvocationId}
-                    onSelectInvocation={props.onSelectInvocation} label={label} blockKind={block?.kind ?? null} testIDPrefix={`${props.testIDPrefix}-${blockId}`}
+                    onSelectInvocation={selectInvocation} label={label} blockKind={block?.kind ?? null} testIDPrefix={`${props.testIDPrefix}-${blockId}`}
                     progressById={props.progressById}
                     invocationStatusContext={props.invocationStatusContext}
                 /> : null,
                 footer: child === undefined ? openWork : <>
                     {openWork}
                     <WorkflowRunSteps
-                        {...props} definition={child} workflowPath={[...workflowPath, blockId]}
+                        {...props} definition={child} sourceKey={block?.kind === 'workflow' ? block.workflowRef : sourceKey} workflowPath={[...workflowPath, blockId]}
+                        inputs={progress?.container?.kind === 'body' ? progress.container.frameInputs : undefined}
                         testIDPrefix={`${props.testIDPrefix}-${blockId}`} />
                 </>,
             };
-        },
+            nextPresentations.set(blockId, { context: presentationContext, facts, selectedInvocationId, slots });
+            return slots;
     };
+    for (const blockId of blockIds) renderStep(blockId);
+    previousPresentations.current = nextPresentations;
+    const presentation: WorkflowDocumentPresentation = {
+        editable: false,
+        note: workflowPath.length === 0 ? <Text style={styles.sectionLabel}>{t('workflows.run.frozenVersion')}</Text> : null,
+        step: blockId => nextPresentations.get(blockId)?.slots ?? null,
+    };
+    const selectBlock = React.useCallback((blockId: string | null) => {
+        const occurrences = blockId === null ? NO_INVOCATIONS : byBlock.get(blockId) ?? NO_INVOCATIONS;
+        if (occurrences.length === 1) selectInvocation(occurrences[0]!.id);
+    }, [byBlock, selectInvocation]);
     return <WorkflowBlockListEditor
         draft={draft} list={{ kind: 'root' }} blocks={draft.blocks} depth={0}
         selectedBlockId={selectedBlockId} validation={validation}
         composerScope={{ kind: 'machine', machineId: props.machineId, ...(props.serverId ? { serverId: props.serverId } : {}) }}
         composerCustody={custody}
-        onChange={() => {}} onCustomize={() => {}}
-        onSelect={(blockId) => {
-            // A repeated block has no implicit "latest" occurrence: its exact selector owns selection.
-            const occurrences = blockId === null ? [] : byBlock.get(blockId) ?? [];
-            if (occurrences.length === 1) props.onSelectInvocation(occurrences[0]!.id);
-        }}
+        onChange={ignoreDocumentEdit} onCustomize={ignoreDocumentEdit}
+        onSelect={selectBlock}
         presentation={presentation} testIDPrefix={props.testIDPrefix}
     />;
 }

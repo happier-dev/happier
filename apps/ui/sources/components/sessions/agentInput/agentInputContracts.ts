@@ -2,13 +2,17 @@ import * as React from 'react';
 
 import type {
     ComposerAttachmentDisplayV1,
-    ComposerAttachmentPreviewV1,
-    ComposerAttachmentViewV1,
+    ComposerAttachmentPreviewV1} from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import type {
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
     ComposerDecorationSetV1,
-    ComposerInputLockSnapshotV1,
+    ComposerInputLockSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
     PluginUiRendererChainBindingV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/rendererChainBinding';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
+import type { StagePictureEdit } from '@/components/ui/media/stage/mediaStageItems';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import type { SelectionListHeightBehavior, SelectionListSelection, SelectionListStep } from '@/components/ui/selectionList';
@@ -16,6 +20,23 @@ import type { SelectionListHeightBehavior, SelectionListSelection, SelectionList
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import type { AgentInputContentPopoverConfig } from './components/AgentInputContentPopover';
 import type { AgentInputControlId } from './controls/agentInputControlTypes';
+
+/**
+ * An initiating press handed to the mounted composer's existing control owner. A chip whose
+ * popover only the mounted composer can anchor (`toggleCollapsedPopover`) is named by its key.
+ */
+export type AgentInputControlIntent =
+    | 'engine'
+    | 'actionMenu'
+    | 'promptLibrary'
+    | 'dictate'
+    | Readonly<{ chipPopover: string }>;
+
+/** Admitted plugin status presentation; nodes stay opaque while their declared emphasis reaches the strip. */
+export type AgentInputStatusRegion = Readonly<{
+    node: React.ReactNode;
+    emphasis?: 'quiet' | 'prominent';
+}>;
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
     chipStyle: (pressed: boolean) => any;
@@ -74,6 +95,8 @@ export type AgentInputComposerInputLock = ComposerInputLockSnapshotV1;
  * contract and remain responsible for mutations, bytes, and persistence.
  */
 type AgentInputAttachmentRowItemBase = Readonly<{
+    stageEdit?: StagePictureEdit;
+    hasImageMarks?: boolean;
     key: string;
     /** Canonical tray identity, independent of the row's React presentation key. */
     attachmentId?: string;
@@ -99,6 +122,7 @@ type AgentInputAttachmentRowItemBase = Readonly<{
     status?: AgentInputAttachmentRowStatus;
     uploadProgress?: AgentInputAttachmentUploadProgress;
     error?: string;
+    errorCode?: string;
     availability?: AgentInputAttachmentRowAvailability;
 }>;
 
@@ -295,6 +319,8 @@ export type AgentInputAttachmentUploadProgress = Readonly<{
 }>;
 
 export type AgentInputAttachment = Readonly<{
+    stageEdit?: StagePictureEdit;
+    hasImageMarks?: boolean;
     key: string;
     label: string;
     attachmentType?: 'file' | 'folder';
@@ -302,6 +328,7 @@ export type AgentInputAttachment = Readonly<{
     preview?: AgentInputAttachmentPreview;
     uploadProgress?: AgentInputAttachmentUploadProgress;
     error?: string;
+    errorCode?: string;
     onRemove?: () => void;
 }>;
 
@@ -319,9 +346,12 @@ function createAgentInputAttachmentRowItemBase(
         attachmentId: attachment.key,
         ...(attachment.attachmentType ? { attachmentType: attachment.attachmentType } : {}),
         label: attachment.label,
+        ...(attachment.stageEdit ? { stageEdit: attachment.stageEdit } : {}),
+        ...(attachment.hasImageMarks ? { hasImageMarks: true } : {}),
         ...(attachment.status === undefined ? {} : { status: attachment.status }),
         ...(attachment.uploadProgress === undefined ? {} : { uploadProgress: attachment.uploadProgress }),
         ...(attachment.error === undefined ? {} : { error: attachment.error }),
+        ...(attachment.errorCode === undefined ? {} : { errorCode: attachment.errorCode }),
         ...(attachment.onRemove === undefined ? {} : { onRemove: attachment.onRemove }),
         ...(attachment.onRemove === undefined ? {} : { removeTestID: `agent-input-attachment-remove:${attachment.key}` }),
     };

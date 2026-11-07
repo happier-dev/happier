@@ -1,10 +1,11 @@
 import * as React from 'react';
-import type { WorkBoardArtifactSummaryV1, WorkBoardV1 } from '@happier-dev/protocol';
+import type { WorkBoardArtifactSummaryV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import type { WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
-import { t } from '@/text';
 
+import { describeBoardNeedYouCount } from './model/boardCards';
 import { useBoardLiveSummary } from './model/useBoardContent';
 import { useWorkBoard } from './model/useWorkBoards';
 
@@ -20,16 +21,18 @@ export const PinnedBoardNeedsYouCount = React.memo(function PinnedBoardNeedsYouC
 });
 
 const PinnedBoardLiveCount = React.memo(function PinnedBoardLiveCount(props: Readonly<{ board: WorkBoardV1 }>) {
-    const { needYou: count } = useBoardLiveSummary(props.board);
-    if (count === 0) return null;
+    const { needYou: count, undetermined } = useBoardLiveSummary(props.board);
+    if (count === null || count === 0) return null;
+    // Unresolved candidates make the proven count a floor: "3+", never an exhaustive "3".
+    const atLeast = undetermined !== null && undetermined.count > 0;
     return (
         <StatusPill
             testID={`pinned-board:${props.board.id}:need-you`}
             variant={WORK_STATUS_PILL_VARIANT.attention}
-            label={String(count)}
+            label={atLeast ? `${count}+` : String(count)}
             hideDot
             labelNumberOfLines={1}
-            accessibilityLabel={t('boards.meta.needYou', { count })}
+            accessibilityLabel={describeBoardNeedYouCount(count, undetermined)}
         />
     );
 });

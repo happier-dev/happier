@@ -5,9 +5,10 @@ import type {
   WorkflowDefinitionCaptureRequestV1,
   WorkflowDefinitionCaptureResultV1,
 } from '@happier-dev/protocol/workflows/actionsV1';
-import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { workflowInputTitle } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { useExecutableParticipantLabel } from '@/components/sessions/authoring/useExecutableParticipantLabel';
+import { ExecutableParticipantPickerBody } from '@/components/sessions/authoring/ExecutableParticipantPickerBody';
 import {
   RoundButton,
   RoundButtonSizeScope,
@@ -20,9 +21,9 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
+import { useInlineLevelFocusReturn } from '@/keyboard/focusReturn';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -37,8 +38,11 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { projectWorkflowFlow } from '@/components/workflows/flow/workflowFlowProjection';
+import { listWorkflowPersonInputs, resolveWorkflowBuiltinInputPresentation } from '@/components/workflows/presentation/workflowBuiltinInputPresentation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 import { DiscussionSheetHeader } from './DiscussionInviteSheet';
 import type { useDiscussionWorkflowCapture } from './useDiscussionWorkflowCapture';
@@ -316,8 +320,16 @@ function Review(
 ) {
   const { state } = props.capture;
   const draft = props.draft;
+  const language = usePreferredLanguage();
+  const definition = draft?.definition;
+  // The ordinary Flow owner reads the exact draft that editor intake and Save consume.
+  // Message roles below exist only to repair an unresolved source selection.
+  const flow = React.useMemo(() => definition ? projectWorkflowFlow(definition) : null, [definition, language]);
+  const inputPresentation = resolveWorkflowBuiltinInputPresentation(draft?.provenance.workflow?.source.ref);
+  const inputs = definition ? listWorkflowPersonInputs(definition.inputs) : [];
   const numbers = React.useMemo(() => {
     const map = new Map<string, number>();
+    if (draft?.definition) return map;
     draft?.steps
       .filter((step) => step.role !== 'exclude')
       .forEach((step, index) => map.set(step.messageId, index + 1));
@@ -347,7 +359,7 @@ function Review(
     state.status === 'failed'
       ? resolveWorkflowProblemPresentation(state.error)
       : null;
-  const kept = draft?.steps.filter((step) => step.role !== 'exclude') ?? [];
+  const kept = draft?.definition ? [] : draft?.steps.filter((step) => step.role !== 'exclude') ?? [];
   const sourceCount =
     draft?.provenance.messages.length ?? state.request?.messageIds.length ?? 0;
 
@@ -418,7 +430,18 @@ function Review(
             surface="sheet"
             style={state.status === 'loading' ? styles.stale : undefined}
           >
-            {draft.steps.map((step, index) => (
+            {flow ? flow.nodes.map((node, index) => (
+              <Item
+                key={node.nodeId}
+                testID={`discussion-pattern-capture-step:${node.nodeId}`}
+                density="compact"
+                title={node.label}
+                subtitle={node.labelDetail}
+                showChevron={false}
+                showDivider={index < flow.nodes.length - 1}
+                leftElement={<Text style={styles.number}>{node.stepOrdinal ?? '–'}</Text>}
+              />
+            )) : draft.steps.map((step, index) => (
               <CaptureStepRow
                 key={step.messageId}
                 step={step}
@@ -450,7 +473,17 @@ function Review(
             title={t('workflows.start.capture.askedTitle')}
           />
           <View testID="discussion-pattern-capture-asked" style={styles.chips}>
-            {kept.map((step) => (
+            {definition ? inputs.map((input) => {
+              const title = workflowInputTitle(input, inputPresentation?.[input.name]
+                ?? (input.name === 'participants' ? { title: t('workflows.builtins.patternInputs.participants') } : undefined));
+              const chip = { name: input.name, title, perRun: input.required,
+                onToggle: !draft.provenance.workflow && state.status === 'review'
+                  ? () => void props.capture.setInputPerRun(input.name, !input.required) : undefined };
+              return input.inputType && 'hostType' in input.inputType && input.inputType.hostType === 'agentParticipant'
+                ? <CaptureParticipantInputChip key={input.name} {...chip}
+                    value={draft.inputs[input.name] ?? input.default} serverId={props.accountLifetime.scope.serverId} />
+                : <CaptureInputChip key={input.name} {...chip} />;
+            }) : kept.map((step) => (
               <SelectionListFilterChip
                 key={step.messageId}
                 filter={{
@@ -468,7 +501,7 @@ function Review(
               />
             ))}
           </View>
-          {kept.some((step) => step.perRun) ? null : (
+          {(definition ? inputs.length > 0 : kept.some((step) => step.perRun)) ? null : (
             <Text style={styles.description}>
               {t('workflows.start.capture.askedNone')}
             </Text>
@@ -483,6 +516,23 @@ function Review(
       </View>
     </View>
   );
+}
+
+type CaptureInputChipProps = Readonly<{
+  name: string; title: string; perRun: boolean; valueLabel?: string; onToggle?: () => void;
+}>;
+
+function CaptureInputChip(props: CaptureInputChipProps) {
+  return <SelectionListFilterChip filter={{
+    id: `ask:${props.name}`, testID: `discussion-pattern-capture-ask:${props.name}`,
+    label: t('workflows.start.capture.askEachRun'), valueLabel: props.title,
+    valueQualifier: props.valueLabel, selected: props.perRun, onToggle: props.onToggle,
+  }} />;
+}
+
+function CaptureParticipantInputChip(props: CaptureInputChipProps & Readonly<{ value: unknown; serverId: string }>) {
+  const label = useExecutableParticipantLabel(props.value, props.serverId);
+  return <CaptureInputChip {...props} valueLabel={label} />;
 }
 
 function stepInputLabel(step: CaptureStep, number: number): string {
@@ -532,20 +582,9 @@ function CaptureStepRow(
     uses.length > 0 && step.role !== 'exclude'
       ? `${t('workflows.start.capture.uses', { steps: uses.join(', ') })} · ${excerpt}`
       : excerpt;
-  const pickParticipant = React.useCallback(async () => {
-    const { presentExecutableParticipantPicker } =
-      await import('@/components/sessions/authoring/ExecutableParticipantPickerModal');
-    const picked = await presentExecutableParticipantPicker({
-      accountLifetime: props.accountLifetime,
-      multiple: false,
-      ...(step.participant ? { selected: step.participant } : {}),
-      signal: new AbortController().signal,
-    });
-    if (picked && !Array.isArray(picked))
-      props.onChoose({
-        participant: picked as ExecutableParticipantSelectionV1,
-      });
-  }, [props, step.participant]);
+  const [browsingParticipants, setBrowsingParticipants] = React.useState(false);
+  // Back (or a choice) returns focus to the Who answers row the picker replaced.
+  const participantFocus = useInlineLevelFocusReturn(browsingParticipants);
   const toggleUse = (id: string) => {
     const next = step.dependsOnMessageIds.includes(id)
       ? step.dependsOnMessageIds.filter((value) => value !== id)
@@ -559,12 +598,11 @@ function CaptureStepRow(
       expanded={props.expanded}
       onExpandedChange={props.onExpandedChange}
       showDivider={!props.last}
-      header={({ headerProps, expanded }) => (
+      header={({ headerProps }) => (
         <Item
           {...headerProps}
           testID={`discussion-pattern-capture-step:${step.messageId}:header`}
           density="compact"
-          showChevron={false}
           leftElement={
             <Text
               style={[
@@ -587,26 +625,34 @@ function CaptureStepRow(
             )
           }
           subtitleLines={attention ? 0 : 1}
+          keepChevronWithRightElement
           rightElement={
-            <View style={styles.rowEnd}>
-              {step.role === 'step' && step.perRun ? (
-                <StatusPill
-                  testID={`discussion-pattern-capture-step-input:${step.messageId}`}
-                  variant="neutral"
-                  shape="capsule"
-                  hideDot
-                  labelVariant="phrase"
-                  label={stepInputLabel(step, props.number ?? 0)}
-                />
-              ) : null}
-              <ExpandableItemCaret expanded={expanded} />
-            </View>
+            step.role === 'step' && step.perRun ? (
+              <StatusPill
+                testID={`discussion-pattern-capture-step-input:${step.messageId}`}
+                variant="neutral"
+                shape="capsule"
+                hideDot
+                labelVariant="phrase"
+                label={stepInputLabel(step, props.number ?? 0)}
+              />
+            ) : undefined
           }
           accessibilityLabel={`${props.number ?? ''} ${title}. ${attention ? props.reasons.map(reasonCopy).join(' ') : subtitle}`}
         />
       )}
     >
       <View style={styles.stepBody}>
+        {browsingParticipants ? <ExecutableParticipantPickerBody
+          accountLifetime={props.accountLifetime}
+          backRef={participantFocus.attachEntry}
+          multiple={false}
+          selected={step.participant}
+          onResolve={picked => {
+            setBrowsingParticipants(false);
+            if (picked && 'kind' in picked && props.accountLifetime.isCurrent()) props.onChoose({ participant: picked });
+          }}
+        /> : <>
         {props.reasons.length > 1
           ? props.reasons.slice(1).map((reason) => (
               <Text key={reason} style={styles.attention}>
@@ -675,13 +721,14 @@ function CaptureStepRow(
         {step.role === 'step' ? (
           <Item
             testID={`discussion-pattern-capture-participant:${step.messageId}`}
+            pressableRef={participantFocus.attachOrigin}
             density="compact"
             title={t('workflows.start.capture.whoAnswers')}
             detail={
               participant ?? t('workflows.start.capture.chooseParticipant')
             }
             disabled={props.disabled}
-            onPress={() => void pickParticipant()}
+            onPress={() => setBrowsingParticipants(true)}
           />
         ) : null}
         {step.role !== 'exclude' ? (
@@ -705,6 +752,7 @@ function CaptureStepRow(
             }
           />
         ) : null}
+        </>}
       </View>
     </ExpandableItem>
   );
@@ -784,6 +832,5 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
     paddingHorizontal: theme.space.s12,
   },
-  rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   footerEnd: { marginLeft: 'auto' },
 }));

@@ -12,7 +12,7 @@ import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { isWorkflowTriggerSetAttachedToSession } from '@/sync/domains/workflows/workflowTriggerSession';
-import { matchesWorkflowTriggerQuery } from '@/sync/domains/workflows/workflowTriggerQuery';
+import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
 import type { StoreGet, StoreSet } from './_shared';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -125,21 +125,52 @@ export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty 
     };
 }
 
+export const EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL: readonly AutomationDefinition[] = [];
+
 /** Automation sync is the invalidation signal, not a second opened-content owner. */
 export function createWorkflowTriggerChangeSelector(sessionId: string | null, workflow: string | null = null, all = false,
     managedTarget?: Readonly<{ homeId: string; managedId: string }>) {
     let previous: AutomationsDomain['automations'] | null = null;
-    let signal = '';
-    return (state: Pick<AutomationsDomain, 'automations'>) => {
+    let observed = new Map<string, AutomationDefinition>();
+    let signal = EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
+    const queryKey = workflowTriggerQueryKey(managedTarget ? { managedTarget } : all ? { scope: 'account_all' }
+        : sessionId !== null ? { sessionId } : workflow !== null ? { workflow } : { scope: 'account_inline' });
+    return (state: Pick<AutomationsDomain, 'automations' | 'workflowTriggerSetsById' | 'workflowTriggerSetIdsByQuery'>) => {
         if (previous === state.automations) return signal;
-        previous = state.automations;
-        signal = Object.values(state.automations)
+        const relevant = Object.values(state.automations)
             .filter((automation) => managedTarget ? automation.managedTarget === undefined
                 || (automation.managedTarget?.homeId === managedTarget.homeId && automation.managedTarget.managedId === managedTarget.managedId)
                 : all || (sessionId === null
                 ? !automation.scopeSessionId && (workflow === null ? !automation.workflowDefinitionId : automation.workflowDefinitionId === workflow)
-                : automation.scopeSessionId === sessionId))
-            .map((automation) => `${automation.id}:${automation.updatedAt}:${automation.lastRunAt}`).join('|');
+                : automation.scopeSessionId === sessionId));
+        const next = new Map(relevant.map(automation => [automation.id, automation]));
+        const listedIds = new Set(state.workflowTriggerSetIdsByQuery[queryKey]);
+        const changed = [...observed.keys()].some(id => !next.has(id)) || relevant.some(automation => {
+            const known = observed.get(automation.id);
+            if (known === automation) return false;
+            if (known) return known.updatedAt !== automation.updatedAt || known.lastRunAt !== automation.lastRunAt
+                || known.templateVersion !== automation.templateVersion || known.enabled !== automation.enabled
+                // Schedule/lifecycle progress does not rewrite the authored Automation.
+                || !sameStrictJsonValue(known.triggers, automation.triggers);
+            // Initial Sync may arrive after this exact query's opened read.
+            // It adds no information when that read already has every revision.
+            const opened = state.workflowTriggerSetsById[automation.id];
+            if (!listedIds.has(automation.id) || !opened || opened.health !== 'available'
+                || opened.revision !== automation.templateVersion || opened.enabled !== automation.enabled
+                || (opened.scopeSessionId ?? null) !== (automation.scopeSessionId ?? null)
+                || opened.triggers.length !== automation.triggers.length) return true;
+            const triggers = new Map(opened.triggers.map(trigger => [trigger.id, trigger]));
+            return automation.triggers.some(trigger => {
+                const current = triggers.get(trigger.id);
+                if (!current) return true;
+                // Public status fields can change without a private trigger revision.
+                const fields = new Map<string, unknown>(Object.entries(current));
+                return Object.entries(trigger).some(([key, value]) => !sameStrictJsonValue(fields.get(key), value));
+            });
+        });
+        if (previous === null || changed) signal = relevant;
+        previous = state.automations;
+        observed = next;
         return signal;
     };
 }

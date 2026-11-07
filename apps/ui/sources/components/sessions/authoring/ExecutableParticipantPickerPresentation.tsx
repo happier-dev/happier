@@ -22,20 +22,18 @@ export function ExecutableParticipantPickerPresentation(props: ExecutablePartici
       onSelect={props.onSelect}
       onRequestClose={props.onRequestClose}
       inputTestID={props.testID === undefined ? undefined : `${props.testID}-search`}
-    />
-    {props.selection.kind === 'multiple' ? <View style={styles.footer}>
-      <RoundButton
+      // Done is the list's one whole-list action: it sits in the list's own footer, inset like every other.
+      footerAction={props.selection.kind === 'multiple' ? <RoundButton
         testID={props.testID === undefined ? undefined : `${props.testID}-done`}
         size="normal"
         title={props.doneLabel}
         disabled={!props.canConfirm}
         onPress={props.onDone}
-      />
-    </View> : null}
+      /> : undefined}
+    />
   </View>;
 }
 
-const styles = StyleSheet.create(theme => ({
-  body: { gap: theme.space.s12, flex: 1, minHeight: 0 },
-  footer: { flexDirection: 'row', justifyContent: 'flex-end' },
+const styles = StyleSheet.create(() => ({
+  body: { flex: 1, minHeight: 0 },
 }));

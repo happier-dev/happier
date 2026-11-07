@@ -69,6 +69,19 @@ export function useDiscussionWorkflowCapture(params: Readonly<{
             status: previous.error ? 'failed' : previous.draft && previous.request === reviewedRequest.current ? 'review' : 'selection' });
     }, [params.discussion, review]);
     const close = React.useCallback(() => { pending.current?.abort(); setState(previous => ({ ...previous, status: 'closed' })); }, []);
+    const setInputPerRun = React.useCallback((name: string, perRun: boolean) => {
+        const latest = current.current;
+        if (latest.status !== 'review' || latest.request !== reviewedRequest.current || !latest.draft?.definition
+            || latest.draft.provenance.workflow) return;
+        const choices = new Map(latest.request?.choices?.map(choice => [choice.messageId, choice]));
+        for (const step of latest.draft.steps) {
+            if (step.inputName === name || step.participantInputName === name) {
+                choices.set(step.messageId, { messageId: step.messageId, role: step.role,
+                    ...choices.get(step.messageId), perRun });
+            }
+        }
+        return review({ choices: [...choices.values()] });
+    }, [review]);
     /** `name` is the panel's typed name; it names the unsaved draft and never changes the reviewed graph. */
     const openEditor = React.useCallback((options: Readonly<{ name?: string }> = {}) => {
         const latest = current.current;
@@ -79,5 +92,5 @@ export function useDiscussionWorkflowCapture(params: Readonly<{
         router.push(entry);
     }, [params.accountLifetime, router]);
     const canOpenEditor = displayed.status === 'review' && displayed.request === reviewedRequest.current && displayed.draft?.status === 'ready';
-    return { state: displayed, canOpenEditor, open, close, review, openEditor };
+    return { state: displayed, canOpenEditor, open, close, review, setInputPerRun, openEditor };
 }

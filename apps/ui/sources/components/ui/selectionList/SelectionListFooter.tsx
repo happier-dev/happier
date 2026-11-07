@@ -44,7 +44,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'flex-end',
         gap: theme.space.s12,
     },
-    animatorBesideAction: { flex: 1, minWidth: 0 },
+    // Beside the list's one action the hints keep their one row at their own width; the action's
+    // sentence gives way (ellipsizes) instead, so a status never wraps the hints or grows the footer.
+    animatorBesideAction: { flexGrow: 1, flexShrink: 0, flexWrap: 'nowrap' },
+    actionSlot: { flexShrink: 1, minWidth: 0, flexDirection: 'row', justifyContent: 'flex-end' },
     hint: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -163,7 +166,7 @@ export function SelectionListFooter(props: SelectionListFooterProps): React.Reac
                     </View>
                 ))}
             </Animated.View>}
-            {action}
+            {action !== null ? <View style={styles.actionSlot}>{action}</View> : null}
         </View>
     );
 }

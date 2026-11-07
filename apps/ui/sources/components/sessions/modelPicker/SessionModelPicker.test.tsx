@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { createProviderModelProjectionGroupFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
@@ -14,6 +15,8 @@ import {
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { SessionModelApplyTimingContext } from './SessionModelSourceBrowseHandoff';
 import { SelectionList } from '@/components/ui/selectionList/SelectionList';
+import { Text } from '@/components/ui/text/Text';
+import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 import { t } from '@/text';
 import { router as expoRouter } from 'expo-router';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -85,6 +88,20 @@ function experimentalProviderGroup(id: string) {
 }
 
 describe('SessionModelPicker', () => {
+    it('selects an experimental preference directly while execution still requests confirmation', async () => {
+        const { providerGroups, selected } = experimentalProviderGroup('pc_preference');
+        const onSelect = vi.fn();
+        const confirm = vi.fn(async () => true);
+        const screen = await renderScreen(<SessionModelPicker purpose="preference"
+            agentTargetKey={selected.agentTargetKey} declarationContext={{ kind: 'account' }}
+            nativeModels={[]} providerGroups={providerGroups} providerProjectionAuthoritative
+            selected={null} onSelect={onSelect}
+            experimentalConfirmation={{ confirm, pending: false, error: null, retry: null, clear: vi.fn() }} />);
+        await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(selected)}`);
+        expect(onSelect).toHaveBeenCalledWith(selected);
+        expect(confirm).not.toHaveBeenCalled();
+        expect(resolveSessionModelPickerSelection({ groups: providerGroups, ref: selected }).kind).toBe('confirm-experimental');
+    });
     it('selects the runtime-applied Team row rather than a same-model Built-in row after a V1 launch', async () => {
         const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-luna' };
         const active = createSessionActiveModelSelection({ selection, source: 'runtime_apply', runner: { pid: 42, processStartTimeMs: 10 },
@@ -101,28 +118,56 @@ describe('SessionModelPicker', () => {
                 selection: active.teamCredentialModel, descriptor: { id: selection.modelId, name: 'Luna' },
                 application: { agentTargetKey: selection.agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
                     endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
+                compatibility: { result: { status: 'experimental', selectedProtocol: 'openai-responses',
+                    reasons: ['compatibility_evidence_missing'], confirmationScope: { kind: 'model', modelId: selection.modelId } },
+                    compatibilityFingerprint: 'compatibility:v1:experimental', confirmed: false },
+                confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
                 sourceRevision: 'source-v1', availability: 'available',
             }], sourcePresentation: { kind: 'provider', provider: { identity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, definitionRevision: 1 } } });
         for (const sessionActive of [true, false]) {
+            const onSelectTeamCredentialModel = vi.fn();
             const disposition = resolveSessionModelSelectionDisposition({ metadata, agentId: 'codex', agentTargetKey: selection.agentTargetKey,
                 sessionActive, currentRunnerProcessIdentity: sessionActive ? active.runner : null });
             const screen = await renderScreen(<SessionModelPicker agentTargetKey={selection.agentTargetKey} declarationContext={{ kind: 'account' }}
                 nativeModels={[{ value: selection.modelId, label: 'Luna' }]} providerGroups={[]} providerProjectionAuthoritative
-                teamCredentialResources={[resource]} currentTeamCredentialResourceKeys={new Set(['team:resource'])}
+                teamCredentialResources={[resource]} teamCredentialResourceStatusByKey={new Map([['team:resource', { kind: 'current' as const }]])}
                 selected={selection} selectedTeamCredentialModel={disposition.selectedTeamCredentialModel}
                 reportedModel={{ ref: disposition.reportedTeamCredentialModel ?? selection, status: 'last_used' }}
+                multiColumn onSelectTeamCredentialModel={onSelectTeamCredentialModel}
                 onSelect={() => {}} />);
             const list = screen.findByType(SelectionList);
+            expect(list.props.optionPresentation).toBe('card');
             expect(list.props.selectedOptionId).toBe(sessionModelSelectionKey(active.teamCredentialModel));
             expect(list.props.selectedOptionId).not.toBe(sessionModelSelectionKey(selection));
             expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeTruthy();
             expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${sessionModelSelectionKey(selection)}`)).toBeNull();
             expect(screen.findByTestId(`model-picker-overlay-option-status-icon:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeTruthy();
+            expect(screen.findByTestId(`team-provider-model-experimental:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeTruthy();
+            expect(findTestInstanceByTypeContainingText(screen, Text, t('settingsProviders.models.experimental'))).toBeTruthy();
+            expect(findTestInstanceByTypeContainingText(screen, Text, t('settingsProviders.status.notChecked'))).toBeTruthy();
             expect(screen.findByTestId(`model-picker-overlay-option-status-icon:${sessionModelSelectionKey(selection)}`)).toBeNull();
+            await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(active.teamCredentialModel)}`);
+            expect(onSelectTeamCredentialModel).toHaveBeenCalledWith(active.teamCredentialModel);
+            expect(screen.findByTestId('model-picker-experimental-approval')).toBeNull();
+            for (const [status, expected] of [
+                [{ kind: 'pending' }, t('common.loading')],
+                [{ kind: 'failed', code: 'provider_rpc_response_invalid' }, t('settingsProviders.errors.rpcResponseInvalidDescription')],
+                [{ kind: 'failed', code: 'team_authentication_policy_unavailable', reason: 'unknown' }, t('teams.credentials.errors.teamAuthenticationPolicyUnavailable')],
+                [{ kind: 'homeUnreachable' }, t('teams.unavailable.offline')],
+            ] as const) {
+                await screen.update(<SessionModelPicker agentTargetKey={selection.agentTargetKey} declarationContext={{ kind: 'account' }}
+                    nativeModels={[]} providerGroups={[]} providerProjectionAuthoritative
+                    teamCredentialResources={[resource]} teamCredentialResourceStatusByKey={new Map([['team:resource', status]])}
+                    selected={null} onSelect={() => {}} />);
+                const row = screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(active.teamCredentialModel)}`);
+                expect(row?.props.accessibilityLabel).toContain(expected);
+                expect(row?.props.disabled).toBe(true);
+                if (status.kind !== 'homeUnreachable') expect(row?.props.accessibilityLabel).not.toContain(t('teams.unavailable.offline'));
+            }
             await screen.unmount();
         }
     });
-    it('keeps independent Account model rows inert until the addressed Machine answers, and after withdrawal', async () => {
+    it('keeps producer-confirmed model rows selectable across absent, ready and withdrawn Machine declarations', async () => {
         const { selected, providerGroups } = experimentalProviderGroup('pc_independent_account');
         const group = createProviderModelProjectionGroupFixture({ ...providerGroups[0]!,
             rows: providerGroups[0]!.rows.map(row => ({ ...row, compatibility: { ...row.compatibility, confirmed: true } })),
@@ -152,8 +197,7 @@ describe('SessionModelPicker', () => {
             await screen.update(picker(context));
             onSelect.mockClear();
             await screen.pressByTestIdAsync(optionId);
-            if (context.kind === 'account' || context.projection) expect(onSelect).toHaveBeenCalledWith(selected);
-            else expect(onSelect).not.toHaveBeenCalled();
+            expect(onSelect).toHaveBeenCalledWith(selected);
         }
     });
     it.each(['model', 'connection'] as const)('passes the exact source and worker scope to the existing experimental confirmation (%s)', scope => {
@@ -206,11 +250,10 @@ describe('SessionModelPicker', () => {
         expect(onSelect).toHaveBeenCalledWith(selected);
         expect(screen.findByTestId('provider-error:provider_catalog_unavailable')).toBeNull();
     });
-    it('retains an unavailable Provider catalog diagnostic for a named connection, Provider selection or no discovered native catalog', async () => {
+    it('retains an unavailable Provider catalog diagnostic for a Provider selection or no discovered native catalog', async () => {
         const agentTargetKey = 'agent:acme.agent/reviewer';
-        for (const scenario of ['connection', 'selection', 'no-native']) {
-            const error = createProviderErrorV1('provider_catalog_unavailable', scenario === 'connection'
-                ? { connectionId: 'pc_work' } : undefined);
+        for (const scenario of ['selection', 'no-native']) {
+            const error = createProviderErrorV1('provider_catalog_unavailable');
             const screen = await renderScreen(<SessionModelPicker
                 agentTargetKey={agentTargetKey}
                 nativeModels={scenario === 'no-native'
@@ -427,6 +470,28 @@ describe('SessionModelPicker', () => {
         expect(confirm).not.toHaveBeenCalled();
     });
 
+    it('keeps a model-list request waiting for approval reviewable in place beside its loading state', async () => {
+        const href = buildApprovalHref('refresh-approval-1', 'srv_picker');
+        const screen = await renderScreen(
+            <SessionModelPicker
+                agentTargetKey="agent:happier.agent.codex/codex"
+                nativeModels={[]}
+                providerGroups={[]}
+                providerProjectionAuthoritative={false}
+                selected={null}
+                probe={{ phase: 'loading' }}
+                projectionApproval={{ artifactId: 'refresh-approval-1', href }}
+                onSelect={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByTestId('model-picker-projection-approval')).toBeTruthy();
+        // Waiting is not empty: the settled-empty verdict stays out while the request is in flight.
+        expect(screen.getTextContent()).not.toContain('settingsProviders.models.empty');
+        await screen.pressByTestIdAsync('model-picker-projection-approval.open');
+        expect(expoRouter.push).toHaveBeenCalledWith(href);
+    });
+
     it('shows a discovery failure as one compact line, without a second "discovery unavailable" note', async () => {
         const retryProjection = vi.fn();
         const screen = await renderScreen(
@@ -627,6 +692,44 @@ describe('SessionModelPicker', () => {
         expect(screen.findAllByProps({ testID: 'model-picker-overlay-custom' })).toHaveLength(0);
     });
 
+    it.each(['error', 'refresh'] as const)('keeps a discovered native catalog independent of an unrelated Provider %s failure', async (failureKind) => {
+        const connectionId = ProviderConnectionIdSchema.parse('pc_unrelated');
+        const error = createProviderErrorV1('provider_endpoint_unreachable', { machineId: 'machine-a', connectionId });
+        const nativeSelection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'terra' };
+        const content = (selected: typeof nativeSelection | { agentTargetKey: string; providerConnectionId: typeof connectionId; modelId: string }) => (
+            <SessionModelPicker agentTargetKey={nativeSelection.agentTargetKey} declarationContext={{ kind: 'account' }}
+                nativeModels={[{ value: 'terra', label: 'Terra' }]} providerGroups={[]}
+                providerProjectionAuthoritative={failureKind === 'refresh'}
+                projectionError={failureKind === 'error' ? error : null}
+                projectionFailures={failureKind === 'refresh' ? [{ connectionId, error }] : []}
+                selected={selected} onSelect={() => {}} />
+        );
+        const screen = await renderScreen(content(nativeSelection));
+        expect(screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(nativeSelection)}`)).not.toBeNull();
+        expect(screen.findAllByType(ProviderErrorItems.type)).toHaveLength(0);
+        // Selecting the failed Provider restores its own status; native rows do not conceal it.
+        await screen.update(content({ ...nativeSelection, providerConnectionId: connectionId, modelId: 'provider-only-model' }));
+        expect(screen.findAllByType(ProviderErrorItems.type).some(item => item.props.error === error)).toBe(true);
+    });
+
+    it.each(['loading', 'failed'] as const)('keeps an unrelated unreachable Provider out of the native catalog while its probe is %s', async (phase) => {
+        const connectionId = ProviderConnectionIdSchema.parse('pc_unrelated');
+        const error = createProviderErrorV1('provider_endpoint_unreachable', { machineId: 'machine-a', connectionId });
+        const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'terra' };
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<SessionModelPicker agentTargetKey={selected.agentTargetKey}
+            declarationContext={{ kind: 'account' }} nativeModels={[{ value: 'default', label: 'Automatic' }]}
+            providerGroups={[]} providerProjectionAuthoritative={false}
+            projectionError={error} projectionFailures={[{ connectionId, error }]}
+            probe={phase === 'loading' ? { phase: 'loading' } : { phase: 'idle', failed: true }}
+            selected={selected} onSelect={onSelect} />);
+
+        expect(screen.findAllByType(ProviderErrorItems.type)).toHaveLength(0);
+        expect(screen.findByType(SelectionList).props.selectedOptionId).toBe(sessionModelSelectionKey(selected));
+        expect(screen.getTextContent()).toContain('Automatic');
+        expect(onSelect).not.toHaveBeenCalled();
+    });
+
     it('presents a first-load Provider projection error through the canonical retry owner', async () => {
         const retryProjection = vi.fn(async () => {});
         const error = createProviderErrorV1('provider_endpoint_unreachable', {
@@ -690,6 +793,29 @@ describe('SessionModelPicker', () => {
         expect(errorItems.map((item) => item.props.error)).toEqual(failures.map((failure) => failure.error));
         await act(async () => { await errorItems[1]!.props.retry(); });
         expect(retryProjection).toHaveBeenCalledOnce();
+    });
+
+    it('closes the pane with unreachable sources, said once, instead of stacking them above the search', async () => {
+        const failure = (id: string) => {
+            const connectionId = ProviderConnectionIdSchema.parse(id);
+            return { connectionId, error: createProviderErrorV1('provider_endpoint_unreachable', { machineId: 'machine-a', connectionId }) };
+        };
+        const screen = await renderScreen(
+            <SessionModelPicker
+                agentTargetKey="agent:happier.agent.codex/codex"
+                nativeModels={[{ value: 'default', label: 'Automatic' }]}
+                providerGroups={[]}
+                providerProjectionAuthoritative
+                projectionFailures={[failure('pc_edge'), failure('pc_staging')]}
+                retryProjection={vi.fn(async () => {})}
+                selected={null}
+                onSelect={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('model-picker-overlay-summary')).toBeNull();
+        const footer = screen.findByTestId('model-picker-overlay-notes');
+        expect(footer?.findAllByType(ProviderErrorItems.type)).toHaveLength(1);
     });
 
     it('names the failing source on its failure line, never a bare "Provider is unreachable"', async () => {

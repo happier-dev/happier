@@ -11,10 +11,13 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { WORKFLOWS_NEW_ROUTE } from '@/components/workflows/workflowsRoutes';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { storage } from '@/sync/domains/state/storageStore';
-import { useAutomations } from '@/sync/domains/state/storage';
+import { useAutomations, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
+import { retainAutomationRunHistoryDemand } from '@/sync/domains/automations/automationRunHistoryDemand';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveAutomationRunProjections } from '@/sync/store/domains/workflowRuns';
@@ -32,6 +35,20 @@ import {
 
 const AUTOMATIONS_ROUTE = '/automations';
 const NO_RUN_IDS: readonly string[] = Object.freeze([]);
+
+/**
+ * Nothing has run yet: the scene, what will appear, and, before any workflow exists, the one way to make
+ * the first. No size: the widget frame's state step sizes and centres it. The `/dev/home` showcase draws it too.
+ */
+export function latestRunsEmptyBody(onNewWorkflow?: () => void): WidgetFrameBody {
+    return {
+        kind: 'empty',
+        scene: 'noAutomations',
+        title: t('homeWidgets.latestRunsEmptyTitle'),
+        reason: t('homeWidgets.latestRunsEmptyReason'),
+        ...(onNewWorkflow ? { action: { label: t('workflows.newWorkflow'), onPress: onNewWorkflow } } : {}),
+    };
+}
 
 type ReadState = Readonly<{
     reading: boolean;
@@ -69,8 +86,11 @@ export const AutomationsLatestRunsSection = React.memo(function AutomationsLates
 
 function AutomationsLatestRunsWidget(props: HubSectionProps) {
     const router = useRouter();
+    const presented = useLayoutPresentationActive();
+    const lifetime = useActiveServerAccountScopeLifetime();
     const automations = useAutomations();
     const ids = React.useMemo(() => selectLatestRunAutomationIds(automations, HOME_WIDGET_BODY_ROWS), [automations]);
+    React.useEffect(() => presented ? retainAutomationRunHistoryDemand(lifetime, ids) : undefined, [ids, lifetime, presented]);
     const runs = storage(useShallow((state) => {
         const found: AutomationDefinitionRun[] = [];
         for (const id of ids) {
@@ -87,13 +107,17 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
 
     const [read, setRead] = React.useState<ReadState>({ reading: true, failed: false, readAt: null });
     const mountedRef = React.useRef(true);
-    React.useEffect(() => () => { mountedRef.current = false; }, []);
+    React.useEffect(() => {
+        mountedRef.current = presented;
+        return () => { mountedRef.current = false; };
+    }, [presented]);
     const inFlightRef = React.useRef(new Map<string, Promise<unknown>>());
     const refresh = React.useCallback(async () => {
         setRead((current) => ({ ...current, reading: true }));
         try {
             // The Account's Automations, then the Run pages the newest Runs can come from.
             await sync.refreshAutomations();
+            if (!mountedRef.current) return;
             const automationsNow = Object.values(storage.getState().automations);
             await readMissingRunPages(selectLatestRunAutomationIds(automationsNow, HOME_WIDGET_BODY_ROWS), inFlightRef.current);
             if (mountedRef.current) setRead({ reading: false, failed: false, readAt: Date.now() });
@@ -102,19 +126,23 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
         }
     }, []);
     React.useEffect(() => {
-        void refresh();
-    }, [refresh]);
+        if (presented) void refresh();
+    }, [presented, refresh]);
 
     // An Automation that newly counts among the latest (another one ran) has its first page read once;
     // one whose page this device already holds asks nothing.
     React.useEffect(() => {
+        if (!presented) return;
         readMissingRunPages(ids, inFlightRef.current).catch(() => {
             if (mountedRef.current) setRead((current) => ({ ...current, failed: true }));
         });
-    }, [ids]);
+    }, [ids, presented]);
 
     const openAutomations = React.useCallback(() => {
         router.push(AUTOMATIONS_ROUTE as never);
+    }, [router]);
+    const openNewWorkflow = React.useCallback(() => {
+        router.push(WORKFLOWS_NEW_ROUTE as never);
     }, [router]);
     const openRun = React.useCallback((row: LatestAutomationRunRow) => {
         router.push(createWorkflowRunRoute({
@@ -125,6 +153,8 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
     }, [router]);
 
     const hasRows = rows.length > 0;
+    // Before the first workflow there is nothing to open: the card's one action is making one.
+    const noWorkflows = automations.length === 0;
     let body: WidgetFrameBody;
     if (hasRows) {
         body = {
@@ -144,17 +174,12 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
         // the refresh behind them never puts a known answer back into a skeleton.
         body = { kind: 'loading', accessibilityLabel: t('homeWidgets.latestRunsLoading') };
     } else {
-        body = {
-            kind: 'empty',
-            iconName: 'timer',
-            scene: 'noAutomations',
-            title: t('homeWidgets.latestRunsEmptyTitle'),
-            reason: t('homeWidgets.latestRunsEmptyReason'),
-        };
+        body = latestRunsEmptyBody(noWorkflows ? openNewWorkflow : undefined);
     }
     const destination = t('navigation.automations');
-    const footer: WidgetFrameFooter = hasRows && read.failed
+    const footer: WidgetFrameFooter | null = hasRows && read.failed
         ? { kind: 'refreshFailed', reason: t('homeWidgets.refreshFailed'), onRetry: refresh }
+        : noWorkflows ? null
         : { kind: 'open', label: t('homeWidgets.open', { destination }), onPress: openAutomations };
 
     return (
@@ -164,8 +189,9 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
             placement="home"
             fill
             mark="timer"
+            // Title only, so it shares one header height with the cards beside it; once there are runs the
+            // footer's Open Workflows names where they come from.
             title={t('homeWidgets.latestRunsTitle')}
-            source={destination}
             meta={hasRows && read.readAt !== null ? <SurfaceAsOfLabel testID="home-automations.asOf" at={read.readAt} /> : null}
             menu={props.menu}
             body={body}
@@ -198,7 +224,7 @@ export const LatestRunRow = React.memo(function LatestRunRow(props: Readonly<{
             testID={`home-automations.run.${row.run.id}`}
             title={row.automationName}
             titleLines={1}
-            subtitle={formatAutomationRunStateLabel(row.run.state)}
+                            subtitle={formatAutomationRunStateLabel(row.run)}
             subtitleLines={1}
             // When it ran is the row's meta: the shared right-aligned tabular column.
             detail={formatShortRelativeTime(row.at)}

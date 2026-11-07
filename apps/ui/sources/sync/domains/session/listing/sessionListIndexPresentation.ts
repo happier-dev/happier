@@ -70,8 +70,8 @@ export function resolveSessionListQueryPresentation(input: Readonly<{
         loadMoreFailed: boolean;
     }>;
     /**
-     * The Home is still being reached (right after sign-in or a restart): a query that failed in that gap
-     * has not settled into an error, so it reads as loading and the reconnect reads it again.
+     * The Home is still being reached (right after sign-in or a restart): a network failure in that
+     * gap reads as loading. An admitted query refusal still needs its own error and recovery action.
      */
     settlingHomeServerId?: string | null;
 }>): SessionListQueryPresentation {
@@ -79,7 +79,11 @@ export function resolveSessionListQueryPresentation(input: Readonly<{
     if (presentation.kind !== 'error') return presentation;
     const { failedServerIds, ...error } = presentation;
     return input.settlingHomeServerId && failedServerIds.length > 0
-        && failedServerIds.every(serverId => areServerProfileIdentifiersEquivalent(serverId, input.settlingHomeServerId))
+        && failedServerIds.every(serverId => {
+            const query = input.sessionsEnabled === false ? undefined : input.statesByServerId[serverId];
+            return areServerProfileIdentifiersEquivalent(serverId, input.settlingHomeServerId)
+                && (query?.phase !== 'error' || query.failureReason === 'network');
+        })
         ? error.retainedRows ? { kind: 'refreshing', retainedRows: true } : { kind: 'initial_loading' }
         : error;
 }

@@ -139,6 +139,70 @@ async function loadHarness() {
 
 type Harness = Awaited<ReturnType<typeof loadHarness>>;
 
+it('identifies the exact model participant in a selected frozen occurrence', async () => {
+    const harness = await loadHarness();
+    const { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { materializeWorkflowAcceptedSnapshotV1 } = await import('@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1');
+    const { WorkflowProgressEnvelopeV1Schema } = await import('@happier-dev/protocol/workflows/workflowProgressV1');
+    const { projectWorkflowInvocationStructure } = await import('../run/workflowInvocationStructure');
+    const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
+    const participants = ['claude', 'codex'].map(agent => ({ kind: 'model' as const, launch: {
+        executionTarget: { serverId: MACHINE_COMPOSER_SCOPE.serverId, machineId: 'machine-1' },
+        directory: { kind: 'path' as const, path: '/repo' },
+        agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.' + agent, localId: agent } },
+        modelSelection: { v: 1 as const, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.' + agent + '/' + agent,
+            providerConnectionId: null, modelId: agent + '-frozen-model' } },
+    } }));
+    const definition = createWorkflowDefinitionFixture({ inputs: [{ name: 'participants', valueType: 'json', required: true }],
+        blocks: [{ kind: 'loop', id: 'opinions',
+            repetition: { kind: 'items', items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+            body: [{ kind: 'step', id: 'answer', document: { text: 'Answer independently', references: [], attachments: [] },
+                input: [], result: { kind: 'text' }, execution: { participant: { kind: 'item', field: 'value' } } }] }] });
+    const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
+        effects: { resolveTargetAvailability: async () => true },
+        context: { source: { kind: 'inline' }, inputs: { participants }, machineId: 'machine-1', executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } } });
+    if (!admitted.ok) throw new Error('Participant admission refused: ' + JSON.stringify(admitted.error));
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'second-model-answer', lifecycle: 'completed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', attempt: '0',
+        logicalInvocationRecordId: invocation.id, blockKind: 'step',
+        invocationPath: { blockId: 'answer', scope: [{ kind: 'iteration', blockId: 'opinions', index: 1 }] },
+        execution: { kind: 'session', sessionId: 'spawned-codex-session', localInputId: 'answer-input' } });
+    const progressById = new Map([[invocation.id, progress]]);
+    const structure = projectWorkflowInvocationStructure({ definition, invocations: [invocation], progressByInvocationId: progressById });
+    const screen = await renderScreen(<WorkflowRunSteps runId="model-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={admitted.snapshot.authoredDefinition} materializedLeaves={admitted.snapshot.materializedLeaves} inputs={admitted.snapshot.inputs}
+        sessionDisplayLabelsById={new Map([['spawned-codex-session', 'Second reviewer']])}
+        invocations={[invocation]} progressById={progressById} structure={structure} selectedInvocationId={invocation.id}
+        onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="model-steps" />);
+    const composer = screen.findByTestId('model-steps-step-answer-prompt')!.findByType(harness.AgentInput);
+    expect(composer.props.agentType).toBe('codex');
+    expect(composer.props.modelMode).toBe('codex-frozen-model');
+    // Duplicate roster entries cannot shift the occurrence onto another admitted choice.
+    const duplicated = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
+        effects: { resolveTargetAvailability: async () => true },
+        context: { source: { kind: 'inline' }, inputs: { participants: [participants[0]!, participants[0]!, participants[1]!] },
+            machineId: 'machine-1', executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } } });
+    if (!duplicated.ok) throw new Error('Duplicate participant admission refused');
+    const laterProgress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress,
+        invocationPath: { ...progress.invocationPath, scope: [{ kind: 'iteration', blockId: 'opinions', index: 2 }] } });
+    const laterProgressById = new Map([[invocation.id, laterProgress]]);
+    await screen.update(<WorkflowRunSteps runId="model-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={duplicated.snapshot.authoredDefinition} materializedLeaves={duplicated.snapshot.materializedLeaves} inputs={duplicated.snapshot.inputs}
+        invocations={[invocation]} progressById={laterProgressById}
+        structure={projectWorkflowInvocationStructure({ definition, invocations: [invocation], progressByInvocationId: laterProgressById })}
+        selectedInvocationId={invocation.id} onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="model-steps" />);
+    expect(screen.findByTestId('model-steps-step-answer-prompt')!.findByType(harness.AgentInput).props.agentType).toBe('codex');
+    await screen.update(<WorkflowRunSteps runId="model-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={admitted.snapshot.authoredDefinition} materializedLeaves={admitted.snapshot.materializedLeaves.filter(leaf => leaf.sourceKey !== '$root')}
+        inputs={admitted.snapshot.inputs} invocations={[invocation]} progressById={progressById} structure={structure}
+        selectedInvocationId={invocation.id} onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="model-steps" />);
+    expect(screen.findByTestId('model-steps-step-answer-prompt')!.findByType(harness.AgentInput).props.agentType).not.toBe('codex');
+});
+
 function findComposer(screen: Awaited<ReturnType<typeof renderScreen>>, harness: Harness, blockId: string) {
     const composer = screen.findAllByType(harness.AgentInput).find(node => node.props.composerRef?.blockId === blockId);
     if (!composer) throw new Error(`Missing real composer for ${blockId}`);
@@ -265,10 +329,10 @@ it.each([8, 500])('keeps unaffected prompt content quiet for one keystroke in a 
     for (const counter of promptCosts.values()) counter.reset();
     const prompt = screen.findHostByTestId('workflow-editor-wait-cost-0-prompt');
     const input = prompt?.findAll(node => node.props.testID === 'new-session-composer-input'
-        && typeof node.props.onChange === 'function').at(-1);
+        && typeof node.props.onComposerChange === 'function').at(-1);
     expect(input).toBeDefined();
     await act(async () => {
-        input!.props.onChange({ nativeEvent: {
+        input!.props.onComposerChange({ nativeEvent: {
             text: 'Reviewx', selection: { start: 7, end: 7 }, eventCount: 1, references: [],
         } });
     });
@@ -277,6 +341,7 @@ it.each([8, 500])('keeps unaffected prompt content quiet for one keystroke in a 
     const edited = promptCosts.get('workflow-editor-wait-cost-0')!.read();
     const unaffected = [...promptCosts].filter(([id]) => id !== 'workflow-editor-wait-cost-0')
         .reduce((sum, [, counter]) => sum + counter.read().renders, 0);
+    console.info('Workflow editor key cost', { items: count, edited: edited.renders, unaffected });
     expect(edited.renders).toBeGreaterThan(0);
     expect(unaffected).toBe(0);
 });
@@ -346,6 +411,39 @@ it('edits run when in Step options and preserves an independent only-when condit
     // The first block has no previous step, so there is no edge to choose.
     const first = await renderStepOptions(harness, { draft, blockId: 'work' });
     expect(first.findByTestId('workflow-editor-inspector-run-when:failure')).toBeNull();
+});
+
+it('updates an unselected Action reference, condition and revealed issue when its producer changes', async () => {
+    const harness = await loadHarness();
+    const reference = { kind: 'result' as const, producer: { blockId: 'inspect', scope: { kind: 'current' as const } }, path: [] };
+    const initial = buildDraft(harness, [
+        { kind: 'step', id: 'inspect', name: 'Inspect build', document: { text: 'Inspect', references: [], attachments: [] },
+            input: [], result: { kind: 'text' } },
+        { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: reference },
+            onlyWhen: { kind: 'compare', operator: 'neq', left: reference, right: { kind: 'literal', value: '' } } },
+    ]);
+    let change: React.Dispatch<React.SetStateAction<typeof initial>> = () => { throw new Error('Editor not mounted'); };
+    function Controlled() {
+        const [draft, setDraft] = React.useState(initial);
+        change = setDraft;
+        const [custody] = React.useState(() => harness.createWorkflowAuthoringComposerCustody(initial.draftId));
+        return <harness.WorkflowBlockListEditor draft={draft} blocks={draft.blocks} list={{ kind: 'root' }} depth={0}
+            composerScope={MACHINE_COMPOSER_SCOPE} composerCustody={custody} selectedBlockId={null}
+            validation={harness.validateWorkflowEditorDraft(draft)} revealIssues
+            onChange={setDraft} onSelect={() => {}} onCustomize={() => {}} />;
+    }
+    const screen = await renderScreen(<Controlled />);
+    const message = () => screen.findByTestId('workflow-editor-action-notify-field-message')!;
+    // A reference chip keeps its words together with non-breaking spaces; read them as words.
+    const words = () => message().findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join(' ').replace(/\u00A0/g, ' ');
+    expect(words()).toContain('Inspect build');
+    expect(screen.findByTestId('workflow-editor-action-notify-field-message-issue')).toBeNull();
+    await act(async () => change(draft => harness.setWorkflowBlockName(draft, 'inspect', 'Check release')));
+    expect(words()).toContain('Check release');
+    expect(words()).not.toContain('Inspect build');
+    expect(screen.getTextContent()).toContain('Check release');
+    await act(async () => change(draft => ({ ...draft, blocks: draft.blocks.filter(block => block.id !== 'inspect') })));
+    expect(screen.findByTestId('workflow-editor-action-notify-field-message-issue')).not.toBeNull();
 });
 
 it('says a block condition once: the Notify me card carries no options of its own', async () => {
@@ -449,7 +547,8 @@ it('names a continued Session by its title, keeping its id only for a Session th
     const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
     const step = (id: string, sessionId: string) => ({ kind: 'step' as const, id, document: { text: 'Check', references: [], attachments: [] }, input: [],
         result: { kind: 'text' as const }, execution: { conversation: { kind: 'existing_session' as const, sessionId, machineId: 'machine-1' } } });
-    getStorage().setState({ sessions: { 'session-named': createSessionFixture({ id: 'session-named',
+    // fe9de9f1f7 reads the exact Home-qualified Session, even with its chooser closed.
+    getStorage().setState({ sessions: { 'session-named': createSessionFixture({ id: 'session-named', serverId: MACHINE_COMPOSER_SCOPE.serverId,
         metadata: { path: '/repo', host: 'host', machineId: 'machine-1', summary: { text: 'Nightly quiet check', updatedAt: 1 } } as never }) } });
     const screen = await renderList(harness, { draft: buildDraft(harness, [step('named', 'session-named'), step('gone', 'session-gone')]) });
     expect(screen.findByTestId('workflow-editor-step-named-inheritance')?.props.children).toContain('Nightly quiet check');
@@ -530,6 +629,110 @@ it('reads a step role by its display name and keeps a read-only step input on it
     // The input token sits on the step's one footer line, not a band of its own.
     const footer = screen.findHostByTestId('workflow-editor-step-check-footer');
     expect(footer?.findAll((node) => node.props?.testID === 'workflow-editor-step-check-input-0').length).toBeGreaterThan(0);
+});
+
+it('reads admitted engines from their frozen source in Run Steps, including colliding nested block ids', async () => {
+    const harness = await loadHarness();
+    const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { materializeWorkflowAcceptedSnapshotV1 } = await import('@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1');
+    const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
+    const role = (name: string, modelId: string) => ({ roleId: 'reviewer', name, instructions: 'Review the changes',
+        runsAs: { kind: 'session' as const }, engine: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId } });
+    const child = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'reviewer' } }, roles: [role('Frozen reviewer', 'accepted-child-model')] });
+    const definition = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'reviewer' } }, roles: [role('Root reviewer', 'accepted-root-model')],
+        blocks: [...createWorkflowDefinitionFixture().blocks, { kind: 'workflow', id: 'call', workflowRef: 'builtin:child', input: {} }] });
+    const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
+        effects: { resolveTargetAvailability: async () => true, readWorkflowDefinition: async () => ({ definition: child, sourceKey: 'builtin:child' }) },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } } });
+    if (!admitted.ok) throw new Error(`Run fixture admission refused: ${JSON.stringify(admitted.error)}`);
+    const snapshot = admitted.snapshot;
+    const props = { runId: 'finished-run', machineId: 'machine-1', serverId: MACHINE_COMPOSER_SCOPE.serverId,
+        definition: snapshot.authoredDefinition, frozenChildren: snapshot.frozenChildren, materializedLeaves: snapshot.materializedLeaves,
+        invocations: [], structure: new Map(), selectedInvocationId: null, onSelectInvocation: vi.fn(), occurrenceLabel: () => null,
+        testIDPrefix: 'frozen-steps' };
+    const screen = await renderScreen(<WorkflowRunSteps {...props} />);
+    const rootComposer = () => screen.findByTestId('frozen-steps-step-analyze-prompt')!.findByType(harness.AgentInput);
+    const childComposer = () => screen.findByTestId('frozen-steps-call-step-analyze-prompt')!.findByType(harness.AgentInput);
+    expect(rootComposer().props.agentLabel).toBe('Root reviewer');
+    expect(rootComposer().props.engineLabel).toContain('accepted-root-model');
+    expect(childComposer().props.agentLabel).toBe('Frozen reviewer');
+    expect(childComposer().props.engineLabel).toContain('accepted-child-model');
+    expect(childComposer().props.agentPickerOptions).toEqual([]);
+    expect(screen.getTextContent()).toContain('accepted-root-model');
+    expect(screen.getTextContent()).toContain('accepted-child-model');
+    // A same-id root leaf is not authority for the child when its exact sidecar is absent.
+    await screen.update(<WorkflowRunSteps {...props} materializedLeaves={snapshot.materializedLeaves.filter(leaf => leaf.sourceKey === '$root')} />);
+    expect(childComposer().props.engineLabel).not.toContain('accepted-root-model');
+});
+
+it('reads admitted engines for participant steps from the exact executed Session rather than an authoring choice', async () => {
+    const harness = await loadHarness();
+    const { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { materializeWorkflowAcceptedSnapshotV1 } = await import('@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1');
+    const { ActionSessionAddressV1Schema } = await import('@happier-dev/protocol/actions/sessionTargetV1');
+    const { WorkflowProgressEnvelopeV1Schema } = await import('@happier-dev/protocol/workflows/workflowProgressV1');
+    const { projectWorkflowInvocationStructure } = await import('../run/workflowInvocationStructure');
+    const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
+    const participants = ['first-session', 'second-session'].map(sessionId => ({ kind: 'session' as const, session: { serverId: MACHINE_COMPOSER_SCOPE.serverId, sessionId } }));
+    const definition = createWorkflowDefinitionFixture({ inputs: [{ name: 'participants', valueType: 'json', required: true }],
+        blocks: [{ kind: 'loop', id: 'opinions', repetition: { kind: 'items', items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+            body: [{ kind: 'step', id: 'answer', document: { text: 'Answer independently', references: [], attachments: [] }, input: [], result: { kind: 'text' },
+                execution: { participant: { kind: 'item', field: 'value' } } }] },
+            { kind: 'step', id: 'continued', document: { text: 'Keep reviewing', references: [], attachments: [] }, input: [], result: { kind: 'text' },
+                execution: { conversation: { kind: 'existing_session', sessionId: 'continuation', machineId: 'machine-1' } } }] });
+    const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
+        effects: { resolveTargetAvailability: async () => true, resolveSessionTarget: async value => ({ address: ActionSessionAddressV1Schema.parse(value), machineId: 'machine-1' }) },
+        context: { source: { kind: 'inline' }, inputs: { participants }, machineId: 'machine-1', executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } } });
+    if (!admitted.ok) throw new Error(`Participant fixture admission refused: ${JSON.stringify(admitted.error)}`);
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'second-answer', lifecycle: 'completed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', attempt: '0', logicalInvocationRecordId: invocation.id, blockKind: 'step',
+        invocationPath: { blockId: 'answer', scope: [{ kind: 'iteration', blockId: 'opinions', index: 1 }] },
+        execution: { kind: 'session', sessionId: 'second-session', localInputId: 'second-answer-input' } });
+    const progressById = new Map([[invocation.id, progress]]);
+    const structure = projectWorkflowInvocationStructure({ definition, invocations: [invocation], progressByInvocationId: progressById });
+    const screen = await renderScreen(<WorkflowRunSteps runId="participant-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={admitted.snapshot.authoredDefinition} materializedLeaves={admitted.snapshot.materializedLeaves} inputs={admitted.snapshot.inputs}
+        sessionDisplayLabelsById={new Map([['first-session', 'First reviewer'], ['second-session', 'Second reviewer']])}
+        invocations={[invocation]} progressById={progressById} structure={structure} selectedInvocationId={invocation.id}
+        onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="participant-steps" />);
+    const composer = screen.findByTestId('participant-steps-step-answer-prompt')!.findByType(harness.AgentInput);
+    expect(composer.props.agentLabel).toBe('Second reviewer');
+    expect(composer.props.engineLabel).toBe('Second reviewer');
+    expect(composer.props.agentPickerOptions).toEqual([]);
+    expect(composer.props.engineLabel).not.toContain('First reviewer');
+    expect(screen.getTextContent()).toContain('Second reviewer');
+    const continuedLeaf = admitted.snapshot.materializedLeaves.find(leaf => leaf.blockId === 'continued');
+    expect(continuedLeaf?.selection.conversation?.kind).toBe('existing_session');
+    expect(continuedLeaf?.selection.agentTarget).toBeUndefined();
+    expect(continuedLeaf?.participant).toBeUndefined();
+    const continuedInvocation = createWorkflowInvocationIndexFixture({ id: 'continued-invocation', lifecycle: 'completed' });
+    const continuedProgress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, logicalInvocationRecordId: continuedInvocation.id,
+        invocationPath: { blockId: 'continued', scope: [] },
+        execution: { kind: 'session', sessionId: 'continuation', localInputId: 'continued-input' } });
+    const continuedProgressById = new Map([[continuedInvocation.id, continuedProgress]]);
+    await screen.update(<WorkflowRunSteps runId="participant-run" machineId="machine-1" serverId={MACHINE_COMPOSER_SCOPE.serverId}
+        definition={admitted.snapshot.authoredDefinition} materializedLeaves={admitted.snapshot.materializedLeaves}
+        sessionDisplayLabelsById={new Map([['continuation', 'Release reviewer']])}
+        invocations={[continuedInvocation]} progressById={continuedProgressById}
+        structure={projectWorkflowInvocationStructure({ definition, invocations: [continuedInvocation], progressByInvocationId: continuedProgressById })}
+        selectedInvocationId={continuedInvocation.id} onSelectInvocation={() => {}} occurrenceLabel={() => null} testIDPrefix="participant-steps" />);
+    expect(screen.findByTestId('participant-steps-step-continued-prompt')!.findByType(harness.AgentInput).props.engineLabel).toBe('Release reviewer');
+});
+
+it('keeps an If row options control with the heading actions, so a wrapping sentence cannot orphan it', async () => {
+    const harness = await loadHarness();
+    const screen = await renderList(harness, {
+        draft: buildDraft(harness, [{ kind: 'if', id: 'gate',
+            when: { kind: 'exists', value: { kind: 'input', name: 'goal' } },
+            then: [{ kind: 'step', id: 'go', document: { text: 'Go', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+            otherwise: [] }]),
+    });
+    const actions = screen.findHostByTestId('workflow-editor-if-gate-label-heading-actions');
+    expect(actions?.findAll((node) => node.props.testID === 'workflow-editor-if-gate-summary').length).toBeGreaterThan(0);
 });
 
 it('reads a compound condition as one compact sentence, and leaves an empty Otherwise out of a reading document', async () => {
@@ -741,12 +944,16 @@ describe('workflow block list editor', () => {
         const changes: ReturnType<typeof buildDraft>[] = [];
         const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
+        expect(screen.findHostByTestId('new-session-composer-input')?.props.references).toMatchObject([
+            { ref: 'file:src/a.ts', token: '@src/a.ts' },
+            { ref: 'file:src/b.ts', token: '@src/b.ts' },
+        ]);
         // Deliver the actual input event: the native editor reports the text, the caret and the
         // inline references that survive the edit, which the real composer reconciles by token range.
         const text = 'Review @src/b.ts';
         const start = text.indexOf('@src/b.ts');
         await act(async () => {
-            screen.findByTestId('new-session-composer-input')?.props.onChange({ nativeEvent: {
+            screen.findByTestId('new-session-composer-input')?.props.onComposerChange({ nativeEvent: {
                 text, selection: { start: text.length, end: text.length }, eventCount: 1,
                 references: [{ ref: 'file:src/b.ts', token: '@src/b.ts', start, end: start + '@src/b.ts'.length }],
             } });
@@ -755,6 +962,7 @@ describe('workflow block list editor', () => {
         const step = changes.at(-1)?.blocks[0];
         expect(step?.kind).toBe('step');
         if (step?.kind === 'step') {
+            expect(step.document.text).toBe(text);
             expect(step.document.references).toEqual([
                 { kind: 'happier.file', ref: 'file:src/b.ts', token: '@src/b.ts' },
             ]);
@@ -834,7 +1042,8 @@ describe('workflow block list editor', () => {
         const changes: Array<ReturnType<typeof buildDraft>> = [];
         const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
-        // Action: one row per declared field, bound or not.
+        // Action: one row per declared field, bound or not; options nobody set wait behind one
+        // "more settings" control (lab round 1106 F1), never as nothing.
         // An unnamed typed card's heading carries its card's identity, mark included; a Wait's
         // heading is its number and name (lab .uwe-sh), its kind said by its own footer line.
         for (const id of ['action-notify', 'workflow-review']) {
@@ -843,6 +1052,8 @@ describe('workflow block list editor', () => {
             expect(mark?.props.accessibilityElementsHidden).toBe(true);
         }
         expect(screen.findHostByTestId('workflow-editor-wait-check-label-kind-mark')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-action-notify-field-message')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-action-notify-more-settings');
         for (const field of ['message', 'title', 'channels']) {
             expect(screen.findHostByTestId(`workflow-editor-action-notify-field-${field}`), field).not.toBeNull();
         }

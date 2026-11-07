@@ -54,6 +54,88 @@ async function signOut(serverId: string): Promise<void> {
 }
 
 describe('useServerCredentialAccountScopeResolutions', () => {
+    it.each(['signed_out', 'unavailable', 'unknown_home', 'bound'] as const)(
+        'does not resolve or publish an unchanged %s Home when a sibling leaves', async (state) => {
+            await signIn('home-b', 'account-b');
+            if (state === 'bound') await signIn('home-a', 'account-a');
+            let locked = state === 'unavailable';
+            const originalRead = SecureStore.getItemAsync;
+            // Observe the real credential resolver at its device-storage boundary.
+            const read = vi.spyOn(SecureStore, 'getItemAsync').mockImplementation(async (key, ...rest) => {
+                if (locked && key.includes('auth_credentials') && key.includes('home-a')) {
+                    throw new Error('secure storage is locked');
+                }
+                return originalRead(key, ...rest);
+            });
+            const subject = state === 'unknown_home' ? 'never-added' : 'home-a';
+            try {
+                const { useServerCredentialAccountScopeResolutions } = await import('./useServerCredentialAccountScopes');
+                const hook = await renderHook((ids: string[]) => useServerCredentialAccountScopeResolutions(ids), {
+                    initialProps: [subject, 'home-b'],
+                });
+                expect(hook.getCurrent().get(subject)?.kind).toBe(state);
+                const settled = hook.getCurrent().get(subject);
+                for (let run = 0; run < 3; run++) {
+                    if (run > 0) await hook.rerender([subject, 'home-b']);
+                    read.mockClear();
+                    const publications: unknown[] = [];
+                    const unsubscribe = hook.subscribe(() => { publications.push(hook.getCurrent()); });
+                    await hook.rerender([subject]);
+                    unsubscribe();
+                    expect(hook.getCurrent().get(subject)).toBe(settled);
+                    expect(read.mock.calls.filter(([key]) => key.includes('auth_credentials') && key.includes('home-a'))).toHaveLength(0);
+                    // One caller render and one publication removing the sibling; no
+                    // invalidate/settle publications for the unchanged Home.
+                    expect(publications).toHaveLength(2);
+                    await hook.rerender([subject]);
+                    expect(hook.getCurrent().get(subject)).toBe(settled);
+                }
+                if (state !== 'unknown_home') {
+                    locked = false;
+                    await act(async () => { await signIn('home-a', 'account-next'); });
+                    expect(hook.getCurrent().get(subject)).toMatchObject({ kind: 'bound', scope: { accountId: 'account-next' } });
+                    expect(hook.getCurrent().get(subject)).not.toBe(settled);
+                }
+                await hook.unmount();
+            } finally {
+                read.mockRestore();
+            }
+        },
+    );
+
+    it('does not restart an unchanged in-flight Home when a sibling leaves', async () => {
+        await signIn('home-b', 'account-b');
+        const releaseRead = createDeferred<void>();
+        const readStarted = createDeferred<void>();
+        const originalRead = SecureStore.getItemAsync;
+        const read = vi.spyOn(SecureStore, 'getItemAsync').mockImplementation(async (key, ...rest) => {
+            if (key.includes('auth_credentials') && key.includes('home-a')) {
+                readStarted.resolve();
+                await releaseRead.promise;
+            }
+            return originalRead(key, ...rest);
+        });
+        try {
+            const { useServerCredentialAccountScopeResolutions } = await import('./useServerCredentialAccountScopes');
+            const hook = await renderHook((ids: string[]) => useServerCredentialAccountScopeResolutions(ids), {
+                initialProps: ['home-a', 'home-b'],
+            });
+            await readStarted.promise;
+            expect(hook.getCurrent().get('home-a')?.kind).toBe('resolving');
+            read.mockClear();
+            await hook.rerender(['home-a']);
+            expect(read.mock.calls.filter(([key]) => key.includes('auth_credentials') && key.includes('home-a'))).toHaveLength(0);
+            await act(async () => { releaseRead.resolve(); });
+            expect(hook.getCurrent().get('home-a')?.kind).toBe('signed_out');
+            await act(async () => { await signIn('home-a', 'account-a'); });
+            expect(hook.getCurrent().get('home-a')).toMatchObject({ kind: 'bound', scope: { accountId: 'account-a' } });
+            await hook.unmount();
+        } finally {
+            releaseRead.resolve();
+            read.mockRestore();
+        }
+    });
+
     it.each(['account-b', 'account-a'])('binds addressed filename search and cancellation to Home B with Account %s', async (accountB) => {
         await signIn('home-a', 'account-a');
         await signIn('home-b', accountB);

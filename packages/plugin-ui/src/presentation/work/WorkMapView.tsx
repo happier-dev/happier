@@ -1,15 +1,14 @@
-import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { Pressable, StyleSheet, View, type ViewStyle } from 'react-native';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { StyleSheet, View, type ViewStyle } from 'react-native';
 
+import { WorkMapItem } from './WorkMapItem.js';
 import type { HappierGestureResponderEvent, HappierLayoutChangeEvent } from '../portableTypes.js';
 import { formatHappierWorkMapNodeName, type HappierWorkMap, type HappierWorkMapNode } from './workMap.js';
-import { resolveHappierWorkStatusSurfaceStyle, softenHappierWorkColor, type HappierWorkStatusTone } from './workStatus.js';
+import type { HappierWorkStatusTone } from './workStatus.js';
 import {
   resolveHappierWorkHost,
   useHappierWorkTheme,
-  type HappierWorkColors,
   type HappierWorkHost,
-  type HappierWorkTextRole,
   type HappierWorkTheme,
 } from './workTheme.js';
 
@@ -137,17 +136,6 @@ const CARD_BORDER_WIDTH = 1;
 
 const DEFAULT_PRESENTATION: HappierWorkMapNodePresentation = Object.freeze({});
 
-/**
- * The open card keeps its own ground and tone and is ringed (lab `.wm-node.on`, `.wm-node.need.on`): a
- * paper gap, then the tone's hue, or the ink while healthy. A grey fill would bury a held step's amber.
- */
-function selectedCardRing(colors: HappierWorkColors, tone: HappierWorkStatusTone): ViewStyle {
-  // A tone's ring is its card ring strengthened (the hue at 70%), so selection reads as the same hue, not a darker one.
-  const ring = tone === 'attention' ? softenHappierWorkColor(colors.attention.border, 0.7) ?? colors.attention.border
-    : tone === 'danger' ? softenHappierWorkColor(colors.danger.border, 0.7) ?? colors.danger.border : colors.text;
-  return { boxShadow: `0 0 0 2px ${colors.surface}, 0 0 0 3.5px ${ring}` };
-}
-
 /** The node and connector styles one density draws with, from the Work theme. */
 function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDensity) {
   const g = GEOMETRY[density];
@@ -231,17 +219,7 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
   });
 }
 
-type WorkMapStyles = ReturnType<typeof createWorkMapStyles>;
-
-function detailRole(compact: boolean): HappierWorkTextRole {
-  return compact ? 'mapDetailCompact' : 'mapDetail';
-}
-
-function labelRole(appearance: HappierWorkMapNodeAppearance, compact: boolean): HappierWorkTextRole {
-  if (appearance === 'lane') return 'mapLane';
-  if (appearance === 'card') return compact ? 'mapLabelCompact' : 'mapLabel';
-  return compact ? 'mapHeadingCompact' : 'mapHeading';
-}
+export type WorkMapStyles = ReturnType<typeof createWorkMapStyles>;
 
 export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: HappierWorkMapViewProps<TNode>): ReactElement {
   const { testIDPrefix } = props;
@@ -251,6 +229,9 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
   const compact = density === 'compact';
   const g = GEOMETRY[density];
   const styles = useMemo(() => createWorkMapStyles(theme, density), [theme, density]);
+  const openRef = useRef(props.onOpen);
+  useLayoutEffect(() => { openRef.current = props.onOpen; }, [props.onOpen]);
+  const openNode = useCallback((node: TNode, event: HappierGestureResponderEvent) => openRef.current?.(node, event), []);
   const [width, setWidth] = useState<number | null>(null);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const next = Math.round(event.nativeEvent.layout.width);
@@ -309,7 +290,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
   }, [g, props.map, props.presentNode]);
 
   // Visits in depth-first declared order, so reading order and connectors match.
-  const renderNode = (nodeId: string, inLane = false, availableWidth = width, compressed = false): ReactElement | null => {
+  const renderNode = (nodeId: string, inLane = false, availableWidth = width, compressed = false, rootSequencePosition?: number): ReactElement | null => {
     const node = props.map.nodesById.get(nodeId);
     if (node === undefined) return null;
     const presentation = props.presentNode?.(node) ?? DEFAULT_PRESENTATION;
@@ -317,7 +298,6 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     const selected = props.selectedNodeId === node.nodeId;
     const readOnly = props.onOpen === undefined;
     const disabled = readOnly || props.isNodeDisabled?.(node) === true;
-    const tone = presentation.tone ?? 'neutral';
     // Keep the approved anatomy while it fits alongside the remaining hairlines. Thereafter spend
     // half the spare budget here and leave half for deeper levels: progressively smaller insets,
     // never a flattened branch. Frame padding and its rail compress together, preserving grouping.
@@ -355,63 +335,11 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     // does a lane: its card is narrow, so the fact line would only truncate (lab `map-M2`). Stacked
     // lanes (a phone, `phone-P5m`) are full width again and keep it.
     const subtitle = compact || inLane ? null : props.renderSubtitle?.(node) ?? null;
-    const role = labelRole(appearance, compact);
     // A full-width card trails its status on the title's row, so states line up down the map's right
     // edge (lab `map-M1`, `session-A2`); only a narrow lane card or a compressed one stacks it under
     // the title instead of squeezing the name.
     const stackStatus = appearance === 'card' && (inLane || compressedNode);
 
-    const row = (
-      <Pressable
-        testID={`${testIDPrefix}-node-${node.nodeId}`}
-        accessibilityRole={readOnly ? undefined : 'button'}
-        accessibilityState={{ selected, ...(disabled && !readOnly ? { disabled: true } : {}) }}
-        disabled={disabled}
-        accessibilityLabel={props.accessibilityLabelForNode(node)}
-        onPress={(event) => props.onOpen?.(node, event)}
-        style={({ pressed }) => [
-          appearance === 'card' ? styles.card : appearance === 'lane' ? styles.laneCaption : styles.headerRow,
-          wrapRow ? styles.rowWrap : null,
-          appearance === 'card' ? resolveHappierWorkStatusSurfaceStyle(tone, theme.colors) as ViewStyle | null : null,
-          presentation.muted ? styles.cardMuted : null,
-          selected ? appearance === 'card' ? selectedCardRing(theme.colors, tone) : styles.rowSelected : null,
-          pressed && !disabled ? styles.rowPressed : null,
-        ]}
-      >
-        {leading ? (
-          <View
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={appearance === 'card' ? styles.mark : styles.glyph}
-          >
-            {leading}
-          </View>
-        ) : null}
-        <View style={[styles.copy, wrapRow ? { minWidth: copyMinWidth } : null]}>
-          <Text
-            role={role}
-            strong={selected}
-            // A card's name is read in full: the card grows rather than ellipsizing a short name in a
-            // narrow lane or nested frame. Only a compact full-width map keeps each node to one line
-            // (lab `.wm.sm`); its lane cards wrap like any other.
-            numberOfLines={compact && !(appearance === 'card' && inLane) ? 1 : undefined}
-            style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden' }}
-          >
-            {node.label}
-            {node.labelDetail === undefined ? null : (
-              <Text role={detailRole(compact)} style={{ color: theme.colors.secondaryText }}>{` \u00b7 ${node.labelDetail}`}</Text>
-            )}
-          </Text>
-          {subtitle ? <View style={styles.subtitle}>{subtitle}</View> : null}
-          {stackStatus ? (
-            <View style={styles.stackedStatus}>{props.renderStatus?.(node)}</View>
-          ) : null}
-        </View>
-        {stackStatus ? null : appearance === 'card'
-          ? <View style={styles.trailingStatus}>{props.renderStatus?.(node)}</View>
-          : props.renderStatus?.(node)}
-      </Pressable>
-    );
 
     const children = node.childNodeIds.length === 0 ? null : lanes ? (
       <WorkMapLanes
@@ -465,16 +393,34 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     );
 
     return (
-      <View
+      <WorkMapItem
         key={node.nodeId}
-        testID={`${testIDPrefix}-item-${node.nodeId}`}
-        role="listitem"
-        style={[styles.item, appearance === 'frame' ? [styles.frame, scale === 1 ? null : { paddingHorizontal: framePadding }] : null]}
+        node={node}
+        presentation={presentation}
+        selected={selected}
+        readOnly={readOnly}
+        disabled={disabled}
+        accessibilityLabel={props.accessibilityLabelForNode(node)}
+        onOpen={openNode}
+        theme={theme}
+        Text={Text}
+        styles={styles}
+        testIDPrefix={testIDPrefix}
+        compact={compact}
+        inLane={inLane}
+        wrapRow={wrapRow}
+        copyMinWidth={copyMinWidth}
+        stackStatus={stackStatus}
+        framePadding={framePadding}
+        scale={scale}
+        rootSequencePosition={rootSequencePosition}
+        leading={leading}
+        subtitle={subtitle}
+        status={props.renderStatus?.(node)}
+        detail={props.renderDetail?.(node)}
       >
-        {row}
-        {props.renderDetail?.(node)}
         {children}
-      </View>
+      </WorkMapItem>
     );
   };
 
@@ -482,12 +428,7 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
     <View testID={testIDPrefix} accessibilityRole="list" style={styles.container} onLayout={onLayout}>
       {props.header}
       {props.rootLayout === 'sequence' && props.map.relationships === 'authored'
-        ? props.map.rootNodeIds.map((rootNodeId, index) => (
-          <View key={rootNodeId}>
-            {index === 0 ? null : <WorkMapSpine style={styles.spine} />}
-            {renderNode(rootNodeId)}
-          </View>
-        ))
+        ? props.map.rootNodeIds.map((rootNodeId, index) => renderNode(rootNodeId, false, width, false, index))
         : props.map.rootNodeIds.map((rootNodeId) => renderNode(rootNodeId))}
       {props.footer}
     </View>

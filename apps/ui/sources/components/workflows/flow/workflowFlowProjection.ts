@@ -6,9 +6,10 @@ import type {
   WorkflowRepetition,
 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowInvocationLifecycleV1, WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { listWorkflowBlockOrdinalsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { t } from '@/text';
+import { formatWorkflowConditionSentence } from '@/components/workflows/presentation/workflowConditionPresentation';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { buildHappierWorkMap, type HappierWorkMap, type HappierWorkMapPlaced } from '@happier-dev/plugin-ui/presentation';
 
@@ -165,8 +166,10 @@ export function projectWorkflowFlow(
     return {
       ...(stepOrdinal === undefined ? {} : { stepOrdinal }),
       ...(returns === undefined ? {} : { returns }),
-      // Only the root definition's own producer is this Run's final output.
-      ...(workflowPath.length === 0 && block.id === finalOutputBlockId ? { finalOutput: true } : {}),
+      // A Discussion outcomes read supplies typed round facts, not a human-authored
+      // final answer. Keep its plain name without promoting plumbing to "Final output".
+      ...(workflowPath.length === 0 && block.id === finalOutputBlockId
+        && !(block.kind === 'action' && block.actionId === 'workflow.discussion.round.project') ? { finalOutput: true } : {}),
     };
   };
 
@@ -178,6 +181,7 @@ export function projectWorkflowFlow(
     refs: readonly string[] = [],
     // The visible ordinals of the definition this list belongs to (a nested workflow numbers its own).
     ordinals: ReadonlyMap<string, string> = rootOrdinals,
+    referenceContext: Pick<WorkflowDefinitionV1, 'blocks'> = definition,
   ): void => {
     list.forEach((block) => {
       const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
@@ -201,7 +205,7 @@ export function projectWorkflowFlow(
             // Drafts may contain cycles; accepted definitions are admission-validated.
             if (child !== undefined && !refs.includes(block.workflowRef)) {
               visitList(child.blocks, nodeId, [...workflowPath, block.id], editTarget, [...refs, block.workflowRef],
-                listWorkflowBlockOrdinalsV1(child.blocks));
+                listWorkflowBlockOrdinalsV1(child.blocks), child);
             }
           }
           break;
@@ -248,7 +252,7 @@ export function projectWorkflowFlow(
               parentNodeId: nodeId,
               observed: false,
             });
-            visitList(branch.blocks, branchNodeId, workflowPath, childEditTarget, refs, ordinals);
+            visitList(branch.blocks, branchNodeId, workflowPath, childEditTarget, refs, ordinals, referenceContext);
           });
           break;
         }
@@ -271,7 +275,7 @@ export function projectWorkflowFlow(
               : {}),
             observed: false,
           });
-          visitList(block.body, nodeId, workflowPath, childEditTarget, refs, ordinals);
+          visitList(block.body, nodeId, workflowPath, childEditTarget, refs, ordinals, referenceContext);
           if (block.repetition.kind === 'evaluate') {
             const evaluator = block.repetition.evaluator;
             pushNode({
@@ -294,6 +298,11 @@ export function projectWorkflowFlow(
             kind: 'if',
             editTarget,
             label: workflowBlockReferenceLabel(block),
+            // Unnamed, the kind's own word leads ("**If** · … is No"); a named condition keeps its If so
+            // the map reads as a condition, as the editor's heading does (lab run-A).
+            labelDetail: block.name?.trim()
+              ? t('workflows.page.inspector.ifSentence', { condition: formatWorkflowConditionSentence(referenceContext, block.when) })
+              : formatWorkflowConditionSentence(referenceContext, block.when),
             parentNodeId,
             observed: false,
           });
@@ -307,7 +316,7 @@ export function projectWorkflowFlow(
             parentNodeId: nodeId,
             observed: false,
           });
-          visitList(block.then, thenNodeId, workflowPath, childEditTarget, refs, ordinals);
+          visitList(block.then, thenNodeId, workflowPath, childEditTarget, refs, ordinals, referenceContext);
           if (block.otherwise.length > 0) {
             const otherwiseNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#otherwise`, workflowPath);
             pushNode({
@@ -319,7 +328,7 @@ export function projectWorkflowFlow(
               parentNodeId: nodeId,
               observed: false,
             });
-            visitList(block.otherwise, otherwiseNodeId, workflowPath, childEditTarget, refs, ordinals);
+            visitList(block.otherwise, otherwiseNodeId, workflowPath, childEditTarget, refs, ordinals, referenceContext);
           }
           break;
         }

@@ -20,7 +20,7 @@ export const en = {
     retry: { action: 'Try again', start: 'Couldn’t confirm this Run started. Try again re-sends this exact request; it won’t start twice.', runAgain: 'Couldn’t confirm Run again started. Try again re-sends this exact request; it won’t start twice.', anotherRound: 'Couldn’t confirm Another round started. Try again re-sends this exact request; it won’t start twice.' },
     needed: ({ count }: { count: number }) => `Inputs · ${count} needed`,
     neededNamed: ({ name }: { name: string }) => `Inputs · ${name} needed`,
-    addToStart: ({ name }: { name: string }) => `${name} is needed to start`,
+    addToStart: ({ name }: { name: string }) => `${name} needed to start`,
     required: 'Required to start', preview: 'What it will do', unsaved: 'Includes unsaved edits',
     remove: 'Return to a plain session', search: 'Find a pattern', builtin: 'Built-in', library: 'Your library',
     noInputs: 'No inputs needed', needsSession: 'Needs a session', asksFor: ({ names }: { names: string }) => `Asks for ${names}`,

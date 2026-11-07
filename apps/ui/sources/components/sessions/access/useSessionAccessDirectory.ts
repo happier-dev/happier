@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountDisplayProfileV1 } from '@happier-dev/protocol';
+import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
@@ -579,9 +579,9 @@ export function useSessionAccessDirectory(input: Readonly<{
         // it on every render creates a refresh loop and makes authoritative
         // empty-directory recovery impossible; only the explicit retry removes
         // the page and starts another attempt.
-        if (!enabled || teamAddress || availability !== 'available' || pagesRef.current.team !== undefined) return;
+        if (!enabled || (!allowsTeams && !allowsGroups) || teamAddress || availability !== 'available' || pagesRef.current.team !== undefined) return;
         void resolvePaged('team', '').catch(() => {});
-    }, [availability, enabled, resolvePaged, revision, teamAddress]);
+    }, [allowsGroups, allowsTeams, availability, enabled, resolvePaged, revision, teamAddress]);
 
     const retry = React.useCallback((kind: SessionAccessDirectoryKind) => {
         if (teamAddress) {
@@ -664,7 +664,9 @@ export function useSessionAccessDirectory(input: Readonly<{
         const built: SessionAccessDirectorySectionModel[] = [{
             kind: 'account',
             title: t('session.access.people'),
-            candidates: [],
+            // The Account directory is search-demanded; unrelated section changes
+            // must not publish a new empty candidate inventory.
+            candidates: EMPTY_PAGE.rows,
             status: accountPage.failed ? 'error' : accountPage.loadingMore ? 'refreshing' : 'idle',
             ...(accountPage.failed ? { error: directoryError } : {}),
             cursor: accountPage.nextCursor,

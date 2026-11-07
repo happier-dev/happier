@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { WorkflowProgressEnvelopeV1Schema, WORKFLOW_RUN_STATES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol';
+import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { projectWorkflowInvocationStructure } from './workflowInvocationStructure';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 import { createWorkflowRunReleaseScene } from '@/dev/testkit/render/workflowRunDesignScene';
+import { createWorkflowDiscussionRoundFixture } from '../../../../../../packages/protocol/testkit/workflowDiscussionRound';
 
 import {
     createWorkflowInvocationIndexFixture,
@@ -19,6 +20,9 @@ import {
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import { t } from '@/text';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 
 import {
     canOfferWorkflowInvocationReattach,
@@ -33,16 +37,30 @@ import {
     projectWorkflowRunFailure,
     selectWorkflowRunFailureInvocation,
     formatWorkflowRunFailureCauseLine,
+    selectWorkflowRunApprovalPresentation,
 } from './workflowRunDetailPresentation';
 
+it.each(['discussion.invite', 'plugin:external/check'])('FIX250 presents each retained %s approval once, leaving publication custody in F2', actionId => {
+    const waiting = ['first', 'second'].map(id => createWorkflowInvocationIndexFixture({ id, lifecycle: 'waiting_for_approval' }));
+    const requests = ['approval-a', 'approval-b', 'publication'].map(artifactId => ({ artifactId,
+        href: buildApprovalHref(artifactId, 'server-a', createWorkflowRunRoute('run-1', 'server-a')) }));
+    const progressByInvocationId = new Map(waiting.map((invocation, index) => [invocation.id,
+        WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: '0',
+            logicalInvocationRecordId: invocation.id, invocationPath: { blockId: 'analyze', scope: [] },
+            execution: { kind: 'action', actionId, actionRequestId: `request-${index}`, localInputId: `input-${index}`, input: {},
+                output: ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created',
+                    artifactId: requests[index]!.artifactId, actionId: actionId === 'discussion.invite' ? actionId : 'action.invoke' }) },
+        })]));
+    const selected = selectWorkflowRunApprovalPresentation({ requests, waitingInvocations: waiting, progressByInvocationId });
+    expect([...selected.byInvocationId]).toEqual([[waiting[0]!.id, requests[0]], [waiting[1]!.id, requests[1]]]);
+    expect(selected.unassigned).toEqual([requests[2]]);
+    expect(selected.byInvocationId.size + selected.unassigned.length).toBe(requests.length);
+    expect(selectWorkflowRunApprovalPresentation({ requests, waitingInvocations: waiting }).unassigned).toEqual(requests);
+    expect(selectWorkflowRunApprovalPresentation({ requests,
+        waitingInvocations: waiting.map(row => ({ ...row, lifecycle: 'completed' })), progressByInvocationId }).unassigned).toEqual(requests);
+});
+
 describe('managed workflow Run presentation', () => {
-    it('says what an interrupted Run stopped on and that finished work is retained, never the bare word (H3)', () => {
-        const run = createWorkflowRunSummaryFixture({ state: 'interrupted' });
-        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
-        expect(formatWorkflowRunOutcomeSentence({ run, coverage, failure: { step: 'For each issue' } }))
-            .toBe('For each issue was interrupted. Completed work is retained.');
-        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('Completed work is retained.');
-    });
     it('never assigns a failure cause from later Machine reachability (R5 03:42–04:58 / 10:28)', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', finishedAt: '2026-10-19T04:58:00.000Z' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', createdAt: '2026-10-19T03:42:00.000Z',
@@ -179,11 +197,30 @@ describe('managed workflow Run presentation', () => {
             progress: { ...progress, reason: { code: 'agent_failed', message: 'Agent exited before producing a result' } } });
         expect(other.failureCause).toMatchObject({ headline: 'Agent exited before producing a result' });
     });
-    it('keeps Stop pending until physical custody settles, even after the parent is cancelled', () => {
+    it.each([
+        ['approval_rejected', 'workflows.recovery.publicationDeclined'],
+        ['approval_canceled', 'workflows.recovery.publicationWithdrawn'],
+        ['discussion_post_denied', 'workflows.recovery.publicationRefused'],
+        ['workflow_discussion_publication_unavailable', 'workflows.recovery.publicationUnavailable'],
+    ] as const)('says a Run-level %s publication failure in words, never the producer\'s prose', (code, key) => {
+        const run = createWorkflowRunSummaryFixture({ state: 'failed' });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const producer = 'Producer prose about a Discussion return.';
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'root',
+            invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+            reason: { code, message: producer } });
+        const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: producer, headline: t(key) });
+        // A step's own refusal is that step's story; its recorded message stays its headline.
+        const step = projectWorkflowInvocationRecovery({ run, invocation, machineHomeDirectory: null,
+            progress: { ...progress, blockKind: 'step', invocationPath: { blockId: 'a', scope: [] } } });
+        expect(step.failureCause).toMatchObject({ headline: producer });
+    });
+    it('keeps the canonical cancelled outcome separate from pending physical custody', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 5 }, coverage: 'complete' as const, knownFailure: false };
         const run = createWorkflowRunSummaryFixture({ state: 'cancelled', workflowCustodyState: 'pending', stepProgress: { completed: 1, total: 5 } });
-        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.stopping'));
-        expect(formatWorkflowRunOutcomeLabel({ state: run.state, workflowCustodyState: run.workflowCustodyState, coverage })).toBe(t('workflows.run.stopping'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.runState.cancelled'));
+        expect(formatWorkflowRunOutcomeLabel({ state: run.state, workflowCustodyState: run.workflowCustodyState, coverage })).toBe(t('workflows.runState.cancelled'));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, workflowCustodyState: 'settled' }, coverage })).toBe(t('workflows.run.stoppedCount', { completed: 1, total: 5 }));
     });
     it('describes the persisted conversation refusal through the one problem owner', () => {
@@ -197,9 +234,33 @@ describe('managed workflow Run presentation', () => {
     });
     it('uses authored progress rather than repeated runtime attempts for completion counts', () => {
         const coverage = { observedLeafCounts: { completed: 7, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
-        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 3, total: 3 } });
+        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 3, skipped: 0, total: 3 } });
         expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.completedCount', { count: 3 }));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, stepProgress: null }, coverage })).toBe(t('workflows.runState.succeeded'));
+    });
+    it('keeps retained terminal progress neutral when skipped steps were not recorded', () => {
+        const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
+        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 2, total: 2 } });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: true }))
+            .toBe(t('workflows.runState.succeeded'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...coverage, knownFailure: true } }))
+            .toBe(t('workflows.runState.completed_with_failures'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...coverage, coverage: 'partial' } }))
+            .toBe(t('workflows.runState.succeeded'));
+    });
+    it('distinguishes intentionally skipped authored steps from unfinished work only after successful settlement', () => {
+        const coverage = { observedLeafCounts: { completed: 7, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
+        const run = createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 2, skipped: 1, total: 4 } });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage }))
+            .toBe(t('workflows.run.completedWithSkipped', { completed: 2, skipped: 1 }));
+        expect(formatWorkflowRunOutcomeSentence({ run: { ...run, stepProgress: { completed: 2, total: 4 } }, coverage }))
+            .toBe(t('workflows.runState.succeeded'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: false }))
+            .toBe(t('workflows.runState.succeeded'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...coverage, knownFailure: true } }))
+            .toBe(t('workflows.runState.completed_with_failures'));
+        expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'running' }, coverage }))
+            .toBe(t('workflows.runState.running'));
     });
     it('says how far a stopped Run got rather than the bare state word (DESIGN-15 R9)', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
@@ -208,6 +269,16 @@ describe('managed workflow Run presentation', () => {
         // The count is the server's projection, so a partly loaded history still states it.
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: false })).toBe(t('workflows.run.stoppedCount', { completed: 1, total: 5 }));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, stepProgress: null }, coverage })).toBe(t('workflows.runState.cancelled'));
+    });
+    it('says which items of a loop finished when a Run stopped inside it', () => {
+        const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
+        const run = createWorkflowRunSummaryFixture({ state: 'cancelled', workflowCustodyState: 'settled',
+            stepProgress: { completed: 0, skipped: 0, total: 4, currentLoop: { completed: 1, total: 2 } } });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.stoppedCountWithItems',
+            { completed: 0, total: 4, itemsCompleted: 1, itemsTotal: 2 }));
+        // No item finished: the step count alone is the whole truth.
+        expect(formatWorkflowRunOutcomeSentence({ run: { ...run, stepProgress: { completed: 0, total: 4, currentLoop: { completed: 0, total: 2 } } }, coverage }))
+            .toBe(t('workflows.run.stoppedCount', { completed: 0, total: 4 }));
     });
     it('describes a claimed continuation and an accepted Stop from their current facts', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
@@ -259,6 +330,13 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'cancelled', workflowCustodyState: 'settled' }, coverage,
             failure: { step: 'Publish summary' },
         })).toBe(t('workflows.runState.cancelled'));
+    });
+    it('says what an interrupted Run stopped on and that finished work is retained, never the bare word (H3)', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'interrupted' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, failure: { step: 'For each issue' } }))
+            .toBe('For each issue was interrupted. Completed work is retained.');
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('Completed work is retained.');
     });
     it('offers an explicit engine replacement only for a stopped unavailable step with settled custody', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
@@ -536,16 +614,57 @@ describe('managed workflow Run presentation', () => {
         })).toMatchObject({ canRetrySameConversation: false, canRetryFreshAgent: false });
     });
 
-    /**
-     * The real `workflow.run.invocations.get` answers a failed Action, or an interrupted root, If or loop
-     * frame, with Retry available and both Agent-conversation choices `recovery_not_prepared`. Retry for
-     * these is an ordinary repeat of the original input, never a conversation choice (RV-FIX208-A1).
-     */
+    // RV-FIX208 / FIX212: persistence is the only substituted boundary. Get and Retry use the
+    // same Protocol owner as production, so an offered recovery must be accepted by that owner.
+    it.each(['original-action', 'inherited-after-root', 'inherited-after-IF', 'root', 'IF', 'loop'] as const)
+    ('offers an accepted producer Retry for %s without preparing an Agent conversation', async scenario => {
+        const f = await createWorkflowDiscussionRoundFixture('projector-in-if');
+        let selectedId = f.rounds[2]!.complete;
+        f.row(selectedId).index.lifecycle = 'pending';
+        if (scenario === 'inherited-after-root') await f.retry(f.currentRoot());
+        else if (scenario === 'inherited-after-IF') await f.retry(f.row(selectedId).index.parentRecordId!);
+        else if (scenario === 'root') selectedId = await f.retry(f.currentRoot());
+        else if (scenario === 'IF') selectedId = await f.retry(f.row(selectedId).index.parentRecordId!);
+        else if (scenario === 'loop') selectedId = await f.retry(f.rounds[2]!.frame);
+        else selectedId = await f.retry(selectedId);
+        f.row(selectedId).index.lifecycle = scenario === 'root' ? 'needs_attention' : 'failed';
+        f.seal(f.row(selectedId));
+        f.interrupt();
+
+        const { invocation } = await f.inspect(selectedId);
+        const availability = invocation.recoveryAvailability;
+        expect(availability?.retry.kind).toBe('available');
+        if (availability?.retry.kind !== 'available') throw new Error('Expected the producer to offer Retry');
+        expect(availability.continueSameConversation).toMatchObject({ kind: 'unavailable', reason: 'recovery_not_prepared' });
+        expect(availability.continueFreshAgent).toMatchObject({ kind: 'unavailable', reason: 'recovery_not_prepared' });
+        const presentation = projectWorkflowInvocationRecovery({
+            run: f.run, invocation: invocation.index, progress: invocation.progress,
+            recoveryAvailability: availability, machineHomeDirectory: null,
+        });
+        expect(presentation).toMatchObject({
+            canRetry: true, canRetrySameConversation: false, canRetryFreshAgent: false,
+            retryCausalInvocationIds: availability.retry.causalInvocationIds,
+        });
+        // The conversation spelling matters even for a non-step: same-conversation is refused.
+        await expect(f.requestRetry(selectedId, presentation.retryCausalInvocationIds, 'same_conversation'))
+            .rejects.toMatchObject({ code: 'ineligible_state' });
+        const accepted = await f.requestRetry(selectedId, presentation.retryCausalInvocationIds, 'fresh_agent');
+        expect(accepted.disposition).toBe('accepted');
+        const replacement = (await f.inspect(accepted.invocation.id)).invocation;
+        expect(replacement.progress?.blockKind).toBe(invocation.progress?.blockKind);
+        expect(replacement.progress?.blockKind).not.toBe('step');
+        expect(replacement.progress?.recovery).toBeUndefined();
+        expect(projectWorkflowInvocationRecovery({ run: f.run, invocation: replacement.index,
+            progress: replacement.progress, recoveryAvailability: replacement.recoveryAvailability,
+            machineHomeDirectory: null })).toMatchObject({ canRetrySameConversation: false, canRetryFreshAgent: false });
+        f.interrupt();
+        expect((await f.inspect(selectedId)).invocation.recoveryAvailability?.retry)
+            .toMatchObject({ kind: 'unavailable', reason: 'invocation_not_recoverable' });
+        await expect(f.requestRetry(selectedId, [accepted.invocation.id], 'fresh_agent'))
+            .rejects.toMatchObject({ code: 'ineligible_state' });
+    });
+
     it.each([
-        ['a failed Action', 'action', 'failed'],
-        ['an interrupted root', 'root', 'needs_attention'],
-        ['an interrupted If frame', 'if', 'failed'],
-        ['an interrupted loop frame', 'loop', 'failed'],
         ['a failed workflow call', 'workflow', 'failed'],
     ] as const)('offers a plain Retry for %s with the returned causal set and no conversation choice', (_label, blockKind, lifecycle) => {
         const notPrepared = { kind: 'unavailable' as const, reason: 'recovery_not_prepared' as const };
@@ -555,7 +674,7 @@ describe('managed workflow Run presentation', () => {
             invocation: createWorkflowInvocationIndexFixture({ id: 'selected', lifecycle }),
             progress: WorkflowProgressEnvelopeV1Schema.parse({
                 kind: 'happier.workflow-progress.v1', blockKind, attempt: '0', logicalInvocationRecordId: 'selected',
-                invocationPath: { blockId: blockKind === 'root' ? '$root' : 'projector', scope: [] },
+                invocationPath: { blockId: 'projector', scope: [] },
             }),
             recoveryAvailability: {
                 reattach: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
@@ -947,6 +1066,15 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'running' }, coverage, attention: {
             step: 'Write changelog', waitForYou: false,
         } })).toBe(t('workflows.run.attentionReviewSentence', { step: 'Write changelog' }));
+    });
+
+    it('names an approval hold as waiting for approval, not for review', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'running' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        // A participant invitation or Action approval is decided in its request, not reviewed as a result.
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
+            step: 'Fresh opinions', waitForYou: false, waitsForApproval: true,
+        } })).toBe(t('workflows.run.attentionApprovalSentence', { step: 'Fresh opinions' }));
     });
 
     it('says only that a parked Run waits until its held step is known (DESIGN-16 D10)', () => {

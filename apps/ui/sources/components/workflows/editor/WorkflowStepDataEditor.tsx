@@ -85,7 +85,7 @@ export function WorkflowResultFieldPathInput(props: Readonly<{
  * The document's reference token, including in a loop/condition sentence. A literal is the value
  * itself, so it reads as words in the sentence ("Repeat 2 times"), never as a binding token.
  */
-export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEditorDraft; reference: WorkflowValueReference; testID?: string }>): React.ReactElement {
+export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEditorDraft; reference: WorkflowValueReference; label?: string; testID?: string }>): React.ReactElement {
     const { theme } = useUnistyles();
     if (props.reference.kind === 'literal') {
         return <Text testID={props.testID} selectable>{formatWorkflowValueReference(props.draft, props.reference)}</Text>;
@@ -93,7 +93,9 @@ export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEdi
     // A reference reads as the lab's tinted chip (`.uwe-ref`): the accent's own tint behind accent words,
     // inline in a sentence or on a step's footer line, never a bare link-coloured run of text.
     return <Text testID={props.testID} style={{ color: theme.colors.state.active.foreground, backgroundColor: theme.colors.state.active.background,
-        borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4 }} selectable>{`↵ ${formatWorkflowValueReference(props.draft, props.reference)}`}</Text>;
+        borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4 }} selectable>
+        {/* A chip wraps whole, never inside its words (owner 2026-11-06): its spaces do not break. */}
+        {`↵ ${props.label ?? formatWorkflowValueReference(props.draft, props.reference)}`.replace(/ /g, '\u00A0')}</Text>;
 }
 
 /** Keeps the localized sentence intact while its references use the same token owner. */
@@ -127,6 +129,8 @@ export function WorkflowBindingRow(props: Readonly<{
     /** A fact about how this field binds ("Values go in as environment variables"). */
     note?: string;
     binding: WorkflowActionFieldBindingV1 | undefined;
+    /** The row producer's words for references, independent of unrelated prompt edits. */
+    referenceLabels?: readonly string[];
     /** The value an unset field resolves to, already in the reader's words. */
     defaultLabel?: string;
     draft: WorkflowEditorDraft;
@@ -204,7 +208,7 @@ export function WorkflowBindingRow(props: Readonly<{
                                 : <Text key={index} style={workflowEditorStyles.actionFieldText} selectable>
                                     {props.formatLiteral?.(reference.value) ?? formatWorkflowBindingLiteral(props.draft, reference, props.fieldName)}
                                 </Text>
-                            : <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} />)}
+                            : <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} label={props.referenceLabels?.[index]} />)}
             </View>
         );
     }
@@ -236,7 +240,7 @@ export function WorkflowBindingRow(props: Readonly<{
             {rowAction === null ? <View style={workflowEditorStyles.actionFieldRow}>{pair}</View> : (
                 <HappierPressable testID={rowAction.testID} accessibilityRole="button"
                     accessibilityLabel={rowAction.accessibilityLabel} onPress={rowAction.onPress}
-                    style={(state) => [workflowEditorStyles.actionFieldRow, workflowEditorStyles.actionFieldRowTarget,
+                    style={(state) => [workflowEditorStyles.actionFieldRow,
                         state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
                     {pair}
@@ -481,6 +485,8 @@ export function WorkflowStepDataEditor(props: Readonly<{
             {/* One footer line (07 S7): what the step returns. A reading document has no binding
                 controls, so the step's inputs sit on that line as tokens. */}
             {!showsLine ? null : <View testID={`${id}-footer`} style={workflowEditorStyles.metaRow}>
+                {/* The card's own line (owner 2026-11-06): what the step uses, then what it returns. */}
+                {tokens.length === 0 ? null : <Text testID={`${id}-uses`} style={workflowEditorStyles.metaText}>{t('workflows.page.blocks.uses')}</Text>}
                 {editable && tokens.length > 0 && props.onEdit !== undefined ? (
                     <HappierPressable
                         testID={`${id}-inputs-edit`}

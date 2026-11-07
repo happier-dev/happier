@@ -15,10 +15,16 @@ import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { getActionSpec, ActionIdSchema, StrictJsonValueSchema, WorkflowRunStartRequestV1Schema, WorkflowRunRecipientCensusResponseV1Schema,
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionIdSchema} from '@happier-dev/protocol/actions/actionIds';
+import { StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import { WorkflowRunStartRequestV1Schema, WorkflowInvocationListRequestV1Schema,
+    type WorkflowRunGetResultV1} from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import {
     sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
-    serializeWorkflowStoredContentEnvelopeV1, WorkflowProgressEnvelopeV1Schema,
-    type WorkflowRunGetResultV1, type WorkflowInvocationDetailV1 } from '@happier-dev/protocol';
+    serializeWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { WorkflowProgressEnvelopeV1Schema, type WorkflowInvocationDetailV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
@@ -96,13 +102,16 @@ function runKeyCensus(runId: string) {
         recipients: [], visibleTeamId: null, ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
 }
 
-function renderScreen(element: React.ReactElement, options: Parameters<typeof renderTestScreen>[1] = {}) {
+async function renderScreen(element: React.ReactElement, options: Parameters<typeof renderTestScreen>[1] = {}) {
     const Wrapper = options.wrapper;
-    return renderTestScreen(element, { ...options, wrapper: ({ children }) => (
+    // The application shell owns an established modal host before a destination can open Start.
+    const screen = await renderTestScreen(<></>, { ...options, wrapper: ({ children }) => (
         <AuthProvider initialCredentials={routeBoundary.credentials}><ModalProvider>
             {Wrapper ? <Wrapper>{children}</Wrapper> : children}
         </ModalProvider></AuthProvider>
     ) });
+    await screen.update(element);
+    return screen;
 }
 
 function startRequests() {
@@ -127,17 +136,57 @@ async function addComposerHome(name: string, serverUrl: string) {
 }
 
 function definitionWrites() {
-    return home.requests.filter(request => request.path.startsWith('/v1/artifacts') && request.input !== null);
+    return home.requests.filter(request => request.path.startsWith('/v1/artifacts')
+        && request.path !== '/v1/artifacts/read' && request.input !== null);
 }
 
 function automationWrites() {
-    return home.requests.filter(request => request.path.startsWith('/v3/automations') && request.path !== storageRoute && request.input !== null);
+    return home.requests.filter(request => request.path.startsWith('/v3/automations')
+        && request.path !== '/v3/automations/query' && request.path !== storageRoute && request.input !== null);
 }
 
 function expectNoWorkflowWrites() {
     expect(definitionWrites()).toEqual([]);
     expect(automationWrites()).toEqual([]);
     expect(startRequests()).toEqual([]);
+}
+
+/**
+ * Workflow settings are a companion of the editor's detail navigation (detail-navigation T1/T2/T6):
+ * the rendered companion rail offers them and its select handler is the rail/overflow tap.
+ */
+async function readWorkflowCompanionRail(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const { WorkflowCompanionNavigation } = await import('../navigation/WorkflowNavigationViews');
+    const rail = screen.root.findAllByType(WorkflowCompanionNavigation)[0];
+    if (!rail) throw new Error('Missing workflow companion navigation');
+    return rail;
+}
+
+async function readCompanionIds(screen: Awaited<ReturnType<typeof renderScreen>>): Promise<readonly string[]> {
+    return (await readWorkflowCompanionRail(screen)).props.model.items.map((item: { id: string }) => item.id);
+}
+
+async function openWorkflowSettings(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const rail = await readWorkflowCompanionRail(screen);
+    await act(async () => rail.props.onSelect('settings'));
+}
+
+function expectEnabledAccessibleButton(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+    const control = screen.findHostByTestId(testID);
+    if (!control) throw new Error(`Missing accessory control: ${testID}`);
+    expect(control.type).toBe('Pressable');
+    expect(control.props).toMatchObject({
+        accessibilityRole: 'button',
+        accessibilityLabel: expect.stringMatching(/\S/),
+        disabled: false,
+    });
+    // The canonical native stub preserves raw props. React Native Pressable defaults
+    // accessible/focusable to true; enabled React Native Web Pressable defaults tabIndex to 0.
+    expect(control.props.accessibilityState?.disabled).not.toBe(true);
+    expect(control.props.accessible).not.toBe(false);
+    expect(control.props.focusable).not.toBe(false);
+    expect(control.props.tabIndex).not.toBe(-1);
+    return control;
 }
 
 function savedAgentDefinition() {
@@ -148,10 +197,7 @@ function savedAgentDefinition() {
 
 async function seedSavedDefinition(definitionId: string, definition = savedAgentDefinition(),
     title = 'Saved draft', access: 'owner' | 'view' | 'edit' | 'admin' = 'owner') {
-    let value = await createWorkflowDefinition({ definitionId, definition, metadata: { title } });
-    for (let revision = 1; revision < 3; revision++) {
-        value = await updateWorkflowDefinition({ definitionId, definition, metadata: { title }, expectedRevision: value.revision });
-    }
+    await createWorkflowDefinition({ definitionId, definition, metadata: { title } });
     const row = home.artifacts(appliedHome.serverId).read(definitionId);
     if (!row) throw new Error('Missing produced saved definition');
     if (access !== 'owner') home.answer(appliedHome.serverId, `/v1/artifacts/${definitionId}`, { body: { ...row, access } });
@@ -241,14 +287,18 @@ describe('editor workflow composer', () => {
         };
         let remoteVersion = 1;
         let kvWrites = 0;
+        let kvReadVersion = 0;
         if (admission === 'remote') {
             const { encodeBase64StoredJsonContentEnvelope, decodeBase64StoredJsonContentEnvelope } = await import('@/sync/encryption/base64StoredJsonContent');
             home.answer(appliedHome.serverId, '/v1/account/encryption/currentness', { body: {
                 mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
             } });
-            home.answer(appliedHome.serverId, 'GET /v1/kv/workspace%3Atabs%3Av1', { select: () => ({ body: {
-                key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: remoteRecord }), version: remoteVersion,
-            } }) });
+            home.answer(appliedHome.serverId, 'GET /v1/kv/workspace%3Atabs%3Av1', { select: () => {
+                kvReadVersion = remoteVersion;
+                return { body: {
+                    key: 'workspace:tabs:v1', value: encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: remoteRecord }), version: remoteVersion,
+                } };
+            } });
             home.answer(appliedHome.serverId, 'POST /v1/kv', { select: input => {
                 const parsed = (input as { mutations: { key: string; value: string }[] }).mutations[0];
                 const opened = decodeBase64StoredJsonContentEnvelope(parsed.value);
@@ -335,9 +385,9 @@ describe('editor workflow composer', () => {
         expect(kind === 'new-session' ? readNewSessionAutomationHandoffSeed(second) : readTriggerWorkflowSeed(second)).toBeNull();
         await act(async () => {
             const body = screen.root.findByType(WorkflowEditorBody);
-            body.props.onChange({ ...body.props.draft, name: 'Keep my workspace edit' });
+            body.props.onChange({ ...body.props.draftStore.get(), name: 'Keep my workspace edit' });
         });
-        const draftId = screen.root.findByType(WorkflowEditorBody).props.draft.draftId;
+        const draftId = screen.root.findByType(WorkflowEditorBody).props.draftStore.get().draftId;
         if (admission === 'remote') {
             // Finish this client's accepted handoff write before delivering the
             // peer's later navigation; otherwise its pending intent masks F2.
@@ -353,12 +403,14 @@ describe('editor workflow composer', () => {
                 await act(async () => dispatchKvBatchUpdate({ kvUpdate: { changes: [{ key: 'workspace:tabs:v1', value: null, version: remoteVersion }] },
                     credentials: routeBoundary.credentials!, shouldContinue: () => true, applyTodoSocketUpdates: async () => {},
                     invalidateTodosSync: () => {}, log: { log: () => {} } }));
-                await vi.waitFor(() => expect(workspace?.sharedTabs?.order).toEqual([peerId]));
+                // The import reads the peer record; this window keeps its mounted destination.
+                await vi.waitFor(() => expect(kvReadVersion).toBe(remoteVersion));
+                await act(async () => {});
                 expect(screen.root.findByType(AgentInput)).toBe(input);
                 expect(workspace?.state.groups['group:1'].activeTabId).toBe('pinned-editor');
                 expect(workspace?.state.tabs['pinned-editor'].target.params[param]).toBe(second);
                 expect(input.props.value).toBe('SECOND');
-                expect(screen.root.findByType(WorkflowEditorBody).props.draft).toMatchObject({ draftId, name: 'Keep my workspace edit' });
+                expect(screen.root.findByType(WorkflowEditorBody).props.draftStore.get()).toMatchObject({ draftId, name: 'Keep my workspace edit' });
             }
             expect(kvWrites).toBe(writesBeforeImport);
         }
@@ -375,7 +427,7 @@ describe('editor workflow composer', () => {
         await act(async () => getStorage().setState({ isDataReady: true }));
         expect(screen.root.findByType(AgentInput)).toBe(input);
         expect(input.props.value).toBe('SECOND');
-        expect(screen.root.findByType(WorkflowEditorBody).props.draft).toMatchObject({ draftId, name: 'Keep my workspace edit' });
+        expect(screen.root.findByType(WorkflowEditorBody).props.draftStore.get()).toMatchObject({ draftId, name: 'Keep my workspace edit' });
         await screen.unmount();
     });
 
@@ -385,7 +437,7 @@ describe('editor workflow composer', () => {
     ] as const)('retains adopted %s bytes and edits when real repository %s completes', async (kind, phase) => {
         const { createDeferred } = await import('@/dev/testkit');
         const repository = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
-        const { canonicalSessionDraftAddressV2, createSessionDraftPrivatePayloadV2 } = await import('@happier-dev/protocol');
+        const { canonicalSessionDraftAddressV2, createSessionDraftPrivatePayloadV2} = await import('@happier-dev/protocol/drafts/sessionDraftsV2');
         const { storeNewSessionAutomationHandoffSeed, readNewSessionAutomationHandoffSeed } = await import('@/sync/domains/workflows/newSessionAutomationHandoffSeed');
         const { storeTriggerWorkflowSeed, readTriggerWorkflowSeed } = await import('../triggers/triggerWorkflowSeed');
         const { buildWorkflowEditorDraftFromDefinition } = await import('@/sync/domains/workflows/workflowAuthoring');
@@ -393,7 +445,7 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const scope = { serverId: appliedHome.serverId, accountId: 'account-a' };
         const address = { kind: 'newSession' as const, draftId: '00000000-0000-4000-8000-000000000292' };
-        const records = new Map<string, import('@happier-dev/protocol').SessionDraftRecordV2>();
+        const records = new Map<string, import('@happier-dev/protocol/drafts/sessionDraftsV2').SessionDraftRecordV2>();
         const listStarted = createDeferred<void>();
         const release = createDeferred<void>();
         let holdList = false;
@@ -425,7 +477,7 @@ describe('editor workflow composer', () => {
             open: async (_target, content) => content.t === 'plain' ? content.v.document : null,
         } });
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
-        let hydration: Promise<void> | null = null;
+        let hydration: ReturnType<typeof repository.ensureSessionDraftRepositoryHydrated> | null = null;
         try {
             if (phase === 'refresh') await repository.ensureSessionDraftRepositoryHydrated(scope);
             const lifetime = captureActiveServerAccountScopeLifetime();
@@ -447,10 +499,10 @@ describe('editor workflow composer', () => {
             const input = screen.root.findByType(AgentInput);
             expect(input.props.value).toBe('SECOND');
             expect(kind === 'new-session' ? readNewSessionAutomationHandoffSeed(id) : readTriggerWorkflowSeed(id)).toBeNull();
-            const adoptedId = screen.root.findByType(WorkflowEditorBody).props.draft.draftId;
+            const adoptedId = screen.root.findByType(WorkflowEditorBody).props.draftStore.get().draftId;
             await act(async () => {
                 const body = screen!.root.findByType(WorkflowEditorBody);
-                body.props.onChange({ ...body.props.draft, name: 'Keep my edit' });
+                body.props.onChange({ ...body.props.draftStore.get(), name: 'Keep my edit' });
                 repository.writeNewSessionDraft({ scope, draftId: address.draftId, patch: { text: 'source edit during hydration' }, materializationIntent: 'userEdit' });
             });
             await act(async () => {
@@ -467,7 +519,7 @@ describe('editor workflow composer', () => {
             expect(lifetime?.isCurrent()).toBe(true);
             expect(screen.root.findByType(AgentInput)).toBe(input);
             expect(input.props.value).toBe('SECOND');
-            expect(screen.root.findByType(WorkflowEditorBody).props.draft).toMatchObject({ draftId: adoptedId, name: 'Keep my edit' });
+            expect(screen.root.findByType(WorkflowEditorBody).props.draftStore.get()).toMatchObject({ draftId: adoptedId, name: 'Keep my edit' });
         } finally {
             release.resolve();
             await hydration;
@@ -484,29 +536,38 @@ describe('editor workflow composer', () => {
         const previousAvailable = isAppliedActiveServerRuntimeAvailable();
         publishAppliedActiveServerSnapshot({ ...appliedHome });
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+        const pending = createDeferred<void>();
         try {
-            const pending = createDeferred<void>();
             let reads = 0;
+            let firstReadSignal: AbortSignal | null | undefined;
             const definitionId = '00000000-0000-4000-8000-000000000001';
             // The old credential-bound HTTP reply remains pending while the
             // renewed lifetime reads the same producer-created saved revision.
+            const saved = home.artifacts(appliedHome.serverId).read(definitionId);
+            if (!saved || saved.bodyVersion === undefined) throw new Error('Missing produced saved definition');
             const value = await updateWorkflowDefinition({ definitionId, definition: savedAgentDefinition(),
-                metadata: { title: 'Restored document' }, expectedRevision: { headerVersion: 3, bodyVersion: 3 } });
+                metadata: { title: 'Restored document' }, expectedRevision: { headerVersion: saved.headerVersion, bodyVersion: saved.bodyVersion } });
             const row = home.artifacts(appliedHome.serverId).read(value.definitionId);
             home.requests.splice(0);
-            home.answer(appliedHome.serverId, `/v1/artifacts/${definitionId}`, { select: () => ({ body: row,
-                ...(reads++ === 0 ? { respondAfter: pending.promise } : {}) }) });
+            home.answer(appliedHome.serverId, `/v1/artifacts/${definitionId}`, { select: (_input, request) => {
+                const first = reads++ === 0;
+                if (first) firstReadSignal = request.signal;
+                return { body: row, ...(first ? { respondAfter: pending.promise } : {}) };
+            } });
             const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
             screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
             expect(screen.root.findAllByType(WorkflowEditorBody)).toHaveLength(0);
             expect(home.requestsFor(`/v1/artifacts/${definitionId}`)).not.toHaveLength(0);
             await act(async () => retireActiveServerAccountScopeLifetime());
-            const draft = screen.root.findByType(WorkflowEditorBody).props.draft;
+            expect(firstReadSignal?.aborted).toBe(true);
+            await waitForHomeGovernance(() => expect(screen!.root.findAllByType(WorkflowEditorBody)).toHaveLength(1));
+            const draft = screen.root.findByType(WorkflowEditorBody).props.draftStore.get();
             expect(draft.name).toBe('Restored document');
             await act(async () => retireActiveServerAccountScopeLifetime());
-            expect(screen.root.findByType(WorkflowEditorBody).props.draft).toBe(draft);
-            pending.resolve();
+            expect(screen.root.findByType(WorkflowEditorBody).props.draftStore.get()).toBe(draft);
+            expect(reads).toBe(2);
         } finally {
+            pending.resolve();
             await screen?.unmount();
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
         }
@@ -556,6 +617,7 @@ describe('editor workflow composer', () => {
             additionalRequestOrigins: ['https://workspace-peer.test', 'https://workflow.example'],
             accountId: 'account-a', credentials: routeBoundary.credentials, request: async (url, init) =>
                 await runBoundaries.get(new URL(String(url)).origin)?.handle(new URL(String(url)), init) ?? home.request(url, init) });
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
         viewport.width = 1280;
         const machine = createMachineFixture();
         const scope = { serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' };
@@ -604,7 +666,7 @@ describe('editor workflow composer', () => {
     });
 
     it('opens a concrete habit seed with its trigger and exact session placement without writing', async () => {
-        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol');
+        const { WORKFLOW_STARTER_EXAMPLES_V1} = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { storeWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const session = createSessionFixture({ serverId: appliedHome.serverId });
@@ -620,7 +682,7 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
-        await screen.pressByTestIdAsync('workflow-editor-settings-toggle');
+        await openWorkflowSettings(screen);
         const section = screen.root.findByType(WorkflowTriggerSection);
         expect(section.props.draft.adds).toMatchObject([{ trigger: { sourceSessionId: session.id, events: ['userActionRequired'] } }]);
         await act(async () => screen.update(<AppPaneProvider><WorkflowEditorHostScreen source={{ ...source }} /></AppPaneProvider>));
@@ -629,7 +691,7 @@ describe('editor workflow composer', () => {
     });
 
     it('undoes and redoes an inline habit, its trigger and placement as one editor change', async () => {
-        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol');
+        const { WORKFLOW_STARTER_EXAMPLES_V1} = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const session = createSessionFixture({ serverId: appliedHome.serverId });
         getStorage().setState({ sessions: { [session.id]: session },
@@ -638,7 +700,7 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const { WorkflowBlockListEditor } = await import('../editor/WorkflowBlockListEditor');
         const body = screen.root.findByType(WorkflowEditorBody);
-        const before = { draft: body.props.draft, project: body.props.projectTarget };
+        const before = { draft: body.props.draftStore.get(), project: body.props.projectTarget };
         const example = WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === 'test-after-every-turn')!;
         const onUseExample = screen.root.findByType(WorkflowBlockListEditor).props.onUseExample;
         if (onUseExample === undefined) throw new Error('Missing starter insertion handler');
@@ -653,15 +715,15 @@ describe('editor workflow composer', () => {
                 events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' } },
             sessionTarget: { sessionId: session.id, machineId: 'machine-1' } }));
         expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
-        await screen.pressByTestIdAsync('workflow-editor-settings-toggle');
+        await openWorkflowSettings(screen);
         const section = screen.root.findByType(WorkflowTriggerSection);
         expect(section.props.draft.adds).toHaveLength(1);
         await act(async () => readHistory().undo());
-        expect(body.props.draft).toEqual(before.draft);
+        expect(body.props.draftStore.get()).toEqual(before.draft);
         expect(body.props.projectTarget).toEqual(before.project);
         expect(section.props.draft.adds).toHaveLength(0);
         await act(async () => readHistory().redo());
-        expect(body.props.draft.blocks).toMatchObject([{ kind: 'action', actionId: 'machines.command.run' }]);
+        expect(body.props.draftStore.get().blocks).toMatchObject([{ kind: 'action', actionId: 'machines.command.run' }]);
         expect(body.props.projectTarget).toEqual({ machineId: 'machine-1', directory: '/Users/tester/project' });
         expect(section.props.draft.adds).toHaveLength(1);
         expectNoWorkflowWrites();
@@ -671,7 +733,7 @@ describe('editor workflow composer', () => {
         const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
         const definition = createWorkflowDefinitionFixture({ inputs: [], blocks: [{ kind: 'wait', id: 'review',
             document: { text: 'Saved contents', references: [], attachments: [] } }] });
-        await seedSavedDefinition(definitionId, definition);
+        const saved = await seedSavedDefinition(definitionId, definition);
         runStart.mockImplementation(async (request) => {
             return { admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId, sourceArtifactId: definitionId }) };
         });
@@ -680,12 +742,12 @@ describe('editor workflow composer', () => {
             const { operation, ...storageFields } = input;
             const { progressEnvelopes: _progress, pageByteLimit: _budget, ...fields } = storageFields as Record<string, unknown>;
             if (operation === 'invocations.list') {
-                const request = (await import('@happier-dev/protocol')).WorkflowInvocationListRequestV1Schema.parse(fields);
+                const request = WorkflowInvocationListRequestV1Schema.parse(fields);
                 const root = createWorkflowInvocationIndexFixture({ id: 'root', runId: request.runId, lifecycle: 'completed', contentRevision: '1' });
                 const leaf = createWorkflowInvocationIndexFixture({ id: 'review', runId: request.runId, parentRecordId: root.id,
                     sequence: '1', lifecycle: 'completed', contentRevision: '1', updatedAt: '2026-09-08T10:00:02.000Z' });
                 const index = request.cursor === undefined ? root : leaf;
-                const detail = (await import('@happier-dev/protocol')).WorkflowInvocationDetailV1Schema.parse({ index, parentRevision: 1,
+                const detail = (await import('@happier-dev/protocol/workflows/workflowProgressV1')).WorkflowInvocationDetailV1Schema.parse({ index, parentRevision: 1,
                     progress: { kind: 'happier.workflow-progress.v1', blockKind: request.cursor === undefined ? 'root' : 'wait',
                         invocationPath: { blockId: request.cursor === undefined ? '$root' : 'review', scope: [] }, attempt: '0',
                         logicalInvocationRecordId: index.id, ...(request.cursor === undefined ? {} : { result: 'Saved result' }) } });
@@ -702,14 +764,14 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         const readWait = () => {
-            const block = body.props.draft.blocks[0];
+            const block = body.props.draftStore.get().blocks[0];
             if (block?.kind !== 'wait') throw new Error('Expected the saved Wait step');
             return block;
         };
         const changeWhere = body.props.onChangeProjectTarget;
         if (!changeWhere) throw new Error('Expected the editor target control');
         await act(async () => {
-            body.props.onChange({ ...body.props.draft, blocks: [{ ...readWait(), document: {
+            body.props.onChange({ ...body.props.draftStore.get(), blocks: [{ ...readWait(), document: {
                 text: 'Unsaved changes', references: [], attachments: [],
             } }] });
             changeWhere({ machineId: 'machine-1', directory: '/repo' });
@@ -726,7 +788,7 @@ describe('editor workflow composer', () => {
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(startRequests()[0]).toMatchObject({
-            source: { kind: 'saved', definitionId, revision: { headerVersion: 3, bodyVersion: 3 } },
+            source: { kind: 'saved', definitionId, revision: { headerVersion: saved.headerVersion, bodyVersion: saved.bodyVersion } },
         });
         expect(readWait().document.text).toBe('Unsaved changes');
         expect(router.push).not.toHaveBeenCalled();
@@ -770,9 +832,9 @@ describe('editor workflow composer', () => {
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         await act(async () => {
-            const block = body.props.draft.blocks[0];
+            const block = body.props.draftStore.get().blocks[0];
             if (block.kind !== 'wait') throw new Error('Expected the reviewed wait block');
-            body.props.onChange({ ...body.props.draft, blocks: [{ ...block, document: {
+            body.props.onChange({ ...body.props.draftStore.get(), blocks: [{ ...block, document: {
                 ...block.document, text: 'Reviewed unsaved contents',
             } }] });
             const onChangeProjectTarget = body.props.onChangeProjectTarget;
@@ -813,9 +875,9 @@ describe('editor workflow composer', () => {
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
         const edit = async (text: string, directory: string) => act(async () => {
             const body = screen.root.findByType(WorkflowEditorBody);
-            const block = body.props.draft.blocks[0];
+            const block = body.props.draftStore.get().blocks[0];
             if (block.kind !== 'wait') throw new Error('Expected the reviewed wait block');
-            body.props.onChange({ ...body.props.draft, blocks: [{ ...block, document: { ...block.document, text } }] });
+            body.props.onChange({ ...body.props.draftStore.get(), blocks: [{ ...block, document: { ...block.document, text } }] });
             body.props.onChangeProjectTarget?.({ machineId: 'machine-1', directory });
         });
         await edit('Reviewed contents', '/repo/reviewed');
@@ -825,6 +887,8 @@ describe('editor workflow composer', () => {
         await vi.waitFor(() => expect(screen.root.findByType(WorkflowRunComposer).props.retainedRequest?.unresolved).toBe(true));
         const original = startRequests()[0];
         await act(async () => { screen.root.findByType(WorkflowRunComposer).props.onCancel(); });
+        // The canonical modal host retains the closed composer until its exit motion completes.
+        await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(0));
         await edit('Edited after the lost reply', '/repo/elsewhere');
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         const review = screen.root.findByType(WorkflowRunComposer).props;
@@ -841,6 +905,7 @@ describe('editor workflow composer', () => {
         // Page-level authoring choices belong to the next start. Even an unavailable
         // new runtime must not prevent recovery of the request already reviewed here.
         await act(async () => { screen.root.findByType(WorkflowRunComposer).props.onCancel(); });
+        await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(0));
         await act(async () => {
             const changeExecutionTarget = screen.root.findByType(WorkflowEditorBody).props.onChangeExecutionTarget;
             if (!changeExecutionTarget) throw new Error('Missing page-level runtime choice');
@@ -892,7 +957,7 @@ describe('editor workflow composer', () => {
         await update({ definitionId, definition: waitDefinition('Saved later'), metadata: { title: 'Tested draft' }, expectedRevision: current.revision });
 
         const returned = await mount();
-        await vi.waitFor(() => expect(returned.root.findByType(WorkflowEditorBody).props.draft.blocks[0]).toMatchObject({ document: { text: 'Saved later' } }));
+        await vi.waitFor(() => expect(returned.root.findByType(WorkflowEditorBody).props.draftStore.get().blocks[0]).toMatchObject({ document: { text: 'Saved later' } }));
         await pressTest(returned);
         await vi.waitFor(() => expect(returned.root.findByType(WorkflowRunComposer).props.retainedRequest?.input).toEqual(original));
         const review = returned.root.findByType(WorkflowRunComposer).props;
@@ -917,10 +982,10 @@ describe('editor workflow composer', () => {
         const Host = () => {
             start = useWorkflowComposerStart({ project: { machineId: 'machine-1', directory: '/repo/reviewed' },
                 originSession: { sessionId: 'session-origin' }, onStarted: () => {} });
-            return null;
+            return start.composerProps ? <WorkflowRunComposer {...start.composerProps} /> : null;
         };
         const screen = await renderScreen(<Host />);
-        await act(async () => { start!('builtin:plan-with-a-panel', { retainedDraft: 'Reviewed brief' }); });
+        await act(async () => { start!.start('builtin:plan-with-a-panel', { retainedDraft: 'Reviewed brief' }); });
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(screen.root.findByType(WorkflowRunComposer).props.retainedRequest?.unresolved).toBe(true));
@@ -936,7 +1001,7 @@ describe('editor workflow composer', () => {
 
         // Choosing a workflow again is a new start with its own values, never the unresolved one's review.
         for (const workflow of ['builtin:review-and-converge', 'builtin:plan-with-a-panel'] as const) {
-            await act(async () => { start!(workflow, { retainedDraft: 'Another question' }); });
+            await act(async () => { start!.start(workflow, { retainedDraft: 'Another question' }); });
             const fresh = screen.root.findByType(WorkflowRunComposer).props;
             expect(fresh.retainedRequest ?? null).toBeNull();
             expect(screen.findByTestId('workflow-run-inputs-run')?.props.accessibilityLabel).toBe('workflows.start.start');
@@ -955,16 +1020,16 @@ describe('editor workflow composer', () => {
         const Host = () => {
             start = useWorkflowComposerStart({ project: { machineId: 'machine-1', directory: '/repo/reviewed' },
                 originSession: { sessionId: 'session-origin' }, onStarted });
-            return null;
+            return start.composerProps ? <WorkflowRunComposer {...start.composerProps} /> : null;
         };
         const screen = await renderScreen(<Host />);
-        await act(async () => { start!('builtin:plan-with-a-panel', { retainedDraft: 'First question' }); });
+        await act(async () => { start!.start('builtin:plan-with-a-panel', { retainedDraft: 'First question' }); });
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(startRequests()).toHaveLength(1));
         const first = startRequests()[0]!;
         await act(async () => { screen.root.findByType(WorkflowRunComposer).props.onCancel(); });
-        await act(async () => { start!('builtin:plan-with-a-panel', { retainedDraft: 'Second question' }); });
+        await act(async () => { start!.start('builtin:plan-with-a-panel', { retainedDraft: 'Second question' }); });
         await act(async () => reply.resolve({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: first.runId }) }));
         await vi.waitFor(() => expect(getStorage().getState().workflowRunsById[workflowRunStoreKey(first.runId)]).toBeDefined());
         // The admitted Run remains a canonical fact, but an obsolete intent cannot navigate
@@ -1045,7 +1110,7 @@ describe('editor workflow composer', () => {
     });
 
     it('reads a builtin through the editor with settings, Run now and Duplicate instead of Save', async () => {
-        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
+        const { getBuiltinWorkflowCatalogV1} = await import('@happier-dev/protocol/workflows/builtins/catalog');
         const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.requiresOriginSession !== true)!;
         const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinEditorHostScreen workflow={builtin.id} intent="run" /></AppPaneProvider>, {
             createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
@@ -1055,7 +1120,7 @@ describe('editor workflow composer', () => {
         expect(body.props.documentPresentation).toMatchObject({ editable: false });
         expect(body.props.onSave).toBeUndefined();
         expect(body.props.onDuplicate).toBeTypeOf('function');
-        expect(screen.findByTestId('workflow-builtin-settings-toggle')).not.toBeNull();
+        expect(await readCompanionIds(screen)).toContain('settings');
         expect(screen.findByTestId('workflow-builtin-duplicate')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin-run-now')).not.toBeNull();
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
@@ -1067,14 +1132,14 @@ describe('editor workflow composer', () => {
         expect(body.findAll(node => String(node.type) === 'Text' && node.props.selectable === true && node.children.includes(step.document.text))).not.toHaveLength(0);
         expect(body.findAll(node => String(node.type) === 'MultiTextInput')).toHaveLength(0);
         expect(body.findAll(node => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
-        await screen.pressByTestIdAsync('workflow-builtin-settings-toggle');
+        await openWorkflowSettings(screen);
         const { WorkflowInspector } = await import('../editor/WorkflowInspector');
         expect(screen.root.findAllByType(WorkflowInspector).some(inspector => inspector.props.documentEditable === false)).toBe(true);
         expect(screen.findByTestId('workflow-builtin-group-agent')).not.toBeNull();
     });
 
     it('reopens the catalog composer with recovery enabled and rejoins its exact unresolved admission', async () => {
-        const { getBuiltinWorkflowCatalogV1, WorkflowRunStartRequestV1Schema, WorkflowRunGetResultV1Schema } = await import('@happier-dev/protocol');
+        const [{ getBuiltinWorkflowCatalogV1}, { WorkflowRunStartRequestV1Schema, WorkflowRunGetResultV1Schema}] = await Promise.all([import('@happier-dev/protocol/workflows/builtins/catalog'), import('@happier-dev/protocol/workflows/actionsV1')]);
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
         const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:plan-with-a-panel')!;
         const inputs = { request: 'Plan the next release' };
@@ -1111,7 +1176,7 @@ describe('editor workflow composer', () => {
             startProblem: { message: 'workflows.problem.unresolvedOutcome' } });
         const original = startRequests()[0];
         await act(async () => { screen.root.findByType(WorkflowRunComposer).props.onCancel(); });
-        expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(0);
+        await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(0));
         await screen.pressByTestIdAsync('workflow-builtin-run-now');
         expect(screen.root.findByType(WorkflowRunComposer).props).toMatchObject({ pending: false, reconciling: false });
         expect(startRequests()).toEqual([original, original]);
@@ -1141,12 +1206,19 @@ describe('editor workflow composer', () => {
                 addEventListener: () => {}, removeEventListener: () => {},
                 measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
         });
+        expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        await screen.pressByTestIdAsync(`workflow-editor-step-${screen.root.findByType(WorkflowEditorBody).props.draftStore.get().blocks[0].id}-summary-prompt`);
+        const trigger = expectEnabledAccessibleButton(screen, 'agent-input-agent-chip');
+        const pressEngine = trigger.props.onPress;
+        await act(async () => pressEngine());
+        // The visible composer control opens the real picker after expanding the step.
+        expect(screen.root.findAllByType(AgentInputChipPickerPanel)).toHaveLength(1);
         const composer = screen.root.findAllByType(AgentInput)[0]!;
         expect(composer.props.onAgentClick).toBeTypeOf('function');
         const extraActionChips = composer.props.extraActionChips;
         if (!extraActionChips) throw new Error('Missing workflow composer action chips');
         expect(extraActionChips.some((chip: { key: string }) => chip.key === 'workflow-step-engine')).toBe(false);
-        await screen.pressByTestIdAsync('agent-input-agent-chip');
         const panel = screen.root.findByType(AgentInputChipPickerPanel);
         const option = panel.props.options.find((candidate: { id: string; disabled?: boolean }) => candidate.id !== 'roles' && !candidate.disabled);
         expect(option).toBeDefined();
@@ -1154,10 +1226,9 @@ describe('editor workflow composer', () => {
         const onSelectImmediate = option.onSelectImmediate;
         if (!onSelectImmediate) throw new Error('Missing workflow Agent option handler');
         await act(async () => onSelectImmediate());
-        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const body = screen.root.findByType(WorkflowEditorBody);
         const readStep = () => {
-            const block = body.props.draft.blocks[0];
+            const block = body.props.draftStore.get().blocks[0];
             if (block.kind !== 'step') throw new Error('Expected the workflow authoring step');
             return block;
         };
@@ -1166,7 +1237,7 @@ describe('editor workflow composer', () => {
         expect(engine.agentTarget).toBeDefined();
         expect(readStep().execution?.agentTarget).toBeUndefined();
         expect(readStep().execution?.modelSelection).toBeUndefined();
-        await act(async () => body.props.onChange({ ...body.props.draft, blocks: [{ ...readStep(),
+        await act(async () => body.props.onChange({ ...body.props.draftStore.get(), blocks: [{ ...readStep(),
             execution: { ...readStep().execution, sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
                 overrides: { budget: { value: 42, updatedAt: 1 } } } } }] }));
         const { NewSessionEngineOptionDetail } = await import('@/components/sessions/new/components/NewSessionEngineOptionDetail');
@@ -1183,13 +1254,13 @@ describe('editor workflow composer', () => {
         expect(detail.props.selectedConfigOverrides?.reasoning_effort).toBe('high');
         expect(readStep().execution?.sessionConfigOptionOverrides?.overrides.budget?.value).toBe(42);
         const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
-        expect(validateWorkflowEditorDraft(body.props.draft).valid).toBe(true);
+        expect(validateWorkflowEditorDraft(body.props.draftStore.get()).valid).toBe(true);
         await screen.pressByTestIdAsync('agent-input-chip-picker.option:roles');
         await screen.pressByTestIdAsync('roles-rail-option:local-reviewer');
         expect(readStep().execution?.engine).toEqual({ role: 'local-reviewer' });
         expect(readStep().execution?.agentTarget).toBeUndefined();
         expect(readStep().execution?.modelSelection).toBeUndefined();
-        expect(validateWorkflowEditorDraft(body.props.draft).valid).toBe(true);
+        expect(validateWorkflowEditorDraft(body.props.draftStore.get()).valid).toBe(true);
         expectNoWorkflowWrites();
         expect(home.requests.filter(request => request.path === '/v1/actions/session.spawn_new')).toHaveLength(0);
         await screen.pressByTestIdAsync(`workflow-editor-step-${readStep().id}-customize`);
@@ -1201,6 +1272,92 @@ describe('editor workflow composer', () => {
         expect(readStep().execution?.sessionConfigOptionOverrides).toBeUndefined();
     });
 
+    it('opens the real prompt library from an expanded step and keeps it closed after editing', async () => {
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+        await seedSavedDefinition(definitionId);
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
+        const { AgentInputPromptPicker } = await import('@/components/sessions/agentInput/commandMenu/AgentInputPromptPicker');
+        expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        await screen.pressByTestIdAsync(`workflow-editor-step-${screen.root.findByType(WorkflowEditorBody).props.draftStore.get().blocks[0].id}-summary-prompt`);
+        const trigger = expectEnabledAccessibleButton(screen, 'agent-input-prompt-library');
+        const pressLibrary = trigger.props.onPress;
+        await act(async () => pressLibrary());
+        expect(screen.root.findAllByType(AgentInputPromptPicker)).toHaveLength(1);
+        // Closing must stay closed through a draft publication: the initiating intent is consumed.
+        await act(async () => screen.root.findByType(AgentInputPromptPicker).props.onRequestClose());
+        const composer = screen.root.findByType(AgentInput);
+        const changePrompt = composer.props.onChangeText;
+        if (!changePrompt) throw new Error('Expected editable authoring composer');
+        await act(async () => changePrompt('A revised prompt'));
+        expect(screen.root.findAllByType(AgentInputPromptPicker)).toHaveLength(0);
+        expectNoWorkflowWrites();
+    });
+
+    it('opens the existing action menu from an expanded step’s plus control', async () => {
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+        await seedSavedDefinition(definitionId);
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
+        const { AgentInputActionMenuPopoverContent } = await import('@/components/sessions/agentInput/components/AgentInputActionMenuPopoverContent');
+        expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        await screen.pressByTestIdAsync(`workflow-editor-step-${screen.root.findByType(WorkflowEditorBody).props.draftStore.get().blocks[0].id}-summary-prompt`);
+        expectEnabledAccessibleButton(screen, 'agent-input-action-menu-button');
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
+        expect(screen.root.findAllByType(AgentInputActionMenuPopoverContent)).toHaveLength(1);
+        expectNoWorkflowWrites();
+    });
+
+    it('requests microphone permission once from an expanded step’s dictation control', async () => {
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit');
+        const { loadVitestModuleForNodeRequire } = await import('@/dev/vitestRnShim');
+        const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { voiceSettingsDefaults } = await import('@/sync/domains/settings/voiceSettings');
+        const { voiceDictationController } = await import('@/voice/dictation/useVoiceDictation');
+        const { AudioModule } = await import('expo-audio');
+        const { PermissionStatus } = await import('expo-modules-core');
+        // Expo is the microphone permission boundary. Capture admission and the real Dictation
+        // controller run; a refusal stops before hardware recording is needed in this host test.
+        const permission = vi.spyOn(AudioModule, 'requestRecordingPermissionsAsync').mockResolvedValue({
+            status: PermissionStatus.DENIED, granted: false, canAskAgain: false, expires: 'never',
+        });
+        const recordingModule = await loadVitestModuleForNodeRequire(
+            new URL('../../../voice/runtime/mic/NativeMicSession.ts', import.meta.url),
+            () => import('@/voice/runtime/mic/NativeMicSession'),
+        );
+        const settings = getStorage().getState().settings;
+        try {
+            primeServerFeaturesSnapshot({ serverId: appliedHome.serverId, snapshot: { status: 'ready',
+                features: createRootLayoutFeaturesResponse({ features: { voice: { enabled: true, happierVoice: { enabled: false } } } }) } });
+            getStorage().setState({ settings: { ...settings, featureToggles: { ...settings.featureToggles, voice: true },
+                voice: { ...voiceSettingsDefaults, dictation: { ...voiceSettingsDefaults.dictation, sttBinding: 'explicit',
+                    stt: { ...voiceSettingsDefaults.dictation.stt, provider: 'local_neural', localNeural: {
+                        ...voiceSettingsDefaults.dictation.stt.localNeural, execution: 'daemon',
+                    } } } } } });
+            const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+            await seedSavedDefinition(definitionId);
+            const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
+            expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+            const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+            await screen.pressByTestIdAsync(`workflow-editor-step-${screen.root.findByType(WorkflowEditorBody).props.draftStore.get().blocks[0].id}-summary-prompt`);
+            expectEnabledAccessibleButton(screen, 'agent-input-dictation');
+            await screen.pressByTestIdAsync('agent-input-dictation');
+            await vi.waitFor(() => expect(permission).toHaveBeenCalledTimes(1));
+            const changePrompt = screen.root.findByType(AgentInput).props.onChangeText;
+            if (!changePrompt) throw new Error('Expected editable authoring composer');
+            await act(async () => changePrompt('Keep my prompt'));
+            expect(permission).toHaveBeenCalledTimes(1);
+            expectNoWorkflowWrites();
+        } finally {
+            await act(async () => {
+                await voiceDictationController.cancel();
+                getStorage().setState({ settings });
+                resetServerFeaturesClientForTests();
+            });
+            recordingModule.dispose();
+        }
+    });
+
     it('makes a Can-use recipient’s personal triggers reachable and saves them through the real page without definition.update', async () => {
         const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
         await seedSavedDefinition(definitionId, savedAgentDefinition(), 'Shared workflow', 'view');
@@ -1208,8 +1365,8 @@ describe('editor workflow composer', () => {
         // the person's trigger draft and surfaces a failed save.
         home.answer(appliedHome.serverId, 'POST /v3/automations', { status: 503, body: { error: 'target_unavailable' } });
         const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
-        expect(screen.findByTestId('workflow-editor-settings-toggle')).not.toBeNull();
-        await screen.pressByTestIdAsync('workflow-editor-settings-toggle');
+        expect(await readCompanionIds(screen)).toContain('settings');
+        await openWorkflowSettings(screen);
         const section = screen.root.findByType(WorkflowTriggerSection);
         await act(async () => section.props.onChangeDraft(editWorkflowTriggerDraft(section.props.draft, {
             kind: 'add', clientId: 'personal', trigger: { kind: 'schedule', enabled: true,
@@ -1220,14 +1377,7 @@ describe('editor workflow composer', () => {
         const onChangeProjectTarget = body.props.onChangeProjectTarget;
         if (!onChangeProjectTarget) throw new Error('Missing workflow Project target handler');
         await act(async () => onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' }));
-        const confirmation = vi.spyOn(Alert, 'alert');
         await screen.pressByTestIdAsync('workflow-editor-save');
-        await vi.waitFor(async () => {
-            await act(async () => {});
-            expect(screen.findByTestId('web-modal-confirm') !== null || confirmation.mock.calls.length > 0).toBe(true);
-        });
-        if (screen.findByTestId('web-modal-confirm')) await screen.pressByTestIdAsync('web-modal-confirm');
-        else await act(async () => { confirmation.mock.calls.at(-1)?.[2]?.find(button => button.style !== 'cancel')?.onPress?.(); });
         await vi.waitFor(() => expect(body.props.saveStatus?.kind).toBe('failed'));
         expect(automationWrites(), JSON.stringify(body.props.saveStatus)).toHaveLength(1);
         expect(definitionWrites()).toHaveLength(0);
@@ -1271,7 +1421,8 @@ describe('editor workflow composer', () => {
             expect(prompts[0]?.props).toMatchObject({ value: 'Read the complete shared prompt', disabled: true });
             expect(prompts[0]?.props.onChangeText).toBeUndefined();
             expect(prompts[0]?.props.onStructuredInputMentionsChange).toBeUndefined();
-            expect(screen.findByTestId(width === 390 ? 'workflow-editor-phone-settings' : 'workflow-editor-settings-toggle')).not.toBeNull();
+            if (width === 390) expect(screen.findByTestId('workflow-editor-phone-more')).not.toBeNull();
+            else expect(await readCompanionIds(screen)).toContain('settings');
             expect(screen.root.findAllByType(SessionAuthoringControls).every((controls) => controls.props.disabled === true)).toBe(true);
             const menuActions = body.props.menuActions;
             if (!menuActions) throw new Error('Missing read-only workflow menu actions');

@@ -13,7 +13,9 @@ import { editWorkflowTriggerDraft } from '../triggers/workflowTriggerDraft';
 import { flattenTestStyle, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { ModalProvider as RealModalProvider, useModal } from '@/modal/ModalProvider';
 import type { AlertModalConfig, ConfirmModalConfig, CustomModalConfig } from '@/modal/types';
-import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowDefinitionV1Schema, WorkflowRunStartRequestV1Schema, type ActionExecutorContext, type WorkflowDefinitionCreateRequestV1, type WorkflowDefinitionGetRequestV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionUpdateRequestV1, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol';
+import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowRunStartRequestV1Schema, type WorkflowDefinitionCreateRequestV1, type WorkflowDefinitionGetRequestV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionUpdateRequestV1, type WorkflowRunStartRequestV1, type WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowDefinitionV1Schema} from '@happier-dev/protocol/workflows/workflowV1';
+import { type ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { AgentInput } from '@/components/sessions/agentInput';
@@ -28,20 +30,24 @@ import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildWorkflowReviewedRunSeed, storeWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { readWorkflowAgentRevision, storeWorkflowAgentRevision } from '@/sync/domains/workflows/workflowAgentRevision';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { captureWorkflowDiscussionV1 } from '@happier-dev/protocol/workflows';
+import { DiscussionOpenedMessageV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { prepareWorkflowCaptureEditorEntry } from '../authoring/useWorkflowMakeRepeatable';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createWeeklyStorageReviewWorkflowSeed } from '@/components/automations/storage/weeklyStorageReviewTemplate';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 // Resolve the real screen/store graph during collection, outside a behavioral
 // test's timeout; Vitest hoists the system-boundary fixture declarations below.
-import { WorkflowEditorHostScreen } from './WorkflowEditorHostScreen';
+import { WorkflowEditorHostScreen, type WorkflowEditorSource } from './WorkflowEditorHostScreen';
 import { WorkflowEditorBody } from './WorkflowEditorBody';
 import { WorkflowRunComposer } from '../run/WorkflowRunComposer';
-import { insertWorkflowStarterExample } from '@/sync/domains/workflows/workflowEditorDraft';
+import { insertWorkflowStarterExample, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { removeWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
+import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { t } from '@/text';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -57,7 +63,7 @@ import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { applyAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+import { resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
 import { resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { WorkspaceProvider } from '@/components/appShell/workspace/WorkspaceProvider';
@@ -80,7 +86,8 @@ import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createWorkflowActionHttpTransport } from '@/dev/testkit/fixtures/workflowActionHttpTransport';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { encodeBase64 } from '@/encryption/base64';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createWorkflowAutomationDetailFixture, createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
@@ -112,27 +119,27 @@ async function pressConfirmation(confirmed: boolean) {
     if (!editorScreen || !readConfirmation()) throw new Error('Expected a real confirmation dialog');
     await editorScreen.pressByTestIdAsync(confirmed ? 'web-modal-confirm' : 'web-modal-cancel');
 }
-async function confirmWorkflowAction<T>(run: () => Promise<T>): Promise<T> {
-    let pending!: Promise<T>;
-    await act(async () => { pending = run(); void pending.catch(() => undefined); });
-    await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
-    await pressConfirmation(true);
+async function runDirectWorkflowAction<T>(run: () => Promise<T>): Promise<T> {
     let result!: T;
-    await act(async () => { result = await pending; });
+    await act(async () => { result = await run(); });
+    expect(readConfirmation()).toBeUndefined();
     return result;
 }
-async function saveWithTriggerConfirmation() {
+async function saveDirectlyFromUi() {
     await act(async () => { readBodyProps()!.onSave!(); });
-    await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
-    await pressConfirmation(true);
+    await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
+    expect(readConfirmation()).toBeUndefined();
+}
+async function copyDirectlyFromUi() {
+    await act(async () => { readBodyProps()!.onSaveAsCopy!(); });
     await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
 }
-async function addConfirmedTrigger(request: Parameters<typeof import('@/sync/domains/workflows/workflowTriggerActions').addWorkflowTrigger>[0]) {
-    // Fixture setup follows the same real confirmation boundary as a user;
-    // unlike the app, an isolated domain call has no already-mounted shell.
+async function addDirectTrigger(request: Parameters<typeof import('@/sync/domains/workflows/workflowTriggerActions').addWorkflowTrigger>[0]) {
+    // Keep the real modal host mounted: an unexpected confirmation must block
+    // this direct UI write rather than be accepted by a boundary stub.
     const shell = await renderScreen(<></>);
     const { addWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
-    const result = await confirmWorkflowAction(() => addWorkflowTrigger(request));
+    const result = await runDirectWorkflowAction(() => addWorkflowTrigger(request));
     await shell.unmount();
     editorScreen = null;
     return result;
@@ -168,6 +175,20 @@ function readArtifactMutation(raw: unknown, definitionId?: string) {
 }
 const focusPromptSpy = vi.fn<(inputProps: Record<string, unknown>) => void>();
 let rejectProjectMemoryWrite = false;
+let memoryReadGate: ReturnType<typeof createDeferred<void>> | null = null;
+let memoryWriteRejected = createDeferred<void>();
+let personalMemoryHttp = createAuthoringMemoryHttpBoundary();
+async function handlePersonalMemoryHttp(url: URL, init?: RequestInit) {
+    if (!url.pathname.startsWith('/v1/account/authoring-memory')) return undefined;
+    if (url.pathname === '/v1/account/authoring-memory' && init?.method !== 'POST') {
+        await memoryReadGate?.promise;
+    }
+    if (rejectProjectMemoryWrite && init?.method === 'POST' && url.pathname.includes('workflowProject')) {
+        memoryWriteRejected.resolve();
+        throw new Error('Personal Workflow target persistence unavailable');
+    }
+    return personalMemoryHttp.handle(url, init);
+}
 let preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 });
 // As in Sync's owner tests, configure incumbent connection facts without
 // replacing any memory, encryption, persistence or currentness operation.
@@ -232,6 +253,8 @@ async function renderScreen(element: React.ReactElement, options: Parameters<typ
             getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
             ownerDocument: new EventTarget(),
             addEventListener: () => {}, removeEventListener: () => {},
+            setAttribute: () => {},
+            removeAttribute: () => {},
             measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40),
         })),
     });
@@ -248,9 +271,13 @@ function renderRunEditor(element: React.ReactElement) {
             // Native selection restoration is an input-platform boundary too.
             setNativeProps: () => {},
             offsetTop: 0, offsetHeight: 40, offsetWidth: 160,
+            // Web content measurement recognizes a DOM node through its contains API.
+            contains: () => false,
             getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
             ownerDocument: new EventTarget(),
             addEventListener: () => {}, removeEventListener: () => {},
+            setAttribute: () => {},
+            removeAttribute: () => {},
             measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40),
         }),
     });
@@ -276,7 +303,11 @@ function switchEditorAccountScope(next: { serverId: string; accountId: string } 
 }
 
 function setEditorMachines(machines: Machine[]): void {
-    getStorage().setState({ machines: Object.fromEntries(machines.map((machine) => [machine.id, machine])), machineListByServerId: {} });
+    // These are already-hydrated rows on the fixture's plain Account runtime.
+    // Keep their content mode and custodian consistent with the HTTP boundary.
+    const admitted = machines.map(machine => ({ ...machine, storageMode: 'plain' as const,
+        access: createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }).access }));
+    getStorage().setState({ machines: Object.fromEntries(admitted.map(machine => [machine.id, machine])), machineListByServerId: {} });
 }
 
 function storeReviewedCopyFixture(): string {
@@ -364,11 +395,20 @@ installDisconnectedServerSocketBoundary((socket) => {
     });
 });
 
+/** Renders of each test-id'd native View: the boundary where an editor keystroke's work shows. */
+const nativeViewRenders = vi.hoisted(() => new Map<string, number>());
 vi.mock('react-native', async () => {
+    const React = await import('react');
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Platform: { get OS() { return nativeRouteBoundary.platform; },
+    const native = await createReactNativeWebMock({ Platform: { get OS() { return nativeRouteBoundary.platform; },
         select: (values: Record<string, unknown>) => values[nativeRouteBoundary.platform] ?? values.default },
-        useWindowDimensions: () => ({ width: nativeRouteBoundary.width, height: 844, scale: 1, fontScale: 1 }) });
+        // Responsive presentation reads the native Dimensions authority, including on web.
+        Dimensions: { get: () => ({ width: nativeRouteBoundary.width, height: 844, scale: 1, fontScale: 1 }) } });
+    const View = React.forwardRef<React.ComponentRef<typeof native.View>, React.ComponentProps<typeof native.View>>((props, ref) => {
+        if (props.testID) nativeViewRenders.set(props.testID, (nativeViewRenders.get(props.testID) ?? 0) + 1);
+        return React.createElement(native.View, { ...props, ref });
+    });
+    return { ...native, View };
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -421,6 +461,8 @@ beforeEach(async () => {
     originalMemoryRuntime = { credentials: memoryRuntime.credentials, pendingSettingsScope: memoryRuntime.pendingSettingsScope,
         appliedServerTarget: memoryRuntime.appliedServerTarget, authoringMemoryRuntime: memoryRuntime.authoringMemoryRuntime };
     restoreWebGlobals = withPopoverWebGlobals();
+    // Browser drag-image decoding is a platform boundary; the drag owner stays real.
+    vi.stubGlobal('Image', class { src = ''; });
     editorScreen = null;
     runActionBoundary = null;
     nativeRouteBoundary.width = 1280;
@@ -477,6 +519,8 @@ beforeEach(async () => {
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+        // An empty ACP catalog is available on this Home, alongside the Machine's Agent catalog.
+        if (path === '/v1/account/entity-rows/acp') return Response.json({ status: 'absent' });
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
             id => createPlainMachineRowFixture({ id, accountId: 'account-a' }));
         if (path.startsWith('/v1/machines/')) return Response.json({ machine: createPlainMachineRowFixture({
@@ -563,8 +607,10 @@ beforeEach(async () => {
     // The new Save consumer uses the real Account-memory runtime. Supply only
     // its prepared HTTP persistence boundary, sharing the canonical testkit CAS.
     rejectProjectMemoryWrite = false;
+    memoryReadGate = null;
+    memoryWriteRejected = createDeferred<void>();
     preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 });
-    const memory = createAuthoringMemoryHttpBoundary();
+    personalMemoryHttp = createAuthoringMemoryHttpBoundary();
     const prepareRequest = apiSocket.createRequestForPreparedTarget.bind(apiSocket);
     vi.spyOn(apiSocket, 'createRequestForPreparedTarget').mockImplementation((target) => {
         const request = prepareRequest(target);
@@ -572,10 +618,7 @@ beforeEach(async () => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json(preparedMemorySettings);
             if (path.startsWith('/v1/account/authoring-memory')) {
-                if (rejectProjectMemoryWrite && init?.method === 'POST' && path.includes('workflowProject')) {
-                    throw new Error('Personal Workflow target persistence unavailable');
-                }
-                return (await memory.handle(new URL(path, target.endpoint), init))!;
+                return (await handlePersonalMemoryHttp(new URL(path, target.endpoint), init))!;
             }
             return request(path, init);
         };
@@ -584,6 +627,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
     await standardCleanup();
+    vi.unstubAllGlobals();
     await editorAccount?.dispose();
     editorAccount = undefined;
     Object.assign(memoryRuntime, originalMemoryRuntime);
@@ -623,7 +667,7 @@ describe('unresolved editor create identity (FIX194)', () => {
             ? { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID } : newSource()} />);
         loseArtifactCreateAcknowledgement = true;
         if (kind === 'Copy') await copy();
-        else expect(await save()).toMatchObject({ status: 'refused', reason: 'save_failed' });
+        else expect(await save()).toMatchObject({ status: 'refused', reason: 'storage_unavailable' });
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
         const id = createdDefinitionId();
         expect(createdRows().map(row => row.id)).toEqual([id]);
@@ -642,11 +686,11 @@ describe('unresolved editor create identity (FIX194)', () => {
             ? { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID } : newSource()} />);
         refuseArtifactCreate = true;
         if (kind === 'Copy') await copy();
-        else expect(await save()).toMatchObject({ status: 'refused', reason: 'save_failed' });
+        else expect(await save()).toMatchObject({ status: 'refused', reason: 'storage_unavailable' });
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
         const id = createdDefinitionId();
         expect(createdRows()).toHaveLength(0);
-        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Edited after refusal' }); });
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Edited after refusal' }); });
         refuseArtifactCreate = false;
         expect(await save()).toMatchObject({ status: 'applied' });
         expect(createdRows().map(row => row.id)).toEqual([id]);
@@ -660,7 +704,7 @@ describe('unresolved editor create identity (FIX194)', () => {
         loseArtifactCreateAcknowledgement = true;
         if (kind === 'Copy') await copy(); else await save();
         const id = createdDefinitionId();
-        const original = readBodyProps()!.draft;
+        const original = readBodyProps()!.draftStore.get();
         await act(async () => {
             readBodyProps()!.onChange({ ...original, name: 'Edited while uncertain', blocks: original.blocks.map(block => block.kind === 'step'
                 ? { ...block, document: { ...block.document, text: 'New prompt after uncertain save' } } : block) });
@@ -731,15 +775,68 @@ describe('unresolved editor create identity (FIX194)', () => {
     });
 });
 
+it('types in a step and in the name without re-rendering the page header, Add menus, other steps or the value line', async () => {
+    const step = (id: string, text: string) => ({ kind: 'step' as const, id, document: { text, references: [], attachments: [] },
+        input: [], result: { kind: 'text' as const } });
+    const seedId = storeWorkflowDefinitionDraftSeed({ name: 'Typing', definition: createWorkflowDefinitionFixture({
+        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+        blocks: [step('first', 'Analyze the repository'), step('second', 'Summarize the findings'), step('third', 'Report back')] }) });
+    const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: seedId }} />);
+    // The body's draft as the host hands it over (a store now; a value before).
+    const readDraft = (): WorkflowEditorDraft => {
+        const props = readBodyProps()! as WorkflowEditorBodyProps & { draft?: WorkflowEditorDraft };
+        return props.draftStore?.get() ?? props.draft!;
+    };
+    const typePrompt = async (text: string) => act(async () => {
+        const draft = readDraft();
+        readBodyProps()!.onChange({ ...draft, blocks: draft.blocks.map(block => block.id === 'first' && block.kind === 'step'
+            ? { ...block, document: { ...block.document, text } } : block) }, 'Edit prompt', false);
+    });
+    const typeName = async (name: string) => act(async () => { readBodyProps()!.onChange({ ...readDraft(), name }, 'Rename', false); });
+    const chrome = (pattern: RegExp) => [...nativeViewRenders].filter(([id]) => pattern.test(id)).reduce((sum, [, count]) => sum + count, 0);
+    const measure = () => ({
+        header: chrome(/^workflow-editor-header/),
+        valueLine: chrome(/^workflow-editor-(chips|undo|redo|triggers-chip|asks-chip)/),
+        addMenus: chrome(/add/i),
+        otherSteps: chrome(/(second|third)/),
+        all: [...nativeViewRenders.values()].reduce((sum, count) => sum + count, 0),
+    });
+    // The first keystroke also makes the draft unsaved; the steady keystrokes after it are measured.
+    await typePrompt('Analyze the repository!');
+    await flushHookEffects({ frames: 1 });
+    nativeViewRenders.clear();
+    for (const text of ['Analyze the repository!!', 'Analyze the repository!!!', 'Analyze the repository!!!!']) {
+        await typePrompt(text);
+        await flushHookEffects({ frames: 1 });
+    }
+    const prompt = measure();
+    console.info('P03-WORKFLOWS3 prompt keystrokes (3)', prompt, [...nativeViewRenders.keys()].slice(0, 40));
+    await typeName('Typingx');
+    await flushHookEffects({ frames: 1 });
+    nativeViewRenders.clear();
+    for (const name of ['Typingxy', 'Typingxyz', 'Typingxyzw']) {
+        await typeName(name);
+        await flushHookEffects({ frames: 1 });
+    }
+    const name = measure();
+    console.info('P03-WORKFLOWS3 name keystrokes (3)', name, [...nativeViewRenders.keys()].slice(0, 40));
+    expect(readDraft().name).toBe('Typingxyzw');
+    expect({ header: prompt.header, valueLine: prompt.valueLine, addMenus: prompt.addMenus, otherSteps: prompt.otherSteps })
+        .toEqual({ header: 0, valueLine: 0, addMenus: 0, otherSteps: 0 });
+    expect({ valueLine: name.valueLine, addMenus: name.addMenus, otherSteps: name.otherSteps })
+        .toEqual({ valueLine: 0, addMenus: 0, otherSteps: 0 });
+    await screen.unmount();
+});
+
 it('opens an editor-local workflow seed without waiting for the Session draft collection', async () => {
     const seedId = storeWorkflowDefinitionDraftSeed({ name: 'Retained seed', definition: createWorkflowDefinitionFixture() });
     getStorage().setState({ isDataReady: true, isSessionDraftsReady: false });
     const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: seedId }} />);
-    expect(readBodyProps()?.draft.name).toBe('Retained seed');
-    const draftId = readBodyProps()?.draft.draftId;
+    expect(readBodyProps()?.draftStore.get().name).toBe('Retained seed');
+    const draftId = readBodyProps()?.draftStore.get().draftId;
     await act(async () => { getStorage().setState({ isSessionDraftsReady: true }); });
-    expect(readBodyProps()?.draft.name).toBe('Retained seed');
-    expect(readBodyProps()?.draft.draftId).toBe(draftId);
+    expect(readBodyProps()?.draftStore.get().name).toBe('Retained seed');
+    expect(readBodyProps()?.draftStore.get().draftId).toBe(draftId);
     await screen.unmount();
 });
 
@@ -753,7 +850,7 @@ it('opens a saved definition entered before Account readiness without a library 
         switchEditorAccountScope({ serverId: 'server-a', accountId: 'account-a' });
         getStorage().setState({ isDataReady: true, isSessionDraftsReady: true });
     });
-    expect(readBodyProps()?.draft.name).toBe('Saved workflow');
+    expect(readBodyProps()?.draftStore.get().name).toBe('Saved workflow');
     expect(readBodyProps()?.saveStatus?.kind).toBe('saved');
     expect(definitionActions.get).toHaveBeenCalledWith({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
     expect(definitionActions.create).not.toHaveBeenCalled();
@@ -761,19 +858,26 @@ it('opens a saved definition entered before Account readiness without a library 
     await screen.unmount();
 });
 
-/** A Plain Account HTTP boundary; Workflow admission, codecs and Artifact CAS stay real. */
+/** Account HTTP boundary; Workflow admission, codecs and Artifact CAS stay real. */
 async function serveMountedDraftActionHome(definition = createWorkflowDefinitionFixture({ defaults: {
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-} }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>) {
+} }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain') {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
     const [{ serveActionHomes }, { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent },
         { WorkflowDefinitionArtifactHeaderV1Schema }, { z }, { tryWriteServerEnabledBitInPlace }] = await Promise.all([
         import('@/dev/testkit/harness/actionHomesHttpHarness'), import('@happier-dev/protocol/storage/artifactStoredContent'),
-        import('@happier-dev/protocol/workflows/workflowDefinitionV1'), import('zod/mini'), import('@happier-dev/protocol'),
+        import('@happier-dev/protocol/workflows/workflowDefinitionV1'), import('zod/mini'), import('@happier-dev/protocol/features/serverEnabledBit'),
     ]);
-    const artifact = {
+    const secret = new Uint8Array(32).fill(17);
+    const encryptedCredentials = accountMode === 'e2ee' ? { token: createAccountTokenForTests('account-a', { currentAccount: true }),
+        secret: encodeBase64(secret, 'base64url') } : undefined;
+    const currentness = accountMode === 'e2ee' ? createLegacyAccountEncryptionCurrentnessFixture({ secret })
+        : createPlainAccountEncryptionCurrentnessFixture();
+    const encryptedArtifacts = accountMode === 'e2ee'
+        ? createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: accountMode }) : null;
+    let artifact = {
         id: SAVED_TRIGGER_WORKFLOW_ID, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain',
         header: encodePlainArtifactStoredContent(WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1',
             definitionId: SAVED_TRIGGER_WORKFLOW_ID, revision: { headerVersion: 1, bodyVersion: 1 },
@@ -806,7 +910,12 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     let readGate: ReturnType<typeof createDeferred<void>> | null = null;
     let readIssued: ReturnType<typeof createDeferred<void>> | null = null;
     const boundary = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workflow-mcp.test',
-        accountId: 'account-a', currentAccount: true, settings, ...(serverIdentityId ? { serverIdentityId } : {}) }], route: async request => {
+        accountId: 'account-a', currentAccount: true, settings, accountMode, encryptionCurrentness: () => currentness,
+        ...(encryptedCredentials ? { credentials: encryptedCredentials } : {}),
+        ...(serverIdentityId ? { serverIdentityId } : {}) }], route: async request => {
+        const memoryResponse = await handlePersonalMemoryHttp(request.url, { method: request.method,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+        if (memoryResponse) return memoryResponse;
         const sessionResponse = await sessionBoundary.handle(request);
         if (sessionResponse) return sessionResponse;
         if (request.method === 'POST' && request.path === '/v1/machines/read-batch') {
@@ -817,8 +926,18 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
             machine: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' }) });
         if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(features);
         if (request.path === '/v1/account/encryption/currentness') {
-            const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
-            return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            return Response.json(currentness);
+        }
+        if (encryptedArtifacts && request.path.startsWith('/v1/artifacts')) {
+            if (request.method === 'POST' && request.path === '/v1/artifacts') {
+                const created = z.looseObject({ id: z.string(), header: z.string(), body: z.string() }).parse(request.body);
+                creates.push({ ...created, headerVersion: 1, bodyVersion: 1 });
+            } else if (request.method === 'POST' && request.path === `/v1/artifacts/${SAVED_TRIGGER_WORKFLOW_ID}`) {
+                updates.push({ ...updateSchema.parse(request.body), definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+            }
+            return await encryptedArtifacts.handle(`${request.path}${request.url.search}`, { method: request.method, headers: request.headers,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+                ...(request.signal ? { signal: request.signal } : {}) }) ?? undefined;
         }
         const grantsArtifactId = /^\/v1\/artifacts\/([^/]+)\/access\/grants$/.exec(request.path)?.[1];
         if (grantsArtifactId && (grantsArtifactId === artifact.id || creates.some(row => row.id === grantsArtifactId))) {
@@ -876,15 +995,32 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         return Response.json({ success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
     } });
     const scope = { serverId: boundary.homes.home!.id, accountId: 'account-a' };
-    publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: boundary.homes.home!.serverUrl, generation: 1 }, true);
+    const target = getActiveServerSnapshot();
+    if (target.serverId !== scope.serverId) throw new Error('Mounted editor Home was not activated');
     getStorage().setState({ profileScope: scope });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = await TokenStorage.getCredentialsForServerUrl(boundary.homes.home!.serverUrl);
     if (!credentials) throw new Error('Expected synthetic Home credentials');
-    initializeMemoryRuntime(credentials, { serverId: scope.serverId, serverUrl: boundary.homes.home!.serverUrl, generation: 1 }, scope);
-    getStorage().setState({ profileScope: scope, settingsScope: scope, isSessionDraftsReady: true });
+    initializeMemoryRuntime(credentials, target, scope);
+    // Settings scope is published by bootstrap together with its HTTP snapshot.
+    getStorage().setState({ profileScope: scope, isSessionDraftsReady: true });
     primeServerFeaturesSnapshot({ serverId: scope.serverId, snapshot: { status: 'ready', features } });
     draftActionHomeDisposers.push(boundary.dispose);
+    if (settings) {
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        await sync.refreshAccountSettingsFromServer(1, scope);
+    }
+    if (encryptedArtifacts && includeSavedArtifact) {
+        // Build encrypted rows through the real writer, not hand-copied cipher fixtures.
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+        const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        await createWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID, definition, metadata: { title: 'Saved trigger workflow' } });
+        const stored = encryptedArtifacts.read(SAVED_TRIGGER_WORKFLOW_ID);
+        if (!stored) throw new Error('Encrypted fixture creation did not persist');
+        artifact = { ...artifact, ...stored };
+        creates.splice(0);
+    }
     return { ...boundary, scope, artifact, updates, creates, automationCreates, artifactCreated: artifactCreated.promise, holdNextRead: () => {
         readGate = createDeferred<void>();
         readIssued = createDeferred<void>();
@@ -897,6 +1033,115 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each([false, true])('presents Settings from the mounted editor navigation (phone=%s)', async phone => {
+        await serveMountedDraftActionHome();
+        nativeRouteBoundary.width = phone ? 390 : 1280;
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        if (phone) {
+            // The phone bar's ⋯ holds Workflow settings (07 §S8; FIN ruling 2026-11-05 on M4).
+            await screen.pressByTestIdAsync('workflow-editor-phone-more');
+            await settlePopoverLayout(screen);
+            await screen.pressByTestIdAsync('workflow-editor-phone-settings');
+        } else {
+            await screen.pressByTestIdAsync('workflowEditor-companion:more');
+            await settlePopoverLayout(screen);
+            await screen.pressByTestIdAsync('workflowEditor-companion:overflow:settings');
+        }
+        await vi.waitFor(() => expect(screen.findHostByTestId(phone
+            ? 'workflow-editor-settings-modal' : 'workflow-editor-settings-pane')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflow-editor-group-inputs-header');
+        expect(screen.findHostByTestId('workflow-editor-final-output-row')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-group-roles-header');
+        expect(screen.findHostByTestId('workflow-editor-add-role-trigger')).not.toBeNull();
+    });
+
+    it('saves the definition while its scoped personal memory reader is not bootstrapped', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.isCurrent()).toBe(true);
+        const gate = createDeferred<void>();
+        memoryReadGate = gate;
+        try {
+            await renderScreen(<WorkflowEditorHostScreen accountLifetime={lifetime}
+                source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+            await vi.waitFor(() => expect(boundary.httpRequests.some(request => request.path === '/v1/account/authoring-memory')).toBe(true));
+            await act(async () => {
+                readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Saved before personal memory is ready' });
+                readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });
+            });
+            let result: unknown;
+            await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+            expect(result, JSON.stringify(readBodyProps()!.saveStatus)).toMatchObject({ status: 'applied' });
+            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+            expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
+            expect(boundary.updates).toHaveLength(1);
+            expect(readArtifactMutation(boundary.updates[0]).request.metadata.title).toBe('Saved before personal memory is ready');
+        } finally {
+            gate.resolve();
+        }
+    });
+
+    it.each([
+        { accountMode: 'plain', caller: 'ui' }, { accountMode: 'plain', caller: 'cli' },
+        { accountMode: 'e2ee', caller: 'ui' }, { accountMode: 'e2ee', caller: 'cli' },
+    ] as const)('saves a changed mounted draft for the admitted $caller caller at the client content owner ($accountMode)', async ({ caller, accountMode }) => {
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, accountMode);
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Caller parity saved' }); });
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        expect(snapshot.dirty).toBe(true);
+        if (caller === 'ui') {
+            await saveDirectlyFromUi();
+        } else {
+            const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            const dispatch = createUiClientActionReverseHandler({ ...boundary.scope, isCurrent: () => lifetime?.isCurrent() === true });
+            let result: unknown;
+            await act(async () => {
+                result = await dispatch({ v: 1, actionId: 'workflow.authoring.draft.save',
+                    input: { scope: boundary.scope, draftId: snapshot.draftId },
+                    context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                        externalActionTarget: { kind: 'machine', machineId: 'machine-a' } },
+                }, { signal: new AbortController().signal });
+            });
+            const { UiActionDispatchResultV1Schema } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+            const { WorkflowDraftMutationResultV1Schema } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+            const response = UiActionDispatchResultV1Schema.parse(result);
+            const mutation = response.execution.ok ? WorkflowDraftMutationResultV1Schema.parse(response.execution.result) : null;
+            expect(result, JSON.stringify({ mutation, saveState: readBodyProps()!.saveStatus?.kind }))
+                .toMatchObject({ v: 1, execution: { ok: true, result: { status: 'applied' } } });
+        }
+        const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const stored = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+        expect(stored.metadata.title).toBe('Caller parity saved');
+        expect(stored.revision).toEqual({ headerVersion: 2, bodyVersion: 2 });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
+    });
+
+    it('refuses a mounted CLI Save misbound to the ordinary relay executor without mutating the definition', async () => {
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'e2ee');
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Unsaved relay edit' }); });
+        const owner = readBodyProps()!.mountedDraftActions!;
+        const snapshot = owner.getSnapshot()!;
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        await act(async () => {
+            expect(await owner.execute('workflow.authoring.draft.save', { scope: boundary.scope, draftId: snapshot.draftId }, undefined, {
+                surface: 'cli', authority: 'present_user', serverId: boundary.scope.serverId,
+                runtimeAccountId: boundary.scope.accountId, actionCaller: { kind: 'host' },
+                externalActionTarget: { kind: 'machine', machineId: 'machine-a' },
+                executeChildAction: createFrontDoorActionExecute(),
+            })).toMatchObject({ status: 'refused' });
+        });
+        expect(boundary.updates).toEqual([]);
+        expect(owner.getSnapshot()!.dirty).toBe(true);
+        const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        expect((await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID })).revision)
+            .toEqual({ headerVersion: 1, bodyVersion: 1 });
+    });
+
     it('Copy retires a conflict Test Run read and lets B open its own Test Run after A completes', async () => {
         nativeRouteBoundary.width = 390;
         const boundary = await serveMountedDraftActionHome();
@@ -905,8 +1150,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         const original = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
         await updateWorkflowDefinition({ definitionId: original.definitionId, expectedRevision: original.revision,
             definition: original.definition, metadata: { title: 'A changed elsewhere' } });
-        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'B local changes' }); });
-        await act(async () => { await readBodyProps()!.onSave!(); });
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'B local changes' }); });
+        await saveDirectlyFromUi();
         expect(readBodyProps()!.saveConflict).toMatchObject({ currentRevision: { headerVersion: 2, bodyVersion: 2 } });
         const gate = boundary.holdNextRead();
         try {
@@ -918,8 +1163,8 @@ describe('WorkflowEditorHostScreen composition', () => {
                 && typeof node.props.onPress === 'function')[0];
             expect(copyControl).toBeDefined();
             await act(async () => { await invokeTestInstanceHandler(copyControl!, 'onPress'); });
-            expect(boundary.creates).toHaveLength(1);
             await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
+            expect(boundary.creates).toHaveLength(1);
             expect(readBodyProps()!.saveConflict).toBeNull();
             gate.resolve();
             await flushHookEffects();
@@ -945,11 +1190,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         const original = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
         const seedId = storeWorkflowAgentRevision({ ...original, changedBlockIds: [] }, 'author-session');
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID, agentRevisionSeedId: seedId }} />);
-        const acceptedDraft = readBodyProps()!.draft;
+        const acceptedDraft = readBodyProps()!.draftStore.get();
         rejectProjectMemoryWrite = memoryFailure;
-        await act(async () => { readBodyProps()!.onSaveAsCopy!(); });
+        await copyDirectlyFromUi();
         const copy = boundary.creates[0]!;
         expect(copy).toBeDefined();
+        if (memoryFailure) await memoryWriteRejected.promise;
         expect(readBodyProps()!.authoringSessionId).toBeNull();
         const revised = await updateWorkflowDefinition({ definitionId: original.definitionId, expectedRevision: original.revision,
             definition: original.definition, metadata: { title: 'Original Agent revision after Copy' } });
@@ -959,16 +1205,16 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => getStorage().setState({ sessionMessages: { 'author-session': createSessionMessagesFixture({
             messagesById: { [completed.id]: completed }, messageIdsOldestFirst: [completed.id], isLoaded: true,
         }) } }));
-        expect(readBodyProps()!.draft).toEqual(acceptedDraft);
+        expect(readBodyProps()!.draftStore.get()).toEqual(acceptedDraft);
         expect(readBodyProps()!.saveConflict).toBeNull();
         rejectProjectMemoryWrite = false;
         await act(async () => { expect(await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}))
             .toMatchObject({ status: 'applied' }); });
-        expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[copy.id]).toEqual(project);
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[copy.id]).toEqual(project));
         expect(boundary.creates).toHaveLength(1);
         expect(boundary.updates).toHaveLength(1); // Only the real Agent update to A.
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
-        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Copy changed after original Agent revision' });
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Copy changed after original Agent revision' });
             expect(await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}))
                 .toMatchObject({ status: 'applied' }); });
         expect(boundary.updates).toHaveLength(2);
@@ -982,7 +1228,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => { readBodyProps()!.onEditWithAgent!(); });
         const pending = readBodyProps()!.authoringDraft!;
         expect(pending).toBeDefined();
-        await act(async () => { readBodyProps()!.onSaveAsCopy!(); });
+        await copyDirectlyFromUi();
         const copyId = boundary.creates[0]!.id;
         expect(readBodyProps()!.authoringDraft).toBeUndefined();
         await act(async () => { pending.onSessionCreated('/session/original-author', { sessionId: 'original-author', serverId: boundary.scope.serverId }); });
@@ -999,11 +1245,11 @@ describe('WorkflowEditorHostScreen composition', () => {
 
     it.each(['add', 'remove'] as const)('Copy retires original pending trigger %s and its Undo history before normal Save', async (kind) => {
         const boundary = await serveMountedDraftActionHome();
-        const { AutomationTriggerIdSchema } = await import('@happier-dev/protocol');
+        const { AutomationTriggerIdSchema} = await import('@happier-dev/protocol/automations/automationTriggerIdentity');
         const project = { machineId: 'machine-a', directory: '/repo' };
         const trigger = { kind: 'schedule' as const, enabled: true,
             schedule: { kind: 'interval' as const, everyMs: 86400000, scheduleExpr: null, timezone: null } };
-        const initial = await addConfirmedTrigger({ workflow: SAVED_TRIGGER_WORKFLOW_ID, project, trigger });
+        const initial = await addDirectTrigger({ workflow: SAVED_TRIGGER_WORKFLOW_ID, project, trigger });
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         const section = readBodyProps()!.triggersSection;
         if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section)) throw new Error('Missing trigger editor');
@@ -1011,14 +1257,14 @@ describe('WorkflowEditorHostScreen composition', () => {
             kind === 'add' ? { kind: 'add', clientId: 'pending-original-trigger', trigger }
                 : { kind: 'remove', triggerId: AutomationTriggerIdSchema.parse(initial.triggerId) })); });
         expect(readBodyProps()!.history!.undoLabel).not.toBeNull();
-        await act(async () => { readBodyProps()!.onSaveAsCopy!(); });
+        await copyDirectlyFromUi();
         const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
         expect(boundary.creates[0]!.id).not.toBe(SAVED_TRIGGER_WORKFLOW_ID);
         expect(snapshot.settings.triggers.rows).toEqual([]);
         expect(readBodyProps()!.history!.undoLabel).toBeNull();
         await act(async () => { readBodyProps()!.history!.undo();
             expect(await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {})).toMatchObject({ status: 'applied' }); });
-        expect(boundary.requests.filter(request => request.path.startsWith('/v3/automations') && request.method !== 'GET')).toHaveLength(1);
+        expect(boundary.requests.filter(request => request.path.startsWith('/v3/automations') && request.path !== '/v3/automations/query' && request.method !== 'GET')).toHaveLength(1);
         expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]?.triggers).toHaveLength(1);
     });
 
@@ -1029,42 +1275,44 @@ describe('WorkflowEditorHostScreen composition', () => {
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         } });
         const project = { machineId: 'machine-a', directory: '/repo' };
-        const initial = await addConfirmedTrigger({ target: { kind: 'inline', definition }, project,
+        const initial = await addDirectTrigger({ target: { kind: 'inline', definition }, project,
             trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'interval', everyMs: 86400000, scheduleExpr: null, timezone: null } } });
         const seedId = storeTriggerWorkflowSeed({ definition, retarget: { scope: 'account',
             automationId: initial.set.automationId, triggerId: initial.triggerId, expectedRevision: initial.set.revision } });
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', triggerWorkflowSeedId: seedId }} />);
-        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Copy of trigger' });
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Copy of trigger' });
             readBodyProps()!.onChangeProjectTarget!(project); });
         rejectProjectMemoryWrite = true;
-        await act(async () => { readBodyProps()!.onSaveAsCopy!(); });
+        await copyDirectlyFromUi();
         expect(boundary.creates, JSON.stringify(readBodyProps()!.saveStatus)).toHaveLength(1);
         const copyId = boundary.creates[0]!.id;
+        await memoryWriteRejected.promise;
         rejectProjectMemoryWrite = false;
         await act(async () => { expect(await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}))
             .toMatchObject({ status: 'applied' }); });
-        expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[copyId]).toEqual(project);
-        expect(boundary.requests.filter(request => request.path.startsWith('/v3/automations') && request.method !== 'GET')).toHaveLength(1);
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[copyId]).toEqual(project));
+        expect(boundary.requests.filter(request => request.path.startsWith('/v3/automations') && request.path !== '/v3/automations/query' && request.method !== 'GET')).toHaveLength(1);
         expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]?.target?.kind).toBe('inline');
     });
 
-    it('retries personal Where after copying fails to persist it, without creating another copy', async () => {
+    it('saves the copy despite failed personal memory and retries memory without another copy', async () => {
         const boundary = await serveMountedDraftActionHome();
         const project = { machineId: 'saved-machine', directory: '/saved-project' };
         getStorage().getState().applyAuthoringMemory({ workflowProjectTargetsByDefinitionId: { [SAVED_TRIGGER_WORKFLOW_ID]: project } });
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         rejectProjectMemoryWrite = true;
-        await act(async () => { readBodyProps()!.onSaveAsCopy!(); });
+        await copyDirectlyFromUi();
         expect(boundary.creates).toHaveLength(1);
         const copiedId = boundary.creates[0]!.id;
         expect(copiedId).not.toBe(SAVED_TRIGGER_WORKFLOW_ID);
-        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
-        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
+        await memoryWriteRejected.promise;
         rejectProjectMemoryWrite = false;
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
         expect(result).toMatchObject({ status: 'applied' });
-        expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[copiedId]).toEqual(project);
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[copiedId]).toEqual(project));
         expect(boundary.creates).toHaveLength(1);
         expect(boundary.updates).toHaveLength(0);
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
@@ -1078,7 +1326,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
         expect(result, JSON.stringify(readBodyProps()!.saveStatus)).toMatchObject({ status: 'applied' });
-        expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toEqual(project);
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toEqual(project));
         expect(definitionActions.update).not.toHaveBeenCalled();
         await screen.unmount();
         getStorage().getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'recent-machine', path: '/other' }] });
@@ -1087,7 +1335,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.projectTarget).toEqual(project);
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
     });
-    it('keeps a failed personal Where save unsaved and retries without another definition write', async () => {
+    it('acknowledges Save despite failed personal memory and retries without another definition write', async () => {
         initializePersonalWhereWriter();
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         const project = { machineId: 'saved-machine', directory: '/saved-project' };
@@ -1095,14 +1343,16 @@ describe('WorkflowEditorHostScreen composition', () => {
         rejectProjectMemoryWrite = true;
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
-        expect(result).toMatchObject({ status: 'refused', reason: 'save_failed' });
-        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
-        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
+        expect(result).toMatchObject({ status: 'applied' });
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
+        await memoryWriteRejected.promise;
         expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toBeUndefined();
         rejectProjectMemoryWrite = false;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
         expect(result, JSON.stringify(readBodyProps()!.saveStatus)).toMatchObject({ status: 'applied' });
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toEqual(project));
         expect(definitionActions.update).not.toHaveBeenCalled();
     });
     it('retains the acknowledged target when clearing personal Where fails, and retries its tombstone', async () => {
@@ -1111,6 +1361,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const project = { machineId: 'saved-machine', directory: '/saved-project' };
         await act(async () => { readBodyProps()!.onChangeProjectTarget!(project); });
         await act(async () => { await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toEqual(project));
         await act(async () => {
             const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
             expect(await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.edit', {
@@ -1121,14 +1372,15 @@ describe('WorkflowEditorHostScreen composition', () => {
         rejectProjectMemoryWrite = true;
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
-        expect(result).toMatchObject({ status: 'refused', reason: 'save_failed' });
-        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
-        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
+        expect(result).toMatchObject({ status: 'applied' });
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
+        await memoryWriteRejected.promise;
         expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toEqual(project);
         rejectProjectMemoryWrite = false;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
         expect(result).toMatchObject({ status: 'applied' });
-        expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toBeUndefined();
+        await vi.waitFor(() => expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toBeUndefined());
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
     });
     it('rehydrates a saved Workflow Where from personal memory instead of unrelated recent Session context', async () => {
@@ -1142,15 +1394,15 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()?.projectTarget).toEqual(project);
         expect(readBodyProps()?.composerScope).toMatchObject({ kind: 'machine', machineId: 'saved-machine', directory: '/saved-project' });
     });
-    it('a session Agent MCP Action reaches the real mounted draft through admitted client routing', async () => {
+    it.each(['mcp', 'cli'] as const)('a %s Action reaches the real mounted draft through admitted client routing', async (surface) => {
         const boundary = await serveMountedDraftActionHome();
         {
             const [{ createClientActionReverseDispatcher },
-                { createActionExecutor }, { listActionSpecs }, { RPC_METHODS }, { apiSocket },
+                { createActionExecutor }, { listActionSpecs }, { RPC_METHODS, RPC_ERROR_CODES }, { apiSocket },
                 { ClientActionReverseRuntime }, { selectRpcTarget }] = await Promise.all([
                 import('../../../../../cli/src/session/actions/clientActionReverseDispatch'),
                 import('@happier-dev/protocol/actions/actionExecutor'),
-                import('@happier-dev/protocol/actions/actionSpecs'), import('@happier-dev/protocol/rpc/methods'),
+                import('@happier-dev/protocol/actions/actionSpecs'), import('@happier-dev/protocol/rpc'),
                 import('@/sync/api/session/apiSocket'), import('@/components/appShell/runtime/ClientActionReverseRuntime'),
                 import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection'),
             ]);
@@ -1167,25 +1419,29 @@ describe('WorkflowEditorHostScreen composition', () => {
             });
             const screen = await renderRunEditor(<><ClientActionReverseRuntime />
                 <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} /></>);
-            const original = readBodyProps()!.draft;
+            const original = readBodyProps()!.draftStore.get();
             const caller = createActionExecutor({ clientActionExecute: createClientActionReverseDispatcher(() => ({
                 hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE || editorMethods.has(method),
                 callConnectedClientRpc: async (method, request, options) => {
                     const timeout = () => ({ emitWithAck: async () => { throw new Error('Delivery belongs to the socket boundary below'); } });
                     const driver = { id: 'a-driver-tab', data: {}, timeout };
                     const editor = { id: 'z-editor-tab', data: {}, timeout };
-                    const selection = selectRpcTarget({ targets: [
+                    const selection = selectRpcTarget({ answeringClient: options.answeringClient, targets: [
                         ...(method === RPC_METHODS.UI_ACTION_EXECUTE ? [driver] : []),
                         ...(editorMethods.has(method) ? [editor] : []),
                     ] });
-                    if (selection.type !== 'target') return { ok: false, errorCode: 'RPC_METHOD_NOT_AVAILABLE' };
+                    // 712af0921c/b0cb31fa4a: a current Home distinguishes an absent answering
+                    // client from a Home that does not support this routing contract.
+                    if (selection.type === 'ambiguous') return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_AMBIGUOUS };
+                    if (selection.type !== 'target') return { ok: false, errorCode: options.answeringClient
+                        ? RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE : RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
                     options.onIssued();
                     return { ok: true, result: selection.target.id === driver.id
                         ? { v: 1, execution: { ok: true, result: { status: 'unavailable' } } }
                         : await editorMethods.get(method)!(request, { signal: options.signal ?? new AbortController().signal }) };
                 },
-            })) } as unknown as import('@happier-dev/protocol').ActionExecutorDeps);
-            const context = { surface: 'mcp' as const, authority: 'account_automation' as const,
+            })) } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
+            const context = { surface, authority: 'account_automation' as const,
                 actionCaller: { kind: 'session' as const, sessionId: 'session-agent', starterDepth: 0, turnDepth: 0 },
                 defaultSessionId: 'session-agent', serverId: scope.serverId };
             const tool = listActionSpecs().find(spec => spec.bindings?.mcpToolName === 'workflow_authoring_draft_get')!;
@@ -1201,18 +1457,18 @@ describe('WorkflowEditorHostScreen composition', () => {
                     ops: [{ kind: 'set_step_prompt', blockId: original.blocks[0]!.id, text: 'Prepared through the Session MCP route' }] }, context))
                     .toMatchObject({ ok: true, result: { status: 'applied', changedBlockIds: [original.blocks[0]!.id] } });
             });
-            expect(readBodyProps()!.draft.blocks[0]).toMatchObject({ document: { text: 'Prepared through the Session MCP route' } });
+            expect(readBodyProps()!.draftStore.get().blocks[0]).toMatchObject({ document: { text: 'Prepared through the Session MCP route' } });
             expect(readBodyProps()!.highlightedBlockIds).toEqual([original.blocks[0]!.id]);
             expect(definitionActions.update).not.toHaveBeenCalled();
             expect(runStartSpy).not.toHaveBeenCalled();
             expect(boundary.updates).toEqual([]);
             await act(async () => { readBodyProps()!.history!.undo(); });
-            expect(readBodyProps()!.draft).toEqual(original);
+            expect(readBodyProps()!.draftStore.get()).toEqual(original);
             expect(await caller.execute(tool.id, { scope: { ...scope, accountId: 'other-account' }, draftId: original.draftId }, context))
                 .toEqual({ ok: true, result: { status: 'unavailable' } });
             await act(async () => { screen.update(<><ClientActionReverseRuntime />
                 <WorkflowEditorHostScreen source={{ kind: 'new' }} /></>); });
-            const replacement = readBodyProps()!.draft;
+            const replacement = readBodyProps()!.draftStore.get();
             expect(replacement.draftId).not.toBe(original.draftId);
             expect(await caller.execute(tool.id, { scope, draftId: original.draftId }, context))
                 .toEqual({ ok: true, result: { status: 'unavailable' } });
@@ -1237,11 +1493,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
         const owners = await import('@/sync/ops/actions/workflowAuthoringAction');
         const executor = createActionExecutor({ workflowAuthoringAction: owners.invokeWorkflowAuthoringAction,
-            isActionApprovalRequired: () => false } as unknown as import('@happier-dev/protocol').ActionExecutorDeps);
+            isActionApprovalRequired: () => false } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        const original = readBodyProps()!.draft;
+        const original = readBodyProps()!.draftStore.get();
         const address = { scope: boundary.scope, draftId: original.draftId };
         const get = async () => {
             const result = await executor.execute('workflow.authoring.draft.get', address, context);
@@ -1250,6 +1506,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         };
         const initial = await get();
         expect(initial.status).toBe('available');
+        expect(await executor.execute('workflow.authoring.draft.edit', { ...address, draftId: 'another-draft',
+            expectedDraftRevision: initial.drafts[0]!.draftRevision,
+            ops: [{ kind: 'upsert_role', role: { roleId: 'workflow_reviewer', name: 'Wrong draft', instructions: '', runsAs: { kind: 'session' } } }] }, context))
+            .toEqual({ ok: true, result: { status: 'unavailable' } });
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         expect(await executor.execute('workflow.authoring.draft.get', { scope: address.scope }, context))
             .toMatchObject({ ok: true, result: { status: 'available', drafts: [{ draftId: original.draftId }] } });
         const retireDuplicate = owners.registerMountedWorkflowDraftOwner({ kind: 'workflow',
@@ -1260,35 +1521,47 @@ describe('WorkflowEditorHostScreen composition', () => {
                 .toEqual({ ok: true, result: { status: 'unavailable' } });
             expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
                 expectedDraftRevision: initial.drafts[0]!.draftRevision,
-                ops: [{ kind: 'rename', name: 'Must not reach either owner' }] }, context))
+                ops: [{ kind: 'upsert_role', role: { roleId: 'workflow_reviewer', name: 'Must not reach either owner', instructions: '', runsAs: { kind: 'session' } } }] }, context))
                 .toEqual({ ok: true, result: { status: 'unavailable' } });
         } finally { retireDuplicate(); }
         await act(async () => {
             expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
                 expectedDraftRevision: initial.drafts[0]!.draftRevision, ops: [
-                    { kind: 'set_step_prompt', blockId: original.blocks[0]!.id, text: 'Must not be partially applied' },
-                    { kind: 'remove_block', blockId: 'missing-block' },
-                ] }, context)).toMatchObject({ ok: true, result: { status: 'refused', reason: 'unknown_block_id' } });
+                    { kind: 'upsert_role', role: { roleId: 'workflow_reviewer', name: 'Must not be partially applied', instructions: '', runsAs: { kind: 'session' } } },
+                    { kind: 'remove_role', roleId: 'missing-role' },
+                ] }, context)).toMatchObject({ ok: true, result: { status: 'refused', reason: 'invalid_target' } });
         });
-        expect(readBodyProps()!.draft).toEqual(original);
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         expect((await get()).drafts[0]!.draftRevision).toBe(initial.drafts[0]!.draftRevision);
         const edit = { ...address, expectedDraftRevision: initial.drafts[0]!.draftRevision,
             ops: [{ kind: 'set_step_prompt', blockId: original.blocks[0]!.id, text: 'Agent changed this prompt' },
+                { kind: 'upsert_role', role: { roleId: 'workflow_reviewer', name: 'Reviewer', instructions: 'Review changes', runsAs: { kind: 'session' } } },
+                { kind: 'upsert_role', role: { roleId: 'workflow_reviewer', name: 'Security reviewer', instructions: 'Review changes', runsAs: { kind: 'session' } } },
                 { kind: 'rename', name: 'Agent changed the title' }] };
         let applied: unknown;
         await act(async () => { applied = await executor.execute('workflow.authoring.draft.edit', edit, context); });
         expect(applied).toMatchObject({ ok: true, result: { status: 'applied', changedBlockIds: [original.blocks[0]!.id] } });
-        expect(readBodyProps()!.draft.name).toBe('Agent changed the title');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Agent changed the title');
+        expect(readBodyProps()!.draftStore.get().roles).toMatchObject([{ roleId: 'workflow_reviewer', name: 'Security reviewer' }]);
         expect(readBodyProps()!.highlightedBlockIds).toEqual([original.blocks[0]!.id]);
         expect((await get()).drafts[0]!.dirty).toBe(true);
         expect(await executor.execute('workflow.authoring.draft.edit', edit, context))
             .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
         await act(async () => { await executor.execute('workflow.authoring.draft.undo', address, context); });
-        expect(readBodyProps()!.draft).toEqual(original);
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         await act(async () => { await executor.execute('workflow.authoring.draft.redo', address, context); });
-        expect(readBodyProps()!.draft.name).toBe('Agent changed the title');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Agent changed the title');
+        await act(async () => {
+            expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
+                expectedDraftRevision: (await get()).drafts[0]!.draftRevision,
+                ops: [{ kind: 'remove_role', roleId: 'workflow_reviewer' }] }, context))
+                .toMatchObject({ ok: true, result: { status: 'applied' } });
+        });
+        expect(readBodyProps()!.draftStore.get().roles).toEqual([]);
+        await act(async () => { await executor.execute('workflow.authoring.draft.undo', address, context); });
+        expect(readBodyProps()!.draftStore.get().roles).toMatchObject([{ roleId: 'workflow_reviewer', name: 'Security reviewer' }]);
         const beforeHumanEdit = (await get()).drafts[0]!.draftRevision;
-        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Person changed the title' }); });
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Person changed the title' }); });
         expect(await executor.execute('workflow.authoring.draft.edit', { ...edit, expectedDraftRevision: beforeHumanEdit }, context))
             .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
         const saving = boundary.holdNextUpdate();
@@ -1308,8 +1581,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         if (typeof envelope.body !== 'string') throw new Error('Workflow Artifact is not a document');
         const stored = WorkflowDefinitionArtifactBodyV1ReadSchema.parse(JSON.parse(envelope.body));
         expect(stored.definition.blocks[0]).toMatchObject({ document: { text: 'Agent changed this prompt' } });
+        expect(stored.definition.roles).toMatchObject([{ roleId: 'workflow_reviewer', name: 'Security reviewer' }]);
         await act(async () => { saving.resolve();
             expect(await save!).toMatchObject({ ok: true, result: { status: 'applied' } }); });
+        const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        expect((await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID })).definition.roles)
+            .toMatchObject([{ roleId: 'workflow_reviewer', name: 'Security reviewer' }]);
         expect(runStartSpy).not.toHaveBeenCalled();
         expect(await executor.execute('workflow.authoring.draft.get', { ...address, scope: { ...address.scope, accountId: 'other' } }, context))
             .toMatchObject({ ok: true, result: { status: 'refused', reason: 'workflow_binding_scope_mismatch' } });
@@ -1332,7 +1609,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: seed }} />);
-        const address = { scope: boundary.scope, draftId: readBodyProps()!.draft.draftId };
+        const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
         const read = async () => {
             const result = await owners.invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.get', input: address, context });
             if (result.status !== 'available') throw new Error('Mounted draft unavailable');
@@ -1432,7 +1709,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        const address = { scope: boundary.scope, draftId: readBodyProps()!.draft.draftId };
+        const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
         const read = async () => {
             const response = await executor.execute('workflow.authoring.draft.get', address, context);
             if (!response.ok) throw new Error(response.error);
@@ -1451,8 +1728,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 .toMatchObject({ ok: true, result: { status: 'applied' } });
         });
         const saveFromNativeControl = async () => {
-            if (boundary.automationCreates.length === 0) await saveWithTriggerConfirmation();
-            else await act(async () => { readBodyProps()!.onSave!(); });
+            await saveDirectlyFromUi();
             await vi.waitFor(() => {
                 expect(boundary.automationCreates).toHaveLength(1);
                 expect(readBodyProps()!.savePending).toBe(false);
@@ -1482,12 +1758,117 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(redone.dirty).toBe(false);
         await saveFromNativeControl();
         expect((await read()).settings.triggers.rows).toHaveLength(1);
-        expect(boundary.requests.filter(request => request.path.startsWith('/v3/automations') && request.method !== 'GET'))
+        expect(boundary.requests.filter(request => request.path.startsWith('/v3/automations') && request.path !== '/v3/automations/query' && request.method !== 'GET'))
             .toHaveLength(1);
     });
 
-    it.each(['trigger', 'definition'] as const)('mounted Agent Save preserves %s child approval while native Save uses its UI admission', async (child) => {
-        const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol');
+    it('native trigger Save honors Settings Ask before persistence and retains the staged edit', async () => {
+        const { ActionsSettingsV1Schema} = await import('@happier-dev/protocol/actions/actionSettings');
+        const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            'workflow.trigger.add': { approvalRequiredSurfaces: ['ui'] },
+        } });
+        const boundary = await serveMountedDraftActionHome(undefined, true, 'srv_workflow-ask-home', { actionsSettingsV1 });
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+        expect(getStorage().getState().settings.actionsSettingsV1, JSON.stringify(getStorage().getState().settingsScope))
+            .toMatchObject({ actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['ui'] } } });
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const section = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section)) throw new Error('Missing trigger editor');
+        const project = { machineId: 'machine-a', directory: '/repo' };
+        const trigger = { kind: 'schedule' as const, enabled: true,
+            schedule: { kind: 'interval' as const, everyMs: 86400000, scheduleExpr: null, timezone: null } };
+        // A mis-bound caller must fail before either confirmation or persistence.
+        const { addWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+        await expect(addWorkflowTrigger({ workflow: SAVED_TRIGGER_WORKFLOW_ID, project, trigger }, {
+            context: { runtimeAccountId: 'another-account' },
+        })).rejects.toMatchObject({ rawCode: 'action_account_scope_changed' });
+        expect(boundary.automationCreates).toHaveLength(0);
+        expect(readConfirmation()).toBeUndefined();
+        await act(async () => {
+            readBodyProps()!.onChangeProjectTarget!(project);
+            section.props.onChangeDraft(editWorkflowTriggerDraft(section.props.draft, { kind: 'add', clientId: 'ask-trigger', trigger }));
+        });
+        await act(async () => { readBodyProps()!.onSave!(); });
+        await vi.waitFor(() => {
+            expect(boundary.creates, JSON.stringify({ saveStatus: readBodyProps()!.saveStatus,
+                requests: boundary.requests.map(({ path, method }) => ({ path, method })) })).toHaveLength(1);
+            expect(readBodyProps()!.savePending).toBe(false);
+        });
+        // Explicit Ask retains durable approval custody; whole-set deletion
+        // below exercises its separate default native confirmation dialog.
+        const { ArtifactBodyEnvelopeV1Schema } = await import('@happier-dev/protocol/artifacts/artifactBinaryV1');
+        const { ApprovalRequestSchema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const envelope = ArtifactBodyEnvelopeV1Schema.parse(decodePlainArtifactStoredContent(boundary.creates[0]!.body));
+        if (typeof envelope.body !== 'string') throw new Error('Approval Artifact did not contain its request');
+        expect(ApprovalRequestSchema.parse(JSON.parse(envelope.body))).toMatchObject({
+            actionId: 'workflow.trigger.add', status: 'open', requestedSurface: 'ui',
+            executionOriginV1: { surface: 'ui', authority: 'present_user' },
+        });
+        expect(readConfirmation()).toBeUndefined();
+        expect(boundary.automationCreates).toHaveLength(0);
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        expect(snapshot.settings.triggers.rows).toMatchObject([{ identity: { clientId: 'ask-trigger' }, trigger }]);
+        expect(snapshot.dirty).toBe(true);
+    });
+
+    it('whole trigger-set deletion still asks and cancellation retains the saved children', async () => {
+        await serveMountedDraftActionHome();
+        const initial = await addDirectTrigger({ workflow: SAVED_TRIGGER_WORKFLOW_ID,
+            project: { machineId: 'machine-a', directory: '/repo' }, trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'interval', everyMs: 86400000, scheduleExpr: null, timezone: null } } });
+        await renderScreen(<></>);
+        const { removeWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+        for (const confirmed of [false, true]) {
+            let pending!: ReturnType<typeof removeWorkflowTrigger>;
+            await act(async () => {
+                pending = removeWorkflowTrigger({ automationId: initial.set.automationId });
+                void pending.catch(() => undefined);
+            });
+            await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
+            expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]?.triggers).toHaveLength(1);
+            await pressConfirmation(confirmed);
+            await act(async () => {
+                if (confirmed) await expect(pending).resolves.toMatchObject({ automationId: initial.set.automationId, deleted: true });
+                else await expect(pending).rejects.toMatchObject({ rawCode: 'approval_canceled' });
+            });
+            if (!confirmed) expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]?.triggers).toHaveLength(1);
+        }
+        expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]).toBeUndefined();
+    });
+
+    it('mounted Agent Save preserves the canonical definition authority refusal and retains its draft', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId,
+            callerPermissionMode: 'default', sessionAgentSpawnPolicyV1: { v: 1 as const },
+            actionCaller: { kind: 'session' as const, sessionId: 'unavailable-author', starterDepth: 0, turnDepth: 0 },
+            defaultSessionId: 'unavailable-author', defaultSessionMachineId: 'machine-a' };
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const address = { scope: boundary.scope, draftId: snapshot.draftId };
+        await act(async () => {
+            expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
+                expectedDraftRevision: snapshot.draftRevision,
+                ops: [{ kind: 'set_default', field: 'permissionMode', value: 'yolo' }],
+            }, context)).toMatchObject({ ok: true, result: { status: 'applied' } });
+        });
+        const before = structuredClone(boundary.artifact);
+        await act(async () => {
+            expect(await executor.execute('workflow.authoring.draft.save', address, context))
+                .toMatchObject({ ok: true, result: { status: 'refused', reason: 'definition_exceeds_authority' } });
+        });
+        expect(boundary.updates).toHaveLength(0);
+        expect(boundary.artifact).toEqual(before);
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()).toMatchObject({ dirty: true,
+            definition: { defaults: { permissionMode: 'yolo' } } });
+    });
+
+    it.each(['trigger', 'definition', 'admitted-trigger'] as const)('mounted Agent Save preserves %s child approval while native Save uses its UI admission', async (scenario) => {
+        const child = scenario === 'admitted-trigger' ? 'trigger' : scenario;
+        const { ActionsSettingsV1Schema} = await import('@happier-dev/protocol/actions/actionSettings');
         const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'workflow.definition.update': { approvalRequiredSurfaces: ['agent'] },
         } });
@@ -1497,13 +1878,15 @@ describe('WorkflowEditorHostScreen composition', () => {
         await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } = await import('@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1');
-        const executor = createDefaultActionExecutor();
+        const executor = createDefaultActionExecutor(scenario === 'admitted-trigger'
+            ? { admittedClientActionId: 'workflow.authoring.draft.save' } : undefined);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, serverIdentityId: 'srv_workflow-approval-home',
             runtimeAccountId: boundary.scope.accountId, expectedAccountId: boundary.scope.accountId,
             callerPermissionMode: 'yolo', sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
             actionCaller: { kind: 'session', sessionId: 'authoring-session', starterDepth: 0, turnDepth: 0 },
             defaultSessionId: 'authoring-session',
+            externalActionTarget: { kind: 'machine', machineId: 'machine-a' },
             // Host-admitted start facts are required before durable child approval.
             agentStartContext: { caller: { kind: 'session', sessionId: 'authoring-session', starterDepth: 0, turnDepth: 0 },
                 baseline: { machineId: 'machine-a', directory: '/repo' }, roles: {},
@@ -1555,8 +1938,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         else expect(result.errorCode).toBeTruthy();
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings.triggers.rows).toHaveLength(child === 'trigger' ? 1 : 0);
         // The person-owned Save executes the retained delta through native UI policy.
-        if (child === 'trigger') await saveWithTriggerConfirmation();
-        else await act(async () => { readBodyProps()!.onSave!(); });
+        await saveDirectlyFromUi();
         await vi.waitFor(() => {
             expect(boundary.automationCreates).toHaveLength(child === 'trigger' ? 1 : 0);
             expect(boundary.updates).toHaveLength(child === 'definition' ? 1 : 0);
@@ -1671,17 +2053,17 @@ describe('WorkflowEditorHostScreen composition', () => {
             } } } }] });
         const boundary = await serveMountedDraftActionHome(definition);
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        const original = readBodyProps()!.draft;
+        const original = readBodyProps()!.draftStore.get();
         const block = original.blocks[0]!;
         if (block.kind !== 'step') throw new Error('Expected the schema-bearing step');
         const reordered = { ...block, result: { kind: 'json' as const, schema: { type: 'object' as const,
             properties: { commits: { type: 'string' as const }, issues: { type: 'string' as const } } } } };
         const fieldOrder = () => {
-            const current = readBodyProps()!.draft.blocks[0]!;
+            const current = readBodyProps()!.draftStore.get().blocks[0]!;
             if (current.kind !== 'step' || current.result?.kind !== 'json') throw new Error('Missing result schema');
             return Object.keys(current.result.schema.properties ?? {});
         };
-        await act(async () => { await readBodyProps()!.onSave?.(); });
+        await saveDirectlyFromUi();
         expect(boundary.updates).toHaveLength(0);
         if (entry === 'action') {
             const owner = readBodyProps()!.mountedDraftActions!;
@@ -1717,8 +2099,9 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => { readBodyProps()!.history!.redo(); });
         expect(fieldOrder()).toEqual(['commits', 'issues']);
         expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
-        await act(async () => { await readBodyProps()!.onSave?.(); });
-        expect(boundary.updates).toHaveLength(1);
+        await saveDirectlyFromUi();
+        expect(boundary.updates, JSON.stringify({ saveStatus: readBodyProps()!.saveStatus,
+            requests: boundary.requests.map(({ path, method }) => ({ path, method })) })).toHaveLength(1);
         const { decodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
         const { ArtifactBodyEnvelopeV1Schema } = await import('@happier-dev/protocol/artifacts/artifactBinaryV1');
         const { WorkflowDefinitionArtifactBodyV1ReadSchema } = await import('@happier-dev/protocol/workflows/workflowDefinitionV1');
@@ -1730,35 +2113,30 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.saveStatus?.kind).toBe('saved');
     });
 
-    it('mounted draft discard respects the existing human confirmation and preserves undo', async () => {
+    it('mounted saved draft discard applies without confirmation and preserves undo and redo', async () => {
         const boundary = await serveMountedDraftActionHome();
         const { invokeWorkflowAuthoringAction } = await import('@/sync/ops/actions/workflowAuthoringAction');
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        const original = readBodyProps()!.draft;
+        const original = readBodyProps()!.draftStore.get();
         const address = { scope: boundary.scope, draftId: original.draftId };
         const context = { serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await act(async () => { readBodyProps()!.onChange({ ...original, name: 'Keep my edits' }); });
         let discard: ReturnType<typeof invokeWorkflowAuthoringAction>;
         await act(async () => { discard = invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.discard', input: address, context }); });
-        await pressConfirmation(false);
-        expect(await discard!).toMatchObject({ status: 'refused', reason: 'cancelled' });
-        expect(readBodyProps()!.draft.name).toBe('Keep my edits');
-        await act(async () => { discard = invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.discard', input: address, context }); });
-        await pressConfirmation(true);
+        expect(readConfirmation()).toBeUndefined();
         await act(async () => { expect(await discard!).toMatchObject({ status: 'applied' }); });
-        expect(readBodyProps()!.draft).toEqual(original);
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         await act(async () => { readBodyProps()!.history!.undo(); });
-        expect(readBodyProps()!.draft.name).toBe('Keep my edits');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Keep my edits');
+        await act(async () => { readBodyProps()!.history!.redo(); });
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
     });
-    it.each([
-        ['unsaved', 'route'], ['unsaved', 'import'], ['saved', 'route'], ['saved', 'import'],
-    ] as const)('mounted draft discard cannot confirm against a replacement %s source (%s)', async (kind, replacement) => {
+    it.each(['route', 'import'] as const)('mounted unsaved draft discard cannot confirm against a replacement source (%s)', async (replacement) => {
         const boundary = await serveMountedDraftActionHome();
         const { invokeWorkflowAuthoringAction } = await import('@/sync/ops/actions/workflowAuthoringAction');
-        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={kind === 'saved'
-            ? { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID } : { kind: 'new' }} />);
-        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Source A edits' }); });
-        const address = { scope: boundary.scope, draftId: readBodyProps()!.draft.draftId };
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Source A edits' }); });
+        const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
         const picked = replacement === 'import' ? createDeferred<string | null>() : null;
         if (picked) {
             workflowDocumentPicker.pick.mockReturnValueOnce(picked.promise);
@@ -1767,27 +2145,26 @@ describe('WorkflowEditorHostScreen composition', () => {
         let discard: ReturnType<typeof invokeWorkflowAuthoringAction>;
         await act(async () => { discard = invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.discard', input: address,
             context: { serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId } }); });
-        if (kind === 'saved') expect(readConfirmation()).toBeDefined();
-        else expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
-        const confirmOldDraft = kind === 'saved' ? () => pressConfirmation(true) : () => pressAlertButton('destructive');
+        expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
+        const confirmOldDraft = () => pressAlertButton('destructive');
         if (picked) {
             await act(async () => { picked.resolve(JSON.stringify({ kind: 'happier.workflow', version: 1,
                 definition: createWorkflowDefinitionFixture({ defaults: {
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
                 } }) })); });
-            expect(readBodyProps()!.draft.draftId).not.toBe(address.draftId);
+            expect(readBodyProps()!.draftStore.get().draftId).not.toBe(address.draftId);
         } else {
             await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', builtinId: 'builtin:plan-with-a-panel' }} />);
-            await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Source B edits must remain' }); });
+            await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Source B edits must remain' }); });
         }
-        const replacementDraft = readBodyProps()!.draft;
+        const replacementDraft = readBodyProps()!.draftStore.get();
         const replacementAddress = { scope: boundary.scope, draftId: replacementDraft.draftId };
         const context = { serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         const replacementSnapshot = await invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.get',
             input: replacementAddress, context });
         await act(async () => { await confirmOldDraft();
-            expect(await discard!).toMatchObject({ status: 'refused', ...(kind === 'saved' ? { reason: 'draft_retired' } : {}) }); });
-        expect(readBodyProps()!.draft).toEqual(replacementDraft);
+            expect(await discard!).toMatchObject({ status: 'refused' }); });
+        expect(readBodyProps()!.draftStore.get()).toEqual(replacementDraft);
         expect(await invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.get',
             input: replacementAddress, context })).toEqual(replacementSnapshot);
         expect(routerSpy.replace).not.toHaveBeenCalled();
@@ -1800,7 +2177,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
         await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        const address = { scope: boundary.scope, draftId: readBodyProps()!.draft.draftId };
+        const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
         const initial = await owners.invokeWorkflowAuthoringAction({ actionId: 'workflow.authoring.draft.get', input: address, context });
         if (initial.status !== 'available') throw new Error('Mounted draft unavailable');
         await act(async () => { expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
@@ -1838,8 +2215,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect(flattenTestStyle(portal!.props.style).opacity).toBe(1);
         });
         await screen.pressByTestIdAsync('workflow-editor-menu-delete');
-        await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 150)); });
-        expect(visibleModals().filter(modal => modal.type === 'confirm')).toHaveLength(1);
+        await vi.waitFor(() => expect(visibleModals().filter(modal => modal.type === 'confirm')).toHaveLength(1));
         expect(screen.findHostByTestId('workflow-editor-menu-delete')).toBeNull();
         expect(screen.findHostByTestId('web-modal-confirm')).not.toBeNull();
         expect(definitionActions.delete).not.toHaveBeenCalled();
@@ -1854,12 +2230,12 @@ describe('WorkflowEditorHostScreen composition', () => {
     it.each([false, true])('keeps the dirty draft when Delete is cancelled or fails (confirmed=%s)', async confirmed => {
         definitionActions.delete.mockRejectedValueOnce(new Error('Deletion failed'));
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Keep this rename' }));
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep this rename' }));
         await act(async () => { void readBodyProps()!.menuActions?.find(action => action.id === 'delete')?.onSelect(); });
         await pressConfirmation(confirmed);
         expect(getActiveUnsavedChangesGuard()?.ignoreRef?.current).not.toBe(true);
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
-        expect(readBodyProps()!.draft.name).toBe('Keep this rename');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Keep this rename');
         expect(routerSpy.replace).not.toHaveBeenCalled();
         if (confirmed) {
             expect(readAlert()).toMatchObject({ title: 'workflows.page.deleteFailedTitle', message: 'workflows.readState.storageBody' });
@@ -1869,7 +2245,7 @@ describe('WorkflowEditorHostScreen composition', () => {
     });
     it('retires dirty edits after confirmed Delete before the router asks its departure guard', async () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Unsaved rename' }));
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Unsaved rename' }));
         const destinations: string[] = [];
         routerSpy.replace.mockImplementation(href => runGuardedNavigation(() => { destinations.push(String(href)); }));
         await act(async () => { void readBodyProps()!.menuActions?.find(action => action.id === 'delete')?.onSelect(); });
@@ -1889,13 +2265,13 @@ describe('WorkflowEditorHostScreen composition', () => {
             definition: WorkflowDefinitionV1Schema.parse(request.definition), metadata: request.metadata, access: 'owner',
             revision: { headerVersion: 1, bodyVersion: 1 } }));
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Notify on completion', defaults: definition.defaults, blocks: definition.blocks }));
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Notify on completion', defaults: definition.defaults, blocks: definition.blocks }));
         await act(async () => readBodyProps()!.onSave?.());
         expect(definitionActions.create).not.toHaveBeenCalled();
         expect(readBodyProps()!.saveStatus?.kind).not.toBe('saved');
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
             input: { message: { kind: 'literal', value: 'Done' } } }] }));
-        await act(async () => readBodyProps()!.onSave?.());
+        await saveDirectlyFromUi();
         expect(definitionActions.create).toHaveBeenCalledOnce();
         expect(readBodyProps()!.saveStatus?.kind).toBe('saved');
         await screen.unmount();
@@ -1907,7 +2283,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 name: 'Copied workflow', description: 'Original description', definition: createWorkflowDefinitionFixture(),
             }) } : {}) };
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={source} />);
-        const baseline = readBodyProps()!.draft;
+        const baseline = readBodyProps()!.draftStore.get();
         const baselineDescription = readBodyProps()!.description;
         const readTriggers = () => {
             const section = readBodyProps()!.triggersSection;
@@ -1925,9 +2301,9 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(left).toBe(false);
         await pressAlertButton('destructive');
         expect(left).toBe(true);
-        expect(readBodyProps()!.draft).toEqual(baseline);
+        expect(readBodyProps()!.draftStore.get()).toEqual(baseline);
         expect(readBodyProps()!.description).toBe(baselineDescription);
-        expect(readBodyProps()!.saveStatus?.kind).toBe(kind === 'saved' ? 'saved' : 'notSaved');
+        expect(readBodyProps()!.saveStatus?.kind).toBe(kind === 'saved' ? 'saved' : kind === 'seed' ? 'unsaved' : 'notSaved');
         expect(readBodyProps()!.history?.undoLabel).toBeNull();
         expect(readBodyProps()!.history?.redoLabel).toBeNull();
         expect(readTriggers().draft.adds).toHaveLength(0);
@@ -2000,7 +2376,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                     </DestinationInstanceHost></>;
             }}</WorkspaceProvider>);
             await act(async () => { navigation!.openHref('/workflows/new'); });
-            const draft = readBodyProps()!.draft;
+            const draft = readBodyProps()!.draftStore.get();
             await act(async () => readBodyProps()!.onChange({ ...draft, name: 'Do not lose this' }));
             const leave = async () => {
                 if (exit === 'Previous') await screen.pressByTestIdAsync('app-shell-back');
@@ -2011,7 +2387,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
             expect(location.pathname).toBe('/workflows/new');
             await pressAlertButton('cancel');
-            expect(readBodyProps()!.draft.name).toBe('Do not lose this');
+            expect(readBodyProps()!.draftStore.get().name).toBe('Do not lose this');
             await leave();
             await pressAlertButton('destructive');
             expect(decodeURIComponent(location.pathname)).toBe('/workflows/builtin:plan-with-a-panel');
@@ -2120,10 +2496,10 @@ describe('WorkflowEditorHostScreen composition', () => {
             await flushHookEffects();
             expect(readBodyProps()).not.toBeNull();
         });
-        const initial = readBodyProps()!.draft;
+        const initial = readBodyProps()!.draftStore.get();
         await act(async () => readBodyProps()!.onChange({ ...initial, name: 'Saved here', inputs: definition.inputs,
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }, 'Build workflow'));
-        const accepted = readBodyProps()!.draft;
+        const accepted = readBodyProps()!.draftStore.get();
         await act(async () => readBodyProps()!.onSave?.());
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
@@ -2131,12 +2507,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         });
         expect(nativeRouteBoundary.pathname).toBe(`/workflows/${createdDefinitionId()}`);
         expect(currentState.routes[currentState.index]!.key).toBe(initialState.routes[initialState.index]!.key);
-        expect(readBodyProps()!.draft).toBe(accepted);
+        expect(readBodyProps()!.draftStore.get()).toBe(accepted);
         expect(definitionActions.get).not.toHaveBeenCalled();
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft).toBe(initial);
+        expect(readBodyProps()!.draftStore.get()).toBe(initial);
         await act(async () => readBodyProps()!.history!.redo());
-        expect(readBodyProps()!.draft).toBe(accepted);
+        expect(readBodyProps()!.draftStore.get()).toBe(accepted);
         await screen.unmount();
     });
     it('shows an unavailable header reason when the saved definition cannot open', async () => {
@@ -2172,7 +2548,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         // A clean saved workflow has nothing to discard.
         expect(readBodyProps()!.menuActions?.some((action) => action.id === 'discardChanges')).toBe(false);
-        const saved = readBodyProps()!.draft;
+        const saved = readBodyProps()!.draftStore.get();
         await act(async () => readBodyProps()!.onChange({ ...saved, name: 'Unsaved rename' }, 'Rename'));
         await act(async () => readBodyProps()!.onChangeDescription?.('Unsaved purpose'));
         await act(async () => readBodyProps()!.onCommitChange?.());
@@ -2182,14 +2558,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(ids.slice(-2)).toEqual(['discardChanges', 'delete']);
 
         await act(async () => { void readBodyProps()!.menuActions?.find((action) => action.id === 'discardChanges')?.onSelect(); });
-        await pressConfirmation(false);
-        expect(readBodyProps()!.draft.name).toBe('Unsaved rename');
-        expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
-
-        await act(async () => { void readBodyProps()!.menuActions?.find((action) => action.id === 'discardChanges')?.onSelect(); });
-        expect(readConfirmation()).toMatchObject({ title: t('common.discardChanges'), message: t('workflows.page.discardChangesBody'), destructive: true });
-        await pressConfirmation(true);
-        expect(readBodyProps()!.draft).toEqual(saved);
+        expect(readConfirmation()).toBeUndefined();
+        expect(readBodyProps()!.draftStore.get()).toEqual(saved);
         expect(readBodyProps()!.description).toBe('');
         expect(readBodyProps()!.saveStatus?.kind).toBe('saved');
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).not.toBe(true);
@@ -2198,9 +2568,18 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.menuActions?.some((action) => action.id === 'discardChanges')).toBe(false);
 
         expect(readBodyProps()!.history?.undoLabel).toBe(t('common.discardChanges'));
+        // Without a confirmation, the status line says what just happened while Undo can still bring it back.
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved', discarded: true });
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft.name).toBe('Unsaved rename');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Unsaved rename');
         expect(readBodyProps()!.description).toBe('Unsaved purpose');
+        expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
+        // Redoing the discard says so again; any later edit ends that sentence.
+        await act(async () => readBodyProps()!.history!.redo());
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved', discarded: true });
+        await act(async () => readBodyProps()!.onChange({ ...saved, name: 'Another rename' }, 'Rename'));
+        await act(async () => readBodyProps()!.onCommitChange?.());
+        expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
         await screen.unmount();
     });
     it.each(['saved', 'failed'] as const)('protects a pristine seeded draft during its first Save and retains its terminal outcome (%s)', async outcome => {
@@ -2224,7 +2603,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         await pressAlertButton('cancel');
         await act(async () => { expect(await departure).toBe(false); });
         expect(destinations).toEqual([]);
-        expect(readBodyProps()!.draft.name).toBe('Retained save');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Retained save');
         await act(async () => {
             refuseArtifactCreate = outcome === 'failed';
             pending.resolve({ definitionId: SAVED_TRIGGER_WORKFLOW_ID, definition,
@@ -2237,7 +2616,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         } else {
             expect(readBodyProps()!.saveStatus?.kind).toBe('failed');
             expect(destinations).toEqual([]);
-            expect(readBodyProps()!.draft.name).toBe('Retained save');
+            expect(readBodyProps()!.draftStore.get().name).toBe('Retained save');
             expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
         }
         await screen.unmount();
@@ -2253,12 +2632,12 @@ describe('WorkflowEditorHostScreen composition', () => {
             void runGuardedNavigation(() => { destinations.push(route); });
         });
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (!draft) throw new Error('Expected new draft');
         await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Saved here', inputs: definition.inputs,
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }));
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
-        await act(async () => readBodyProps()?.onSave?.());
+        await saveDirectlyFromUi();
         expect(definitionActions.create).toHaveBeenCalledOnce();
         expect(readBodyProps()?.saveStatus).toMatchObject({ kind: 'saved' });
         expect(destinations).toEqual([`/workflows/${createdDefinitionId()}`]);
@@ -2285,7 +2664,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             void runGuardedNavigation(() => { destinations.push(route); });
         });
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', builtinId: 'builtin:plan-with-a-panel' }} />);
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (!draft) throw new Error('Expected built-in draft');
         await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Changed draft' }));
         const discard = readBodyProps()?.menuActions?.find((action) => action.id === 'discard');
@@ -2309,35 +2688,35 @@ describe('WorkflowEditorHostScreen composition', () => {
         definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
             definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const initial = readBodyProps()!.draft;
+        const initial = readBodyProps()!.draftStore.get();
         await act(async () => readBodyProps()!.onChange({ ...initial, name: 'Saved here', inputs: definition.inputs,
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }, 'Build workflow'));
-        await act(async () => readBodyProps()!.onSave?.());
-        const accepted = readBodyProps()!.draft;
+        await saveDirectlyFromUi();
+        const accepted = readBodyProps()!.draftStore.get();
         const savedDefinitionId = createdDefinitionId();
         const hydration = createDeferred<WorkflowDefinitionGetResultV1>();
         definitionActions.get.mockReturnValueOnce(hydration.promise);
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: savedDefinitionId }} />);
         expect(screen.findAllHostsByTestId('workflow-editor-loading')).toHaveLength(0);
         expect(definitionActions.get).not.toHaveBeenCalled();
-        expect(readBodyProps()!.draft).toBe(accepted);
+        expect(readBodyProps()!.draftStore.get()).toBe(accepted);
         expect(readBodyProps()!.history?.undoLabel).toBe('Build workflow');
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft).toBe(initial);
+        expect(readBodyProps()!.draftStore.get()).toBe(initial);
         expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
         await act(async () => readBodyProps()!.history!.redo());
-        expect(readBodyProps()!.draft).toBe(accepted);
+        expect(readBodyProps()!.draftStore.get()).toBe(accepted);
         expect(readBodyProps()!.saveStatus?.kind).toBe('saved');
         await act(async () => switchEditorAccountScope({ serverId: 'server-a', accountId: 'account-b' }));
         expect(screen.findAllHostsByTestId('workflow-editor-loading')).toHaveLength(1);
         await act(async () => hydration.resolve({ definitionId: savedDefinitionId, definition,
             access: 'view', revision: { headerVersion: 3, bodyVersion: 3 }, metadata: { title: 'Account B workflow' } }));
-        expect(readBodyProps()!.draft.name).toBe('Account B workflow');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Account B workflow');
         expect(readBodyProps()!.history).toBeUndefined();
         definitionActions.get.mockResolvedValueOnce({ definitionId: '00000000-0000-4000-8000-000000000006', definition,
             access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Another definition' } });
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: '00000000-0000-4000-8000-000000000006' }} />);
-        expect(readBodyProps()!.draft.name).toBe('Another definition');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Another definition');
         expect(readBodyProps()!.history?.undoLabel).toBeNull();
         await screen.unmount();
     });
@@ -2348,7 +2727,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const pending = createDeferred<WorkflowDefinitionGetResultV1>();
         definitionActions.create.mockReturnValueOnce(pending.promise);
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (!draft) throw new Error('Expected new draft');
         const submitted = { ...draft, name: 'Submitted', inputs: definition.inputs,
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput };
@@ -2360,16 +2739,16 @@ describe('WorkflowEditorHostScreen composition', () => {
         const savedDefinitionId = createdDefinitionId();
         expect(routerSpy.replace).not.toHaveBeenCalled();
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
-        expect(readBodyProps()?.draft.name).toBe('Still editing');
+        expect(readBodyProps()?.draftStore.get().name).toBe('Still editing');
         expect(readBodyProps()?.saveStatus?.kind).toBe('unsaved');
         if (nextAction === 'save again') {
-            const accepted = readBodyProps()!.draft;
+            const accepted = readBodyProps()!.draftStore.get();
             definitionActions.update.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
                 definition, access: 'owner', revision: { headerVersion: 2, bodyVersion: 2 }, metadata: { title: 'Still editing' } });
             await act(async () => readBodyProps()!.onSave?.());
             expect(routerSpy.replace).toHaveBeenCalledWith(`/workflows/${savedDefinitionId}`);
             await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: savedDefinitionId }} />);
-            expect(readBodyProps()!.draft).toBe(accepted);
+            expect(readBodyProps()!.draftStore.get()).toBe(accepted);
             expect(definitionActions.get).not.toHaveBeenCalled();
         } else {
             definitionActions.get.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
@@ -2377,7 +2756,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             // Opening the saved row separately after choosing to discard the later
             // edits is not the clean first-Save continuation.
             await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: savedDefinitionId }} />);
-            expect(readBodyProps()?.draft.name).toBe('Submitted');
+            expect(readBodyProps()?.draftStore.get().name).toBe('Submitted');
         }
         await screen.unmount();
     });
@@ -2388,14 +2767,14 @@ describe('WorkflowEditorHostScreen composition', () => {
         definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
             definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const initial = readBodyProps()!.draft;
+        const initial = readBodyProps()!.draftStore.get();
         await act(async () => readBodyProps()!.onChange({ ...initial, name: 'Saved here', inputs: definition.inputs,
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }, 'Build workflow'));
-        await act(async () => readBodyProps()!.onSave?.());
+        await saveDirectlyFromUi();
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: createdDefinitionId() }} />);
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        expect(readBodyProps()!.draft.name).toBe('');
-        expect(readBodyProps()!.draft.draftId).not.toBe(initial.draftId);
+        expect(readBodyProps()!.draftStore.get().name).toBe('');
+        expect(readBodyProps()!.draftStore.get().draftId).not.toBe(initial.draftId);
         expect(readBodyProps()!.history?.undoLabel).toBeNull();
         expect(readBodyProps()!.menuActions?.some((action) => action.id === 'discard')).toBe(true);
         await screen.unmount();
@@ -2418,7 +2797,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } },
         })));
         expect(guardedDirtyStates.at(-1)).toBe(true);
-        await saveWithTriggerConfirmation();
+        await saveDirectlyFromUi();
         expect(editorAutomations.creates).toEqual([expect.objectContaining({ workflowDefinitionId: SAVED_TRIGGER_WORKFLOW_ID })]);
         expect(definitionActions.update).not.toHaveBeenCalled();
         expect(definitionActions.create).not.toHaveBeenCalled();
@@ -2439,10 +2818,10 @@ describe('WorkflowEditorHostScreen composition', () => {
         const route = routerSpy.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: route.params.definitionDraftSeedId }} />);
-        expect(readBodyProps()?.draft).toMatchObject({ name: t('workflows.copyName', { name: 'Shared workflow' }), blocks: definition.blocks, inputs: definition.inputs });
+        expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: t('workflows.copyName', { name: 'Shared workflow' }), blocks: definition.blocks, inputs: definition.inputs });
         expect(readBodyProps()?.description).toBe('Portable purpose');
         expect(readBodyProps()?.currentWorkflowRef).toBeNull();
-        expect(readBodyProps()?.saveStatus?.kind).toBe('notSaved');
+        expect(readBodyProps()?.saveStatus?.kind).toBe('unsaved');
         expect(readBodyProps()?.menuActions?.some((action) => action.id === 'discard')).toBe(true);
         expect(definitionActions.create).not.toHaveBeenCalled();
         expect(definitionActions.update).not.toHaveBeenCalled();
@@ -2450,7 +2829,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         definitionActions.create.mockImplementationOnce(async (request) => ({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
             access: 'owner', definition: WorkflowDefinitionV1Schema.parse(request.definition), metadata: request.metadata,
             revision: { headerVersion: 1, bodyVersion: 1 } }));
-        await act(async () => readBodyProps()?.onSave?.());
+        await saveDirectlyFromUi();
         expect(definitionActions.create).toHaveBeenCalledWith(expect.objectContaining({ definition,
             metadata: { title: t('workflows.copyName', { name: 'Shared workflow' }), description: 'Portable purpose' } }));
         expect(definitionActions.update).not.toHaveBeenCalled();
@@ -2462,31 +2841,31 @@ describe('WorkflowEditorHostScreen composition', () => {
         } }),
             revision: { headerVersion: 4, bodyVersion: 8 }, metadata: { title: 'Saved', description: 'Original purpose' }, changedBlockIds: [] };
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: base.definitionId, agentRevision: base }} />);
-        const original = readBodyProps()!.draft;
+        const original = readBodyProps()!.draftStore.get();
         const removed = removeWorkflowBlock(original, original.blocks[0]!.id);
         await act(async () => readBodyProps()!.onChange(removed.draft));
-        const inserted = insertWorkflowStarterExample(readBodyProps()!.draft, WORKFLOW_STARTER_EXAMPLES_V1[0]!, 'Example');
+        const inserted = insertWorkflowStarterExample(readBodyProps()!.draftStore.get(), WORKFLOW_STARTER_EXAMPLES_V1[0]!, 'Example');
         await act(async () => readBodyProps()!.onChange(inserted.draft, 'Insert example'));
         expect(readBodyProps()!.history?.undoLabel).toBe('Insert example');
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft).toEqual(removed.draft);
+        expect(readBodyProps()!.draftStore.get()).toEqual(removed.draft);
         expect(readBodyProps()!.history?.undoLabel).toBe(t('workflows.a11y.removed', { block: t('workflows.editor.addStep'), total: 0 }));
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft).toEqual(original);
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         const renamed = { ...base, revision: { headerVersion: 5, bodyVersion: 9 }, metadata: { title: 'Agent rename', description: 'Agent purpose' }, changedBlockIds: ['step-1'] };
         // The agent revision is a committed Home fact, not only a route seed.
         definitionActions.get.mockResolvedValue({ definitionId: renamed.definitionId, definition: renamed.definition,
             metadata: renamed.metadata, revision: renamed.revision, access: 'owner' } satisfies WorkflowDefinitionGetResultV1);
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: base.definitionId, agentRevision: renamed }} />);
-        expect(readBodyProps()!.draft.name).toBe('Agent rename');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Agent rename');
         expect(readBodyProps()!.description).toBe('Agent purpose');
         expect(readBodyProps()!.history?.redoLabel).toBeNull();
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft).toEqual(original);
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         expect(readBodyProps()!.description).toBe('Original purpose');
         expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
         await act(async () => readBodyProps()!.history!.redo());
-        expect(readBodyProps()!.draft.name).toBe('Agent rename');
+        expect(readBodyProps()!.draftStore.get().name).toBe('Agent rename');
         expect(readBodyProps()!.saveStatus?.kind).toBe('saved');
         await act(async () => readBodyProps()!.history!.undo());
         definitionActions.update.mockResolvedValue({ definitionId: base.definitionId, definition: base.definition, access: 'owner',
@@ -2500,13 +2879,13 @@ describe('WorkflowEditorHostScreen composition', () => {
             metadata: { title: 'Saved', description: 'Original purpose' } }));
         expect(readBodyProps()!.history?.redoLabel).not.toBeNull();
         expect(readBodyProps()!.saveStatus?.kind).toBe('saved');
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'My rename' }, 'Rename'));
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'My rename' }, 'Rename'));
         expect(readBodyProps()!.history?.redoLabel).toBeNull();
     });
 
     it('commits text at its input boundary and undoes metadata and targets in one source-local history', async () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const original = readBodyProps()!.draft;
+        const original = readBodyProps()!.draftStore.get();
         await act(async () => readBodyProps()!.onChange({ ...original, name: 'Typing' }, 'Name', false));
         expect(readBodyProps()!.history?.undoLabel).toBeNull();
         await act(async () => readBodyProps()!.onCommitChange?.());
@@ -2522,7 +2901,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => readBodyProps()!.history!.undo());
         expect(readBodyProps()!.description).toBe('');
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft.name).toBe(original.name);
+        expect(readBodyProps()!.draftStore.get().name).toBe(original.name);
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', exampleKey: WORKFLOW_STARTER_EXAMPLES_V1[0]!.key }} />);
         expect(readBodyProps()!.history?.undoLabel).toBeNull();
         expect(readBodyProps()!.history?.redoLabel).toBeNull();
@@ -2537,9 +2916,9 @@ describe('WorkflowEditorHostScreen composition', () => {
         };
         const trigger = { kind: 'schedule', enabled: true, schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } as const;
         await act(async () => readSection().onChangeDraft(editWorkflowTriggerDraft(readSection().draft, { kind: 'add', clientId: 'schedule-1', trigger })));
-        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'After trigger' }, 'Rename'));
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'After trigger' }, 'Rename'));
         await act(async () => readBodyProps()!.history!.undo());
-        expect(readBodyProps()!.draft.name).toBe('');
+        expect(readBodyProps()!.draftStore.get().name).toBe('');
         expect(readSection().draft.adds).toHaveLength(1);
         await act(async () => readBodyProps()!.history!.undo());
         expect(readSection().draft.adds).toHaveLength(0);
@@ -2580,7 +2959,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevisionSeedId: seedId }} />);
         if (delayedHistory) await act(async () => publishHistory());
         expect(readWorkflowAgentRevision(seedId)).toBeNull();
-        expect(readBodyProps()?.draft.name).toBe('Agent snapshot');
+        expect(readBodyProps()?.draftStore.get().name).toBe('Agent snapshot');
         expect(readBodyProps()?.description).toBe('Exact saved description');
         expect(readBodyProps()?.highlightedBlockIds).toEqual(['step-1']);
         expect(definitionActions.get).toHaveBeenCalledWith({ definitionId });
@@ -2589,11 +2968,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => getStorage().setState({ sessionMessages: { 'author-session': createSessionMessagesFixture({
             messageIdsOldestFirst: [next.id], messagesById: { [next.id]: next }, isLoaded: true,
         }) } }));
-        expect(readBodyProps()?.draft.name).toBe('Saved after opening');
+        expect(readBodyProps()?.draftStore.get().name).toBe('Saved after opening');
         expect(readBodyProps()?.highlightedBlockIds).toEqual([]);
         expect(readBodyProps()?.saveStatus).toMatchObject({ kind: 'saved', byAgent: true });
         expect(definitionActions.get).toHaveBeenCalledWith({ definitionId });
-        const currentDraft = readBodyProps()?.draft;
+        const currentDraft = readBodyProps()?.draftStore.get();
         if (!currentDraft) throw new Error('Expected the clean agent reload');
         await act(async () => readBodyProps()?.onChange({ ...currentDraft, name: 'My unsaved edit' }));
         const changed = { ...next, seq: 102, id: 'second-post-open-update', tool: { ...next.tool, id: 'second-post-open-update', completedAt: 2, result: {
@@ -2602,7 +2981,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => getStorage().setState({ sessionMessages: { 'author-session': createSessionMessagesFixture({
             messageIdsOldestFirst: [changed.id], messagesById: { [changed.id]: changed }, isLoaded: true,
         }) } }));
-        expect(readBodyProps()?.draft.name).toBe('My unsaved edit');
+        expect(readBodyProps()?.draftStore.get().name).toBe('My unsaved edit');
         expect(readBodyProps()?.saveConflict?.currentDraft?.name).toBe('Another agent save');
         expect(readBodyProps()?.saveConflict?.currentRevision).toEqual({ headerVersion: 11, bodyVersion: 11 });
     });
@@ -2634,8 +3013,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         getStorage().setState({ sessions: { 'author-session': createSessionFixture({ id: 'author-session', seq: 100 }) } });
         publish([running, historical]);
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: base, authoringSessionId: 'author-session' }} />);
-        expect(readBodyProps()?.draft.name).toBe('Agent snapshot');
-        if (dirty) await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'My unsaved edit' }));
+        expect(readBodyProps()?.draftStore.get().name).toBe('Agent snapshot');
+        if (dirty) await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'My unsaved edit' }));
 
         const lateRunning = { ...running, id: 'older-call-hydrated-after-open', seq: 97 };
         await act(async () => publish([running, historical, lateRunning]));
@@ -2643,7 +3022,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             result: { definitionId, access: 'owner', definition: base.definition, revision: { headerVersion: 6, bodyVersion: 10 }, metadata: { title: 'Hydrated older call' } },
         } };
         await act(async () => publish([running, historical, lateCompleted]));
-        expect(readBodyProps()?.draft.name).toBe(dirty ? 'My unsaved edit' : 'Agent snapshot');
+        expect(readBodyProps()?.draftStore.get().name).toBe(dirty ? 'My unsaved edit' : 'Agent snapshot');
         expect(readBodyProps()?.saveConflict).toBeNull();
 
         const saved: WorkflowDefinitionGetResultV1 = { definitionId, access: 'owner', definition: base.definition,
@@ -2651,11 +3030,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         const completed = { ...running, tool: { ...running.tool, state: 'completed' as const, completedAt: 1, result: saved } };
         await act(async () => publish([completed, historical, lateCompleted]));
         if (dirty) {
-            expect(readBodyProps()?.draft.name).toBe('My unsaved edit');
+            expect(readBodyProps()?.draftStore.get().name).toBe('My unsaved edit');
             expect(readBodyProps()?.saveConflict?.currentDraft?.name).toBe('Saved after opening');
             expect(readBodyProps()?.saveConflict?.currentRevision).toEqual(saved.revision);
         } else {
-            expect(readBodyProps()?.draft.name).toBe('Saved after opening');
+            expect(readBodyProps()?.draftStore.get().name).toBe('Saved after opening');
             expect(readBodyProps()?.saveStatus).toMatchObject({ kind: 'saved', byAgent: true });
             expect(readBodyProps()?.saveConflict).toBeNull();
         }
@@ -2663,7 +3042,7 @@ describe('WorkflowEditorHostScreen composition', () => {
 
         const seedId = storeWorkflowAgentRevision({ ...base, metadata: { title: 'Another selected snapshot' } }, 'author-session');
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevisionSeedId: seedId }} />);
-        expect(readBodyProps()?.draft.name).toBe('Another selected snapshot');
+        expect(readBodyProps()?.draftStore.get().name).toBe('Another selected snapshot');
         expect(readBodyProps()?.saveConflict).toBeNull();
     });
 
@@ -2672,12 +3051,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         const base = { definitionId, definition: createWorkflowDefinitionFixture(),
             revision: { headerVersion: 4, bodyVersion: 8 }, metadata: { title: 'Saved' }, changedBlockIds: [] };
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: base }} />);
-        const original = readBodyProps()?.draft;
+        const original = readBodyProps()?.draftStore.get();
         if (!original) throw new Error('Expected exact saved snapshot');
         await act(async () => readBodyProps()?.onChange({ ...original, name: 'My local edit' }));
         const next = { ...base, metadata: { title: 'Agent rename' }, revision: { headerVersion: 5, bodyVersion: 9 }, changedBlockIds: ['step-1'] };
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: next }} />);
-        expect(readBodyProps()?.draft.name).toBe('My local edit');
+        expect(readBodyProps()?.draftStore.get().name).toBe('My local edit');
         expect(readBodyProps()?.saveConflict?.currentDraft?.name).toBe('Agent rename');
         expect(readBodyProps()?.saveConflict?.currentRevision).toEqual(next.revision);
         expect(readBodyProps()?.highlightedBlockIds ?? []).toEqual([]);
@@ -2690,7 +3069,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: base }} />);
         const next = { ...base, metadata: { title: 'New saved title' }, revision: { headerVersion: 5, bodyVersion: 9 }, changedBlockIds: ['step-1'] };
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: next }} />);
-        expect(readBodyProps()?.draft.name).toBe('New saved title');
+        expect(readBodyProps()?.draftStore.get().name).toBe('New saved title');
         expect(readBodyProps()?.highlightedBlockIds).toEqual(['step-1']);
         expect(readBodyProps()?.saveStatus).toMatchObject({ kind: 'saved', byAgent: true });
         await act(async () => readBodyProps()?.onSelectBlock('step-1'));
@@ -2702,7 +3081,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const base = { definitionId, definition: createWorkflowDefinitionFixture(),
             revision: { headerVersion: 4, bodyVersion: 8 }, metadata: { title: 'Saved' }, changedBlockIds: [] };
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: base }} />);
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (!draft) throw new Error('Expected saved draft');
         await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Unsaved local name' }));
         // Wide: the header's quiet action, not a ⋯ item, and no modal (04 §4.6, §4.7).
@@ -2739,11 +3118,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         definitionActions.create.mockResolvedValueOnce({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
             definition, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved here' } });
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (!draft) throw new Error('Expected new draft');
         await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Saved here', inputs: definition.inputs,
             defaults: definition.defaults, blocks: definition.blocks, finalOutput: definition.finalOutput }));
-        await act(async () => readBodyProps()?.onSave?.());
+        await saveDirectlyFromUi();
         expect(definitionActions.create).toHaveBeenCalledOnce();
         expect(routerSpy.replace).toHaveBeenCalledWith(`/workflows/${encodeURIComponent(createdDefinitionId())}`);
         await act(async () => readBodyProps()?.onEditWithAgent?.());
@@ -2769,7 +3148,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()?.authoringDraft).toBeUndefined();
         await act(async () => pending.onSessionCreated(`/session/author-session?serverId=${boundary.scope.serverId}`,
             { sessionId: 'author-session', serverId: boundary.scope.serverId }));
-        expect(readBodyProps()?.draft.name).toBe('Second');
+        expect(readBodyProps()?.draftStore.get().name).toBe('Second');
         expect(readBodyProps()?.authoringSessionId).toBeNull();
     });
     it('keeps an unavailable saved trigger in its known query after removal instead of inventing inline membership', async () => {
@@ -2782,7 +3161,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         missingStoredArtifact = true;
         await renderScreen(<></>);
         const { removeWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
-        await confirmWorkflowAction(() => removeWorkflowTrigger({ automationId: TRIGGER_SET_ID, triggerId: 'trigger-1' }));
+        await runDirectWorkflowAction(() => removeWorkflowTrigger({ automationId: TRIGGER_SET_ID, triggerId: 'trigger-1' }));
         expect(getStorage().getState().workflowTriggerSetIdsByQuery[`workflow:${SAVED_TRIGGER_WORKFLOW_ID}`]).toEqual([TRIGGER_SET_ID]);
         expect(getStorage().getState().workflowTriggerSetIdsByQuery.account_inline).toBeUndefined();
     });
@@ -2796,7 +3175,6 @@ describe('WorkflowEditorHostScreen composition', () => {
     it('contributes the incumbent Agent catalog and the Machine composer scope to the editor', async () => {
         const scope = { serverId: 'server-a', accountId: 'account-a' };
         getStorage().setState({ settingsScope: scope });
-        applyAcpCatalogSnapshot(scope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
         setEditorMachines([createMachineFixture({ metadata: {
             host: 'tester.local', happyCliVersion: '0.0.0-test', happyHomeDir: '/Users/tester/.happy-dev',
             homeDir: '/Users/me', platform: 'darwin',
@@ -2835,7 +3213,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         // the editor a structurally identical but referentially new object.
         const host = () => <WorkflowEditorHostScreen source={{ kind: 'new' }} />;
         const screen = await renderScreen(host());
-        const initialDraft = readBodyProps()?.draft;
+        const initialDraft = readBodyProps()?.draftStore.get();
         if (initialDraft === undefined) throw new Error('Expected the new Workflow draft');
 
         await act(async () => readBodyProps()?.onChange({
@@ -2848,8 +3226,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         await screen.update(host());
         await screen.update(host());
 
-        expect(readBodyProps()?.draft.draftId).toBe(initialDraft.draftId);
-        const firstBlock = readBodyProps()?.draft.blocks[0];
+        expect(readBodyProps()?.draftStore.get().draftId).toBe(initialDraft.draftId);
+        const firstBlock = readBodyProps()?.draftStore.get().blocks[0];
         if (firstBlock?.kind !== 'step') throw new Error('Expected the first Workflow block to be a step');
         expect(firstBlock.document.text).toBe('Analyze the repository');
     });
@@ -2864,7 +3242,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const host = () => <WorkflowEditorHostScreen source={{ kind: 'new' }} />;
         const screen = await renderScreen(host());
         await act(async () => {});
-        const firstBlockId = readBodyProps()?.draft.blocks[0]?.id;
+        const firstBlockId = readBodyProps()?.draftStore.get().blocks[0]?.id;
         await vi.waitFor(() => expect(focusPromptSpy).toHaveBeenCalledTimes(1));
         const firstPrompt = screen.findByTestId(`workflow-editor-step-${firstBlockId}-prompt`)!.findByType(AgentInput);
         expect(firstPrompt.props.inputAccessibilityLabel).toBeTypeOf('string');
@@ -2873,7 +3251,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         }));
 
         await screen.update(host());
-        await act(async () => readBodyProps()?.onChange({ ...readBodyProps()!.draft, name: 'Named' } as never));
+        await act(async () => readBodyProps()?.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Named' } as never));
         await screen.update(host());
         expect(focusPromptSpy).toHaveBeenCalledTimes(1);
         await screen.unmount();
@@ -2890,6 +3268,8 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => {});
 
         expect(guardedDirtyStates.at(-1)).toBe(false);
+        expect(readBodyProps()?.saveStatus).toEqual({ kind: 'notSaved' });
+        expect(screen.findByTestId('workflow-editor-save')).toBeNull();
         await screen.unmount();
     });
 
@@ -2910,7 +3290,8 @@ describe('WorkflowEditorHostScreen composition', () => {
             }));
             if (daemonProjection.resolves) await vi.waitFor(async () => {
                 await act(async () => {});
-                expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-a' })?.kind).toBe('ready');
+                const entry = readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId: 'server-a' });
+                expect(entry?.kind, JSON.stringify(entry && { kind: entry.kind, ...('reason' in entry ? { reason: entry.reason } : {}) })).toBe('ready');
             });
         };
 
@@ -2934,7 +3315,6 @@ describe('WorkflowEditorHostScreen composition', () => {
         it('adopts the contextual Agent once the exact Machine projection resolves, without becoming dirty', async () => {
             const scope = { serverId: 'server-a', accountId: 'account-a' };
             getStorage().setState({ settingsScope: scope });
-            applyAcpCatalogSnapshot(scope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
             daemonProjection.resolves = true;
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
@@ -2944,10 +3324,10 @@ describe('WorkflowEditorHostScreen composition', () => {
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
                 expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget).not.toBeNull();
-                expect(readBodyProps()?.draft.defaults.agentTarget).toBeDefined();
+                expect(readBodyProps()?.draftStore.get().defaults.agentTarget).toBeDefined();
             });
 
-            const seeded = readBodyProps()?.draft.defaults.agentTarget;
+            const seeded = readBodyProps()?.draftStore.get().defaults.agentTarget;
             const offered = readBodyProps()?.authoringFacts?.agentTargets ?? [];
             expect(offered.length).toBeGreaterThan(0);
             expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget).not.toBeNull();
@@ -2969,7 +3349,6 @@ describe('WorkflowEditorHostScreen composition', () => {
         it.each(['trigger', 'definition'] as const)('keeps a copied %s engine valid when the contextual Agent resolves', async (kind) => {
             const scope = { serverId: 'server-a', accountId: 'account-a' };
             getStorage().setState({ settingsScope: scope });
-            applyAcpCatalogSnapshot(scope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
             daemonProjection.resolves = true;
             const { buildTriggerTarget } = await import('../triggers/sessionTriggerForm');
             const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review the changes', selection: {
@@ -2993,26 +3372,63 @@ describe('WorkflowEditorHostScreen composition', () => {
                 await flushHookEffects();
                 expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget).toBeTruthy();
             });
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the copied draft');
             const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
             expect(validateWorkflowEditorDraft(draft).issues).toEqual([]);
             expect(draft.defaults).toEqual(target.definition.defaults);
             expect(draft.defaults).not.toHaveProperty('agentTarget');
             await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Copied prompt' }));
-            await act(async () => readBodyProps()?.onSave?.());
+            await saveDirectlyFromUi();
             expect(definitionActions.create).toHaveBeenCalledWith(expect.objectContaining({
                 definition: expect.objectContaining({ defaults: target.definition.defaults }),
             }));
             await screen.unmount();
         });
 
-        it('hydrates the weekly storage review seed and keeps the selected Machine’s contextual Agent', async () => {
+        it('preserves a reviewed capture through editor initialization, Save and reopen with a contextual Agent available', async () => {
             const scope = { serverId: 'server-a', accountId: 'account-a' };
             getStorage().setState({ settingsScope: scope });
-            applyAcpCatalogSnapshot(scope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
             daemonProjection.resolves = true;
-            const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed(createWeeklyStorageReviewWorkflowSeed({ name: 'Weekly storage review' }));
+            const discussion = { serverId: scope.serverId, discussionId: 'capture-discussion' };
+            const messageId = 'capture-answer';
+            const reviewed = captureWorkflowDiscussionV1({ discussion, messageIds: [messageId], name: 'Captured pattern',
+                choices: [{ messageId, role: 'step', participant: { kind: 'session',
+                    session: { serverId: scope.serverId, sessionId: 'answering-session' } } }],
+            }, [DiscussionOpenedMessageV1Schema.parse({ id: messageId, discussionId: discussion.discussionId,
+                localId: null, seq: 1, authorAccountId: null, accountActor: null, producerV1: null,
+                mentionedAccountIds: [], createdAt: 1, messageRef: { kind: 'discussion', discussion, messageId },
+                content: { v: 1, parts: [{ t: 'text', text: 'A selected answer' }] },
+            })]);
+            expect(reviewed.status).toBe('ready');
+            expect(reviewed.definition?.defaults).not.toHaveProperty('agentTarget');
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected the active capture Account');
+            const entry = prepareWorkflowCaptureEditorEntry(reviewed, lifetime);
+            if (!entry) throw new Error('Expected the capture editor handoff');
+            const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new',
+                definitionDraftSeedId: entry.params.definitionDraftSeedId }} />);
+            await selectMachine();
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget).toBeTruthy();
+            });
+            const { buildWorkflowDefinitionCandidate } = await import('@/sync/domains/workflows/workflowAuthoring');
+            expect(buildWorkflowDefinitionCandidate(readBodyProps()!.draftStore.get())).toEqual(reviewed.definition);
+            await saveDirectlyFromUi();
+            expect(definitionActions.create.mock.calls.at(-1)?.[0].definition).toEqual(reviewed.definition);
+            const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+            const reopened = await getWorkflowDefinition({ definitionId: createdDefinitionId() });
+            expect(reopened.definition).toEqual(reviewed.definition);
+            await screen.unmount();
+        });
+
+        it('preserves the weekly storage review template without injecting the contextual Agent', async () => {
+            const scope = { serverId: 'server-a', accountId: 'account-a' };
+            getStorage().setState({ settingsScope: scope });
+            daemonProjection.resolves = true;
+            const seed = createWeeklyStorageReviewWorkflowSeed({ name: 'Weekly storage review' });
+            const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed(seed);
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId }} />);
 
             await selectMachine();
@@ -3021,13 +3437,54 @@ describe('WorkflowEditorHostScreen composition', () => {
                 expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget).toBeTruthy();
             });
 
-            expect(readBodyProps()?.draft.name).toBe('Weekly storage review');
-            expect(readBodyProps()?.draft.defaults.agentTarget).toEqual(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget);
-            expect(readBodyProps()?.draft.blocks[0]).not.toHaveProperty('execution.engine');
-            const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
-            expect(validateWorkflowEditorDraft(readBodyProps()!.draft).valid).toBe(true);
+            expect(readBodyProps()?.draftStore.get().name).toBe('Weekly storage review');
+            expect(readBodyProps()?.draftStore.get().defaults).toEqual(seed.definition.defaults);
+            expect(readBodyProps()?.draftStore.get().blocks[0]).not.toHaveProperty('execution.engine');
             await screen.unmount();
         });
+
+        it.each(['copy', 'new-session', 'trigger', 'example', 'builtin'] as const)(
+            'preserves authored defaults for the %s entry when the contextual Agent resolves', async (kind) => {
+                const scope = { serverId: 'server-a', accountId: 'account-a' };
+                getStorage().setState({ settingsScope: scope });
+                daemonProjection.resolves = true;
+                const seed = createWeeklyStorageReviewWorkflowSeed({ name: 'Authored workflow' });
+                let definition = seed.definition;
+                let source: WorkflowEditorSource;
+                if (kind === 'copy') {
+                    source = { kind: 'new', definitionDraftSeedId: storeWorkflowDefinitionDraftSeed(seed) };
+                } else if (kind === 'new-session') {
+                    const { storeNewSessionAutomationHandoffSeed } = await import('@/sync/domains/workflows/newSessionAutomationHandoffSeed');
+                    const { buildWorkflowEditorDraftFromDefinition } = await import('@/sync/domains/workflows/workflowAuthoring');
+                    source = { kind: 'new', newSessionDraftSeedId: storeNewSessionAutomationHandoffSeed({
+                        name: seed.name, description: null, enabled: true, project: null, triggers: [],
+                        draft: buildWorkflowEditorDraftFromDefinition({ draftId: 'session-seed', ...seed }),
+                    }) };
+                } else if (kind === 'trigger') {
+                    const { storeTriggerWorkflowSeed } = await import('../triggers/triggerWorkflowSeed');
+                    source = { kind: 'new', triggerWorkflowSeedId: storeTriggerWorkflowSeed({ definition,
+                        retarget: { scope: 'account', automationId: TRIGGER_SET_ID, expectedRevision: 1 } }) };
+                } else if (kind === 'example') {
+                    const example = WORKFLOW_STARTER_EXAMPLES_V1[0];
+                    definition = example.definition;
+                    source = { kind: 'new', exampleKey: example.key };
+                } else {
+                    const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
+                    const builtin = getBuiltinWorkflowCatalogV1()[0];
+                    if (!builtin) throw new Error('Expected a built-in authoring source');
+                    definition = builtin.definition;
+                    source = { kind: 'new', builtinId: builtin.id };
+                }
+                const screen = await renderScreen(<WorkflowEditorHostScreen source={source} />);
+                await selectMachine();
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget).toBeTruthy();
+                });
+                expect(readBodyProps()?.draftStore.get().defaults).toEqual(definition.defaults);
+                await screen.unmount();
+            },
+        );
 
         it('leaves the draft honestly unresolved when no projection can name an Agent', async () => {
             daemonProjection.resolves = false;
@@ -3039,11 +3496,11 @@ describe('WorkflowEditorHostScreen composition', () => {
             await act(async () => {});
 
             expect(readBodyProps()?.authoringFacts?.contextualDefaultAgentTarget ?? null).toBeNull();
-            expect(readBodyProps()?.draft.defaults.agentTarget).toBeUndefined();
+            expect(readBodyProps()?.draftStore.get().defaults.agentTarget).toBeUndefined();
 
             // And the draft still says so: an unresolved Agent is refused by the
             // canonical validator rather than papered over at the chip.
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the new Workflow draft');
             const withPrompt = {
                 ...draft,
@@ -3087,8 +3544,8 @@ describe('WorkflowEditorHostScreen composition', () => {
             await selectMachine();
             await act(async () => {});
 
-            expect(readBodyProps()?.draft).toMatchObject({ name: 'Saved workflow' });
-            expect(readBodyProps()?.draft.defaults.agentTarget).toBeUndefined();
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Saved workflow' });
+            expect(readBodyProps()?.draftStore.get().defaults.agentTarget).toBeUndefined();
             await screen.unmount();
         });
 
@@ -3100,7 +3557,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             };
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the new Workflow draft');
             await act(async () => readBodyProps()?.onChange({
                 ...draft,
@@ -3108,11 +3565,11 @@ describe('WorkflowEditorHostScreen composition', () => {
             } as never));
 
             daemonProjection.resolves = true;
-            publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: 'server-a' });
+            publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: 'server-a' }, 'authority');
             await selectMachine();
             await act(async () => {});
 
-            expect(readBodyProps()?.draft.defaults.agentTarget).toEqual(authored);
+            expect(readBodyProps()?.draftStore.get().defaults.agentTarget).toEqual(authored);
             await screen.unmount();
         });
     });
@@ -3128,8 +3585,10 @@ describe('WorkflowEditorHostScreen composition', () => {
         it('opens accepted metadata and run inputs for review without saving or starting', async () => {
             const seedId = storeReviewedCopyFixture();
             const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new', reviewedRunSeedId: seedId }} />);
-            expect(readBodyProps()?.draft.name).toBe('Accepted title');
+            expect(readBodyProps()?.draftStore.get().name).toBe('Accepted title');
             expect(readBodyProps()?.description).toBe('Accepted description');
+        expect(readBodyProps()?.saveStatus?.kind).toBe('unsaved');
+        expect(screen.findByTestId('workflow-editor-save')).not.toBeNull();
             await act(async () => {
                 readBodyProps()?.onChangeDescription?.('Edited description');
             });
@@ -3175,7 +3634,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 <WorkflowEditorHostScreen source={{ kind: 'new', reviewedRunSeedId: seedId }} />,
             );
             await act(async () => {});
-            expect(readBodyProps()?.draft).toMatchObject({ name: 'Account A reviewed run' });
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Account A reviewed run' });
 
             await act(async () => {
                 switchEditorAccountScope({ serverId: 'server-a', accountId: 'account-b' });
@@ -3257,13 +3716,13 @@ describe('WorkflowEditorHostScreen composition', () => {
             const second = makeSource('SECOND');
             await screen.update(editor(second.source));
             expect(second.consumed()).toBe(true);
-            const acceptedId = readBodyProps()!.draft.draftId;
+            const acceptedId = readBodyProps()!.draftStore.get().draftId;
             const assertSecond = () => {
-                expect(readBodyProps()!.draft).toMatchObject({ draftId: acceptedId, blocks: [{ document: { text: 'SECOND' } }] });
+                expect(readBodyProps()!.draftStore.get()).toMatchObject({ draftId: acceptedId, blocks: [{ document: { text: 'SECOND' } }] });
                 expect(screen.findByType(AgentInput).props.value).toBe('SECOND');
             };
             assertSecond();
-            await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draft, name: 'Keep my second seed edit' }));
+            await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep my second seed edit' }));
             const retainedInput = screen.findByType(AgentInput);
             // The route's next publication occurs after intake's passive effect,
             // not in the same act/render that first displays the replacement.
@@ -3305,7 +3764,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 assertSecond();
                 await screen.update(editor({ ...second.source }));
                 assertSecond();
-                expect(readBodyProps()!.draft.name).toBe('Keep my second seed edit');
+                expect(readBodyProps()!.draftStore.get().name).toBe('Keep my second seed edit');
             } finally {
                 vi.useRealTimers();
             }
@@ -3324,20 +3783,22 @@ describe('WorkflowEditorHostScreen composition', () => {
             </React.Suspense>);
             expect(readTriggerWorkflowSeed(seedId)).not.toBeNull();
             await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', triggerWorkflowSeedId: seedId }} />);
-            expect(readBodyProps()!.draft.blocks).toEqual(definition.blocks);
+            expect(readBodyProps()!.draftStore.get().blocks).toEqual(definition.blocks);
             expect(readTriggerWorkflowSeed(seedId)).toBeNull();
         });
 
         it('starts fresh history when import opens a different review document', async () => {
             await serveMountedDraftActionHome();
             const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const original = readBodyProps()!.draft;
+            const original = readBodyProps()!.draftStore.get();
             await act(async () => readBodyProps()!.onChange({ ...original, name: 'Previous document' }, 'Rename'));
             expect(readBodyProps()!.history?.undoLabel).toBe('Rename');
             workflowDocumentPicker.pick.mockResolvedValueOnce(JSON.stringify({ kind: 'happier.workflow', version: 1,
                 definition: createWorkflowDefinitionFixture({ defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }) }));
             await act(async () => readBodyProps()!.onImportJson?.());
-            expect(readBodyProps()!.draft.draftId).not.toBe(original.draftId);
+            expect(readBodyProps()!.draftStore.get().draftId).not.toBe(original.draftId);
+            expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
+            expect(screen.findByTestId('workflow-editor-save')).not.toBeNull();
             expect(readBodyProps()!.history?.undoLabel).toBeNull();
             expect(readBodyProps()!.history?.redoLabel).toBeNull();
             await screen.unmount();
@@ -3374,14 +3835,14 @@ describe('WorkflowEditorHostScreen composition', () => {
             const screen = await renderScreen(
                 <WorkflowEditorHostScreen source={{ kind: 'new', reviewedRunSeedId: seedA }} />,
             );
-            expect(readBodyProps()?.draft).toMatchObject({ name: 'Run A' });
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Run A' });
 
             await screen.update(
                 <WorkflowEditorHostScreen source={{ kind: 'new', reviewedRunSeedId: seedB }} />,
             );
             await act(async () => {});
 
-            expect(readBodyProps()?.draft).toMatchObject({
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({
                 name: 'Run B',
                 blocks: [expect.objectContaining({
                     document: expect.objectContaining({ text: 'Prompt B' }),
@@ -3399,7 +3860,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             workflowDocumentPicker.pick.mockImplementationOnce(() => importSelection.promise);
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const firstDraft = readBodyProps()?.draft;
+            const firstDraft = readBodyProps()?.draftStore.get();
             if (!firstDraft) throw new Error('Expected the first new Workflow draft');
             await act(async () => readBodyProps()?.onChange({ ...firstDraft, name: 'Unsaved source A' }));
 
@@ -3409,8 +3870,8 @@ describe('WorkflowEditorHostScreen composition', () => {
             await act(async () => {});
 
             expect(workflowDocumentPicker.pick).toHaveBeenCalledTimes(1);
-            expect(readBodyProps()?.draft).toMatchObject({ name: '' });
-            expect(readBodyProps()?.draft?.draftId).not.toBe(firstDraft.draftId);
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: '' });
+            expect(readBodyProps()?.draftStore.get()?.draftId).not.toBe(firstDraft.draftId);
 
             importSelection.resolve(null);
             await act(async () => {});
@@ -3436,7 +3897,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             });
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the new Workflow draft');
 
             await act(async () => readBodyProps()?.onChange({
@@ -3461,7 +3922,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             // closed, and the page-level Run as choice is the new source's own.
             expect(screen.findByTestId('workflow-run-inputs-main')).toBeNull();
             expect(readBodyProps()?.executionTarget).toBe('session');
-            expect(readBodyProps()?.draft).toMatchObject({ name: 'Definition B' });
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Definition B' });
             await act(async () => readBodyProps()?.onRunNow?.());
             expect(screen.findByTestId('workflow-run-inputs-main')).toBeNull();
             expect(screen.findByTestId('workflow-run-inputs-preview')).not.toBeNull();
@@ -3492,7 +3953,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             });
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the new Workflow draft');
             await act(async () => readBodyProps()?.onChange({
                 ...draft,
@@ -3515,7 +3976,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: definitionB }} />,
             );
             await act(async () => {});
-            expect(readBodyProps()?.draft).toMatchObject({ name: 'Definition B' });
+            expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Definition B' });
 
             slowCreate.resolve({
                 definitionId: createdDefinitionId(),
@@ -3548,7 +4009,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             });
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the new Workflow draft');
             await act(async () => readBodyProps()?.onChange({
                 ...draft,
@@ -3566,7 +4027,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect((readBodyProps()?.triggersSection as React.ReactElement<{ draft: { adds: unknown[] } }>).props.draft.adds)
                 .toEqual([{ clientId: 'c1', trigger }]);
 
-            await saveWithTriggerConfirmation();
+            await saveDirectlyFromUi();
 
             expect(order).toEqual(['definition', 'trigger']);
             expect(editorAutomations.creates).toEqual([expect.objectContaining({ workflowDefinitionId: createdDefinitionId(),
@@ -3585,7 +4046,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
                 } }), metadata: { title: 'Reopened saved definition' } });
             await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-            expect(readBodyProps()?.draft.name).toBe('Reopened saved definition');
+            expect(readBodyProps()?.draftStore.get().name).toBe('Reopened saved definition');
             expect((readBodyProps()?.triggersSection as React.ReactElement<{ draft: { adds: unknown[] } }>).props.draft.adds).toHaveLength(0);
             await screen.unmount();
         });
@@ -3602,8 +4063,11 @@ describe('WorkflowEditorHostScreen composition', () => {
                 defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
                 blocks: [{ kind: 'step', id: 'digest', document: { text: 'Morning digest', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
             };
-            editorAutomations.rows.set(TRIGGER_SET_ID, createWorkflowAutomationDetailFixture({ id: TRIGGER_SET_ID,
-                revision: 8, triggerId: 'trigger-2', definition: WorkflowDefinitionV1Schema.parse(definition) }));
+            const triggerRow = createWorkflowAutomationDetailFixture({ id: TRIGGER_SET_ID,
+                revision: 8, triggerId: 'trigger-2', definition: WorkflowDefinitionV1Schema.parse(definition) });
+            if (triggerRow.executionRecipe?.v !== 2) throw new Error('Expected the current Workflow recipe');
+            editorAutomations.rows.set(TRIGGER_SET_ID, { ...triggerRow, managedTarget: null,
+                executionRecipe: { ...triggerRow.executionRecipe, managedTarget: null } });
             const seedId = storeTriggerWorkflowSeed({
                 definition: definition as never,
                 retarget: { scope: 'account', automationId: TRIGGER_SET_ID, triggerId: 'trigger-1', expectedRevision: 3 },
@@ -3616,13 +4080,13 @@ describe('WorkflowEditorHostScreen composition', () => {
             });
             await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', triggerWorkflowSeedId: replacementSeedId }} />);
             // The trigger's own steps open as the draft; nothing is written yet.
-            expect(readBodyProps()?.draft.blocks[0]).toMatchObject({ id: 'digest' });
+            expect(readBodyProps()?.draftStore.get().blocks[0]).toMatchObject({ id: 'digest' });
             expect(editorAutomations.reconciles).toHaveLength(0);
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the seeded draft');
             await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Morning digest' } as never));
 
-            await saveWithTriggerConfirmation();
+            await saveDirectlyFromUi();
             expect(editorAutomations.reconciles).toEqual([{ automationId: TRIGGER_SET_ID, input: expect.objectContaining({
                 expectedTemplateVersion: 8, workflowDefinitionId: createdDefinitionId(),
                 triggers: [{ kind: 'existing', triggerId: 'trigger-2', expectedRevision: 1 }], removedTriggers: [],
@@ -3634,7 +4098,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             definitionActions.update.mockImplementationOnce(async (request) => ({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
                 access: 'owner', revision: { headerVersion: 1, bodyVersion: 2 }, definition: WorkflowDefinitionV1Schema.parse(request.definition), metadata: request.metadata }));
             rejectRetarget = false;
-            await saveWithTriggerConfirmation();
+            await saveDirectlyFromUi();
             expect(editorAutomations.reconciles).toHaveLength(2);
             expect(editorAutomations.rows.get(TRIGGER_SET_ID)?.workflowDefinitionId).toBe(createdDefinitionId());
             expect(readBodyProps()?.saveStatus?.kind).not.toBe('failed');
@@ -3655,7 +4119,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             runStartSpy.mockImplementationOnce(() => admission.promise);
             const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
             const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-            const draft = readBodyProps()?.draft;
+            const draft = readBodyProps()?.draftStore.get();
             if (draft === undefined) throw new Error('Expected the new Workflow draft');
             await act(async () => readBodyProps()?.onChange({
                 ...draft,
@@ -3714,7 +4178,7 @@ describe('WorkflowEditorHostScreen composition', () => {
     it('keeps the editor mounted while the composer collects Run inputs', async () => {
         const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const initialDraft = readBodyProps()?.draft;
+        const initialDraft = readBodyProps()?.draftStore.get();
         expect(initialDraft).toBeDefined();
         if (initialDraft === undefined) throw new Error('Expected the new Workflow draft');
 
@@ -3729,9 +4193,9 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(runStartSpy).not.toHaveBeenCalled();
         await act(async () => invokeTestInstanceHandler(runComposerInput(screen), 'onChangeText', 'Unsubmitted topic'));
         await dismissRunComposer(screen);
-        expect(screen.findByTestId('workflow-run-inputs-main')).toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-main')).toBeNull());
         expect(screen.findAllByType(WorkflowEditorBody)).toHaveLength(1);
-        expect(readBodyProps()?.draft.draftId).toBe(initialDraft.draftId);
+        expect(readBodyProps()?.draftStore.get().draftId).toBe(initialDraft.draftId);
         await act(async () => readBodyProps()?.onRunNow?.());
         expect(runComposerInput(screen).props.value).toBe('Unsubmitted topic');
         expect(runStartSpy).not.toHaveBeenCalled();
@@ -3747,7 +4211,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect.objectContaining({ kind: 'detached_run', available: false }),
         ]));
 
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (draft === undefined) throw new Error('Expected the new Workflow draft');
         await act(async () => readBodyProps()?.onChange({
             ...draft,
@@ -3799,7 +4263,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         await prepareRunAdmissionFixture();
         const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
-        const draft = readBodyProps()?.draft;
+        const draft = readBodyProps()?.draftStore.get();
         if (draft === undefined) throw new Error('Expected the new Workflow draft');
         const authored = {
             ...draft,
@@ -3882,12 +4346,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         await screen.pressByTestIdAsync('workflow-editor-error-action');
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(readBodyProps()?.draft.name).toBe('Recovered workflow');
+            expect(readBodyProps()?.draftStore.get().name).toBe('Recovered workflow');
         });
 
         expect(artifactReads).toEqual([SAVED_TRIGGER_WORKFLOW_ID, SAVED_TRIGGER_WORKFLOW_ID]);
         expect(definitionActions.get).toHaveBeenCalledOnce();
-        expect(readBodyProps()?.draft).toMatchObject({ name: 'Recovered workflow' });
+        expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Recovered workflow' });
     });
 
     it('offers Share for a saved workflow, opening the one document share sheet with its Artifact', async () => {
@@ -3952,7 +4416,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} />);
         await act(async () => {});
-        expect(readBodyProps()?.draft).toMatchObject({ name: 'Account A private prompt' });
+        expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Account A private prompt' });
 
         await act(async () => {
             switchEditorAccountScope({ serverId: 'server-a', accountId: 'account-b' });
@@ -3963,7 +4427,7 @@ describe('WorkflowEditorHostScreen composition', () => {
 
         accountB.resolve(definition('Account B private prompt'));
         await act(async () => {});
-        expect(readBodyProps()?.draft).toMatchObject({ name: 'Account B private prompt' });
+        expect(readBodyProps()?.draftStore.get()).toMatchObject({ name: 'Account B private prompt' });
     });
 });
 

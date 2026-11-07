@@ -32,6 +32,7 @@ import {
   AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE,
   AGENT_INPUT_ACTION_CHIP_PRESSED_STYLE,
   AGENT_INPUT_ACTION_CHIP_STYLE,
+  AGENT_INPUT_QUIET_ICON_SIZE_PX,
   resolveAgentInputActionChipTextStyle,
   resolveAgentInputPanelLayoutStyle,
 } from './agentInputChromeStyles';
@@ -50,7 +51,7 @@ export type {
 
 const NO_ANCHOR: React.RefObject<View | null> = { current: null };
 /** The field accessories' drawn circle; its target grows to the platform minimum around it. */
-const ACCESSORY_VISUAL_SIZE = 24;
+const ACCESSORY_VISUAL_SIZE = AGENT_INPUT_QUIET_ICON_SIZE_PX;
 
 const styles = StyleSheet.create((theme) => ({
   /** The document card's own frame (`AgentInput` `container` + `containerDocument`). */

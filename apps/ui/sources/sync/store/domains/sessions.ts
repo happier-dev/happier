@@ -38,7 +38,6 @@ import {
     loadSessionModelModes,
     loadSessionPermissionModeUpdatedAts,
     loadSessionPermissionModes,
-    loadSessionActionDrafts,
     loadSessionReviewCommentsDrafts,
     loadWorkspaceReviewCommentsDrafts,
     saveSessionLastViewed,
@@ -46,7 +45,6 @@ import {
     saveSessionModelModes,
     saveSessionPermissionModeUpdatedAts,
     saveSessionPermissionModes,
-    saveSessionActionDrafts,
     saveSessionReviewCommentsDrafts,
     saveWorkspaceReviewCommentsDrafts,
 } from '../../domains/state/sessionPersistence';
@@ -72,8 +70,6 @@ import {
 import { applyReachableTargetsToSessionListRenderables } from '../../domains/session/listing/applyReachableTargetsToSessionListRenderables';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
-import type { SessionActionDraftStatus } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
@@ -85,9 +81,13 @@ import {
 } from '@/sync/state/mutators';
 
 import type { StoreGet, StoreSet } from './_shared';
-import { areSessionValuesDeepEqual, areStoredSessionsEqual, reuseEqualSessionObjectFields } from './areStoredSessionsEqual';
+import { readStoreQuery } from './_shared';
+import { areSessionValuesDeepEqual, areStoredSessionsEqual } from './areStoredSessionsEqual';
+import { areSessionPublicationFactsEqual, resolveSessionRuntimePublication } from './sessionRuntimePublication';
 import { applyAgentStateUpdateToSessionMessages } from './messages';
-import type { SessionMessages } from './messages';
+import { hasSessionMessageToolChanges, publishSessionMessageChanges, type SessionMessageChange } from '../sessionMessageChanges';
+import { applySessionUserMessageHistory, removeSessionUserMessageHistory, type SessionUserMessageHistory } from '../sessionUserMessageHistory';
+import type { MessagesDomain, SessionMessages } from './messages';
 import {
     canReuseTranscriptRenderableAggregateRequestStates,
     isTranscriptRenderableAggregate,
@@ -99,6 +99,7 @@ import {
     finalizeSessionListIndexUpdate,
     finalizeSessionListRenderablePublication,
     saveWarmSessionCacheForState,
+    type OrdinarySessionMembershipChange,
 } from './sessionListIndexFinalization';
 import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
 import { publishSessionListBotSelection, type SessionListBotRowsByServerId } from './sessionListBotSelection';
@@ -106,6 +107,7 @@ import { EMPTY_SESSION_RELATIONS, type SessionRelationsByServerId } from './sess
 import { persistSessionModelData } from './sessionModelPersistence';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveSessionInputModes } from './resolveSessionInputModes';
+import { readSessionProjectMetadata, resolveManagedSessionScmScope, resolveSessionScmScopeFromState } from './managedSessionScmScope';
 import {
     clearSessionRepositoryTreeExpandedPathsForState,
     clearWorkspaceRepositoryTreeExpandedPathsForState,
@@ -118,6 +120,7 @@ import {
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { createKeyedTimeoutScheduler } from '@/utils/time/keyedTimeoutScheduler';
 import {
@@ -147,6 +150,7 @@ export {
     classifySessionTupleApplyCurrentness,
     type SessionTupleApplyCurrentness,
 } from '@/sync/domains/session/sessionTupleApplyCurrentness';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 /**
  * Does a Home-addressed Session deletion also retire the shared per-id carrier?
@@ -376,7 +380,6 @@ export type SessionsDomain = {
     workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     reviewCommentsDraftsByWorkspaceCacheKey: Record<string, ReviewCommentDraft[]>;
-    sessionActionDraftsByAddressKey: Record<string, SessionActionDraft[]>;
     sessionLocalStateScope: ServerAccountScope | null;
     isDataReady: boolean;
     isSessionDraftsReady: boolean;
@@ -430,7 +433,7 @@ export type SessionsDomain = {
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
     markSessionViewed: (sessionId: string) => void;
     /** Applies the server's authoritative responsible Account after a committed mutation. */
-    applySessionResponsibleAccount: (sessionId: string, responsibleAccountId: string | null, scope: ServerAccountScope, responsibleAccount?: import('@happier-dev/protocol').SessionAccessAccountSummaryV1 | null) => void;
+    applySessionResponsibleAccount: (sessionId: string, responsibleAccountId: string | null, scope: ServerAccountScope, responsibleAccount?: import('@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1').SessionAccessAccountSummaryV1 | null) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode, context?: SessionModelOptionsContext) => void;
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
@@ -441,15 +444,6 @@ export type SessionsDomain = {
     setWorkspaceReviewCommentDraftIncluded: (workspaceCacheKey: string, commentId: string, included: boolean) => void;
     deleteWorkspaceReviewCommentDraft: (workspaceCacheKey: string, commentId: string, expectedDraft?: ReviewCommentDraft) => void;
     clearWorkspaceReviewCommentDrafts: (workspaceCacheKey: string) => void;
-    createSessionActionDraft: (
-        scope: ServerAccountScope,
-        address: SessionAddress,
-        draft: Readonly<{ actionId: string; input?: Record<string, unknown> }>,
-    ) => SessionActionDraft;
-    updateSessionActionDraftInput: (scope: ServerAccountScope, address: SessionAddress, draftId: string, patch: Record<string, unknown>) => void;
-    setSessionActionDraftStatus: (scope: ServerAccountScope, address: SessionAddress, draftId: string, status: SessionActionDraftStatus, error?: string | null) => void;
-    deleteSessionActionDraft: (scope: ServerAccountScope, address: SessionAddress, draftId: string) => void;
-    clearSessionActionDrafts: (scope: ServerAccountScope, address: SessionAddress) => void;
 
     getProject: (projectId: string) => import('../../runtime/orchestration/projectManager').Project | null;
     getProjectForSession: (sessionId: string, serverId?: string | null) => import('../../runtime/orchestration/projectManager').Project | null;
@@ -471,9 +465,6 @@ export type SessionsDomain = {
             status: ScmStatus | null;
         }>>,
     ) => void;
-    getWorkspaceScmTouchedPathsForSession: (sessionId: string, serverId?: string | null) => string[];
-    markWorkspaceScmTouchedPathsForSession: (sessionId: string, paths: string[], serverId?: string | null) => void;
-    pruneWorkspaceScmTouchedPathsForSession: (sessionId: string, activePaths: Set<string>, serverId?: string | null) => void;
     getSessionProjectScmCommitSelectionPaths: (sessionId: string, serverId?: string | null) => string[];
     markSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[], serverId?: string | null) => void;
     unmarkSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[], serverId?: string | null) => void;
@@ -505,9 +496,6 @@ export type SessionsDomain = {
     getWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase) => ProjectScmSnapshotError | null;
     updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null) => void;
     updateWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase, error: ProjectScmSnapshotError | null) => void;
-    getWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase) => string[];
-    markWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, paths: string[], touchedAt?: number) => void;
-    pruneWorkspaceScmTouchedPaths: (scope: WorkspaceScopeBase, activePaths: Set<string>) => void;
     getWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => string[];
     markWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[], selectedAt?: number) => void;
     unmarkWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
@@ -539,6 +527,8 @@ type SessionsDomainDependencies = {
     machineDisplayById: Record<string, import('../../domains/machines/machineDisplayRenderable').MachineDisplayRenderable>;
     machineListByServerId?: Readonly<Record<string, readonly Machine[] | null | undefined>>;
     sessionMessages: Record<string, SessionMessages>;
+    sessionMessageToolVersion: MessagesDomain['sessionMessageToolVersion'];
+    sessionUserMessageHistory: SessionUserMessageHistory;
     sessionMessagesHistoryStartLoaded: Record<string, true>;
     profile: { id: string };
     // Keep resilient: older settings payloads (or partial boot states) may not yet include this key.
@@ -559,12 +549,6 @@ const resumingTimeouts = createKeyedTimeoutScheduler();
 const SESSION_THINKING_GRACE_TIMEOUT_MS = 3_000;
 const thinkingGraceTimeouts = createKeyedTimeoutScheduler();
 const SESSION_LIST_WARM_CACHE_PROGRESS_SAVE_DEBOUNCE_MS = 1_000;
-
-let actionDraftIdCounter = 0;
-function createActionDraftId(nowMs: number): string {
-    actionDraftIdCounter += 1;
-    return `action_draft_${nowMs}_${actionDraftIdCounter}`;
-}
 
 type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | number };
 
@@ -742,7 +726,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let reviewCommentsDraftsByWorkspaceCacheKey = loadWorkspaceReviewCommentsDrafts();
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
     let workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]> = {};
-    let sessionActionDraftsByAddressKey: Record<string, SessionActionDraft[]> = {};
     let deferredWarmCacheSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const clearDeferredWarmCacheSave = (): void => {
@@ -800,15 +783,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionLastViewed = loadSessionLastViewed(scope);
         reviewCommentsDraftsBySessionId = loadSessionReviewCommentsDrafts(scope);
         reviewCommentsDraftsByWorkspaceCacheKey = loadWorkspaceReviewCommentsDrafts(scope);
-        sessionActionDraftsByAddressKey = {
-            ...Object.fromEntries(Object.entries(sessionActionDraftsByAddressKey).filter(([, drafts]) => (
-                drafts[0]?.address.serverId !== scope.serverId || drafts[0]?.accountId === scope.accountId
-            ))),
-            ...loadSessionActionDrafts(scope),
-        };
     };
     const resolveWorkspaceTargetForSessionInStore = (sessionId: string) =>
         resolveWorkspaceTargetForSessionFromState(get(), sessionId);
+    const resolveSessionScmScope = (sessionId: string, serverId?: string | null): WorkspaceScopeBase | null =>
+        resolveSessionScmScopeFromState(get(), sessionId, serverId);
     const ensureProjectManagerSession = (sessionId: string): void => {
         const state = get();
         const session = state.sessions[sessionId];
@@ -889,8 +868,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             && nextArchivedMembershipByServerId === state.archivedSessionListMembershipByServerId
             && nextIndexByServerId === state.sessionListIndexByServerId
             && !didRemoveQueryMembership) return state;
-        const removedSessionIds = [...new Set(Object.entries(state.ordinarySessionListMembershipByServerId)
-            .flatMap(([key, ids]) => areServerProfileIdentifiersEquivalent(key, serverId) ? ids ?? [] : []))];
+        const ordinaryMembershipChanges = Object.entries(state.ordinarySessionListMembershipByServerId)
+            .flatMap(([key, ids]) => areServerProfileIdentifiersEquivalent(key, serverId)
+                ? [{ serverId: key, addedSessionIds: [], removedSessionIds: ids ?? [] }] : []);
+        const removedSessionIds = [...new Set(ordinaryMembershipChanges.flatMap(change => change.removedSessionIds))];
         const nextStateBase = {
             ...state,
             sessionListRowsByServerId: nextRowsByServerId,
@@ -912,7 +893,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 saveImmediately: saveWarmSessionCacheImmediately,
                 scheduleDeferredSave: scheduleWarmSessionCacheSave,
             },
-            removedSessionIds.length > 0 ? { changedSessionIds: [], removedSessionIds } : undefined,
+            removedSessionIds.length > 0 ? { changedSessionIds: [], removedSessionIds, ordinaryMembershipChanges } : undefined,
         );
     });
 
@@ -1001,7 +982,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey,
         reviewCommentsDraftsBySessionId,
         reviewCommentsDraftsByWorkspaceCacheKey,
-        sessionActionDraftsByAddressKey,
         sessionLocalStateScope,
         isDataReady: false,
         isSessionDraftsReady: false,
@@ -1040,20 +1020,16 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     ? state.sessionLastViewed : { ...sessionLastViewed };
                 const nextSessionReviews = areSessionValuesDeepEqual(state.reviewCommentsDraftsBySessionId, reviewCommentsDraftsBySessionId)
                     ? state.reviewCommentsDraftsBySessionId
-                    : reuseEqualSessionObjectFields(state.reviewCommentsDraftsBySessionId, reviewCommentsDraftsBySessionId);
+                    : retainDeep(state.reviewCommentsDraftsBySessionId, reviewCommentsDraftsBySessionId);
                 const nextWorkspaceReviews = areSessionValuesDeepEqual(state.reviewCommentsDraftsByWorkspaceCacheKey, reviewCommentsDraftsByWorkspaceCacheKey)
                     ? state.reviewCommentsDraftsByWorkspaceCacheKey
-                    : reuseEqualSessionObjectFields(state.reviewCommentsDraftsByWorkspaceCacheKey, reviewCommentsDraftsByWorkspaceCacheKey);
-                const nextActionDrafts = areSessionValuesDeepEqual(state.sessionActionDraftsByAddressKey, sessionActionDraftsByAddressKey)
-                    ? state.sessionActionDraftsByAddressKey
-                    : reuseEqualSessionObjectFields(state.sessionActionDraftsByAddressKey, sessionActionDraftsByAddressKey);
+                    : retainDeep(state.reviewCommentsDraftsByWorkspaceCacheKey, reviewCommentsDraftsByWorkspaceCacheKey);
                 const nextScope = areServerAccountScopesEqual(state.sessionLocalStateScope, scope)
                     ? state.sessionLocalStateScope : scope;
                 if (nextSessions === state.sessions
                     && nextLastViewed === state.sessionLastViewed
                     && nextSessionReviews === state.reviewCommentsDraftsBySessionId
                     && nextWorkspaceReviews === state.reviewCommentsDraftsByWorkspaceCacheKey
-                    && nextActionDrafts === state.sessionActionDraftsByAddressKey
                     && nextScope === state.sessionLocalStateScope) return state;
 
                 return {
@@ -1062,7 +1038,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     sessionLastViewed: nextLastViewed,
                     reviewCommentsDraftsBySessionId: nextSessionReviews,
                     reviewCommentsDraftsByWorkspaceCacheKey: nextWorkspaceReviews,
-                    sessionActionDraftsByAddressKey: nextActionDrafts,
                     sessionLocalStateScope: nextScope,
                 };
             });
@@ -1077,23 +1052,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             sessionLastViewed = {};
             reviewCommentsDraftsBySessionId = {};
             reviewCommentsDraftsByWorkspaceCacheKey = {};
-            sessionActionDraftsByAddressKey = {};
             set((state) => {
                 const lastViewed = Object.keys(state.sessionLastViewed).length === 0 ? state.sessionLastViewed : {};
                 const sessionReviews = Object.keys(state.reviewCommentsDraftsBySessionId).length === 0 ? state.reviewCommentsDraftsBySessionId : {};
                 const workspaceReviews = Object.keys(state.reviewCommentsDraftsByWorkspaceCacheKey).length === 0 ? state.reviewCommentsDraftsByWorkspaceCacheKey : {};
-                const actionDrafts = Object.keys(state.sessionActionDraftsByAddressKey).length === 0 ? state.sessionActionDraftsByAddressKey : {};
                 if (state.sessionLocalStateScope === null
                     && lastViewed === state.sessionLastViewed
                     && sessionReviews === state.reviewCommentsDraftsBySessionId
-                    && workspaceReviews === state.reviewCommentsDraftsByWorkspaceCacheKey
-                    && actionDrafts === state.sessionActionDraftsByAddressKey) return state;
+                    && workspaceReviews === state.reviewCommentsDraftsByWorkspaceCacheKey) return state;
                 return {
                     ...state,
                     sessionLastViewed: lastViewed,
                     reviewCommentsDraftsBySessionId: sessionReviews,
                     reviewCommentsDraftsByWorkspaceCacheKey: workspaceReviews,
-                    sessionActionDraftsByAddressKey: actionDrafts,
                     sessionLocalStateScope: null,
                 };
             });
@@ -1179,10 +1150,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...nextExpansionState,
             };
         }),
-        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[], source = 'full') => syncPerformanceTelemetry.measure(
+        applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: "online" | number })[], source: SessionPublicationSource = 'full') => syncPerformanceTelemetry.measure(
             'sync.store.sessions.apply',
             { sessions: sessions.length },
-            () => set((state) => {
+            () => {
+            const messageChanges = new Map<string, readonly SessionMessageChange[]>();
+            set((state) => {
             const localNowMs = Date.now();
 
             // Drafts are persisted out-of-band from the session payload, so we must always consult the
@@ -1205,6 +1178,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let projectAuthoringSessions = state.projectAuthoringSessions;
             let mergedRowsByServerId = state.sessionListRowsByServerId;
             let mergedOrdinaryMembershipByServerId = state.ordinarySessionListMembershipByServerId;
+            const ordinaryMembershipChanges: OrdinarySessionMembershipChange[] = [];
+            let ordinaryMembershipDeltaComplete = true;
             let mergedArchivedMembershipByServerId = state.archivedSessionListMembershipByServerId;
             const inactiveOwnerServerIdsNeedingIndexRebuild = new Set<string>();
             let mergedRenderables: Record<string, SessionListRenderableSession> = activeRows;
@@ -1369,8 +1344,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     }
                 }
 
-                const nextSession: Session = {
+                const nextSession = resolveSessionRuntimePublication(previousSession, {
                     ...session,
+                    serverId: ownerServerId ?? session.serverId,
                     // Turn facts travel through the shell Session to transcript consumers.
                     // Reuse equal hydration echoes so reference-based subscribers stay local.
                     sessionTurns: areSessionValuesDeepEqual(previousSession?.sessionTurns, session.sessionTurns)
@@ -1398,15 +1374,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     permissionModeUpdatedAt: mergedPermissionModeUpdatedAt,
                     modelMode: mergedModelMode,
                     modelModeUpdatedAt: mergedModelModeUpdatedAt,
-                };
-                // Preserve the full response clock independently of merged compact-list lifecycle facts.
-                const publicationAddress = normalizeSessionAddress(nextSession.serverId, nextSession.id);
-                if (publicationAddress && source === 'full') {
-                    sessionRuntimeObservations.recordFullPublication(publicationAddress, incomingSession.updatedAt, nextSession);
-                }
-                const mergedSession = previousSession && areStoredSessionsEqual(previousSession, nextSession)
+                } satisfies Session, incomingSession, source === 'full' ? incomingSession.updatedAt : undefined);
+                const mergedSession = previousSession && areSessionPublicationFactsEqual(previousSession, nextSession)
                     ? previousSession
-                    : reuseEqualSessionObjectFields(previousSession, nextSession);
+                    : retainDeep(previousSession, nextSession);
                 if (mergedSession !== previousSession) {
                     changedSessionCount += 1;
                     if (mergedSessions === state.sessions) {
@@ -1436,7 +1407,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     : currentRenderable;
                 const mergedRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderable)
                     ? previousRenderable
-                    : nextRenderable;
+                    : retainDeep(previousRenderable, nextRenderable);
                 const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, mergedRenderable, {
                     sessionListIndexSettings,
                 });
@@ -1468,6 +1439,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         mergedRowsByServerId = publishSessionListHomeValue(mergedRowsByServerId, ownerServerId, nextOwnerRows);
                         if (isActiveOwner) mergedRenderables = nextOwnerRows;
                         const ordinaryKey = resolveSessionListHomeKey(mergedOrdinaryMembershipByServerId, ownerServerId);
+                        if (ordinaryKey && ordinaryKey !== ownerServerId) ordinaryMembershipDeltaComplete = false;
                         const archivedKey = resolveSessionListHomeKey(mergedArchivedMembershipByServerId, ownerServerId);
                         mergedOrdinaryMembershipByServerId = publishSessionListHomeValue(mergedOrdinaryMembershipByServerId,
                             ownerServerId, ordinaryKey ? mergedOrdinaryMembershipByServerId[ordinaryKey] : undefined);
@@ -1483,6 +1455,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             const ordinaryMembership = mergedOrdinaryMembershipByServerId[ownerServerId] ?? [];
                             const archivedMembership = mergedArchivedMembershipByServerId[ownerServerId] ?? [];
                             if (mergedRenderable.archivedAt != null && ordinaryMembership.includes(session.id)) {
+                                ordinaryMembershipChanges.push({ serverId: ownerServerId, addedSessionIds: [], removedSessionIds: [session.id] });
                                 mergedOrdinaryMembershipByServerId = {
                                     ...mergedOrdinaryMembershipByServerId,
                                     [ownerServerId]: ordinaryMembership.filter((id) => id !== session.id),
@@ -1498,6 +1471,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                                     inactiveOwnerServerIdsNeedingIndexRebuild.add(ownerServerId);
                                 }
                             } else if (mergedRenderable.archivedAt == null && archivedMembership.includes(session.id)) {
+                                ordinaryMembershipChanges.push({ serverId: ownerServerId, addedSessionIds: [session.id], removedSessionIds: [] });
                                 mergedArchivedMembershipByServerId = {
                                     ...mergedArchivedMembershipByServerId,
                                     [ownerServerId]: archivedMembership.filter((id) => id !== session.id),
@@ -1612,6 +1586,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
             // Process AgentState updates for sessions that already have messages loaded
             let updatedSessionMessages = state.sessionMessages;
+            let didToolMessagesChange = false;
+            let updatedSessionUserMessageHistory = state.sessionUserMessageHistory;
 
             measureSessionApplyPhase(
                 'sync.store.sessions.apply.messageReconcile',
@@ -1631,6 +1607,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         agentState: newSession.agentState,
                         mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[session.id] === true,
                     });
+                    if (updated.messageChanges.length > 0) messageChanges.set(session.id, updated.messageChanges);
+                    didToolMessagesChange ||= hasSessionMessageToolChanges(updated.messageChanges);
+                    updatedSessionUserMessageHistory = applySessionUserMessageHistory(
+                        updatedSessionUserMessageHistory, session.id, updated.sessionMessages, updated.messageChanges,
+                    );
                     if (updated.sessionMessages !== existingSessionMessages) {
                         reconciledSessionMessageCount += 1;
                         if (updatedSessionMessages === state.sessionMessages) {
@@ -1696,7 +1677,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     });
                     const mergedRenderable = areSessionListRenderablesEqual(currentRenderable, nextRenderable)
                         ? currentRenderable
-                        : nextRenderable;
+                        : retainDeep(currentRenderable, nextRenderable);
                     const renderableChangeImpact = resolveSessionListRenderableChangeImpact(currentRenderable, mergedRenderable, {
                         sessionListIndexSettings,
                     });
@@ -1781,6 +1762,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 archivedSessionListMembershipByServerId: mergedArchivedMembershipByServerId,
                 sessionListIndexByServerId: mergedSessionListIndexByServerId,
                 sessionMessages: updatedSessionMessages,
+                sessionMessageToolVersion: state.sessionMessageToolVersion + (didToolMessagesChange ? 1 : 0),
+                sessionUserMessageHistory: updatedSessionUserMessageHistory,
             };
 
             const needsActiveProjectionRepair = !needsSessionListIndexRebuild
@@ -1794,6 +1777,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 && mergedRowsByServerId === state.sessionListRowsByServerId
                 && mergedSessionListIndexByServerId === state.sessionListIndexByServerId
                 && updatedSessionMessages === state.sessionMessages
+                && updatedSessionUserMessageHistory === state.sessionUserMessageHistory
                 && !needsSessionListIndexRebuild
                 && !needsProjectManagerUpdate
             ) {
@@ -1847,9 +1831,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     changedSessionIds: Array.from(changedRenderableSessionIds),
                     removedSessionIds: [],
                     hydratedSessionIds: sessions.map(session => session.id),
+                    ordinaryMembershipChanges: ordinaryMembershipDeltaComplete ? ordinaryMembershipChanges : undefined,
                 },
             );
-            }),
+            });
+            for (const [sessionId, changes] of messageChanges) publishSessionMessageChanges(sessionId, changes);
+            },
         ),
         applyServerScopedSessionListRows: (serverIdRaw, sessions, options) => {
             // A paged reader advances only over its own accepted publications, never over
@@ -1884,13 +1871,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     const withStaleFields = preserveSessionListRenderableStaleFields(previous,
                         incoming.serverId === serverId ? incoming : { ...incoming, serverId });
                     let next = preserveSessionListRenderableTransientState(previous, withStaleFields);
+                    next = resolveSessionRuntimePublication(previous, next, incoming);
                     if (didPreserveRenderableMetadata(previous, incoming, next)) staleMetadataPreservedCount += 1;
                     if (didPreserveRenderablePendingFlags(previous, incoming, next)) stalePendingFlagsPreservedCount += 1;
-                    if (areSessionListRenderablesEqual(previous, next)) {
+                    if (areSessionPublicationFactsEqual(previous, next)) {
                         if (publishedRows && previous) publishedRows[incoming.id] = previous;
                         continue;
                     }
-                    next = reuseEqualSessionObjectFields(previous, next);
+                    next = retainDeep(previous, next);
                     if (publishedRows) publishedRows[incoming.id] = next;
                     if (nextRows === previousRows) nextRows = { ...previousRows };
                     nextRows[incoming.id] = next;
@@ -2106,6 +2094,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     shouldPublishDelta ? {
                         changedSessionIds: publishedChangedSessionIds,
                         removedSessionIds: removedOrdinarySessionIds,
+                        ordinaryMembershipChanges: hasScopeAliases ? undefined : [{ serverId,
+                            addedSessionIds: addedOrdinarySessionIds, removedSessionIds: removedOrdinarySessionIds }],
                     } : undefined,
                 );
             });
@@ -2138,6 +2128,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let didAnyWarmCacheRelevantRenderableChange = false;
             let changedCount = 0;
             const changedSessionIds: string[] = [];
+            const addedOrdinarySessionIds = new Set<string>();
+            const removedOrdinarySessionIds = new Set<string>();
             const touchedSessionIds = new Set<string>();
             let missingCount = 0;
             let noopPatchCount = 0;
@@ -2155,11 +2147,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     patch,
                 );
                 if (next.serverId !== serverId) next = { ...next, serverId };
-                if (areSessionListRenderablesEqual(previous, next)) {
+                next = resolveSessionRuntimePublication(previous, next, {
+                    activeAt: patch.activeAt ?? previous.activeAt,
+                    updatedAt: patch.updatedAt ?? previous.updatedAt,
+                });
+                if (areSessionPublicationFactsEqual(previous, next)) {
                     noopPatchCount += 1;
                     continue;
                 }
-                next = reuseEqualSessionObjectFields(previous, next);
+                next = retainDeep(previous, next);
                 if (nextRows === previousRows) nextRows = { ...previousRows };
                 nextRows[sessionId] = next;
                 touchedSessionIds.add(sessionId);
@@ -2169,21 +2165,23 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             for (const sessionId of touchedSessionIds) {
                 const previous = previousRows[sessionId];
                 let next = nextRows[sessionId];
-                if (areSessionListRenderablesEqual(previous, next)) {
+                if (areSessionPublicationFactsEqual(previous, next)) {
                     nextRows[sessionId] = previous;
                     continue;
                 }
-                next = reuseEqualSessionObjectFields(previous, next);
+                next = retainDeep(previous, next);
                 nextRows[sessionId] = next;
                 changedCount += 1;
                 changedSessionIds.push(sessionId);
                 const didArchivalStateChange = (previous.archivedAt ?? null) !== (next.archivedAt ?? null);
                 if (didArchivalStateChange && next.archivedAt != null && ordinaryMembershipSet.delete(sessionId)) {
+                    if (!addedOrdinarySessionIds.delete(sessionId)) removedOrdinarySessionIds.add(sessionId);
                     archivedMembershipSet.add(sessionId);
                     didArchivalMembershipChange = true;
                     needsOrdinaryIndexRebuild = true;
                     didAnyWarmCacheRelevantRenderableChange = true;
                 } else if (didArchivalStateChange && next.archivedAt == null && archivedMembershipSet.delete(sessionId)) {
+                    if (!removedOrdinarySessionIds.delete(sessionId)) addedOrdinarySessionIds.add(sessionId);
                     ordinaryMembershipSet.add(sessionId);
                     didArchivalMembershipChange = true;
                     needsOrdinaryIndexRebuild = true;
@@ -2297,6 +2295,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 changedSessionIds.length > 0 || needsOrdinaryIndexRebuild ? {
                     changedSessionIds,
                     removedSessionIds: [],
+                    ordinaryMembershipChanges: [{ serverId, addedSessionIds: [...addedOrdinarySessionIds], removedSessionIds: [...removedOrdinarySessionIds] }],
                 } : undefined,
             );
         }),
@@ -2341,10 +2340,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
                 const withStaleFields = preserveSessionListRenderableStaleFields(previous,
                     incoming.serverId === serverId ? incoming : { ...incoming, serverId });
-                const next = preserveSessionListRenderableTransientState(previous, withStaleFields);
-                const reconciled = previous && areSessionListRenderablesEqual(previous, next)
+                const next = resolveSessionRuntimePublication(previous,
+                    preserveSessionListRenderableTransientState(previous, withStaleFields), incoming);
+                const reconciled = previous && areSessionPublicationFactsEqual(previous, next)
                     ? previous
-                    : reuseEqualSessionObjectFields(previous, next);
+                    : retainDeep(previous, next);
                 if (reconciled !== previous) {
                     changedRows ??= { ...previousRows };
                     changedRows[sessionId] = reconciled;
@@ -2411,7 +2411,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     saveImmediately: saveWarmSessionCacheImmediately,
                     scheduleDeferredSave: scheduleWarmSessionCacheSave,
                 },
-                didOrdinaryProjectionChange ? { changedSessionIds, removedSessionIds } : undefined,
+                didOrdinaryProjectionChange ? { changedSessionIds, removedSessionIds,
+                    ordinaryMembershipChanges: previousMembershipKey && previousMembershipKey !== serverId ? undefined : [{ serverId,
+                        addedSessionIds: changedSessionIds.filter(id => !previousOrdinaryMembership.has(id)), removedSessionIds }] } : undefined,
             );
         }),
         mergeSessionListRowsForServerScope: (serverIdRaw, sessions) => set((state) => {
@@ -2429,10 +2431,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const previous = (changedRows ?? previousRows)[incoming.id];
                 const withStaleFields = preserveSessionListRenderableStaleFields(previous,
                     incoming.serverId === serverId ? incoming : { ...incoming, serverId });
-                const next = preserveSessionListRenderableTransientState(previous, withStaleFields);
-                const reconciled = previous && areSessionListRenderablesEqual(previous, next)
+                const next = resolveSessionRuntimePublication(previous,
+                    preserveSessionListRenderableTransientState(previous, withStaleFields), incoming);
+                const reconciled = previous && areSessionPublicationFactsEqual(previous, next)
                     ? previous
-                    : reuseEqualSessionObjectFields(previous, next);
+                    : retainDeep(previous, next);
                 if (reconciled !== previous) {
                     changedRows ??= { ...previousRows };
                     changedRows[incoming.id] = reconciled;
@@ -2495,7 +2498,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     saveImmediately: saveWarmSessionCacheImmediately,
                     scheduleDeferredSave: scheduleWarmSessionCacheSave,
                 },
-                didOrdinaryProjectionChange ? { changedSessionIds, removedSessionIds: [] } : undefined,
+                didOrdinaryProjectionChange ? { changedSessionIds, removedSessionIds: [],
+                    ordinaryMembershipChanges: previousMembershipKey && previousMembershipKey !== serverId ? undefined : [{ serverId,
+                        addedSessionIds: changedSessionIds.filter(id => !previousMembershipSet.has(id)), removedSessionIds: [] }] } : undefined,
             );
         }),
         clearSessionListRowsForServerScope: (serverIdRaw) => {
@@ -2536,7 +2541,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         })),
         applyScmStatus: (sessionId: string, status: ScmStatus | null) => set((state) => {
             // Update project git status as well
-            const projectChanged = projectManager.updateSessionProjectScmStatus(sessionId, status);
+            const scope = resolveManagedSessionScmScope(state, sessionId);
+            const projectChanged = scope
+                ? projectManager.updateWorkspaceScmStatus(scope, status)
+                : projectManager.updateSessionProjectScmStatus(sessionId, status);
             if (areSessionValuesDeepEqual(state.sessionScmStatus[sessionId], status)) {
                 return projectChanged ? { ...state } : state;
             }
@@ -2553,7 +2561,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const existing = state.reviewCommentsDraftsBySessionId[sessionId] ?? [];
             const previous = existing.find((d) => d.id === draft.id);
             if (previous && areSessionValuesDeepEqual(previous, draft)) return state;
-            const nextDraft = reuseEqualSessionObjectFields(previous, draft);
+            const nextDraft = retainDeep(previous, draft);
             const next = previous
                 ? existing.map((d) => (d.id === draft.id ? nextDraft : d))
                 : [...existing, draft];
@@ -2601,7 +2609,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const existing = state.reviewCommentsDraftsByWorkspaceCacheKey[key] ?? [];
             const previous = existing.find((d) => d.id === draft.id);
             if (previous && areSessionValuesDeepEqual(previous, draft)) return state;
-            const nextDraft = reuseEqualSessionObjectFields(previous, draft);
+            const nextDraft = retainDeep(previous, draft);
             const next = previous
                 ? existing.map((d) => (d.id === draft.id ? nextDraft : d))
                 : [...existing, draft];
@@ -2649,111 +2657,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return { ...state, reviewCommentsDraftsByWorkspaceCacheKey: merged };
         }),
 
-        createSessionActionDraft: (scope: ServerAccountScope, address: SessionAddress, draft) => {
-            const normalizedAddress = normalizeSessionAddress(address.serverId, address.sessionId);
-            const normalizedScope = createServerAccountScope(scope.serverId, scope.accountId);
-            if (!normalizedAddress || !normalizedScope || normalizedAddress.serverId !== normalizedScope.serverId) {
-                throw new Error('Session action draft target must match its exact Home Account scope');
-            }
-            const nowMs = nowServerMs();
-            const created: SessionActionDraft = {
-                id: createActionDraftId(nowMs),
-                address: normalizedAddress,
-                accountId: normalizedScope.accountId,
-                actionId: String(draft.actionId),
-                createdAt: nowMs,
-                status: 'editing',
-                input: { ...(draft.input ?? {}) },
-                error: null,
-            };
-            set((state) => {
-                const addressKey = sessionAddressKey(normalizedAddress);
-                const existing = state.sessionActionDraftsByAddressKey[addressKey] ?? [];
-                const next = [...existing, created];
-                const merged = { ...state.sessionActionDraftsByAddressKey, [addressKey]: next };
-                sessionActionDraftsByAddressKey = merged;
-                saveSessionActionDrafts(merged, normalizedScope);
-                return { ...state, sessionActionDraftsByAddressKey: merged };
-            });
-            return created;
-        },
-        updateSessionActionDraftInput: (scope: ServerAccountScope, address: SessionAddress, draftId: string, patch: Record<string, unknown>) =>
-            set((state) => {
-                const normalizedScope = createServerAccountScope(scope.serverId, scope.accountId);
-                const normalizedAddress = normalizeSessionAddress(address.serverId, address.sessionId);
-                if (!normalizedScope || !normalizedAddress || normalizedScope.serverId !== normalizedAddress.serverId) return state;
-                const addressKey = sessionAddressKey(normalizedAddress);
-                const inMemory = state.sessionActionDraftsByAddressKey[addressKey]?.filter((draft) => draft.accountId === normalizedScope.accountId);
-                const existing = inMemory?.length ? inMemory : loadSessionActionDrafts(normalizedScope)[addressKey] ?? [];
-                const idx = existing.findIndex((d) => d.id === draftId);
-                if (idx < 0) return state;
-                const prev = existing[idx]!;
-                const updated: SessionActionDraft = {
-                    ...prev,
-                    input: reuseEqualSessionObjectFields(prev.input, { ...(prev.input ?? {}), ...(patch ?? {}) }),
-                };
-                if (inMemory?.length && areSessionValuesDeepEqual(prev, updated)) return state;
-                const next = [...existing.slice(0, idx), updated, ...existing.slice(idx + 1)];
-                const merged = { ...state.sessionActionDraftsByAddressKey, [addressKey]: next };
-                sessionActionDraftsByAddressKey = merged;
-                saveSessionActionDrafts(merged, normalizedScope);
-                return { ...state, sessionActionDraftsByAddressKey: merged };
-            }),
-        setSessionActionDraftStatus: (scope: ServerAccountScope, address: SessionAddress, draftId: string, status: SessionActionDraftStatus, error?: string | null) =>
-            set((state) => {
-                const normalizedScope = createServerAccountScope(scope.serverId, scope.accountId);
-                const normalizedAddress = normalizeSessionAddress(address.serverId, address.sessionId);
-                if (!normalizedScope || !normalizedAddress || normalizedScope.serverId !== normalizedAddress.serverId) return state;
-                const addressKey = sessionAddressKey(normalizedAddress);
-                const inMemory = state.sessionActionDraftsByAddressKey[addressKey]?.filter((draft) => draft.accountId === normalizedScope.accountId);
-                const existing = inMemory?.length ? inMemory : loadSessionActionDrafts(normalizedScope)[addressKey] ?? [];
-                const idx = existing.findIndex((d) => d.id === draftId);
-                if (idx < 0) return state;
-                const prev = existing[idx]!;
-                const updated: SessionActionDraft = {
-                    ...prev,
-                    status,
-                    ...(typeof error !== 'undefined' ? { error: error ?? null } : {}),
-                };
-                if (inMemory?.length && areSessionValuesDeepEqual(prev, updated)) return state;
-                const next = [...existing.slice(0, idx), updated, ...existing.slice(idx + 1)];
-                const merged = { ...state.sessionActionDraftsByAddressKey, [addressKey]: next };
-                sessionActionDraftsByAddressKey = merged;
-                saveSessionActionDrafts(merged, normalizedScope);
-                return { ...state, sessionActionDraftsByAddressKey: merged };
-            }),
-        deleteSessionActionDraft: (scope: ServerAccountScope, address: SessionAddress, draftId: string) =>
-            set((state) => {
-                const normalizedScope = createServerAccountScope(scope.serverId, scope.accountId);
-                const normalizedAddress = normalizeSessionAddress(address.serverId, address.sessionId);
-                if (!normalizedScope || !normalizedAddress || normalizedScope.serverId !== normalizedAddress.serverId) return state;
-                const addressKey = sessionAddressKey(normalizedAddress);
-                const inMemory = state.sessionActionDraftsByAddressKey[addressKey]?.filter((draft) => draft.accountId === normalizedScope.accountId);
-                const existing = inMemory?.length ? inMemory : loadSessionActionDrafts(normalizedScope)[addressKey] ?? [];
-                if (!existing.some((draft) => draft.id === draftId)) return state;
-                const next = existing.filter((d) => d.id !== draftId);
-                const merged = { ...state.sessionActionDraftsByAddressKey };
-                if (next.length > 0) merged[addressKey] = next;
-                else delete merged[addressKey];
-                sessionActionDraftsByAddressKey = merged;
-                saveSessionActionDrafts(merged, normalizedScope);
-                return { ...state, sessionActionDraftsByAddressKey: merged };
-            }),
-        clearSessionActionDrafts: (scope: ServerAccountScope, address: SessionAddress) =>
-            set((state) => {
-                const normalizedScope = createServerAccountScope(scope.serverId, scope.accountId);
-                const normalizedAddress = normalizeSessionAddress(address.serverId, address.sessionId);
-                if (!normalizedScope || !normalizedAddress || normalizedScope.serverId !== normalizedAddress.serverId) return state;
-                const addressKey = sessionAddressKey(normalizedAddress);
-                const inMemory = state.sessionActionDraftsByAddressKey[addressKey]?.filter((draft) => draft.accountId === normalizedScope.accountId);
-                const existing = inMemory?.length ? inMemory : loadSessionActionDrafts(normalizedScope)[addressKey] ?? [];
-                if (existing.length === 0) return state;
-                const merged = { ...state.sessionActionDraftsByAddressKey };
-                delete merged[addressKey];
-                sessionActionDraftsByAddressKey = merged;
-                saveSessionActionDrafts(merged, normalizedScope);
-                return { ...state, sessionActionDraftsByAddressKey: merged };
-            }),
         markSessionOptimisticThinking: (sessionId: string) => set((state) => {
             const session = state.sessions[sessionId];
             if (!session) return state;
@@ -2889,7 +2792,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 };
             });
         },
-        applySessionResponsibleAccount: (sessionId: string, responsibleAccountId: string | null, scope: ServerAccountScope, responsibleAccount?: import('@happier-dev/protocol').SessionAccessAccountSummaryV1 | null) => set((state) => {
+        applySessionResponsibleAccount: (sessionId: string, responsibleAccountId: string | null, scope: ServerAccountScope, responsibleAccount?: import('@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1').SessionAccessAccountSummaryV1 | null) => set((state) => {
             const activeScope = state.sessionLocalStateScope;
             // A late response must never update a different Account after sign-in changes.
             if (activeScope?.serverId === scope.serverId && !areServerAccountScopesEqual(activeScope, scope)) return state;
@@ -2999,107 +2902,103 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             };
         }),
         // Project management methods
-        getProject: (projectId: string) => projectManager.getProject(projectId),
+        getProject: (projectId: string) => readStoreQuery(get, ['sessions', 'machines'], () => projectManager.getProject(projectId)),
         getProjectForSession: (sessionId: string, serverId?: string | null) => {
             if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+                const state = get();
+                const metadata = readSessionProjectMetadata(state, sessionId, serverId);
+                if (readSessionDirectoryKind(metadata) === 'managed') return null;
+                const scope = resolveWorkspaceTargetForSessionFromState(state, { sessionId, serverId });
                 return scope ? projectManager.getProjectForWorkspace(scope) : null;
             }
             ensureProjectManagerSession(sessionId);
             return projectManager.getProjectForSession(sessionId);
         },
         // Project source-control methods
-        getProjectScmStatus: (projectId: string) => projectManager.getProjectScmStatus(projectId),
+        getProjectScmStatus: (projectId: string) => readStoreQuery(get, ['sessions', 'machines'], () => projectManager.getProjectScmStatus(projectId)),
         getSessionProjectScmStatus: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmStatus(scope) : null;
             }
             ensureProjectManagerSession(sessionId);
             return projectManager.getSessionProjectScmStatus(sessionId);
         },
         updateSessionProjectScmStatus: (sessionId: string, status: ScmStatus | null, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().updateWorkspaceScmStatus(scope, status) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.updateSessionProjectScmStatus(sessionId, status)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.updateSessionProjectScmStatus(sessionId, status);
         },
-        getProjectScmSnapshot: (projectId: string) => projectManager.getProjectScmSnapshot(projectId),
-        getProjectScmSnapshotError: (projectId: string) => projectManager.getProjectScmSnapshotError(projectId),
+        getProjectScmSnapshot: (projectId: string) => readStoreQuery(get, ['sessions', 'machines'], () => projectManager.getProjectScmSnapshot(projectId)),
+        getProjectScmSnapshotError: (projectId: string) => readStoreQuery(get, ['sessions', 'machines'], () => projectManager.getProjectScmSnapshotError(projectId)),
         getSessionProjectScmSnapshot: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmSnapshot(scope) : null;
             }
             ensureProjectManagerSession(sessionId);
             return projectManager.getSessionProjectScmSnapshot(sessionId);
         },
         getSessionProjectScmSnapshotError: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmSnapshotError(scope) : null;
             }
             ensureProjectManagerSession(sessionId);
             return projectManager.getSessionProjectScmSnapshotError(sessionId);
         },
         updateSessionProjectScmSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().updateWorkspaceScmSnapshot(scope, snapshot) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot);
         },
         updateSessionProjectScmSnapshotError: (
             sessionId: string,
             error: import('../../runtime/orchestration/projectManager').ProjectScmSnapshotError | null,
             serverId?: string | null,
         ) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().updateWorkspaceScmSnapshotError(scope, error) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.updateSessionProjectScmSnapshotError(sessionId, error)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.updateSessionProjectScmSnapshotError(sessionId, error);
         },
         publishSessionProjectScmSnapshots: (publishes) => {
-            // A project SCM refresh publishes to every session sharing the repo. Doing that
-            // through the individual snapshot/status/prune actions costs up to six store
-            // notifications per session; every notification re-runs all store subscribers,
-            // which starves the JS thread on large accounts. All project-manager mutations
-            // happen here first, then a single notification covers the whole batch.
+            // ProjectManager publishes SCM facts; only the legacy per-Session status mirror writes Zustand.
             if (publishes.length === 0) return;
             const statusUpdates: Record<string, ScmStatus | null> = {};
-            let projectChanged = false;
             for (const { sessionId, serverId, snapshot, status } of publishes) {
-                if (serverId != null) {
-                    const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+                const scope = resolveSessionScmScope(sessionId, serverId);
+                if (serverId != null || scope) {
                     if (!scope) continue;
-                    projectChanged = projectManager.updateWorkspaceScmSnapshot(scope, snapshot) || projectChanged;
-                    projectChanged = projectManager.updateWorkspaceScmSnapshotError(scope, null) || projectChanged;
-                    projectChanged = projectManager.updateWorkspaceScmStatus(scope, status) || projectChanged;
-                    const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
-                    projectChanged = projectManager.pruneWorkspaceScmTouchedPaths(scope, activePaths) || projectChanged;
-                    projectChanged = projectManager.pruneWorkspaceScmCommitSelectionPaths(scope, activePaths) || projectChanged;
-                    projectChanged = projectManager.pruneWorkspaceScmCommitSelectionPatches(scope, activePaths) || projectChanged;
+                    projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
+                    projectManager.updateWorkspaceScmSnapshotError(scope, null);
+                    projectManager.updateWorkspaceScmStatus(scope, status);
+                    // A summary delivery has no rows: it cannot prove a selected path is gone.
+                    if (!snapshot.detail) {
+                        const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
+                        projectManager.pruneWorkspaceScmCommitSelectionPaths(scope, activePaths);
+                        projectManager.pruneWorkspaceScmCommitSelectionPatches(scope, activePaths);
+                    }
+                    if (serverId == null) statusUpdates[sessionId] = status;
                     continue;
                 }
                 ensureProjectManagerSession(sessionId);
-                projectChanged = projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot) || projectChanged;
-                projectChanged = projectManager.updateSessionProjectScmSnapshotError(sessionId, null) || projectChanged;
-                projectChanged = projectManager.updateSessionProjectScmStatus(sessionId, status) || projectChanged;
-                const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
-                projectChanged = projectManager.pruneWorkspaceScmTouchedPathsForSession(sessionId, activePaths) || projectChanged;
-                projectChanged = projectManager.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths) || projectChanged;
-                projectChanged = projectManager.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths) || projectChanged;
+                projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot);
+                projectManager.updateSessionProjectScmSnapshotError(sessionId, null);
+                projectManager.updateSessionProjectScmStatus(sessionId, status);
+                if (!snapshot.detail) {
+                    const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
+                    projectManager.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
+                    projectManager.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
+                }
                 statusUpdates[sessionId] = status;
             }
             set((state) => {
@@ -3109,138 +3008,94 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     if (nextStatus === state.sessionScmStatus) nextStatus = { ...state.sessionScmStatus };
                     nextStatus[sessionId] = status;
                 }
-                return projectChanged || nextStatus !== state.sessionScmStatus
+                return nextStatus !== state.sessionScmStatus
                     ? { ...state, sessionScmStatus: nextStatus }
                     : state;
             });
         },
-        getWorkspaceScmTouchedPathsForSession: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
-                return scope ? get().getWorkspaceScmTouchedPaths(scope) : [];
-            }
-            ensureProjectManagerSession(sessionId);
-            return projectManager.getWorkspaceScmTouchedPathsForSession(sessionId);
-        },
-        markWorkspaceScmTouchedPathsForSession: (sessionId: string, paths: string[], serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
-                return scope ? get().markWorkspaceScmTouchedPaths(scope, paths) : undefined;
-            }
-            ensureProjectManagerSession(sessionId);
-            if (projectManager.markWorkspaceScmTouchedPathsForSession(sessionId, paths)) {
-                set((state) => ({ ...state }));
-            }
-        },
-        pruneWorkspaceScmTouchedPathsForSession: (sessionId: string, activePaths: Set<string>, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
-                return scope ? get().pruneWorkspaceScmTouchedPaths(scope, activePaths) : undefined;
-            }
-            ensureProjectManagerSession(sessionId);
-            if (projectManager.pruneWorkspaceScmTouchedPathsForSession(sessionId, activePaths)) {
-                set((state) => ({ ...state }));
-            }
-        },
         getSessionProjectScmCommitSelectionPaths: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmCommitSelectionPaths(scope) : [];
             }
             ensureProjectManagerSession(sessionId);
             return projectManager.getSessionProjectScmCommitSelectionPaths(sessionId);
         },
         markSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[], serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().markWorkspaceScmCommitSelectionPaths(scope, paths) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.markSessionProjectScmCommitSelectionPaths(sessionId, paths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.markSessionProjectScmCommitSelectionPaths(sessionId, paths);
         },
         unmarkSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[], serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().unmarkWorkspaceScmCommitSelectionPaths(scope, paths) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.unmarkSessionProjectScmCommitSelectionPaths(sessionId, paths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.unmarkSessionProjectScmCommitSelectionPaths(sessionId, paths);
         },
         clearSessionProjectScmCommitSelectionPaths: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().clearWorkspaceScmCommitSelectionPaths(scope) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.clearSessionProjectScmCommitSelectionPaths(sessionId)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.clearSessionProjectScmCommitSelectionPaths(sessionId);
         },
         pruneSessionProjectScmCommitSelectionPaths: (sessionId: string, activePaths: Set<string>, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().pruneWorkspaceScmCommitSelectionPaths(scope, activePaths) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
         },
         getSessionProjectScmCommitSelectionPatches: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmCommitSelectionPatches(scope) : [];
             }
             ensureProjectManagerSession(sessionId);
             return projectManager.getSessionProjectScmCommitSelectionPatches(sessionId);
         },
         upsertSessionProjectScmCommitSelectionPatch: (sessionId: string, patchSelection: ScmCommitSelectionPatch, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().upsertWorkspaceScmCommitSelectionPatch(scope, patchSelection) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.upsertSessionProjectScmCommitSelectionPatch(sessionId, patchSelection)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.upsertSessionProjectScmCommitSelectionPatch(sessionId, patchSelection);
         },
         removeSessionProjectScmCommitSelectionPatch: (sessionId: string, path: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().removeWorkspaceScmCommitSelectionPatch(scope, path) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.removeSessionProjectScmCommitSelectionPatch(sessionId, path)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.removeSessionProjectScmCommitSelectionPatch(sessionId, path);
         },
         clearSessionProjectScmCommitSelectionPatches: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().clearWorkspaceScmCommitSelectionPatches(scope) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.clearSessionProjectScmCommitSelectionPatches(sessionId)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.clearSessionProjectScmCommitSelectionPatches(sessionId);
         },
         pruneSessionProjectScmCommitSelectionPatches: (sessionId: string, activePaths: Set<string>, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().pruneWorkspaceScmCommitSelectionPatches(scope, activePaths) : undefined;
             }
             ensureProjectManagerSession(sessionId);
-            if (projectManager.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
         },
         getSessionProjectScmOperationLog: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmOperationLog(scope) : [];
             }
             ensureProjectManagerSession(sessionId);
@@ -3251,17 +3106,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             entry: Omit<ScmOperationLogEntry, 'id' | 'sessionId'>,
             serverId?: string | null,
         ) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
-                return scope ? get().appendWorkspaceScmOperation(scope, entry) : undefined;
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
+                if (scope) {
+                    projectManager.appendWorkspaceScmOperation(scope, entry, sessionId);
+                }
+                return;
             }
             ensureProjectManagerSession(sessionId);
             projectManager.appendSessionProjectScmOperation(sessionId, entry);
-            set((state) => ({ ...state }));
         },
         getSessionProjectScmInFlightOperation: (sessionId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().getWorkspaceScmInFlightOperation(scope) : null;
             }
             ensureProjectManagerSession(sessionId);
@@ -3272,134 +3129,81 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             operation: import('../../runtime/orchestration/projectManager').ScmProjectOperationKind,
             serverId?: string | null,
         ) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
-                return scope ? get().beginWorkspaceScmOperation(scope, operation) : { started: false, reason: 'missing_project', inFlight: null };
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
+                if (!scope) return { started: false, reason: 'missing_project', inFlight: null };
+                return projectManager.beginWorkspaceScmOperation(scope, operation, undefined, sessionId);
             }
             ensureProjectManagerSession(sessionId);
-            const result = projectManager.beginSessionProjectScmOperation(sessionId, operation);
-            if (result.started) {
-                set((state) => ({ ...state }));
-            }
-            return result;
+            return projectManager.beginSessionProjectScmOperation(sessionId, operation);
         },
         finishSessionProjectScmOperation: (sessionId: string, operationId: string, serverId?: string | null) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().finishWorkspaceScmOperation(scope, operationId) : false;
             }
             ensureProjectManagerSession(sessionId);
-            const finished = projectManager.finishSessionProjectScmOperation(sessionId, operationId);
-            if (finished) {
-                set((state) => ({ ...state }));
-            }
-            return finished;
+            return projectManager.finishSessionProjectScmOperation(sessionId, operationId);
         },
         updateSessionProjectScmOperationProgress: (sessionId, operationId, progressText, serverId) => {
-            if (serverId != null) {
-                const scope = resolveWorkspaceTargetForSessionFromState(get(), { sessionId, serverId });
+            const scope = resolveSessionScmScope(sessionId, serverId);
+            if (serverId != null || scope) {
                 return scope ? get().updateWorkspaceScmOperationProgress(scope, operationId, progressText) : false;
             }
             ensureProjectManagerSession(sessionId);
-            const updated = projectManager.updateSessionProjectScmOperationProgress(sessionId, operationId, progressText);
-            if (updated) set((state) => ({ ...state }));
-            return updated;
+            return projectManager.updateSessionProjectScmOperationProgress(sessionId, operationId, progressText);
         },
         getWorkspaceScmStatus: (scope) => projectManager.getWorkspaceScmStatus(scope),
         updateWorkspaceScmStatus: (scope, status) => {
-            if (projectManager.updateWorkspaceScmStatus(scope, status)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.updateWorkspaceScmStatus(scope, status);
         },
         getWorkspaceScmSnapshot: (scope) => projectManager.getWorkspaceScmSnapshot(scope),
         getWorkspaceScmSnapshotError: (scope) => projectManager.getWorkspaceScmSnapshotError(scope),
         updateWorkspaceScmSnapshot: (scope, snapshot) => {
-            if (projectManager.updateWorkspaceScmSnapshot(scope, snapshot)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
         },
         updateWorkspaceScmSnapshotError: (scope, error) => {
-            if (projectManager.updateWorkspaceScmSnapshotError(scope, error)) {
-                set((state) => ({ ...state }));
-            }
-        },
-        getWorkspaceScmTouchedPaths: (scope) => projectManager.getWorkspaceScmTouchedPaths(scope),
-        markWorkspaceScmTouchedPaths: (scope, paths, touchedAt) => {
-            if (projectManager.markWorkspaceScmTouchedPaths(scope, paths, touchedAt)) {
-                set((state) => ({ ...state }));
-            }
-        },
-        pruneWorkspaceScmTouchedPaths: (scope, activePaths) => {
-            if (projectManager.pruneWorkspaceScmTouchedPaths(scope, activePaths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.updateWorkspaceScmSnapshotError(scope, error);
         },
         getWorkspaceScmCommitSelectionPaths: (scope) => projectManager.getWorkspaceScmCommitSelectionPaths(scope),
         markWorkspaceScmCommitSelectionPaths: (scope, paths, selectedAt) => {
-            if (projectManager.markWorkspaceScmCommitSelectionPaths(scope, paths, selectedAt)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.markWorkspaceScmCommitSelectionPaths(scope, paths, selectedAt);
         },
         unmarkWorkspaceScmCommitSelectionPaths: (scope, paths) => {
-            if (projectManager.unmarkWorkspaceScmCommitSelectionPaths(scope, paths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.unmarkWorkspaceScmCommitSelectionPaths(scope, paths);
         },
         clearWorkspaceScmCommitSelectionPaths: (scope) => {
-            if (projectManager.clearWorkspaceScmCommitSelectionPaths(scope)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.clearWorkspaceScmCommitSelectionPaths(scope);
         },
         pruneWorkspaceScmCommitSelectionPaths: (scope, activePaths) => {
-            if (projectManager.pruneWorkspaceScmCommitSelectionPaths(scope, activePaths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.pruneWorkspaceScmCommitSelectionPaths(scope, activePaths);
         },
         getWorkspaceScmCommitSelectionPatches: (scope) => projectManager.getWorkspaceScmCommitSelectionPatches(scope),
         upsertWorkspaceScmCommitSelectionPatch: (scope, patchSelection, selectedAt) => {
-            if (projectManager.upsertWorkspaceScmCommitSelectionPatch(scope, patchSelection, selectedAt)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.upsertWorkspaceScmCommitSelectionPatch(scope, patchSelection, selectedAt);
         },
         removeWorkspaceScmCommitSelectionPatch: (scope, path) => {
-            if (projectManager.removeWorkspaceScmCommitSelectionPatch(scope, path)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.removeWorkspaceScmCommitSelectionPatch(scope, path);
         },
         clearWorkspaceScmCommitSelectionPatches: (scope) => {
-            if (projectManager.clearWorkspaceScmCommitSelectionPatches(scope)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.clearWorkspaceScmCommitSelectionPatches(scope);
         },
         pruneWorkspaceScmCommitSelectionPatches: (scope, activePaths) => {
-            if (projectManager.pruneWorkspaceScmCommitSelectionPatches(scope, activePaths)) {
-                set((state) => ({ ...state }));
-            }
+            projectManager.pruneWorkspaceScmCommitSelectionPatches(scope, activePaths);
         },
         getWorkspaceScmOperationLog: (scope) => projectManager.getWorkspaceScmOperationLog(scope),
         appendWorkspaceScmOperation: (scope, entry) => {
             projectManager.appendWorkspaceScmOperation(scope, entry);
-            set((state) => ({ ...state }));
         },
         getWorkspaceScmInFlightOperation: (scope) => projectManager.getWorkspaceScmInFlightOperation(scope),
         beginWorkspaceScmOperation: (scope, operation) => {
-            const result = projectManager.beginWorkspaceScmOperation(scope, operation);
-            if (result.started) {
-                set((state) => ({ ...state }));
-            }
-            return result;
+            return projectManager.beginWorkspaceScmOperation(scope, operation);
         },
         finishWorkspaceScmOperation: (scope, operationId) => {
-            const finished = projectManager.finishWorkspaceScmOperation(scope, operationId);
-            if (finished) {
-                set((state) => ({ ...state }));
-            }
-            return finished;
+            return projectManager.finishWorkspaceScmOperation(scope, operationId);
         },
         updateWorkspaceScmOperationProgress: (scope, operationId, progressText) => {
-            const updated = projectManager.updateWorkspaceScmOperationProgress(scope, operationId, progressText);
-            if (updated) set((state) => ({ ...state }));
-            return updated;
+            return projectManager.updateWorkspaceScmOperationProgress(scope, operationId, progressText);
         },
         deleteSession: (sessionId: string, serverId?: string | null) => set((state) => {
             const targetServerId = normalizeTrimmedString(serverId) || null;
@@ -3424,6 +3228,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let didDeleteRenderable = false;
             let remainingRowsByServerId = state.sessionListRowsByServerId as Record<string, Readonly<Record<string, SessionListRenderableSession>>>;
             let remainingOrdinaryMembershipByServerId = state.ordinarySessionListMembershipByServerId as Record<string, readonly string[] | undefined>;
+            const ordinaryMembershipChanges: OrdinarySessionMembershipChange[] = [];
             let remainingArchivedMembershipByServerId = state.archivedSessionListMembershipByServerId as Record<string, readonly string[] | undefined>;
             let remainingIndexByServerId = state.sessionListIndexByServerId as Record<string, SessionListIndexItem[] | null | undefined>;
             const indexSettings = resolveSessionListIndexRebuildSettings(state.settings);
@@ -3442,6 +3247,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const previousOrdinaryMembership = state.ordinarySessionListMembershipByServerId[serverId] ?? [];
                 const nextOrdinaryMembership = previousOrdinaryMembership.filter((id) => id !== sessionId);
                 if (nextOrdinaryMembership.length !== previousOrdinaryMembership.length) {
+                    ordinaryMembershipChanges.push({ serverId, addedSessionIds: [], removedSessionIds: [sessionId] });
                     if (remainingOrdinaryMembershipByServerId === state.ordinarySessionListMembershipByServerId) {
                         remainingOrdinaryMembershipByServerId = { ...state.ordinarySessionListMembershipByServerId };
                     }
@@ -3507,9 +3313,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const remainingReviewDrafts = retireActiveCarrier
                 ? remainingReviewDraftsWithoutCarrier
                 : state.reviewCommentsDraftsBySessionId;
-            const remainingActionDrafts = retireActiveCarrier
-                ? { ...state.sessionActionDraftsByAddressKey }
-                : state.sessionActionDraftsByAddressKey;
 
             let nextTreeExpansionState: ReturnType<typeof deleteSessionRepositoryTreeExpansionForState> | null = null;
             if (retireActiveCarrier) {
@@ -3524,24 +3327,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey =
                     nextTreeExpansionState.workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey;
                 reviewCommentsDraftsBySessionId = remainingReviewDrafts;
-                const deletedDraftAddress = normalizeSessionAddress(
-                    deletedSession?.serverId ?? sessionLocalStateScope?.serverId,
-                    sessionId,
-                );
-                const deletedDraftAddressKey = deletedDraftAddress ? sessionAddressKey(deletedDraftAddress) : null;
-                if (deletedDraftAddressKey) delete remainingActionDrafts[deletedDraftAddressKey];
-                sessionActionDraftsByAddressKey = remainingActionDrafts;
 
                 // Clear permission modes and other session-local projections from persistent storage.
                 const reviewDrafts = loadSessionReviewCommentsDrafts(sessionLocalStateScope);
                 delete reviewDrafts[sessionId];
                 saveSessionReviewCommentsDrafts(reviewDrafts, sessionLocalStateScope);
 
-                if (sessionLocalStateScope && deletedDraftAddressKey) {
-                    const actionDrafts = loadSessionActionDrafts(sessionLocalStateScope);
-                    delete actionDrafts[deletedDraftAddressKey];
-                    saveSessionActionDrafts(actionDrafts, sessionLocalStateScope);
-                }
 
                 const modes = loadSessionPermissionModes(sessionLocalStateScope);
                 delete modes[sessionId];
@@ -3592,11 +3383,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     }
                     : {}),
                 sessionMessages: remainingSessionMessages,
+                sessionUserMessageHistory: retireActiveCarrier
+                    ? removeSessionUserMessageHistory(state.sessionUserMessageHistory, sessionId)
+                    : state.sessionUserMessageHistory,
                 sessionMessagesHistoryStartLoaded: remainingHistoryStartLoaded,
                 sessionScmStatus: remainingScmStatus,
                 ...(nextTreeExpansionState ?? {}),
                 reviewCommentsDraftsBySessionId: remainingReviewDrafts,
-                sessionActionDraftsByAddressKey: remainingActionDrafts,
                 ...(retireActiveCarrier ? { sessionLastViewed: { ...sessionLastViewed } } : {}),
             };
 
@@ -3611,6 +3404,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 {
                     changedSessionIds: [],
                     removedSessionIds: didDeleteRenderable || (retireActiveCarrier && deletedSession !== undefined) ? [sessionId] : [],
+                    ordinaryMembershipChanges,
                 },
             );
         }),

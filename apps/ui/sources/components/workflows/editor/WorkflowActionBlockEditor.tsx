@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
@@ -11,6 +13,7 @@ import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/ac
 import type { WorkflowActionFieldBindingV1, WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { isWorkflowActionLiteralFieldV1 } from '@happier-dev/protocol/workflows/stepActionsV1';
+import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
@@ -29,8 +32,10 @@ import { formatWorkflowBlockOptionsSummary, WorkflowStepOptionsFootChip } from '
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowKindCard } from './WorkflowKindCard';
-import { formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
+import { formatWorkflowExecutionLiteral, formatWorkflowFieldLabel } from '../presentation/workflowValuePresentation';
 import { WorkflowBindingRow, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
+
+const NO_ROWS: readonly ActionFieldRow[] = Object.freeze([]);
 
 /** The literal a newly set field starts from: an empty selection for a multi-select, empty text otherwise. */
 function initialActionFieldLiteral(hint: EffectiveActionInputField | null): WorkflowActionFieldBindingV1 {
@@ -101,12 +106,14 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     focusRegistration?: (focus: (() => void) | null) => void;
     /** Each field's revealed issue, by field key, in the editor's words (DESIGN-6 P3). */
     fieldIssues?: Readonly<Record<string, string>>;
+    referenceLabels?: Readonly<Record<string, readonly string[]>>;
     slots?: WorkflowDocumentStepSlots | null;
     /** Opens this block's Step options, anchored beside its options control; absent when read-only. */
     onOpenOptions?: (anchorRef: React.RefObject<View | null>) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { block, testIDPrefix } = props;
+    const { theme } = useUnistyles();
     const editable = props.editable !== false;
     const catalog = useWorkflowActionCatalog(props.composerScope);
     const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId, catalog.specs), [block.actionId, catalog.specs]);
@@ -114,7 +121,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const literalInput = React.useMemo(() => Object.fromEntries(Object.entries(block.input)
         .flatMap(([name, binding]) => binding.kind === 'literal' ? [[name, binding.value]] : [])), [block.input]);
     const fieldOptions = useInputFieldOptions({ machineId: catalog.machineId, serverId: catalog.serverId,
-        enabled: editable && spec !== null,
+        enabled: editable && spec !== null && spec.projectionError === undefined,
         requests: rows.flatMap((row) => row.hint ? [{ field: row.hint, actionId: block.actionId, draftInput: literalInput }] : []) });
     const resolveFieldOptions = parseQualifiedPluginActionId(block.actionId) ? fieldOptions.resolveOptions
         : props.resolveFieldOptions ?? fieldOptions.resolveOptions;
@@ -124,8 +131,29 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const actionGlyph = spec?.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : WORKFLOW_BLOCK_KIND_GLYPH.action;
     // Unnamed, the heading carries the card's identity and the card shows only its rows.
     const headingCarriesCard = resolveWorkflowUnnamedHeading(block) === 'card';
-    const actionSource = spec?.plugin?.title ?? (spec === null ? t('workflows.contentUnavailable') : 'Happier');
+    const actionSource = spec?.plugin?.title ?? (spec === null ? t('workflows.page.blocks.actionNotInCatalog') : 'Happier');
     const optionsSummary = formatWorkflowBlockOptionsSummary(block);
+
+    // At rest, fields the workflow fills from its inputs read as one line; selecting the step opens them.
+    const askedRows = props.selected === true ? NO_ROWS : rows.filter((row) =>
+        block.input[row.key]?.kind === 'input' && props.fieldIssues?.[row.key] === undefined);
+    const listedRows = askedRows.length === 0 ? rows : rows.filter((row) => !askedRows.includes(row));
+    // Settings disclose progressively (owner 2026-11-06, lab round 1106 F1): what is set, required or
+    // in need of repair stays; an option nobody set waits behind one "N more settings" until asked for.
+    // A reader never sees unset fields at all (`WorkflowBindingRow`), so this is the editor's alone.
+    const [allSettingsShown, setAllSettingsShown] = React.useState(false);
+    const quietRows = !editable || allSettingsShown ? NO_ROWS : listedRows.filter((row) =>
+        block.input[row.key] === undefined && !row.required && props.fieldIssues?.[row.key] === undefined);
+    const shownRows = quietRows.length === 0 ? listedRows : listedRows.filter((row) => !quietRows.includes(row));
+    const askedLine = askedRows.length === 0 ? null : t('workflows.page.blocks.asksWhenItRuns', {
+        names: [...new Set(askedRows.flatMap((row) => {
+            const binding = block.input[row.key];
+            if (binding?.kind !== 'input') return [];
+            // The same words as the page's "Asks when it runs" row and Workflow settings.
+            const declared = props.draft.inputs.find((input) => input.name === binding.name);
+            return [formatWorkflowFieldLabel(binding.name, declared ? workflowInputToFieldHint(declared).title : undefined)];
+        }))].join(', '),
+    });
 
     const setBinding = (key: string, binding: WorkflowActionFieldBindingV1 | undefined) => {
         const { [key]: _previous, ...rest } = block.input;
@@ -171,9 +199,19 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                     />
                 )}
             >
-            {rows.length === 0 ? (
+            {spec?.projectionError ? <Text testID={`${rowPrefix}-projection-error`} accessibilityRole="alert"
+                style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.actionUnavailable', { action: displayName })}</Text> : rows.length === 0 ? (
                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.noFields')}</Text>
-            ) : rows.map((row) => {
+            ) : <>{askedLine === null ? null : editable ? (
+                <HappierPressable testID={`${rowPrefix}-asks`} accessibilityRole="button" accessibilityLabel={askedLine}
+                    onPress={props.onSelect} style={workflowEditorStyles.actionFieldRow}>
+                    <Text style={workflowEditorStyles.groupSummary}>{askedLine}</Text>
+                </HappierPressable>
+            ) : (
+                <View testID={`${rowPrefix}-asks`} style={workflowEditorStyles.actionFieldRow}>
+                    <Text style={workflowEditorStyles.groupSummary}>{askedLine}</Text>
+                </View>
+            )}{shownRows.map((row) => {
                 const binding = block.input[row.key];
                 const fieldId = `${rowPrefix}-field-${row.key}`;
                 const literalOnly = isWorkflowActionLiteralFieldV1(block.actionId, row.key);
@@ -185,6 +223,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                         required={row.required}
                         {...(literalOnly ? { note: t('workflows.actionTitles.commandValuesInEnv') } : {})}
                         binding={binding}
+                        referenceLabels={props.referenceLabels?.[row.key]}
                         draft={props.draft}
                         fieldName={row.key}
                         editable={editable}
@@ -192,6 +231,10 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                         onEdit={props.onSelect}
                         {...(props.fieldIssues?.[row.key] === undefined ? {} : { issue: props.fieldIssues[row.key] })}
                         formatLiteral={(value) => {
+                            // A declared execution value reads in words even where the spec's
+                            // static option label is the wire value (`read_only`).
+                            const execution = formatWorkflowExecutionLiteral(value, row.key);
+                            if (execution !== null) return execution;
                             if (row.hint === null) return null;
                             const options = resolveFieldOptions(row.hint);
                             const label = (item: unknown) => options.find((option) => option.value === item)?.label;
@@ -258,7 +301,16 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                         )}
                     />
                 );
-            })}
+            })}{quietRows.length === 0 ? null : (
+                <HappierPressable testID={`${rowPrefix}-more-settings`} accessibilityRole="button"
+                    accessibilityLabel={t('workflows.page.blocks.moreSettings', { count: quietRows.length })}
+                    onPress={() => setAllSettingsShown(true)} style={workflowEditorStyles.actionFieldRow}>
+                    <View style={workflowEditorStyles.addRow}>
+                        <Text style={workflowEditorStyles.footAction}>{t('workflows.page.blocks.moreSettings', { count: quietRows.length })}</Text>
+                        <Icon name="caret-down" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+                    </View>
+                </HappierPressable>
+            )}</>}
             </WorkflowKindCard>
             {props.slots?.reviewedCard ?? null}
             {props.slots?.footer ?? null}

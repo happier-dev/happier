@@ -75,7 +75,6 @@ const ApprovalPendingRowOrInline = React.memo(function ApprovalPendingRowOrInlin
                 accessibilityRole="button"
                 accessibilityLabel={`${label}. ${props.openLabel ?? t('approvals.review')}`}
                 onPress={props.onOpenApproval}
-                hitSlop={6}
                 style={(state) => [
                     styles.inline,
                     focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
@@ -104,7 +103,7 @@ const ApprovalPendingRowOrInline = React.memo(function ApprovalPendingRowOrInlin
             subtitle={summary ? t('approvals.waitingForYou') : undefined}
             subtitleLines={0}
             showChevron={false}
-            rightElement={<RoundButton size="small" display="secondary" title={props.openLabel ?? t('approvals.review')} onPress={props.onOpenApproval} />}
+            rightElement={<RoundButton testID={props.testID ? `${props.testID}.open` : undefined} size="small" display="secondary" title={props.openLabel ?? t('approvals.review')} onPress={props.onOpenApproval} />}
         />
     );
     // Placed straight on a configuration page, the row brings its own sheet so it keeps the column.
@@ -173,6 +172,7 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'flex-end',
     },
     // The pill never grows past its room: its words truncate inside it and Review stays inside the press target.
+    // It never clips: its hit area reaches past the pill.
     inline: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -180,7 +180,6 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         maxWidth: '100%',
-        overflow: 'hidden',
         paddingHorizontal: theme.space.s8,
         paddingVertical: theme.space.s4,
         borderRadius: theme.borderRadius.md,

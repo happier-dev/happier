@@ -3,7 +3,7 @@ import { Dimensions } from 'react-native';
 import { workflowRunStoreKey, workflowRunListWindowStoreKey, type WorkflowRunListWindowStoreId } from '@/sync/store/domains/workflowRuns';
 import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 
-import { workflowDefinitionListCursorPhaseV1, type WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, workflowDefinitionListCursorPhaseV1, type WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -31,10 +31,11 @@ import {
 } from '@/sync/domains/workflows/workflowRunListActions';
 import { subscribeVisibleWorkflowRunListInvalidation, type WorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import { refreshWorkflowRunWindowChanges } from './workflowRunWindowChanges';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 /**
  * The Workflows destination's reads (FIN 04 §3.3). The column, library home and shared Runs list are
@@ -102,12 +103,29 @@ const INITIAL_DEFINITIONS: DefinitionsState = Object.freeze({
     deletedDefinitionId: null,
 });
 
-function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScopeLifetime | null, addressed = false) {
+function affectsWorkflowDefinitions(event: HomeAccountChangeEvent, lifetime: ServerAccountScopeLifetime): boolean {
+    return areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)
+        && event.workflowDefinitionsAffect !== false;
+}
+
+/** A selected definition consumes the same producer-classified change as the header library. */
+export function affectsSelectedWorkflowDefinition(event: HomeAccountChangeEvent, lifetime: ServerAccountScopeLifetime, definitionId: string): boolean {
+    return affectsWorkflowDefinitions(event, lifetime)
+        && (event.changedWorkflowDefinitionIds === undefined || event.changedWorkflowDefinitionIds.includes(definitionId));
+}
+
+function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScopeLifetime | null, addressed = false, definitionIds?: readonly string[]) {
     const definitionsCell = createCell<DefinitionsState>(INITIAL_DEFINITIONS);
-    let definitionsInFlight: { lifetime: ActiveServerAccountScopeLifetime; promise: Promise<void>; kind: 'refresh' | 'more'; refreshRequested: boolean; deletionInvalidated: boolean } | null = null;
+    let definitionsInFlight: { lifetime: ActiveServerAccountScopeLifetime; promise: Promise<void>; kind: 'refresh' | 'more'; refreshRequested: false | 'all' | Set<string>; deletionInvalidated: boolean; controller: AbortController } | null = null;
     let definitionReaderCount = 0;
     let unsubscribeDefinitionChange: (() => void) | null = null;
     let deletionRetirement: Readonly<{ dispose(): void }> | null = null;
+    // What a closed library missed. The wake observer outlives its readers, so a reopen keeps the
+    // last-good rows and reads only when this lifetime never completed a list, a coarse wake
+    // arrived, or named rows (or Machine plugin sources) changed while nothing showed them.
+    let followedLifetime: ServerAccountScopeLifetime | null = null;
+    const closedChangedIds = new Set<string>();
+    let closedPluginSources = false;
 
     /** The loaded Workflow domain retains acknowledgements, even before its first library demand. */
     function ensureDefinitionChangeObserver(): void {
@@ -115,11 +133,11 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
             unsubscribeDefinitionChange = subscribeHomeAccountChange((event) => {
                 const lifetime = captureLifetime();
                 if (lifetime === null || !areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
-                // Session-only catch-up changes neither saved definitions nor
-                // Machine-contributed workflows. Unknown wakes remain conservative.
-                if (event.changeKinds?.length && event.changeKinds.every(kind => kind === 'session')) return;
-                const deletedDefinitionId = event.deletedArtifactIds?.[0];
+                // The Home producer classifies saved/source/access changes once;
+                // unrelated content never queues an inventory recheck.
+                const deletedDefinitionId = event.deletedArtifactIds?.find(id => definitionIds === undefined || definitionIds.includes(id));
                 if (deletedDefinitionId !== undefined) {
+                    if (definitionsInFlight?.lifetime === lifetime) definitionsInFlight.deletionInvalidated = true;
                     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
                     const cached = definitionsCell.get();
                     const current = cached.scopeKey === scopeKey ? cached : { ...INITIAL_DEFINITIONS, scopeKey };
@@ -133,17 +151,70 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                         }
                     });
                 }
-                // Artifact ids in the incumbent wake do not carry kind information.
-                // The authoritative list decides membership, retaining equal known rows.
+                // A deletion receipt supplies landing feedback. Its feed row,
+                // rather than this local acknowledgement, owns query refresh.
+                if (event.workflowDefinitionsAffect === false) {
+                    // A Machine row can change only Machine-contributed sources, never a saved row.
+                    if (event.workflowPluginSourcesAffect === true) {
+                        if (definitionReaderCount > 0) refreshPluginSources();
+                        else closedPluginSources = true;
+                    }
+                    return;
+                }
+                const changedIds = (event.workflowDefinitionAutomationIds === undefined ? undefined
+                    : definitionIdsShowingAutomations(event.workflowDefinitionAutomationIds, scopeKeyOf(lifetime)))
+                    ?? (definitionIds === undefined ? event.changedWorkflowDefinitionIds
+                        : event.changedWorkflowDefinitionIds?.filter(id => definitionIds.includes(id)));
+                if (changedIds?.length === 0) return;
+                // The producer pairs exact Artifact ids. The list owner opens only
+                // those records to decide membership; source/recovery facts stay broad.
                 if (definitionsInFlight?.lifetime === lifetime) {
-                    definitionsInFlight.refreshRequested = true;
+                    if (!changedIds) definitionsInFlight.refreshRequested = 'all';
+                    else if (definitionsInFlight.refreshRequested !== 'all') {
+                        const ids = definitionsInFlight.refreshRequested || new Set<string>();
+                        for (const id of changedIds) ids.add(id);
+                        definitionsInFlight.refreshRequested = ids;
+                    }
                     // Ordinary wakes queue a recheck without withholding usable rows.
                     // Only an acknowledged deletion makes the pending result obsolete.
                     if (deletedDefinitionId !== undefined) definitionsInFlight.deletionInvalidated = true;
                 }
-                else if (definitionReaderCount > 0) void refreshDefinitions();
-            });
+                else if (definitionReaderCount > 0) void refreshDefinitions(changedIds);
+                else if (changedIds) for (const id of changedIds) closedChangedIds.add(id);
+                else followedLifetime = null;
+            }, { reconnect: { readNotCurrent: () => {
+                // A failed list or plugin continuation retries on reconnect; loaded rows follow the feed.
+                const current = definitionsCell.get();
+                return current.status !== 'loaded' || current.loadMoreFailed;
+            } } });
         }
+    }
+
+    function scopeKeyOf(lifetime: ServerAccountScopeLifetime): string {
+        return serverAccountScopeKeySuffix(lifetime.scope);
+    }
+    /**
+     * The loaded rows that show these Automations. A row lists its triggers' Automation ids, so an
+     * edited Automation re-reads only its row. An id no loaded row shows (a new trigger) may belong
+     * to any definition: the list is read again.
+     */
+    function definitionIdsShowingAutomations(automationIds: readonly string[], scopeKey: string): readonly string[] | undefined {
+        const current = definitionsCell.get();
+        if (current.scopeKey !== scopeKey || current.status !== 'loaded') return undefined;
+        const byAutomation = new Map<string, string[]>();
+        for (const row of current.definitions) for (const trigger of row.triggers ?? []) {
+            if (trigger.automationId === undefined) continue;
+            const rows = byAutomation.get(trigger.automationId) ?? [];
+            rows.push(row.definitionId);
+            byAutomation.set(trigger.automationId, rows);
+        }
+        const ids = new Set<string>();
+        for (const automationId of automationIds) {
+            const rows = byAutomation.get(automationId);
+            if (rows === undefined) return undefined;
+            for (const id of rows) if (definitionIds === undefined || definitionIds.includes(id)) ids.add(id);
+        }
+        return [...ids];
     }
 
     // One observer belongs to the retained cache's module lifetime. It opens no transport
@@ -158,7 +229,14 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
         return () => {
             unsubscribe();
             definitionReaderCount -= 1;
+            if (definitionReaderCount === 0) {
+                // An abandoned read may have carried queued wakes: the next open reads the list.
+                if (definitionsInFlight) followedLifetime = null;
+                definitionsInFlight?.controller.abort();
+                definitionsInFlight = null;
+            }
             if (addressed && definitionReaderCount === 0) {
+                followedLifetime = null;
                 unsubscribeDefinitionChange?.(); unsubscribeDefinitionChange = null;
                 deletionRetirement?.dispose(); deletionRetirement = null;
             }
@@ -177,29 +255,26 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
             const current = definitionsCell.get();
             if (current.loadingMore) definitionsCell.set({ ...current, loadingMore: false });
         }
-        if (read.refreshRequested && isCurrent() && definitionReaderCount > 0) void refreshDefinitions();
+        if (read.refreshRequested && isCurrent() && definitionReaderCount > 0) {
+            void refreshDefinitions(read.refreshRequested === 'all' ? undefined : [...read.refreshRequested]);
+        }
         else if (isCurrent() && definitionReaderCount > 0 && !definitionsCell.get().loadMoreFailed
             && workflowDefinitionListCursorPhaseV1(definitionsCell.get().nextCursor) === 'plugins-start') void loadMoreDefinitions();
     }
 
-    function retainEqualLibraryRows<T>(previous: readonly T[], incoming: readonly T[], key: (row: T) => string): readonly T[] {
-        const previousById = new Map(previous.map((row) => [key(row), row]));
-        const rows = incoming.map((row) => {
-            const stored = previousById.get(key(row));
-            return stored !== undefined && sameStrictJsonValue(stored, row) ? stored : row;
-        });
-        return rows.length === previous.length && rows.every((row, index) => row === previous[index]) ? previous : rows;
-    }
-
     /** Refresh demanded Account pages together, then discover plugins without gating saved rows. */
-    function refreshDefinitions(): Promise<void> {
+    function refreshDefinitions(changedArtifactIds?: readonly string[]): Promise<void> {
         if (definitionReaderCount === 0) return Promise.resolve();
         const lifetime = captureLifetime();
         if (lifetime === null) return Promise.resolve();
         const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
         // The same Home/Account can reactivate while its retired request is still pending.
         // Only demand captured in this exact lifetime may join or queue behind that read.
-        if (definitionsInFlight?.lifetime === lifetime) return definitionsInFlight.promise;
+        if (definitionsInFlight?.lifetime === lifetime && !definitionsInFlight.controller.signal.aborted) return definitionsInFlight.promise;
+        definitionsInFlight?.controller.abort();
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        const isCurrent = () => lifetime.isCurrent() && !controller.signal.aborted;
         const previous = definitionsCell.get();
         const demandedPages = previous.scopeKey === scopeKey ? Math.max(1, previous.loadedPages) : 1;
         // Another Account's rows are never shown while this one loads.
@@ -210,11 +285,27 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
         const readDefinitions = async (): Promise<void> => {
             let pluginContinuation: Readonly<{ cursor: string; loadedPages: number }> | null = null;
             try {
-                let page = await listWorkflowDefinitions(addressed ? { accountLifetime: lifetime } : {});
+                const exactIds = previous.scopeKey === scopeKey && previous.status === 'loaded'
+                    ? changedArtifactIds ?? definitionIds : definitionIds;
+                if (exactIds) {
+                    const pages = await Promise.all(exactIds.map(definitionId => listWorkflowDefinitions({ definitionId,
+                        signal: controller.signal, ...(addressed ? { accountLifetime: lifetime } : {}) })));
+                    if (!isCurrent() || definitionsInFlight?.deletionInvalidated) return;
+                    const current = definitionsCell.get();
+                    const changed = new Set(exactIds);
+                    const incoming = pages.flatMap(page => page.definitions);
+                    const definitions = retainKeyedRows(current.definitions,
+                        [...incoming, ...current.definitions.filter(row => !changed.has(row.definitionId))], row => row.definitionId);
+                    const next = { ...current, status: 'loaded' as const, failure: null, definitions,
+                        loadedPages: Math.max(1, current.loadedPages) };
+                    definitionsCell.set(sameStrictJsonValue(current, next) ? current : next);
+                    return;
+                }
+                let page = await listWorkflowDefinitions({ signal: controller.signal, ...(addressed ? { accountLifetime: lifetime } : {}) });
                 const definitions = new Map(page.definitions.map((row) => [row.definitionId, row]));
                 const plugins = new Map((page.pluginWorkflows ?? []).map((row) => [row.workflow, row]));
                 let loadedPages = 1;
-                while (lifetime.isCurrent() && definitionReaderCount > 0 && !definitionsInFlight?.deletionInvalidated && page.nextCursor && (loadedPages < demandedPages
+                while (isCurrent() && definitionReaderCount > 0 && !definitionsInFlight?.deletionInvalidated && page.nextCursor && (loadedPages < demandedPages
                     || (!pluginContinuation && workflowDefinitionListCursorPhaseV1(page.nextCursor) === 'plugins-start'))) {
                     if (!pluginContinuation && workflowDefinitionListCursorPhaseV1(page.nextCursor) !== 'artifacts') {
                         // Account content and built-ins remain usable while the daemon is
@@ -222,19 +313,19 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                         // their authoritative continuation replaces them.
                         pluginContinuation = { cursor: page.nextCursor, loadedPages };
                         const current = definitionsCell.get();
-                        const savedRows = retainEqualLibraryRows(current.definitions, [...definitions.values()], (row) => row.definitionId);
+                        const savedRows = retainKeyedRows(current.definitions, [...definitions.values()], (row) => row.definitionId);
                         // Already-visible equal rows need no transient refresh notification.
                         if (!definitionsInFlight?.deletionInvalidated && (current.status !== 'loaded' || savedRows !== current.definitions)) definitionsCell.set({
                             ...current, scopeKey, status: 'loaded', failure: null, definitions: savedRows,
                             nextCursor: page.nextCursor, loadedPages, loadingMore: true, loadMoreFailed: false,
                         });
                     }
-                    page = await listWorkflowDefinitions({ cursor: page.nextCursor, ...(addressed ? { accountLifetime: lifetime } : {}) });
+                    page = await listWorkflowDefinitions({ cursor: page.nextCursor, signal: controller.signal, ...(addressed ? { accountLifetime: lifetime } : {}) });
                     for (const row of page.definitions) definitions.set(row.definitionId, row);
                     for (const row of page.pluginWorkflows ?? []) plugins.set(row.workflow, row);
                     loadedPages += 1;
                 }
-                if (!lifetime.isCurrent() || definitionsInFlight?.deletionInvalidated) return;
+                if (!isCurrent() || definitionsInFlight?.deletionInvalidated) return;
                 const current = definitionsCell.get();
                 const next: DefinitionsState = {
                     scopeKey,
@@ -242,15 +333,16 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                     failure: null,
                     loadingMore: false,
                     loadMoreFailed: false,
-                    definitions: retainEqualLibraryRows(current.definitions, [...definitions.values()], (row) => row.definitionId),
-                    pluginWorkflows: retainEqualLibraryRows(current.pluginWorkflows, [...plugins.values()], (row) => row.workflow),
+                    definitions: retainKeyedRows(current.definitions, [...definitions.values()], (row) => row.definitionId),
+                    pluginWorkflows: retainKeyedRows(current.pluginWorkflows, [...plugins.values()], (row) => row.workflow),
                     nextCursor: page.nextCursor ?? null,
                     loadedPages,
                     deletedDefinitionId: current.deletedDefinitionId,
                 };
                 definitionsCell.set(sameStrictJsonValue(current, next) ? current : next);
+                followedLifetime = lifetime;
             } catch (error) {
-                if (!lifetime.isCurrent() || definitionsInFlight?.deletionInvalidated) return;
+                if (!isCurrent() || definitionsInFlight?.deletionInvalidated) return;
                 if (pluginContinuation) {
                     // Plugin failure must not turn readable Account rows into a failed
                     // initial load. Retry continues the same list phase.
@@ -266,12 +358,76 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                     failure: resolveWorkflowProblemPresentation(error),
                 });
             } finally {
-                finishDefinitionRead(promise, lifetime.isCurrent);
+                retirement.dispose();
+                finishDefinitionRead(promise, isCurrent);
             }
         };
         const promise = readDefinitions();
-        definitionsInFlight = { lifetime, promise, kind: 'refresh', refreshRequested: false, deletionInvalidated: false };
+        definitionsInFlight = { lifetime, promise, kind: 'refresh', refreshRequested: false, deletionInvalidated: false, controller };
         return promise;
+    }
+
+    /** A surface opens: last-good rows stay, and only what this lifetime has not followed is read. */
+    function demandDefinitions(): void {
+        const lifetime = captureLifetime();
+        if (lifetime === null) return;
+        const current = definitionsCell.get();
+        if (followedLifetime !== lifetime || current.scopeKey !== scopeKeyOf(lifetime) || current.status !== 'loaded'
+            || current.loadMoreFailed || (closedPluginSources && closedChangedIds.size > 0)) {
+            closedChangedIds.clear(); closedPluginSources = false;
+            void refreshDefinitions();
+            return;
+        }
+        if (closedChangedIds.size > 0) {
+            const ids = [...closedChangedIds];
+            closedChangedIds.clear();
+            void refreshDefinitions(ids);
+        }
+        if (closedPluginSources) { closedPluginSources = false; refreshPluginSources(); }
+    }
+
+    /**
+     * Re-derive the plugin phase only, for as many plugin pages as are shown. A saved list still
+     * paging its Account rows reads its plugin sources when it gets there; a running read already will.
+     */
+    function refreshPluginSources(): void {
+        if (definitionReaderCount === 0 || definitionIds !== undefined || definitionsInFlight !== null) return;
+        const lifetime = captureLifetime();
+        const current = definitionsCell.get();
+        if (lifetime === null || !lifetime.isCurrent() || current.status !== 'loaded' || current.loadingMore || current.loadMoreFailed
+            || current.scopeKey !== serverAccountScopeKeySuffix(lifetime.scope)
+            || (current.nextCursor !== null && workflowDefinitionListCursorPhaseV1(current.nextCursor) === 'artifacts')) return;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        const isCurrent = () => lifetime.isCurrent() && !controller.signal.aborted;
+        const readSources = async () => {
+            try {
+                const plugins = new Map<string, WorkflowPluginSourceV1>();
+                let cursor: string | undefined = `${WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1}0`;
+                let nextCursor: string | null = null;
+                while (cursor !== undefined && isCurrent()) {
+                    const page = await listWorkflowDefinitions({ cursor, signal: controller.signal, ...(addressed ? { accountLifetime: lifetime } : {}) });
+                    for (const row of page.pluginWorkflows ?? []) plugins.set(row.workflow, row);
+                    nextCursor = page.nextCursor ?? null;
+                    cursor = page.nextCursor !== undefined && plugins.size < current.pluginWorkflows.length ? page.nextCursor : undefined;
+                }
+                if (!isCurrent() || definitionsInFlight?.deletionInvalidated) return;
+                const latest = definitionsCell.get();
+                const pluginWorkflows = retainKeyedRows(latest.pluginWorkflows, [...plugins.values()], (row) => row.workflow);
+                if (pluginWorkflows !== latest.pluginWorkflows || nextCursor !== latest.nextCursor) {
+                    definitionsCell.set({ ...latest, pluginWorkflows, nextCursor });
+                }
+            } catch {
+                // As in a full refresh: shown sources stay and Retry continues the plugin phase.
+                if (isCurrent() && !definitionsInFlight?.deletionInvalidated) definitionsCell.set({ ...definitionsCell.get(),
+                    nextCursor: `${WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1}0`, loadMoreFailed: true });
+            } finally {
+                retirement.dispose();
+                finishDefinitionRead(promise, isCurrent);
+            }
+        };
+        const promise = readSources();
+        definitionsInFlight = { lifetime, promise, kind: 'more', refreshRequested: false, deletionInvalidated: false, controller };
     }
 
     async function loadMoreDefinitions(): Promise<void> {
@@ -294,10 +450,13 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
             return;
         }
         definitionsCell.set({ ...current, loadingMore: true, loadMoreFailed: false });
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        const isCurrent = () => lifetime.isCurrent() && !controller.signal.aborted;
         const readPage = async () => {
             try {
-                const page = await listWorkflowDefinitions({ cursor, ...(addressed ? { accountLifetime: lifetime } : {}) });
-                if (!lifetime.isCurrent() || definitionsInFlight?.deletionInvalidated) return;
+                const page = await listWorkflowDefinitions({ cursor, signal: controller.signal, ...(addressed ? { accountLifetime: lifetime } : {}) });
+                if (!isCurrent() || definitionsInFlight?.deletionInvalidated) return;
                 const latest = definitionsCell.get();
                 const seen = new Set(latest.definitions.map((entry) => entry.definitionId));
                 const addedDefinitions = page.definitions.filter((entry) => !seen.has(entry.definitionId));
@@ -313,27 +472,28 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                     loadingMore: false,
                     definitions: addedDefinitions.length === 0 ? latest.definitions : [...latest.definitions, ...addedDefinitions],
                     pluginWorkflows: replacingPlugins
-                        ? retainEqualLibraryRows(latest.pluginWorkflows, addedPlugins, (row) => row.workflow)
+                        ? retainKeyedRows(latest.pluginWorkflows, addedPlugins, (row) => row.workflow)
                         : addedPlugins.length === 0 ? latest.pluginWorkflows : [...latest.pluginWorkflows, ...addedPlugins],
                     nextCursor: page.nextCursor ?? null,
                     loadedPages: latest.loadedPages + 1,
                 });
             } catch {
                 // The loaded rows and the cursor stay; Retry asks for exactly this page again.
-                if (lifetime.isCurrent() && !definitionsInFlight?.deletionInvalidated) definitionsCell.set({ ...definitionsCell.get(), loadingMore: false, loadMoreFailed: true });
+                if (isCurrent() && !definitionsInFlight?.deletionInvalidated) definitionsCell.set({ ...definitionsCell.get(), loadingMore: false, loadMoreFailed: true });
             } finally {
-                finishDefinitionRead(promise, lifetime.isCurrent);
+                retirement.dispose();
+                finishDefinitionRead(promise, isCurrent);
             }
         };
         const promise = readPage();
-        definitionsInFlight = { lifetime, promise, kind: 'more', refreshRequested: false, deletionInvalidated: false };
+        definitionsInFlight = { lifetime, promise, kind: 'more', refreshRequested: false, deletionInvalidated: false, controller };
         await promise;
     }
 
     return {
         cell: definitionsCell, subscribe: subscribeDefinitions,
-        refresh: refreshDefinitions,
-        retry: () => { void refreshDefinitions(); },
+        demand: demandDefinitions,
+        retry: () => { definitionsInFlight?.controller.abort(); void refreshDefinitions(); },
         loadMore: () => { void loadMoreDefinitions(); },
         dismissDeletion(definitionId: string) {
             const current = definitionsCell.get();
@@ -344,21 +504,26 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
         reset() {
             unsubscribeDefinitionChange?.(); unsubscribeDefinitionChange = null;
             deletionRetirement?.dispose(); deletionRetirement = null;
+            definitionsInFlight?.controller.abort();
             definitionsCell.set(INITIAL_DEFINITIONS); definitionsInFlight = null;
+            followedLifetime = null; closedChangedIds.clear(); closedPluginSources = false;
             ensureDefinitionChangeObserver();
         },
     };
 }
 
 const activeDefinitionLibrary = createDefinitionLibraryReader(captureActiveServerAccountScopeLifetime);
-let addressedDefinitionLibraries = new WeakMap<ServerAccountScopeLifetime, ReturnType<typeof createDefinitionLibraryReader>>();
-function definitionLibraryForLifetime(lifetime: ServerAccountScopeLifetime | null | undefined) {
-    if (!lifetime) return activeDefinitionLibrary;
-    if (areServerAccountScopesEqual(lifetime.scope, captureActiveServerAccountScopeLifetime()?.scope)) return activeDefinitionLibrary;
-    let reader = addressedDefinitionLibraries.get(lifetime);
+let addressedDefinitionLibraries = new WeakMap<ServerAccountScopeLifetime, Map<string, ReturnType<typeof createDefinitionLibraryReader>>>();
+function definitionLibraryForLifetime(lifetime: ServerAccountScopeLifetime | null | undefined, definitionIds?: readonly string[]) {
+    if (!lifetime || definitionIds?.length === 0) return activeDefinitionLibrary;
+    if (definitionIds === undefined && areServerAccountScopesEqual(lifetime.scope, captureActiveServerAccountScopeLifetime()?.scope)) return activeDefinitionLibrary;
+    let windows = addressedDefinitionLibraries.get(lifetime);
+    if (!windows) { windows = new Map(); addressedDefinitionLibraries.set(lifetime, windows); }
+    const key = definitionIds === undefined ? '' : JSON.stringify(definitionIds);
+    let reader = windows.get(key);
     if (!reader) {
-        reader = createDefinitionLibraryReader(() => lifetime.isCurrent() ? lifetime : null, true);
-        addressedDefinitionLibraries.set(lifetime, reader);
+        reader = createDefinitionLibraryReader(() => lifetime.isCurrent() ? lifetime : null, true, definitionIds);
+        windows.set(key, reader);
     }
     return reader;
 }
@@ -393,21 +558,26 @@ const INACTIVE_DEFINITION_LIBRARY: WorkflowDefinitionLibrary = Object.freeze({
     retry: retryDefinitions, loadMore: requestMoreDefinitions,
 });
 
-/** The saved definitions, refreshed when a surface that shows them mounts or the Account changes. */
-export function useWorkflowDefinitionLibrary(options?: Readonly<{ enabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null }>): WorkflowDefinitionLibrary {
+/** The saved definitions: last-good on reopen, read when this Account lifetime has not followed them. */
+export function useWorkflowDefinitionLibrary(options?: Readonly<{
+    enabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null; definitionIds?: readonly string[];
+}>): WorkflowDefinitionLibrary {
     const addressedLifetime = useWorkflowAccountLifetime(options?.accountLifetime);
     const enabled = options?.enabled ?? true;
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = addressedLifetime === undefined ? activeLifetime : addressedLifetime;
-    const reader = definitionLibraryForLifetime(addressedLifetime);
-    const readable = enabled && (addressedLifetime === undefined || lifetime?.isCurrent() === true);
+    const definitionIds = React.useMemo(() => options?.definitionIds === undefined ? undefined
+        : [...new Set(options.definitionIds)].sort(), [options?.definitionIds]);
+    const reader = definitionLibraryForLifetime(definitionIds === undefined ? addressedLifetime : lifetime, definitionIds);
+    const readable = enabled && (definitionIds === undefined ? addressedLifetime === undefined || lifetime?.isCurrent() === true
+        : definitionIds.length > 0 && lifetime?.isCurrent() === true);
     const scopeKey = lifetime === null ? null : serverAccountScopeKeySuffix(lifetime.scope);
     const state = React.useSyncExternalStore(
         readable ? reader.subscribe : subscribeInactiveDefinitions,
         readable ? reader.cell.get : readInactiveDefinitions,
         readable ? reader.cell.get : readInactiveDefinitions,
     );
-    React.useEffect(() => { if (readable && lifetime) void reader.refresh(); }, [readable, lifetime, reader]);
+    React.useEffect(() => { if (readable && lifetime) reader.demand(); }, [readable, lifetime, reader]);
     if (!enabled) return INACTIVE_DEFINITION_LIBRARY;
     const owned = state.scopeKey === scopeKey;
     return {
@@ -424,23 +594,59 @@ export function useWorkflowDefinitionLibrary(options?: Readonly<{ enabled?: bool
     };
 }
 
-/** Resolve one plugin source through the same scoped pages as the library and pickers. */
+/** Reuse admitted library facts, or demand this exact source through the same Action owner. */
 export function useWorkflowPluginSource(workflow: string | null, enabled = true, accountLifetime?: ServerAccountScopeLifetime | null): Readonly<{
     source: WorkflowPluginSourceV1 | null;
     status: 'idle' | 'loading' | 'failed' | 'missing' | 'ready';
     retry: () => void;
 }> {
-    const library = useWorkflowDefinitionLibrary({ enabled: enabled && workflow !== null,
-        ...(accountLifetime === undefined ? {} : { accountLifetime }) });
-    const source = library.pluginWorkflows.find((entry) => entry.workflow === workflow) ?? null;
+    accountLifetime = useWorkflowAccountLifetime(accountLifetime);
+    const activeLifetime = useActiveServerAccountScopeLifetime();
+    const lifetime = accountLifetime === undefined ? activeLifetime : accountLifetime;
+    const reader = definitionLibraryForLifetime(accountLifetime);
+    const scopeKey = lifetime ? serverAccountScopeKeySuffix(lifetime.scope) : null;
+    // Observe only the exact admitted hit, without demanding collection pages or
+    // rerendering when unrelated saved rows/status change.
+    const getKnown = React.useCallback(() => {
+        if (!enabled || workflow === null || !lifetime?.isCurrent()) return null;
+        const library = reader.cell.get();
+        return library.scopeKey === scopeKey ? library.pluginWorkflows.find(entry => entry.workflow === workflow) ?? null : null;
+    }, [enabled, workflow, lifetime, reader, scopeKey]);
+    const known = React.useSyncExternalStore(enabled && workflow !== null ? reader.cell.subscribe : subscribeInactiveDefinitions, getKnown, getKnown);
+    const [attempt, setAttempt] = React.useState(0);
+    const retry = React.useCallback(() => setAttempt(value => value + 1), []);
+    const [read, setRead] = React.useState<Readonly<{
+        workflow: string; lifetime: ServerAccountScopeLifetime; attempt: number;
+        source: WorkflowPluginSourceV1 | null; status: 'ready' | 'missing' | 'failed';
+    }> | null>(null);
     React.useEffect(() => {
-        if (enabled && workflow !== null && source === null && library.status === 'loaded'
-            && library.hasMore && !library.loadingMore && !library.loadMoreFailed) library.loadMore();
-    }, [enabled, workflow, source, library.status, library.hasMore, library.loadingMore, library.loadMoreFailed, library.loadMore]);
-    return { source, status: !enabled || workflow === null ? 'idle' : source !== null ? 'ready'
-        : library.status === 'failed' || library.loadMoreFailed ? 'failed'
-            : library.status !== 'loaded' || library.hasMore ? 'loading' : 'missing',
-        retry: library.loadMoreFailed ? library.loadMore : library.retry };
+        if (!enabled || workflow === null || !lifetime?.isCurrent()) return;
+        const retirement = lifetime.onRetire(retry);
+        const unsubscribe = subscribeHomeAccountChange(event => {
+            if (!affectsWorkflowDefinitions(event, lifetime)) return;
+            retry();
+        }, { reconnect: 'refresh' });
+        return () => { unsubscribe(); retirement.dispose(); };
+    }, [enabled, workflow, lifetime, retry]);
+    React.useEffect(() => {
+        if (!enabled || workflow === null || !lifetime?.isCurrent() || (known !== null && attempt === 0)) return;
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => { controller.abort(); setRead(null); });
+        void listWorkflowDefinitions({ workflow, signal: controller.signal,
+            ...(accountLifetime === undefined ? {} : { accountLifetime }) }).then(result => {
+            if (controller.signal.aborted || !lifetime.isCurrent()) return;
+            const source = result.pluginWorkflows?.[0] ?? null;
+            setRead({ workflow, lifetime, attempt, source, status: source === null ? 'missing' : 'ready' });
+        }).catch(() => {
+            if (!controller.signal.aborted && lifetime.isCurrent()) setRead({ workflow, lifetime, attempt, source: null, status: 'failed' });
+        });
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [enabled, workflow, lifetime, accountLifetime, known, attempt]);
+    if (!enabled || workflow === null) return { source: null, status: 'idle', retry };
+    if (!lifetime?.isCurrent()) return { source: null, status: 'failed', retry };
+    const current = read?.workflow === workflow && read.lifetime === lifetime && read.attempt === attempt ? read : null;
+    return { source: current?.source ?? (current === null ? known : null),
+        status: current?.status ?? (known === null ? 'loading' : 'ready'), retry };
 }
 
 // ---- Run windows ------------------------------------------------------------------------------
@@ -453,16 +659,37 @@ const runWindowStatusCell = createCell<RunWindowStatuses>(EMPTY_RUN_STATUSES);
 type RunProjection = 'membership' | undefined;
 type RunWindowRead = { promise: Promise<void>; refreshRequested: boolean; change?: WorkflowRunListInvalidation; projection: RunProjection; controller: AbortController };
 type RunWindowReader = { lifetime: ActiveServerAccountScopeLifetime; fullReaders: number; membershipReaders: number; completeReaders: number;
-    read?: RunWindowRead; unsubscribe?: () => void };
+    read?: RunWindowRead; unsubscribe?: () => void;
+    /** What the next open must read: nothing, the exact Runs/sources that changed while closed, or the window. */
+    stale: false | 'all' | WorkflowRunListInvalidation };
 const runWindowReaders = new Map<WorkflowRunListWindowStoreId, RunWindowReader>();
 
 function runWindowReader(windowId: WorkflowRunListWindowId, lifetime: ActiveServerAccountScopeLifetime): RunWindowReader {
     const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
     const existing = runWindowReaders.get(storeId);
     if (existing?.lifetime === lifetime) return existing;
-    const reader = { lifetime, fullReaders: 0, membershipReaders: 0, completeReaders: 0 };
+    const reader: RunWindowReader = { lifetime, fullReaders: 0, membershipReaders: 0, completeReaders: 0, stale: 'all' };
     runWindowReaders.set(storeId, reader);
     return reader;
+}
+
+/**
+ * The fixed windows (`all`, `active`, `attention`, `automationAttention`) keep observing their
+ * Account's Run wakes for the reader's lifetime, so a reopen serves the shared Run store without a
+ * read. Exact Run-set windows are per-detail demand and stop observing with their last reader.
+ */
+function observesWhileClosed(windowId: WorkflowRunListWindowId): boolean {
+    return !windowId.startsWith('exact:');
+}
+
+/** Two pending changes share one read; a coarse change (no named Runs or sources) supersedes them. */
+function mergeRunListChanges(previous: WorkflowRunListInvalidation | undefined, next: WorkflowRunListInvalidation | undefined): WorkflowRunListInvalidation | undefined {
+    if (!previous || !next) return undefined;
+    return { summaryCurrent: previous.summaryCurrent && next.summaryCurrent,
+        runIds: [...new Set([...(previous.runIds ?? []), ...(next.runIds ?? [])])],
+        ...((previous.sourceArtifactIds || next.sourceArtifactIds) ? {
+            sourceArtifactIds: [...new Set([...(previous.sourceArtifactIds ?? []), ...(next.sourceArtifactIds ?? [])])],
+        } : {}) };
 }
 
 function demandedRunProjection(windowId: WorkflowRunListWindowId, reader: RunWindowReader): RunProjection {
@@ -484,7 +711,7 @@ function finishRunWindowRead(windowId: WorkflowRunListWindowId, lifetime: Server
     else if (reader.completeReaders > 0 && isCurrent() && reader.lifetime.isCurrent()
         && readRunWindowStatus(storeId).status === 'loaded' && !readRunWindowStatus(storeId).loadMoreFailed
         && getStorage().getState().workflowRunListWindows[storeId]?.nextCursor) void loadMoreRunWindow(windowId, lifetime);
-    else if (reader.fullReaders + reader.membershipReaders === 0) runWindowReaders.delete(storeId);
+    else if (reader.fullReaders + reader.membershipReaders === 0 && !reader.unsubscribe) runWindowReaders.delete(storeId);
 }
 
 function setRunWindowStatus(windowId: WorkflowRunListWindowStoreId, next: RunReadStatus): void {
@@ -533,13 +760,7 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
         if (invalidate) {
             // Keep exact changes exact while sharing the existing in-flight read.
             // A coarse reset supersedes accumulated row selections.
-            if (!inFlight.refreshRequested) inFlight.change = change;
-            else if (!inFlight.change || !change) inFlight.change = undefined;
-            else inFlight.change = { summaryCurrent: inFlight.change.summaryCurrent && change.summaryCurrent,
-                runIds: [...new Set([...(inFlight.change.runIds ?? []), ...(change.runIds ?? [])])],
-                ...((inFlight.change.sourceArtifactIds || change.sourceArtifactIds) ? {
-                    sourceArtifactIds: [...new Set([...(inFlight.change.sourceArtifactIds ?? []), ...(change.sourceArtifactIds ?? [])])],
-                } : {}) };
+            inFlight.change = inFlight.refreshRequested ? mergeRunListChanges(inFlight.change, change) : change;
             inFlight.refreshRequested = true;
         }
         return inFlight.promise;
@@ -701,7 +922,8 @@ export type WorkflowRunWindow = Readonly<{
 
 /**
  * One Run window (`all`, `active`, `attention`, `automationAttention`) while a surface shows it: its first
- * page on mount and on the Account's Run-change wake, and its rows from the shared Run store.
+ * page on first demand in an Account lifetime and on the Account's Run-change wake, and its rows from
+ * the shared Run store. A reopen keeps those rows and reads only the Runs that changed while closed.
  * Complete readers demand the whole relation through that owner's response-byte continuations.
  * `enabled: false` holds no subscription and issues no read. `demanded: false`
  * retains observation of known rows/status while releasing network demand.
@@ -738,7 +960,17 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
         if (membershipOnly) reader.membershipReaders += 1;
         else reader.fullReaders += 1;
         if (complete) reader.completeReaders += 1;
-        void refreshRunWindow(windowId, false, lifetime);
+        // Reopen from the shared Run store; read only what was missed while closed.
+        const stale = reader.stale;
+        reader.stale = false;
+        const known = readRunWindowStatus(storeId);
+        const stored = getStorage().getState().workflowRunListWindows[storeId];
+        if (stale !== false || reader.read || known.status !== 'loaded' || known.loadMoreFailed
+            || known.scopeKey !== serverAccountScopeKeySuffix(lifetime.scope) || !stored
+            || (stored.projection !== undefined && stored.projection !== demandedRunProjection(windowId, reader))
+            || (complete && stored.nextCursor)) {
+            void refreshRunWindow(windowId, false, lifetime, stale === false || stale === 'all' ? undefined : stale);
+        }
         reader.unsubscribe ??= subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
             ...(windowId !== 'automationAttention' && windowId.startsWith('exact:') ? { runIds: buildWorkflowRunListFilter(windowId).runIds } : {}),
@@ -747,16 +979,23 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
             isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
                 || readRunWindowStatus(storeId).status === 'failed'
                 || (runWindowReaders.get(storeId)?.lifetime === lifetime && runWindowReaders.get(storeId)?.read !== undefined),
-            invalidate: change => { void refreshRunWindow(windowId, true, lifetime, change); },
+            invalidate: change => {
+                if (reader.fullReaders + reader.membershipReaders > 0) { void refreshRunWindow(windowId, true, lifetime, change); return; }
+                reader.stale = reader.stale === false ? change : reader.stale === 'all' ? 'all' : mergeRunListChanges(reader.stale, change) ?? 'all';
+            },
         });
         return () => {
             if (membershipOnly) reader.membershipReaders -= 1;
             else reader.fullReaders -= 1;
             if (complete) reader.completeReaders -= 1;
             if (reader.fullReaders + reader.membershipReaders === 0) {
+                // An abandoned read may have carried queued wakes: the next open reads the window.
+                if (reader.read) reader.stale = 'all';
+                reader.read?.controller.abort();
+                if (observesWhileClosed(windowId)) return;
                 reader.unsubscribe?.();
                 delete reader.unsubscribe;
-                reader.read?.controller.abort();
+                reader.stale = 'all';
                 if (!reader.read && runWindowReaders.get(storeId) === reader) runWindowReaders.delete(storeId);
             }
         };

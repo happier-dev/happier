@@ -6,6 +6,7 @@ import type { WorkflowWaitLeafV1 } from '@happier-dev/protocol/workflows/workflo
 
 import {
     ScopedAuthoringComposer,
+    type ScopedAuthoringComposerHandle,
     type AuthoringComposerScope,
     type ScopedAuthoringDocument,
 } from '@/components/sessions/authoring/ScopedAuthoringComposer';
@@ -45,13 +46,19 @@ type WorkflowWaitBlockEditorProps = Readonly<{
     editable?: boolean;
     /** Whether this Wait sits in a lane; at the workflow's root it pauses the workflow (DESIGN-6 P3). */
     inLane?: boolean;
-    /** Registers the block's heading as its focus target (blocks without a prompt). */
+    /** Registers the block's prompt as its focus target (Add, opening its summary, the first issue). */
     focusRegistration?: (focus: (() => void) | null) => void;
     /** The first issue on this step, once the page reveals issues; named in its own words (P3). */
     issue?: string | null;
     slots?: WorkflowDocumentStepSlots | null;
     /** Opens this block's Step options, anchored beside its options control; absent when read-only. */
     onOpenOptions?: (anchorRef: React.RefObject<View | null>) => void;
+    /**
+     * Whether this prompt is the one being edited. `false` shows its static picture; activating it
+     * asks the host through `onRequestEdit`.
+     */
+    editing?: boolean;
+    onRequestEdit?: () => void;
     testIDPrefix: string;
 }>;
 
@@ -61,6 +68,13 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
     const custody = props.composerCustody.entryFor(block.id);
     const latestRef = React.useRef(props);
     latestRef.current = props;
+    const composerRef = React.useRef<ScopedAuthoringComposerHandle>(null);
+    const { focusRegistration } = props;
+    React.useEffect(() => {
+        if (focusRegistration === undefined) return undefined;
+        focusRegistration(() => composerRef.current?.focus());
+        return () => focusRegistration(null);
+    }, [focusRegistration]);
     const handleChangeDocument = React.useCallback((document: ScopedAuthoringDocument) => {
         const current = latestRef.current;
         current.onChangeBlock({
@@ -76,6 +90,7 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
         });
     }, []);
     const handleFocus = React.useCallback(() => latestRef.current.onSelect(), []);
+    const handleRequestEdit = React.useCallback(() => latestRef.current.onRequestEdit?.(), []);
     const displayName = workflowBlockReferenceLabel(block);
     const rowPrefix = `${testIDPrefix}-wait-${block.id}`;
     // Step options is a chip in the composer's own chip row, as on every step (07 S7).
@@ -102,7 +117,6 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
                 selected={props.selected}
                 unnamed={resolveWorkflowUnnamedHeading(block)}
                 visibleOrdinal={props.visibleOrdinal ?? null}
-                {...(props.focusRegistration === undefined ? {} : { focusRegistration: props.focusRegistration })}
                 displayName={displayName}
                 accessibilityLabel={t('workflows.a11y.stepContext', { block: displayName, position: props.ordinal, total: props.total })}
                 issue={props.issue ?? null}
@@ -115,8 +129,9 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
             {props.slots?.occurrenceSelector ?? null}
             <View testID={`${rowPrefix}-prompt`} style={workflowEditorStyles.promptFrame}>
                 <ScopedAuthoringComposer
-                    hostActionBarLayout="wrap"
+                    ref={composerRef}
                     inputAccessibilityLabel={displayName}
+                    hostActionBarLayout="wrap"
                     custody={custody}
                     scope={props.composerScope}
                     document={block.document}
@@ -129,6 +144,8 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
                     voiceAffordance="dictation"
                     onFocus={handleFocus}
                     {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
+                    editing={props.editing !== false}
+                    {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: handleRequestEdit })}
                 />
             </View>
             {props.slots?.reviewedCard ?? null}

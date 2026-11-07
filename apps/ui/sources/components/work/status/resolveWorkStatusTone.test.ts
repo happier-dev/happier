@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentActivityStatusV1 } from '@happier-dev/protocol';
+import type { AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 
 vi.mock('@/text', async () => {
@@ -13,6 +13,22 @@ import { t } from '@/text';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 describe('resolveWorkStatusTone', () => {
+    it('uses current authorized teammate work without treating unavailable or stale summaries as idle', () => {
+        const facts = { online: true, needsYouCount: 0, runningSessionCount: 0, word: 'Online' };
+        const summary = { kind: 'summary', summary: { kind: 'current', requesters: [
+            { accountId: 'bob', displayName: 'Bob', sessions: 1, tasks: 0, terminals: 0 },
+        ] } } as const;
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, workSummary: summary } }))
+            .toMatchObject({ bucket: 'working', tone: 'neutral' });
+        for (const workSummary of [{ ...summary, stale: 'unavailable' }, { kind: 'summary', summary: { kind: 'unavailable' } },
+            { kind: 'loading' }] as const) {
+            expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, workSummary } }))
+                .toMatchObject({ state: 'unknown', word: t('common.unknown') });
+        }
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, workSummary: { kind: 'denied' } } }).bucket).toBe('idle');
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts,
+            workSummary: { kind: 'summary', summary: { kind: 'current', requesters: [] } } } }).bucket).toBe('idle');
+    });
     it('keeps the unseen failure signal independent of an actionable request and Workflow acknowledgement', () => {
         const awareness = { runtime: 'offline', operational: { primary: 'permission_required', reasons: ['permission_required'] } } as const;
         const viewer = { attention: { needsAttention: true, reasons: ['failed', 'permission_required'], primary: 'failed', presentation: 'full' } } as const;
@@ -21,7 +37,9 @@ describe('resolveWorkStatusTone', () => {
         } })).toMatchObject({ state: 'failed', tone: 'danger', attentionType: 'approval' });
         const run = { state: 'failed', word: 'Failed', inAttentionWindow: true, invocationAttentionRequired: false } as const;
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...run, failureUnseen: true } }))
-            .toMatchObject({ state: 'failed', bucket: 'needs_you', tone: 'danger', attentionType: 'update' });
+            .toMatchObject({ state: 'failed', bucket: 'finished', tone: 'danger', attentionType: 'update' });
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...run, failureUnseen: true, invocationAttentionRequired: true } }))
+            .toMatchObject({ state: 'failed', bucket: 'needs_you', tone: 'danger', attentionType: 'decision' });
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...run, inAttentionWindow: false, failureUnseen: false } }))
             .toMatchObject({ state: 'failed', bucket: 'finished', tone: 'neutral', attentionType: null });
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...run, failureUnseen: false, invocationAttentionRequired: true } }))
@@ -61,7 +79,7 @@ describe('resolveWorkStatusTone', () => {
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
             resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: { id: 'retained-native' } },
             retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
-            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } };
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } };
         const facts = { online: false, needsYouCount: 0, runningSessionCount: 0, word: 'Offline', machineId: 'guest', managedMachine: managed };
         expect(resolveWorkStatusTone({ kind: 'machine', facts })).toMatchObject({ bucket: 'idle', tone: 'neutral', word: t('managedPower.asleep') });
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, online: null } }))
@@ -146,14 +164,14 @@ describe('resolveWorkStatusTone', () => {
         }
     });
 
-    it('presents unreachable Stop custody as offline and keeps header actions nonterminal', () => {
+    it('keeps canonical cancellation finished while unresolved custody keeps header actions nonterminal', () => {
         const facts = { state: 'cancelled' as const, workflowCustodyState: 'pending' as const,
             machineReachable: false, machineName: 'Build box', inAttentionWindow: true, word: 'Stopped' };
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts })).toMatchObject({
-            bucket: 'offline', tone: 'neutral', word: t('workflows.run.stopWhenMachineReconnects', { machine: 'Build box' }),
+            bucket: 'finished', tone: 'neutral', word: 'Stopped',
         });
         expect(describeWorkflowRunState(facts.state, facts)).toMatchObject({ terminal: false, variant: 'neutral',
-            label: t('workflows.run.stopWhenMachineReconnects', { machine: 'Build box' }) });
+            label: 'Stopped' });
         expect(resolveWorkStatusTone({ kind: 'workflow_step', facts: { lifecycle: 'cancel_requested',
             machineReachable: false, machineName: 'Build box', inAttentionWindow: true, word: 'Stopping' } }))
             .toMatchObject({ bucket: 'offline', tone: 'neutral', word: t('workflows.run.stopWhenMachineReconnects', { machine: 'Build box' }) });
@@ -261,7 +279,6 @@ describe('resolveWorkStatusTone', () => {
     it('keeps trouble in Finished unless the attention owner places it in Needs you', () => {
         for (const facts of [
             { state: 'cancel_requested' as const },
-            { state: 'cancelled' as const, workflowCustodyState: 'pending' as const },
             { state: 'running' as const, cancelRequested: true },
         ]) {
             expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
@@ -286,6 +303,20 @@ describe('resolveWorkStatusTone', () => {
         expect(resolveWorkStatusTone({ kind: 'session', facts: {
             awareness: { runtime: 'offline', operational: { primary: 'failed', reasons: ['failed', 'runtime_offline'] } }, word: 'Failed',
         } })).toMatchObject({ bucket: 'offline', tone: 'neutral', word: 'Failed' });
+    });
+
+    it('names who is waiting in a Discussion\u2019s attention word, and keeps the generic word when no one is known', () => {
+        const waiting = (attentionReason: 'draft_waiting' | 'approval_pending', agentName?: string | null) =>
+            resolveWorkStatusTone({ kind: 'discussion', facts: { attentionReason, attentionType: 'approval', agentName } });
+        for (const reason of ['draft_waiting', 'approval_pending'] as const) {
+            const generic = waiting(reason).word;
+            expect(generic).toBeTruthy();
+            expect(waiting(reason, 'Release bot').word).toContain('Release bot');
+            expect(waiting(reason, 'Release bot').word).not.toBe(generic);
+            expect(waiting(reason, '  ').word).toBe(generic);
+            expect(waiting(reason, null)).toMatchObject({ bucket: 'needs_you', tone: 'attention' });
+        }
+        expect(waiting('draft_waiting', 'Release bot').word).not.toBe(waiting('approval_pending', 'Release bot').word);
     });
 
     it('keeps admitted current requests independent from Session reachability', () => {

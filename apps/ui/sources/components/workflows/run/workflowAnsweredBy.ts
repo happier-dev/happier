@@ -1,15 +1,15 @@
 import type { WorkflowReviewResultSourceV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
-import { useActiveServerAccountScopeLifetime, useUser } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
 
 /**
  * Who answered a Wait or review, in one quiet line beside the completed answer.
  *
  * Only a human-accepted result names a person. The name comes from the Account display-name owner and
- * only for a profile this viewer already holds; an Account the viewer cannot name stays anonymous
- * rather than being guessed from the Run's starter or a Team grant.
+ * from the shared, authorized People projection. An unavailable Account stays anonymous rather
+ * than being guessed from the Run's starter or a Team grant.
  */
 export function resolveAnsweredByLabel(input: Readonly<{
     resultSource: WorkflowReviewResultSourceV1 | undefined;
@@ -24,7 +24,10 @@ export function resolveAnsweredByLabel(input: Readonly<{
 }
 
 export function useAnsweredByLabel(resultSource: WorkflowReviewResultSourceV1 | undefined): string | null {
-    const viewerAccountId = useActiveServerAccountScopeLifetime()?.scope.accountId ?? null;
-    const profile = useUser(resultSource?.kind === 'human' ? resultSource.accountId : undefined);
+    const accountId = resultSource?.kind === 'human' ? resultSource.accountId : undefined;
+    const people = useWorkflowSourcePeople(accountId ? [{ kind: 'person', accountId }] : []);
+    const viewerAccountId = people.viewerAccountId;
+    const profile = people.profiles.get(accountId ?? '')?.profile;
+    if (accountId && accountId !== viewerAccountId && people.status === 'loading') return null;
     return resolveAnsweredByLabel({ resultSource, viewerAccountId, profile });
 }

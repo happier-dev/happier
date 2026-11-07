@@ -1,3 +1,4 @@
+import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -5,7 +6,8 @@ import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionL
 import { providerDeclarationContext, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
-import type { ProviderBoundModelRef, ProviderErrorV1 } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     DaemonProviderCurrentSelectionRecoveryV1,
     DaemonProviderModelProjectionRefreshFailureV1,
@@ -35,6 +37,7 @@ import type {
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { SelectionListHeightBehavior } from '@/components/ui/selectionList';
 import { t } from '@/text';
+import type { ProviderModelSelectionPurpose } from '@/providers/models/presentProviderModelRow';
 import {
     buildSessionModelPickerSections,
     resolveSessionModelSourceDescriptor,
@@ -123,10 +126,11 @@ export function buildSessionModelPickerNotes(input: Readonly<{
 }
 
 export function resolveSessionModelPickerSelection(input: Readonly<{
+    purpose?: ProviderModelSelectionPurpose;
     groups: readonly SessionModelProjectionGroup[];
     ref: SessionModelPickerOptionValue;
 }>): SessionModelPickerExperimentalConfirmation | Readonly<{ kind: 'select'; ref: SessionModelPickerOptionValue }> {
-    if (input.ref === null) return { kind: 'select', ref: null };
+    if (input.ref === null || input.purpose === 'preference') return { kind: 'select', ref: input.ref };
     if (isTeamCredentialProviderModelPickerValue(input.ref)) return { kind: 'select', ref: input.ref };
     for (const group of input.groups) {
         const row = group.rows.find((candidate) => (
@@ -156,6 +160,8 @@ const EMPTY_NATIVE_MODELS: readonly SessionNativeModelOption[] = [];
 const EMPTY_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
 
 export type SessionModelPickerProps = Readonly<{
+    /** Preferences retain compatibility and visibility, without execution readiness or consent. */
+    purpose?: ProviderModelSelectionPurpose;
     agentTargetKey: string;
     declarationContext?: ProviderDeclarationContext;
     nativeModels: readonly SessionNativeModelOption[];
@@ -163,12 +169,14 @@ export type SessionModelPickerProps = Readonly<{
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamNameById?: Readonly<Record<string, string>>;
     homeNameByTeamId?: Readonly<Record<string, string>>;
-    currentTeamCredentialResourceKeys?: ReadonlySet<string>;
+    teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     providerProjectionAuthoritative: boolean;
     projectionError?: ProviderErrorV1 | null;
     projectionFailures?: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProjection?: (() => Promise<void> | void) | null;
+    /** The model-list request waiting for its approval: the picker keeps the way to it in place. */
+    projectionApproval?: ProviderPendingApproval | null;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys?: ReadonlySet<string>;
     /** Default `true`; `false` drops the automatic option (a model-restricted embed). */
@@ -202,6 +210,10 @@ export type SessionModelPickerProps = Readonly<{
     favoriteActionVisibility?: 'selected-or-favorite' | 'all';
     /** Forwarded verbatim; the hosting surface decides, this adapter never does. */
     multiColumn?: boolean;
+    /**
+     * A host that applies a pick asynchronously (a running Session) resolves whether the model was
+     * accepted; a card's option value is written only after that, so a refused model drops it.
+     */
     onSelect: (ref: SessionModelPickerValue) => void;
     onSelectTeamCredentialModel?: (selection: TeamCredentialProviderModelSelectionV1) => void;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
@@ -247,22 +259,27 @@ export function SessionModelPicker(props: SessionModelPickerProps) {
                 selectedTeamCredentialModel={undefined}
                 favoriteEntries={props.favoriteEntries?.filter(entry => entry.ref.providerConnectionId === null)}
                 scope={scope}
+                onSelect={(ref) => {
+                    if (browseScope === requested?.scope) requested.onSelect?.();
+                    return props.onSelect(ref);
+                }}
             />;
         }
         if (props.sourceBrowse) return <SessionModelSourceBrowse picker={props} sourceBrowse={props.sourceBrowse}
             scope={browseScope} onExit={exitBrowse} />;
     }
-    // A global, non-authoritative Provider projection cannot declare the Agent's discovered native
-    // catalog unavailable. Keep connection-specific failures and Provider-selection recovery intact.
-    const projectionError = !props.providerProjectionAuthoritative
-        && props.projectionError?.code === 'provider_catalog_unavailable'
-        && !props.projectionError.connectionId
-        && !props.selected?.providerConnectionId
+    // Provider discovery is a separate catalog from the authored native probe. Its failures
+    // describe the selected Provider (or an empty picker), never the selected native catalog.
+    // Browsing a source above retains that source's own projection and recovery.
+    const nativeCatalogSelected = !props.selected?.providerConnectionId
         && !props.selectedTeamCredentialModel
-        && props.nativeModels.some((model) => model.value !== 'default')
-        ? null
-        : props.projectionError;
-    return <SessionModelPickerPane {...props} projectionError={projectionError}
+        && (Boolean(props.selected) || props.nativeModels.some((model) => model.value !== 'default'));
+    const nativeCatalogReady = nativeCatalogSelected && !props.probe?.failed
+        && props.nativeModels.some((model) => model.value !== 'default');
+    return <SessionModelPickerPane {...props}
+        projectionError={nativeCatalogSelected && (props.projectionError?.connectionId || nativeCatalogReady)
+            ? null : props.projectionError}
+        projectionFailures={nativeCatalogSelected ? undefined : props.projectionFailures}
         onBrowseSource={props.sourceBrowse ? setBrowseScope : undefined} />;
 }
 
@@ -287,6 +304,8 @@ function SessionModelSourceBrowse(props: Readonly<{
     const scope = React.useMemo(() => ({ scope: props.scope, onExit: props.onExit }), [props.onExit, props.scope]);
     const gatewaySlotTitle = useGatewaySlotTitle(projection.data?.groups ?? EMPTY_PROJECTION_GROUPS, props.sourceBrowse.serverId);
     const notes = React.useMemo(() => [t('agentInput.model.nativeSubagentNote')], []);
+    const sourceAuthorization = projection.data?.groups.find(group => group.connectionId === props.scope.connectionId)?.authorization;
+    const authorizationError = sourceAuthorization?.authorized === false ? sourceAuthorization.error : null;
     return (
         <SessionModelPickerPane
             agentTargetKey={picker.agentTargetKey}
@@ -295,9 +314,10 @@ function SessionModelSourceBrowse(props: Readonly<{
             nativeModels={EMPTY_NATIVE_MODELS}
             providerGroups={projection.data?.groups ?? EMPTY_PROJECTION_GROUPS}
             providerProjectionAuthoritative={projection.status === 'success'}
-            projectionError={projection.error}
+            projectionError={projection.error ?? authorizationError}
             projectionFailures={projection.refreshFailures}
             retryProjection={projection.refresh}
+            projectionApproval={projection.pendingApproval}
             allowAutomatic={false}
             canEnterCustomValue={false}
             selected={picker.selected}
@@ -311,6 +331,7 @@ function SessionModelSourceBrowse(props: Readonly<{
                 ? { phase: 'loading' }
                 : { phase: 'idle', onRefresh: () => { void projection.refresh(); void sourceUsage.refresh?.(); } }}
             experimentalConfirmation={picker.experimentalConfirmation}
+            purpose={picker.purpose}
             fillAvailableSpace={picker.fillAvailableSpace}
             showTitle={picker.showTitle}
             maxHeight={picker.maxHeight}
@@ -381,10 +402,15 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const sourceUsageApprovalOpen = React.useMemo(() => sourceUsageApprovalHref
         ? () => router.pushRetainingCurrent(sourceUsageApprovalHref as never)
         : null, [sourceUsageApprovalHref, router]);
+    const projectionApprovalHref = props.projectionApproval?.href ?? null;
+    const projectionApprovalOpen = React.useMemo(() => projectionApprovalHref
+        ? () => router.pushRetainingCurrent(projectionApprovalHref as never)
+        : null, [projectionApprovalHref, router]);
     const hostNativeSourceLabel = React.useContext(SessionModelNativeSourceLabelContext);
     const hostApplyTiming = React.useContext(SessionModelApplyTimingContext);
     const nativeSourceLabel = props.nativeSourceLabel ?? hostNativeSourceLabel;
     const baseSections = React.useMemo(() => buildSessionModelPickerSections({
+        purpose: props.purpose,
         agentTargetKey: props.agentTargetKey,
         declarationContext,
         nativeModels: props.nativeModels,
@@ -399,12 +425,13 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
         teamCredentialResources: props.teamCredentialResources,
         teamNameById: props.teamNameById,
         homeNameByTeamId: props.homeNameByTeamId,
-        currentTeamCredentialResourceKeys: props.currentTeamCredentialResourceKeys,
+        teamCredentialResourceStatusByKey: props.teamCredentialResourceStatusByKey,
         onRecoverTeamCredentialResource: props.onRecoverTeamCredentialResource,
         nativeSourceLabel,
         recoverMissingSelection: props.scope === undefined,
         gatewaySlotTitle: props.gatewaySlotTitle,
     }), [
+        props.purpose,
         props.agentTargetKey,
         declarationContext,
         props.allowAutomatic,
@@ -422,7 +449,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
         props.teamCredentialResources,
         props.teamNameById,
         props.homeNameByTeamId,
-        props.currentTeamCredentialResourceKeys,
+        props.teamCredentialResourceStatusByKey,
         props.onRecoverTeamCredentialResource,
     ]);
     const reportedModelPresentation = React.useMemo(() => {
@@ -583,11 +610,22 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const commitSelection = React.useCallback((ref: SessionModelPickerOptionValue) => {
         props.experimentalConfirmation?.clear();
         if (isTeamCredentialProviderModelPickerValue(ref)) {
-            props.onSelectTeamCredentialModel?.(ref);
+            return props.onSelectTeamCredentialModel?.(ref);
+        }
+        return props.onSelect(ref);
+    }, [props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel]);
+    // A card press; the experimental confirmation guards it.
+    const selectModel = (ref: SessionModelPickerOptionValue) => {
+        const commit = () => commitSelection(ref);
+        const resolution = resolveSessionModelPickerSelection({ purpose: props.purpose, groups: props.providerGroups, ref });
+        if (resolution.kind === 'select') {
+            commit();
             return;
         }
-        props.onSelect(ref);
-    }, [props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel]);
+        // One confirmation at a time: while it waits (on its approval too) the row stays put.
+        if (props.experimentalConfirmation?.pending) return;
+        void props.experimentalConfirmation?.confirm(resolution, commit);
+    };
     // A failure line names the source it is about, so two unreachable sources never read as one anonymous line.
     // A failed source has no model group; its name comes from the same connection read the route sources use.
     const failedConnectionIds = [props.projectionError?.connectionId, ...(props.projectionFailures ?? []).map((failure) => failure.connectionId)]
@@ -631,9 +669,14 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const hiddenSourcesLine = !props.scope && props.onBrowseSource && hiddenSources.length > 0
         ? <SessionModelHiddenSources sources={hiddenSources} onBrowse={props.onBrowseSource} />
         : null;
+    const emptyFailureContent = props.scope && !presentedSections.some(section => section.options.length > 0)
+        && sourceFailureLines.length > 0 ? <>
+            {sourceFailureLines.map(line => <ProviderErrorItems key={line.key} error={line.error}
+                size="line" retry={projectionLineRetry} />)}
+        </> : undefined;
     const footerContent = hasDiscoveryErrorLine || hiddenSourcesLine ? (
         <>
-            {sourceFailureLines.length > 0 ? (
+            {sourceFailureLines.length > 0 && !emptyFailureContent ? (
                 <View style={styles.failureLines}>
                     {sourceFailureLines.map((line) => (
                         <ProviderErrorItems
@@ -672,6 +715,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             selectedValue={props.selectedTeamCredentialModel ?? props.selected}
             getValueKey={sessionModelSelectionKey}
             emptyText={t('settingsProviders.models.empty')}
+            emptyContent={emptyFailureContent}
             headerAccessory={props.headerAccessory}
             footerContent={footerContent}
             {...(customTarget ? {
@@ -694,6 +738,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             summary={reportedModelPresentation.label
                 || currentSelectionRecovery
                 || (props.scope && props.sourceUsage)
+                || projectionApprovalOpen
                 || experimentalApproval
                 || props.experimentalConfirmation?.error ? (
                 <>
@@ -706,6 +751,15 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
                     ) : null}
                     {currentSelectionRecovery ? (
                         <ProviderErrorItems presentation="line" error={currentSelectionRecovery.error} />
+                    ) : null}
+                    {projectionApprovalOpen ? (
+                        <ActionApprovalPendingNotice
+                            testID="model-picker-projection-approval"
+                            presentation="line"
+                            message={t('settingsProvidersCollection.approvalPendingTitle')}
+                            openLabel={t('settingsProvidersCollection.openApproval')}
+                            onOpenApproval={projectionApprovalOpen}
+                        />
                     ) : null}
                     {experimentalApproval ? (
                         <ActionApprovalPendingNotice
@@ -737,16 +791,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
                     ) : null}
                 </>
             ) : undefined}
-            onSelect={(ref) => {
-                const resolution = resolveSessionModelPickerSelection({ groups: props.providerGroups, ref });
-                if (resolution.kind === 'select') {
-                    commitSelection(resolution.ref);
-                    return;
-                }
-                // One confirmation at a time: while it waits (on its approval too) the row stays put.
-                if (props.experimentalConfirmation?.pending) return;
-                void props.experimentalConfirmation?.confirm(resolution, () => commitSelection(ref));
-            }}
+            onSelect={(ref) => selectModel(ref)}
         />
     );
 }

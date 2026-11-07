@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { ScopedAuthoringComposerProps } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 
 /**
  * The workflow document's presentation contract (04 §4.11): one document
@@ -20,6 +21,9 @@ export type WorkflowDocumentStepSlots = Readonly<{
     occurrenceSelector?: React.ReactNode;
     /** The effective role/engine chip, only where it differs from the authored one. */
     engineChip?: React.ReactNode;
+    /** Frozen engine facts for a reading host; no authoring choices or mutable defaults. */
+    enginePresentation?: Pick<NonNullable<ScopedAuthoringComposerProps['agentInputContext']>,
+        'agentType' | 'agentLabel' | 'engineLabel' | 'modelMode' | 'permissionMode'>;
     /** The reviewed-state card after a decision, under the composer. */
     reviewedCard?: React.ReactNode;
     /** The step's own-work link, in the footer row. */

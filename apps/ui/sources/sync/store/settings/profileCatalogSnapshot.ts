@@ -58,14 +58,13 @@ export function applyProfileCatalogSnapshot(scope: ServerAccountScope, catalog: 
     if (!current) return;
     if (catalog.status === 'unavailable' && catalog.reason === 'scope-retired') {
         receiptOrdering.clearScope(scope);
-        return;
     }
     const previous = getProfileCatalogSnapshot(scope);
     // A wake can overtake the first checked read. Retain that cold answer for
     // display while the queued census catches up, without replacing newer
     // retained/acknowledged data or granting runtime and mutation authority.
     if (!fresh && (previous?.data != null || (catalog.status !== 'ready' && catalog.status !== 'partial'))) return;
-    const refused = catalog.status === 'unavailable' && ['unauthorized', 'forbidden', 'account-mode-mismatch',
+    const refused = catalog.status === 'unavailable' && ['scope-retired', 'unauthorized', 'forbidden', 'account-mode-mismatch',
         'account-not-found', 'account-inconsistent', 'encryption-material-unavailable'].includes(catalog.reason);
     if (refused || ((catalog.status === 'ready' || catalog.status === 'partial') && catalog.source !== 'destination')) {
         receiptOrdering.clearScope(scope);

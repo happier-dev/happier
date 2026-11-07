@@ -10,8 +10,8 @@ import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/protocol/sess
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
-import { hasAgentIconMark } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { StatusPill } from '@/components/ui/status/StatusPill';
+import { SessionAgentMark } from '@/agents/registry/SessionAgentMark';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
@@ -19,17 +19,29 @@ import type { SessionReadinessRepairV1, SessionReadinessV1 } from '@happier-dev/
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type { ExecutableParticipantPickerOption } from '@/components/sessions/authoring/executableParticipantPicker';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { useMachineListForServer } from '@/sync/domains/state/storage';
+import { getStorage, useMachineListForServer } from '@/sync/domains/state/storage';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useDiscussionInviteCandidates } from './useDiscussionInviteCandidates';
+import { projectModelParticipantCandidates } from './modelParticipantCandidates';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { SharePrincipalVisual } from '@/components/sharing/buildShareSheetSelectionStep';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
 import { t } from '@/text';
 import { describeMachineReadinessCause, presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
+import { useShallow } from 'zustand/react/shallow';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import { getModelOptionsForSession } from '@/sync/domains/models/modelOptions';
+import { SessionServerStartDraftRecipeEditor } from '@/components/sessions/new/SessionServerStartDraftRecipeEditor';
+import type { SessionServerStartDraftSeed, SessionServerStartDraftTarget } from '@/components/sessions/new/serverStartDraftComposer';
 
 /**
  * A not-ready choice stays listed and selectable with its one cause in place of the usual hint
@@ -63,8 +75,8 @@ export function executableParticipantOptionId(
 }
 
 /**
- * The one presenter of who can take part (lab T2-I): the viewer's existing sessions on this Home,
- * then a model started as a new session of theirs on a machine. A session is chosen
+ * The one presenter of who can take part (lab T2-I): existing Sessions, then Bots from the same
+ * exact-Home Session inventory, then a model started as a new Session on a Machine. A Session is chosen
  * at once; a model first opens the ordinary session setup (agent, model, folder) for that machine.
  * Mount it only while a participant choice is open: it reads the session listing and machines.
  * Discussion invites and Workflow participant inputs both choose through it.
@@ -80,6 +92,7 @@ export function useExecutableParticipantSections(
     readinessSessionId?: string | null;
     onReadinessSessionChange?: (sessionId: string | null) => void;
     modelOptions?: readonly ExecutableParticipantPickerOption[];
+    preferredMachineId?: string | null;
     /** How the viewer's sessions take part here; said once beside the section title, not on every row. */
     sessionsContext: string;
     onChoose: (selection: ExecutableParticipantSelectionV1) => void;
@@ -92,6 +105,8 @@ export function useExecutableParticipantSections(
       title: string;
       /** Who is already chosen: listed while nothing is typed, so each can be unchosen. */
       chosen: readonly SharePrincipalPresentation[];
+      /** An opinion can invite people and start new reviewers in the same Discussion. */
+      includeModels?: boolean;
     }>;
   }>,
 ) {
@@ -106,22 +121,34 @@ export function useExecutableParticipantSections(
     modelOptions: input.modelOptions,
   });
   const machines = useMachineListForServer(serverId, input.enabled);
+  const presence = useMachinePresenceSummaries(serverId, input.enabled ? (machines ?? []).map(machine => machine.id) : [], input.accountLifetime);
+  // List display metadata omits model catalogs. Subscribe only to the catalog leaf of held,
+  // Home-qualified Sessions; search never hydrates every candidate or loads a second catalog.
+  const modelCatalogs = getStorage()(useShallow(state => candidates.candidates.map(candidate => {
+    if (!input.enabled || candidate.kind !== 'session') return null;
+    const session = selectHomeQualifiedSession(state, candidate.selection.session.sessionId, serverId, getActiveServerSnapshot().serverId);
+    return session ? readSessionModelsState(session.composerOptionsInput === undefined
+      ? readSessionOwnerMetadataView(session) : session.composerOptionsInput) : null;
+  })));
   const { onChoose, sessionsContext, onReadinessSessionChange } = input;
+  const [recipe, setRecipe] = React.useState<Readonly<{
+    seed: SessionServerStartDraftSeed;
+    target: SessionServerStartDraftTarget;
+    automatic: boolean;
+    onChoose: (selection: ExecutableParticipantSelectionV1) => void;
+  }> | null>(null);
+  const editModel = React.useCallback((selection: Extract<ExecutableParticipantSelectionV1, { kind: 'model' }>,
+    onReplace: (selection: ExecutableParticipantSelectionV1) => void) => {
+    const existingDraft = SessionServerStartSpawnDraftV1Schema.parse(selection.launch);
+    setRecipe({ seed: { existingDraft }, target: existingDraft.executionTarget, automatic: false, onChoose: onReplace });
+  }, []);
   const busy = input.busy === true;
   const query = input.query ?? '';
   const sections = React.useMemo<readonly ExecutableParticipantSection[]>(() => {
     if (!input.enabled) return [];
     // A session leads with its Agent's own mark (identity marks always stay); the catalog decides
     // whether one exists, and a session without a recorded Agent keeps the neutral glyph.
-    const sessionMark = (agentId: string | null | undefined) => agentId && hasAgentIconMark(agentId, theme)
-      ? <AgentIcon agentId={agentId} size={ICON_SIZE.md} />
-      : (
-        <Icon
-          name="robot"
-          size={ICON_SIZE.md}
-          color={theme.colors.text.secondary}
-        />
-      );
+    const sessionMark = (agentId: string | null | undefined) => <SessionAgentMark agentId={agentId} size={ICON_SIZE.md} />;
     const modelMark = (
       <Icon
         name="sparkle"
@@ -132,30 +159,29 @@ export function useExecutableParticipantSections(
     const needle = query.trim().toLocaleLowerCase();
     const matches = (text: string) =>
       needle.length === 0 || text.toLocaleLowerCase().includes(needle);
-    const sessions: ExecutableParticipantSectionOption[] = candidates.candidates.flatMap((candidate) =>
-      candidate.kind === 'session' &&
-      matches(
+    const sessions: ExecutableParticipantSectionOption[] = [];
+    const bots: ExecutableParticipantSectionOption[] = [];
+    for (const candidate of candidates.candidates) {
+      if (candidate.kind !== 'session' || !matches(
         [candidate.label ?? t('session.collaboration.discussion.participants.session'), candidate.contextLabel].filter(Boolean).join(' '),
-      )
-        ? [
-            {
-              id: `session:${candidate.selection.session.sessionId}`,
-              testID: `discussion-invite-session-${candidate.selection.session.sessionId}`,
-              label:
-                candidate.label ??
-                t('session.collaboration.discussion.participants.session'),
-              subtitle: readinessSubtitle(candidate.readiness, candidate.contextLabel ?? (candidate.lastActivityAt == null ? '' : formatAsOfTime(candidate.lastActivityAt))),
-              icon: sessionMark(candidate.agentId),
-              disabled: busy,
-              readiness: candidate.readiness,
-              repair: candidate.repair,
-              onHighlight: () => onReadinessSessionChange?.(candidate.selection.session.sessionId),
-              onPressIn: () => onReadinessSessionChange?.(candidate.selection.session.sessionId),
-              onSelect: () => onChoose(candidate.selection),
-            },
-          ]
-        : [],
-    );
+      )) continue;
+      (candidate.bot ? bots : sessions).push({
+        id: `session:${candidate.selection.session.sessionId}`,
+        testID: `discussion-invite-session-${candidate.selection.session.sessionId}`,
+        label: candidate.label ?? t('session.collaboration.discussion.participants.session'),
+        subtitle: readinessSubtitle(candidate.readiness, candidate.contextLabel ?? (candidate.lastActivityAt == null ? '' : formatAsOfTime(candidate.lastActivityAt))),
+        icon: sessionMark(candidate.agentId),
+        ...(candidate.bot ? { titleAccessory: (
+          <StatusPill variant="neutral" hideDot labelVariant="phrase" label={t('sessionsList.conditionBot')} />
+        ) } : {}),
+        disabled: busy,
+        readiness: candidate.readiness,
+        repair: candidate.repair,
+        onHighlight: () => onReadinessSessionChange?.(candidate.selection.session.sessionId),
+        onPressIn: () => onReadinessSessionChange?.(candidate.selection.session.sessionId),
+        onSelect: () => onChoose(candidate.selection),
+      });
+    }
     const stateRow = (
       id: string,
       label: string,
@@ -201,58 +227,69 @@ export function useExecutableParticipantSections(
     }
     // Setup remains selectable offline. Start re-admits through the ordinary authoring owner.
     const inventory = machines ?? [];
-    const matchingMachines = resolveMachineActionCandidates(
+    const launchMachines = resolveMachineActionCandidates(
       input.accountLifetime.scope,
       inventory.filter(isMachineVisibleForLaunchSelection),
       { onlineOnly: false },
-    ).filter(
-      (machine) =>
-        matches(
-          `${getMachineDisplayName(machine, inventory) ?? ''} ${t('session.collaboration.discussion.manage.modelsGroup')}`,
-        ),
     );
+    const machineById = new Map(launchMachines.map((machine) => [machine.id, machine]));
+    const agentLabel = (agentId: string) => resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title;
+    const modelSearchByAgent = new Map<string, Set<string>>();
+    for (const [index, candidate] of candidates.candidates.entries()) {
+      if (candidate.kind !== 'session' || !candidate.agentId) continue;
+      const searchText = getModelOptionsForSession(candidate.agentId, { sessionModelsV1: modelCatalogs[index] ?? undefined })
+        .filter(model => model.value !== 'default').map(model => `${model.label} ${model.value}`).join(' ');
+      if (!searchText) continue;
+      const texts = modelSearchByAgent.get(candidate.agentId) ?? new Set<string>();
+      texts.add(searchText);
+      modelSearchByAgent.set(candidate.agentId, texts);
+    }
+    const agentSearchText = (agentId: string) => [...(modelSearchByAgent.get(agentId) ?? [])].join(' ');
+    const modelRows = projectModelParticipantCandidates({
+      machines: launchMachines.map((machine) => ({
+        id: machine.id,
+        name: getMachineDisplayName(machine, inventory) ?? t('session.collaboration.unnamed'),
+        reachable: resolveMachineReachability(input.accountLifetime.scope, machine) === 'reachable',
+      })),
+      sessions: candidates.candidates.flatMap((candidate) => candidate.kind === 'session'
+        ? [{ agentId: candidate.agentId, machineId: candidate.machineId, lastActivityAt: candidate.lastActivityAt }]
+        : []),
+      query,
+      preferredMachineId: input.preferredMachineId,
+      sessionsSettled: candidates.sessions.status !== 'loading' && candidates.sessions.status !== 'idle',
+      agentLabel,
+      agentSearchText,
+    });
     const models: ExecutableParticipantSectionOption[] = candidates.candidates.flatMap(candidate => candidate.kind === 'model' && matches(candidate.label)
       ? [{ id: candidate.key, label: candidate.label, subtitle: readinessSubtitle(candidate.readiness, ''), icon: modelMark, disabled: busy,
           readiness: candidate.readiness, repair: candidate.repair, onHighlight: () => onReadinessSessionChange?.(null),
           onPressIn: () => onReadinessSessionChange?.(null), onSelect: () => onChoose(candidate.selection) }] : []);
-    models.push(...matchingMachines.map((machine) => {
-      const name =
-        getMachineDisplayName(machine, inventory) ??
-        t('session.collaboration.unnamed');
+    models.push(...modelRows.flatMap((row): ExecutableParticipantSectionOption[] => {
+      const machine = machineById.get(row.machineId);
+      if (!machine) return [];
       const readiness = resolveMachineSpawnReadiness({ machine, selectedMachineId: machine.id, scope: input.accountLifetime.scope });
-      return {
-        id: `model:${machine.id}`,
-        testID: `discussion-invite-model-${machine.id}`,
-        label: t('session.collaboration.discussion.manage.modelOn', {
-          machine: name,
-        }),
-        icon: modelMark,
+      // A row the viewer's own sessions name: that Agent, started as a new session of theirs on that Machine;
+      // its setup opens on that Agent. A Machine row leaves the Agent and model to setup.
+      const agentId = row.kind === 'agent' ? row.agentId : undefined;
+      return [{
+        id: agentId ? `model:${machine.id}:${agentId}` : `model:${machine.id}`,
+        testID: agentId ? `discussion-invite-model-${machine.id}-${agentId}` : `discussion-invite-model-${machine.id}`,
+        label: agentId
+          ? agentLabel(agentId)
+          : t('session.collaboration.discussion.manage.modelOn', { machine: row.machineName }),
+        searchText: [row.machineName, agentId ? agentSearchText(agentId) : ''].join(' '),
+        icon: agentId ? sessionMark(agentId) : modelMark,
         disabled: busy,
         readiness,
-        subtitle: readinessSubtitle(readiness, t('session.collaboration.discussion.manage.modelCandidate')),
+        subtitle: readinessSubtitle(readiness, agentId
+          ? t('session.collaboration.discussion.manage.modelNewSessionOn', { machine: row.machineName })
+          : t('session.collaboration.discussion.manage.modelCandidate')),
         repair: null,
         onHighlight: () => onReadinessSessionChange?.(null),
         onPressIn: () => onReadinessSessionChange?.(null),
-        onSelect: () => {
-          void (async () => {
-            const { presentSessionServerStartDraftComposer } =
-              await import('@/components/sessions/new/serverStartDraftComposerPresentation');
-            const drafted = await presentSessionServerStartDraftComposer({
-              seed: {},
-              target: { serverId, machineId: machine.id },
-            }).result.catch(() => null);
-            if (!input.accountLifetime.isCurrent()) return;
-            const draft =
-              SessionServerStartSpawnDraftV1Schema.safeParse(drafted);
-            if (!draft.success) return;
-            const selection = normalizeExecutableParticipantSelectionV1({
-              kind: 'model',
-              launch: projectDiscussionModelParticipantLaunchV1(draft.data),
-            });
-            if (selection) onChoose(selection);
-          })();
-        },
-      };
+        onSelect: () => setRecipe({ seed: { ...(agentId ? { agentId } : {}), permissionMode: 'read-only' },
+          target: { serverId, machineId: machine.id }, automatic: true, onChoose }),
+      }];
     }));
     const sections: ExecutableParticipantSection[] = [];
     if (sessions.length)
@@ -267,7 +304,14 @@ export function useExecutableParticipantSections(
         ),
         options: sessions,
       });
-    if (models.length && !input.people)
+    if (bots.length)
+      sections.push({
+        kind: 'static',
+        id: 'agents-bots',
+        title: t('bots.title'),
+        options: bots,
+      });
+    if (models.length && (!input.people || input.people.includeModels))
       sections.push({
         kind: 'static',
         id: 'agents-models',
@@ -282,10 +326,13 @@ export function useExecutableParticipantSections(
     input.accountLifetime.scope,
     input.enabled,
     input.people,
+    input.preferredMachineId,
     query,
     onChoose,
     onReadinessSessionChange,
     machines,
+    presence,
+    modelCatalogs,
     serverId,
     sessionsContext,
     theme.colors.text.secondary,
@@ -323,5 +370,13 @@ export function useExecutableParticipantSections(
       }),
     };
   }, [browsePeople, busy, candidates.people.resolverKey, input.enabled, people, resolvePeople, viewerAccountId]);
-  return React.useMemo(() => ({ sections, peopleSection, sessions: candidates.sessions }), [sections, peopleSection, candidates.sessions]);
+  const recipeEditor = input.enabled && recipe ? <SessionServerStartDraftRecipeEditor
+    seed={recipe.seed} target={recipe.target} automatic={recipe.automatic}
+    onResolve={draft => {
+      setRecipe(null);
+      if (!draft || !input.accountLifetime.isCurrent()) return;
+      const selection = normalizeExecutableParticipantSelectionV1({ kind: 'model', launch: projectDiscussionModelParticipantLaunchV1(draft) });
+      if (selection) recipe.onChoose(selection);
+    }} /> : null;
+  return { sections, peopleSection, sessions: candidates.sessions, recipeEditor, editModel };
 }

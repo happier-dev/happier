@@ -1,14 +1,17 @@
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type {
     ComposerAttachmentDraftV1,
-    ComposerSnapshotV1,
-    ComposerTransactionResultV1,
-    MentionRefV1,
     PortableComposerAttachmentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
+    ComposerSnapshotV1,
+    ComposerTransactionResultV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
+    MentionRefV1} from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import * as React from 'react';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { COMPOSER_HOST_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import {
     NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
     type ComposerReferenceSearchHost,
@@ -17,17 +20,24 @@ import {
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AgentInput } from '@/components/sessions/agentInput';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import {
+    AgentInputDocumentPreview,
+    type AgentInputDocumentPreviewReference,
+    type AgentInputDocumentPreviewSelection,
+} from '@/components/sessions/agentInput/components/AgentInputDocumentPreview';
+import { resolveAgentInputEngineOptionId } from '@/components/sessions/agentInput/controls/resolveAgentInputEngineOptionId';
+import type { AgentInputControlIntent, AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import type { ComposerStructuredInputMention } from '@/components/sessions/agentInput/structuredInputMentions';
 import { projectComposerAttachmentRowItems } from '@/components/sessions/composer/composerAttachmentProjection';
 import type { ComposerDraftDocument } from '@/components/sessions/composer/composerDocumentOwner';
+import { projectComposerDocumentSnapshot } from '@/components/sessions/composer/composerSnapshotProjection';
 import {
     composerAttachmentDraftToView,
-    composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
     placePositionlessComposerReferences,
 } from '@/components/sessions/composer/composerScopeAdapters';
+import { projectAuthoringDocumentPreview } from '@/components/sessions/authoring/authoringDocumentPreview';
 import {
     projectPortableAuthoringDocument,
     useAuthoringComposerDocumentOwner,
@@ -42,7 +52,6 @@ import {
     applyComposerPresentationTransaction,
     notifyComposerPresentationTargetChanged,
     readComposerPresentationSnapshot,
-    registerComposerPresentationTarget,
     useStableComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
@@ -50,7 +59,6 @@ import {
 import { useComposerPresentationInputEffects } from '@/components/sessions/presentation/useComposerPresentationInputEffects';
 import { useComposerScopePluginPresentation } from '@/components/sessions/presentation/useComposerScopePluginPresentation';
 import { randomUUID } from '@/platform/randomUUID';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
@@ -93,21 +101,7 @@ export type ScopedAuthoringDocument = Readonly<{
 
 export type ScopedAuthoringComposerHandle = Readonly<{ focus: () => void }>;
 
-/**
- * The controlled scope-aware Composer owner shared by portable Workflow
- * documents and the retained one-shot Automation authoring surface.
- *
- * There is exactly one authoring composer: mention/reference suggestions,
- * plugin attachments and contributed composer controls all come from the same
- * owners ordinary Session authoring uses. What differs is only the scope those
- * owners are addressed with, and a capability the scope genuinely cannot serve
- * stays absent rather than being faked.
- */
-// A host draft edit can rerender every row while leaving each sibling document,
-// custody and callbacks unchanged. Keep that work outside the live Composer.
-export const ScopedAuthoringComposer = React.memo(React.forwardRef<
-    ScopedAuthoringComposerHandle,
-    Readonly<{
+export type ScopedAuthoringComposerProps = Readonly<{
         /**
          * The host's custody of this document. It owns the exact Composer
          * address, the live document and the caret, so the composer can be
@@ -124,6 +118,9 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
         voiceAffordance?: React.ComponentProps<typeof AgentInput>['voiceAffordance'];
         /** A narrow host card asks its chips to wrap when the person's setting is auto (a Workflow step). */
         hostActionBarLayout?: React.ComponentProps<typeof AgentInput>['hostActionBarLayout'];
+        /** A long document is clipped at the composer's own collapsed height, with its shared expand toggle (a Workflow step). */
+        inputMaxHeight?: React.ComponentProps<typeof AgentInput>['inputMaxHeight'];
+        inputExpansion?: React.ComponentProps<typeof AgentInput>['inputExpansion'];
         /**
          * The accessible name of the actual text input, for a host that mounts
          * several composers (a workflow names each by its step). The input
@@ -153,6 +150,113 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
             onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
             onAgentClick?: () => void;
         }>;
+        /**
+         * The host's editing demand, for a host that places many documents at once. `false`
+         * shows this document as its static picture (`AgentInputDocumentPreview`) and mounts no
+         * editor, menus or dictation; the document's target and scope projection remain available.
+         * Activating the picture asks
+         * the host through `onRequestEdit`, and the live composer then opens with the caret where
+         * the author pointed. Absent, or without `onRequestEdit`, the composer is always live.
+         */
+        editing?: boolean;
+        onRequestEdit?: () => void;
+    }>;
+
+/**
+ * The controlled scope-aware Composer owner shared by portable Workflow
+ * documents and the retained one-shot Automation authoring surface.
+ *
+ * There is exactly one authoring composer: mention/reference suggestions,
+ * plugin attachments and contributed composer controls all come from the same
+ * owners ordinary Session authoring uses. What differs is only the scope those
+ * owners are addressed with, and a capability the scope genuinely cannot serve
+ * stays absent rather than being faked.
+ *
+ * A host that places many documents at once (a workflow's steps) gives each its
+ * editing demand: only the document being edited mounts the live composer, and
+ * every other one is its static picture.
+ */
+// A host draft edit can rerender every row while leaving each sibling document,
+// custody and callbacks unchanged. Keep that work outside the live Composer.
+export const ScopedAuthoringComposer = React.memo(React.forwardRef<
+    ScopedAuthoringComposerHandle,
+    ScopedAuthoringComposerProps
+>((props, forwardedRef) => {
+    const latestRef = React.useRef(props);
+    latestRef.current = props;
+    const liveRef = React.useRef<ScopedAuthoringComposerHandle>(null);
+    const focusOnMountRef = React.useRef(false);
+    const controlOnMountRef = React.useRef<AgentInputControlIntent | null>(null);
+    const requestEdit = React.useCallback((selection: AgentInputDocumentPreviewSelection | null, intent?: AgentInputControlIntent) => {
+        const current = latestRef.current;
+        if (selection !== null) current.custody.writeSelection(selection);
+        focusOnMountRef.current = true;
+        controlOnMountRef.current = intent ?? null;
+        current.onRequestEdit?.();
+    }, []);
+    const consumeFocusOnMount = React.useCallback(() => {
+        const focus = focusOnMountRef.current;
+        focusOnMountRef.current = false;
+        return focus;
+    }, []);
+    const consumeControlOnMount = React.useCallback(() => {
+        const intent = controlOnMountRef.current;
+        controlOnMountRef.current = null;
+        return intent;
+    }, []);
+    React.useImperativeHandle(forwardedRef, () => ({
+        focus: () => {
+            if (liveRef.current) liveRef.current.focus();
+            else requestEdit(null);
+        },
+    }), [requestEdit]);
+    return <ScopedAuthoringComposerOwner {...props} ref={liveRef} onRequestPreviewEdit={requestEdit}
+        consumeFocusOnMount={consumeFocusOnMount} consumeControlOnMount={consumeControlOnMount} />;
+}));
+
+ScopedAuthoringComposer.displayName = 'ScopedAuthoringComposer';
+
+/**
+ * The picture of a document that is not being edited. Custody's exact document is used while
+ * it is the same document the host holds (its echo), so a duplicated token keeps
+ * its exact chip; a host edit since then (undo, an agent's rewrite) is placed from
+ * the portable form exactly as the live composer would adopt it. Attachment
+ * availability comes from the scope projection independently of editing demand.
+ */
+function projectAuthoringComposerPreviewDocument(
+    custody: AuthoringComposerCustodyEntry,
+    document: ScopedAuthoringDocument,
+): Readonly<{ text: string; references: readonly AgentInputDocumentPreviewReference[] }> {
+    const retained = custody.readDocument();
+    const exact = retained !== null && pluginJsonValuesEqual(projectPortableAuthoringDocument(retained), document) ? retained : null;
+    return projectAuthoringDocumentPreview(document, exact);
+}
+
+/**
+ * The plugin regions' frame around a document's composer, shared by the live row and its
+ * picture so the regions, their Resource store and their place never change on activation.
+ */
+function PluginComposerRegions(props: Readonly<{
+    before: React.ReactNode;
+    after: React.ReactNode;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    return (
+        <PluginContextualResourceStoreProvider>
+            {props.before}
+            {props.children}
+            {props.after}
+        </PluginContextualResourceStoreProvider>
+    );
+}
+
+/** Document/scope custody remains mounted; only the heavy input follows editing demand. */
+const ScopedAuthoringComposerOwner = React.forwardRef<
+    ScopedAuthoringComposerHandle,
+    ScopedAuthoringComposerProps & Readonly<{
+        consumeFocusOnMount: () => boolean;
+        consumeControlOnMount: () => AgentInputControlIntent | null;
+        onRequestPreviewEdit: (selection: AgentInputDocumentPreviewSelection | null, intent?: AgentInputControlIntent) => void;
     }>
 >((props, forwardedRef) => {
     const { scope } = props;
@@ -177,25 +281,43 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
     const machineId = scope.kind === 'session'
         ? sessionMachineTarget?.machineId ?? null
         : scope.machineId;
+    // Account authority follows the retained document, not a remounted input.
+    const accountCurrentness = props.custody.captureAccountCurrentness();
+    const accountLifetime = 'scope' in accountCurrentness ? accountCurrentness : null;
     const daemonProjection = useDaemonMergedProjectionInputs({
+        sections: COMPOSER_HOST_PROJECTION_SECTIONS,
+        accountLifetime,
         machineId,
         serverId,
-        enabled: machineId !== null,
+        enabled: machineId !== null && accountCurrentness.isCurrent(),
     });
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const mountedRef = React.useRef(true);
     const focusedRef = React.useRef(false);
     const editableRef = React.useRef(editable);
     editableRef.current = editable;
     const actionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const focusRequestRef = React.useRef<(() => void) | null>(null);
+    const controlRequestRef = React.useRef<((intent: AgentInputControlIntent) => void) | null>(null);
+    const editing = !(props.editing === false && props.onRequestEdit !== undefined && editable);
     React.useImperativeHandle(forwardedRef, () => ({
-        focus: () => focusRequestRef.current?.(),
-    }), []);
+        focus: () => {
+            if (focusRequestRef.current) focusRequestRef.current();
+            else props.onRequestPreviewEdit(null);
+        },
+    }), [props.onRequestPreviewEdit]);
+    // Opened from its picture: the input is mounted by now (child effects run first), so the
+    // author lands in it, at the caret custody restores.
+    const { consumeFocusOnMount, consumeControlOnMount } = props;
+    React.useEffect(() => {
+        if (!editing) { focusedRef.current = false; return; }
+        if (consumeFocusOnMount()) focusRequestRef.current?.();
+        const intent = consumeControlOnMount();
+        if (intent !== null) controlRequestRef.current?.(intent);
+    }, [editing, consumeFocusOnMount, consumeControlOnMount]);
 
     const isCurrent = React.useCallback(() => (
-        mountedRef.current && (accountLifetime === null || accountLifetime.isCurrent())
-    ), [accountLifetime]);
+        mountedRef.current && accountCurrentness.isCurrent()
+    ), [accountCurrentness]);
     const onChangeDocumentRef = React.useRef(props.onChangeDocument);
     onChangeDocumentRef.current = props.onChangeDocument;
     const attachmentEntriesRef = React.useRef<ReturnType<typeof useComposerScopePluginPresentation>['attachmentEntriesById']>(null);
@@ -270,40 +392,17 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
     }, []);
 
     React.useEffect(() => {
-        // Our own portable projection coming back is not a host edit.
-        const current = documentOwner.read().document;
-        if (pluginJsonValuesEqual(projectPortableAuthoringDocument(current), props.document)) return;
-        documentOwner.replaceDocument({
-            text: props.document.text,
-            structuredInputMentions: composerStructuredMentionsFromReferences({
-                references: placePositionlessComposerReferences({
-                    text: props.document.text,
-                    references: props.document.references,
-                }),
-                existing: current.structuredInputMentions,
-            }),
-            composerAttachments: props.document.attachments as readonly ComposerAttachmentDraftV1[],
-        });
-    }, [documentOwner, props.document]);
+        props.custody.synchronizeDocument(props.document);
+    }, [props.custody, props.document]);
 
     const readSnapshot = React.useCallback((): ComposerSnapshotV1 => {
-        const current = documentOwner.read();
         const lock = inputEffects.readComposerInputLock();
-        return {
-            revision: current.revision,
-            ref: composerRef,
-            text: current.document.text,
-            references: [...composerReferencesFromStructuredMentions({
-                text: current.document.text,
-                mentions: current.document.structuredInputMentions,
-            })],
-            attachments: current.document.composerAttachments.map((attachment) => composerAttachmentDraftToView(
-                attachment,
-                { entriesById: attachmentEntriesRef.current },
-            )),
-            layout: actionBarLayoutRef.current,
-            capabilities: documentOwner.capabilities,
-            state: {
+        const selection = props.custody.readSelection();
+        return projectComposerDocumentSnapshot({ owner: documentOwner,
+            attachmentCatalog: { entriesById: attachmentEntriesRef.current },
+            presentation: {
+                layout: actionBarLayoutRef.current,
+                ...(selection === null ? {} : { selection }),
                 focused: focusedRef.current,
                 editable: editableRef.current && lock?.mode !== 'editAndSubmit',
                 submittable: editableRef.current && props.onSubmit !== undefined && lock === null,
@@ -311,8 +410,8 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
                 running: false,
                 ...(lock ? { inputLock: lock } : {}),
             },
-        };
-    }, [documentOwner, inputEffects.readComposerInputLock, composerRef, props.onSubmit]);
+        });
+    }, [documentOwner, inputEffects.readComposerInputLock, composerRef, props.custody, props.onSubmit]);
     const commitDocument = React.useCallback((input: Readonly<{
         expectedRevision: number;
         mutation: ComposerPresentationDocumentMutation;
@@ -327,17 +426,22 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
         readSnapshot,
         isPresented: () => layoutPresented,
         commitDocument,
+        readAttachmentComposition: () => attachmentEntriesRef.current === null ? null : ({
+            composerAttachmentsById: attachmentEntriesRef.current,
+            localize: pluginPresentation.localizePluginText,
+        }),
         ...(props.attachmentsEnabled ? { createAttachmentInstanceId: randomUUID } : {}),
         setComposerDecorations: inputEffects.setComposerDecorations,
         acquireComposerInputLock: inputEffects.acquireComposerInputLock,
         isCurrent,
         focusComposer: () => {
-            if (!isCurrent() || focusRequestRef.current === null) return false;
-            focusRequestRef.current();
+            if (!isCurrent() || !editableRef.current) return false;
+            if (focusRequestRef.current !== null) focusRequestRef.current();
+            else props.onRequestPreviewEdit(null);
             return true;
         },
     } satisfies ComposerPresentationTarget);
-    React.useEffect(() => registerComposerPresentationTarget(composerRef, target), [composerRef, target]);
+    React.useEffect(() => props.custody.registerPresentationTarget(target), [props.custody, target]);
     React.useEffect(() => notifyComposerPresentationTargetChanged(composerRef), [pluginPresentation.attachmentEntriesById, composerRef]);
 
     const removeAttachment = React.useCallback((instanceId: string) => {
@@ -401,7 +505,11 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
         renderSurface: pluginPresentation.renderAttachmentSurface,
         resolveInteraction: pluginPresentation.resolveAttachmentInteraction,
     });
-    const extraActionChips = [...(props.extraActionChips ?? []), ...pluginPresentation.extraActionChips];
+    const hostExtraActionChips = props.extraActionChips;
+    const extraActionChips = React.useMemo(
+        () => [...(hostExtraActionChips ?? []), ...pluginPresentation.extraActionChips],
+        [hostExtraActionChips, pluginPresentation.extraActionChips],
+    );
     const context = props.agentInputContext;
     /**
      * The caret, through the composer's own restore seam.
@@ -421,10 +529,31 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
         },
     }), [custodySelection, props.custody]);
 
+    if (!editing) {
+        const preview = projectAuthoringComposerPreviewDocument(props.custody, props.document);
+        const engineLabel = context?.engineLabel ?? context?.agentLabel;
+        const engineOptions = context?.agentPickerOptions ?? [];
+        const engineOptionId = resolveAgentInputEngineOptionId({
+            options: engineOptions, selectedOptionId: context?.agentPickerSelectedOptionId, agentType: context?.agentType,
+        });
+        const selectedOption = engineOptions.find((option) => option.id === engineOptionId);
+        const engineIcon = React.isValidElement<Record<string, unknown>>(selectedOption?.icon)
+            ? React.cloneElement(selectedOption.icon, { size: 16 }) : undefined;
+        return <PluginComposerRegions before={pluginPresentation.beforeComposer} after={pluginPresentation.afterComposer}>
+            <AgentInputDocumentPreview value={preview.text} references={preview.references} placeholder={props.placeholder}
+                {...(props.inputAccessibilityLabel === undefined ? {} : { inputAccessibilityLabel: props.inputAccessibilityLabel })}
+                engine={context !== undefined && engineLabel !== undefined
+                    ? { agentId: context.agentType ?? null, label: engineLabel, ...(engineIcon === undefined ? {} : { icon: engineIcon }) } : null}
+                extraActionChips={extraActionChips} attachmentRowItems={attachmentRowItems}
+                dictation={props.voiceAffordance === 'dictation'} onActivate={props.onRequestPreviewEdit}
+                {...(props.hostActionBarLayout === undefined ? {} : { hostActionBarLayout: props.hostActionBarLayout })} />
+        </PluginComposerRegions>;
+    }
+
     return (
-        <PluginContextualResourceStoreProvider>
-            {pluginPresentation.beforeComposer}
+        <PluginComposerRegions before={pluginPresentation.beforeComposer} after={pluginPresentation.afterComposer}>
             <AgentInput
+                statusRegions={pluginPresentation.statusRegions}
                 value={current.text}
                 onChangeText={editable ? (text) => documentOwner.replaceDocument({ ...documentOwner.read().document, text }) : undefined}
                 structuredInputMentions={current.structuredInputMentions as readonly ComposerStructuredInputMention[]}
@@ -439,7 +568,10 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
                     else props.onBlur?.();
                 }}
                 onComposerFocusRequestChange={(request) => { focusRequestRef.current = request; }}
+                onComposerControlRequestChange={(request) => { controlRequestRef.current = request; }}
                 {...(props.hostActionBarLayout === undefined ? {} : { hostActionBarLayout: props.hostActionBarLayout })}
+                {...(props.inputMaxHeight === undefined ? {} : { inputMaxHeight: props.inputMaxHeight })}
+                {...(props.inputExpansion === undefined ? {} : { inputExpansion: props.inputExpansion })}
                 onComposerActionBarLayoutChange={(layout) => {
                     actionBarLayoutRef.current = layout;
                     notifyComposerPresentationTargetChanged(composerRef);
@@ -492,9 +624,8 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
                 panelPresentation="document"
                 voiceAffordance={props.voiceAffordance}
             />
-            {pluginPresentation.afterComposer}
-        </PluginContextualResourceStoreProvider>
+        </PluginComposerRegions>
     );
-}));
+});
 
-ScopedAuthoringComposer.displayName = 'ScopedAuthoringComposer';
+ScopedAuthoringComposerOwner.displayName = 'ScopedAuthoringComposerOwner';

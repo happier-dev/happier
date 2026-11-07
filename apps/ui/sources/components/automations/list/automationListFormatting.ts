@@ -1,14 +1,19 @@
 import type {
-    AutomationRunCause,
-    AutomationRunStateV3,
+    AutomationRunCause} from '@happier-dev/protocol/automations/run-cause';
+import type {
+    AutomationRunStateV3} from '@happier-dev/protocol/automations/automationRunStateV3';
+import type {
     AutomationSessionLifecycleEvent,
     AutomationSessionLifecyclePolicy,
-    AutomationSessionLifecyclePolicySnapshot,
+    AutomationSessionLifecyclePolicySnapshot} from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import type {
     AutomationSessionLifecycleTriggerStatus,
     AutomationTriggerListItem,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { t, type TranslationKey } from '@/text';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
+import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 export function formatAutomationSessionLifecycleEventLabel(
     event: AutomationSessionLifecycleEvent,
@@ -163,8 +168,9 @@ const AUTOMATION_RUN_STATE_TRANSLATION_KEYS = {
     outcome_uncertain: 'automations.detail.runMeta.state.outcome_uncertain',
 } as const satisfies Record<AutomationRunStateV3, TranslationKey>;
 
-export function formatAutomationRunStateLabel(state: AutomationRunStateV3): string {
-    return t(AUTOMATION_RUN_STATE_TRANSLATION_KEYS[state]);
+export function formatAutomationRunStateLabel(run: Pick<AutomationV3RunListItem, 'state' | 'workflowRunState'>): string {
+    if (run.workflowRunState !== undefined) return describeWorkflowRunState(run.workflowRunState).label;
+    return t(AUTOMATION_RUN_STATE_TRANSLATION_KEYS[run.state]);
 }
 
 export function formatAutomationNextRun(nextRunAt: number | null): string {

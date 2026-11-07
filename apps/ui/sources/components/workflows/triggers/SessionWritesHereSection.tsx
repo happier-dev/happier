@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPageSheetGroup } from '@happier-dev/plugin-ui/presentation';
@@ -7,15 +8,14 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { ManagedRunMiniMap, useWorkRowOnScreen } from '@/components/sessions/work/WorkItemRow';
 import { WorkflowRunItemBody } from '@/components/sessions/shell/row/WorkflowRunItemBody';
-import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
+import type { WorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { useActiveServerAccountScope, useWorkflowRun } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
-import { ScheduledWorkflowRows, useScheduledWorkflowRows } from './ScheduledWorkflowSection';
+import { ScheduledWorkflowRows, type ScheduledWorkflowRowsRead } from './ScheduledWorkflowSection';
 import { useRunsListedInTriggerHistory } from './SessionTriggerHistoryScope';
 
 /**
@@ -23,29 +23,40 @@ import { useRunsListedInTriggerHistory } from './SessionTriggerHistoryScope';
  *
  * One group of the Session's Triggers section (lab P1-I: what starts from here, and what writes into
  * it). The group exists only while something writes into this Session: a run that did, a scheduled one
- * that will, or a read that failed and must say so. With nothing to show it draws nothing — no bare
+ * that will. The Habits owner presents read failures once. With nothing to show it draws nothing — no bare
  * heading, and no placeholder while it reads, since a section that may not exist would only collapse
  * and move the sections under it.
  */
 export const SessionWritesHereSection = React.memo(function SessionWritesHereSection(props: Readonly<{
-    sessionId: string; serverId?: string | null;
+    sessionId: string; serverId?: string | null; scheduled: ScheduledWorkflowRowsRead; read: WorkflowRunWindow;
 }>) {
     const scope = useActiveServerAccountScope();
     const inScope = scope !== null && (!props.serverId || areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId));
     // Another Home's Session reads nothing here: the reads mount only inside the active Account.
-    return inScope ? <WritesHere sessionId={props.sessionId} serverId={scope.serverId} /> : null;
+    return inScope ? <WritesHere sessionId={props.sessionId} serverId={scope.serverId} scheduled={props.scheduled} read={props.read} /> : null;
 });
 
-const WritesHere = React.memo(function WritesHere(props: Readonly<{ sessionId: string; serverId: string }>) {
+const WritesHere = React.memo(function WritesHere(props: Readonly<{ sessionId: string; serverId: string; scheduled: ScheduledWorkflowRowsRead; read: WorkflowRunWindow }>) {
     const { theme } = useUnistyles();
-    const read = useWorkflowRunWindow(`destination:${props.sessionId}`);
-    const scheduled = useScheduledWorkflowRows(props.sessionId);
-    const readFailed = read.status === 'failed' || read.loadMoreFailed;
-    const hasScheduled = scheduled.available && (scheduled.rows.length > 0 || scheduled.status === 'failed');
+    const read = props.read;
+    const scheduled = props.scheduled;
+    const hasScheduled = scheduled.available && scheduled.rows.length > 0;
     // A Run an open trigger History already lists is shown there, once.
     const listedUnderTrigger = useRunsListedInTriggerHistory();
     const runIds = React.useMemo(() => read.runIds.filter((runId) => !listedUnderTrigger.has(runId)), [listedUnderTrigger, read.runIds]);
-    if (runIds.length === 0 && !readFailed && !hasScheduled) return null;
+    // Session Info folds an empty Habits from this read too: what writes here, scheduled work included.
+    const summaryScope = useActiveServerAccountScope(props.serverId);
+    const scheduledStatus = scheduled.available ? scheduled.status : 'ready';
+    const heldCount = read.runIds.length + (scheduled.available ? scheduled.rows.length : 0);
+    useReportSessionInfoSectionSummary('habits.writesHere', summaryScope ? {
+        scope: summaryScope,
+        sessionId: props.sessionId,
+        status: read.status === 'failed' || scheduledStatus === 'failed' ? 'error'
+            : read.status === 'loaded' && scheduledStatus === 'ready' ? 'ready' : 'loading',
+        coverage: heldCount === 0 && read.hasMore ? 'partial' : 'complete',
+        count: heldCount,
+    } : null);
+    if (runIds.length === 0 && !hasScheduled) return null;
     const count = runIds.length + (hasScheduled ? scheduled.rows.length : 0);
     // What is next leads, then what already wrote here, newest first; Load more closes the Runs it extends.
     return <HappierPageSheetGroup testID="session-work-writes-here" header={(
@@ -56,11 +67,9 @@ const WritesHere = React.memo(function WritesHere(props: Readonly<{ sessionId: s
         {hasScheduled ? <ScheduledWorkflowRows read={scheduled} sessionId={props.sessionId} /> : null}
         {runIds.map((runId) => <DestinationRun key={runId} runId={runId} serverId={props.serverId}
             sessionId={props.sessionId} />)}
-        {readFailed ? <SurfaceFreshnessLine testID="session-work-writes-here-failed"
-            tone="warning" reason={t('workflows.triggers.section.loadFailed')}
-            action={{ label: t('workflows.retry'), onPress: read.loadMoreFailed ? read.loadMore : read.retry }} /> : null}
+        {/* A full-width button between rows: the rows above and below own the space around it. */}
         {read.hasMore ? <ToolbarButton testID="session-work-writes-here-more" label={t('workflows.destination.history.loadMore')}
-            disabled={read.loadingMore} onPress={read.loadMore} /> : null}
+            hitReach={0} disabled={read.loadingMore} onPress={read.loadMore} /> : null}
     </HappierPageSheetGroup>;
 });
 

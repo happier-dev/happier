@@ -1,7 +1,8 @@
 import { HappierPageSheetGroup } from '@happier-dev/plugin-ui/presentation';
-import type { TriggerTargetV1 } from '@happier-dev/protocol';
+import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import * as React from 'react';
+import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -20,7 +21,7 @@ import { parseExactTurnAutomationPrefillRoute } from '@/components/automations/s
 import { useAutomationRunNowController } from '@/components/automations/list/useAutomationRunNowController';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { createAdmittedWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -33,20 +34,26 @@ import {
     SESSION_TRIGGER_WHEN_KINDS,
     readTriggerThen,
     readTriggerWhen,
-    type TriggerFormValue,
+    type ExecutableTriggerFormValue as TriggerFormValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
-import { useSessionTriggers } from './useSessionTriggers';
+import type { SessionTriggersRead } from './useSessionTriggers';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
 import { useOpenTriggerAsWorkflow } from './useOpenTriggerAsWorkflow';
 import { useSessionTriggerLastRuns } from './useSessionTriggerLastRuns';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
+import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
+import type { TriggerRowProps } from './TriggerRow';
 
 export type SessionTriggersSectionViewProps = Readonly<{
     groups: readonly SessionTriggerGroupModel[];
+    sourceProfiles?: ReturnType<typeof useWorkflowSourcePeople>['profiles'];
+    viewerAccountId?: string | null;
     status: 'loading' | 'ready' | 'failed';
+    /** Destination rows are retained content even when no trigger starts here. */
+    hasRetainedContent?: boolean;
     /** Trigger rows whose write is in flight. */
     pendingKeys: ReadonlySet<string>;
     onToggle: (row: SessionTriggerRowModel, next: boolean) => void;
@@ -84,6 +91,10 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
     const deepLinkedRow = props.deepLinkAutomationId
         ? props.groups.flatMap((group) => group.rows).find((row) => row.automationId === props.deepLinkAutomationId)
         : undefined;
+    // Unknown is not presence: reserving an empty body here would collapse Info's
+    // next section when these independent reads finally prove there are no Habits.
+    // The read owners stay mounted above this view; known rows survive reconnects.
+    if (props.status === 'loading' && empty && !props.hasRetainedContent) return null;
     return (
         <WorkSection
             testID="session-work-triggers"
@@ -91,7 +102,6 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
             title={t('workflows.triggers.section.habitsHere')}
             count={empty ? '' : t('workflows.triggers.section.countOn', { count: onCount })}
             info={t('workflows.triggers.section.info')}
-            loading={props.status === 'loading' && empty}
             action={(
                 <View ref={addAnchorRef} collapsable={false}>
                     <IconButton
@@ -100,6 +110,8 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                         variant="plain"
                         accessibilityLabel={t('workflows.triggers.section.add')}
                         tooltip={t('workflows.triggers.section.add')}
+                        // The section above ends right over the title line: the "+" reaches only down and sideways.
+                        interactiveTargetEdgesPx={{ top: 0 }}
                         expanded={props.addOpen === true}
                         onPress={() => props.onAdd(addAnchorRef)}
                     />
@@ -123,6 +135,9 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                     reason={t('workflows.triggers.section.loadFailed')}
                     action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: props.onRetry }}
                 />
+            ) : null}
+            {props.status === 'loading' && props.hasRetainedContent ? (
+                <SurfaceFreshnessLine testID="session-work-triggers-refreshing" busy reason={t('common.loading')} />
             ) : null}
             {empty && props.status === 'ready' ? (
                 // What starts here is a group like "Writes here", labelled the same way even while it is empty.
@@ -158,6 +173,9 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                         <AnchoredTriggerRow
                             key={row.key}
                             row={row}
+                            sourceProfile={props.sourceProfiles === undefined ? undefined
+                                : props.sourceProfiles.get(row.sourceSavedBy?.accountId ?? '')?.profile ?? null}
+                            viewerAccountId={props.viewerAccountId}
                             pending={props.pendingKeys.has(row.key)}
                             deepLink={row === deepLinkedRow}
                             onToggle={props.onToggle}
@@ -174,9 +192,14 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
     );
 });
 
+/** The actions line tucks under its row, which owns the space above it, and the group below owns the space under it: its buttons reach only sideways. */
+const ACTIONS_LINE_HIT_REACH = Object.freeze({ top: 0, bottom: 0 });
+
 /** A row that anchors its own popover beside it. */
 const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonly<{
     row: SessionTriggerRowModel;
+    sourceProfile?: TriggerRowProps['sourceProfile'];
+    viewerAccountId?: string | null;
     pending: boolean;
     deepLink: boolean;
     onToggle: SessionTriggersSectionViewProps['onToggle'];
@@ -209,6 +232,8 @@ const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonl
                 qualifier={row.qualifier}
                 qualifierTime={row.qualifierTime}
                 qualifierAccessibilityLabel={row.qualifierAccessibilityLabel}
+                sourceSavedBy={row.sourceSavedBy} sourceSavedAt={row.sourceSavedAt}
+                sourceProfile={props.sourceProfile} viewerAccountId={props.viewerAccountId}
                 // The event sub-header carries the glyph; rows start on its text edge (lab `convo-W9`,
                 // `b-habit T`), so a row never repeats its group's mark.
                 multiline={row.legacy}
@@ -219,10 +244,10 @@ const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonl
                 // The habit's own line (lab `b-habit T`, plan 65 §8): History · Run now, then its switch.
                 actions={hasActions ? <>
                 {props.onHistory ? <ToolbarButton testID={`session-work-trigger:${row.key}-history`}
-                    label={t('workflows.destination.history.title')} active={props.history !== undefined}
+                    hitReach={ACTIONS_LINE_HIT_REACH} label={t('workflows.destination.history.title')} active={props.history !== undefined}
                     onPress={() => props.onHistory?.(row)} /> : null}
                 {canRun ? <ToolbarButton testID={`session-work-trigger:${row.key}-runNow`}
-                    label={t('workflows.editor.runNow')} busy={running} disabled={running}
+                    hitReach={ACTIONS_LINE_HIT_REACH} label={t('workflows.editor.runNow')} busy={running} disabled={running}
                     onPress={runNow} /> : null}
                 </> : undefined}
             />
@@ -244,15 +269,25 @@ type OpenPopover = Readonly<{ anchor: React.RefObject<View | null>; row: Session
  * popover each one immediate call with its own result. Last outcomes and expanded history read
  * the shared Account Run store; a firing timestamp alone never supplies a Run's lifecycle.
  */
-export const SessionTriggersSection = React.memo(function SessionTriggersSection(props: Readonly<{ sessionId: string; serverId?: string | null; children?: React.ReactNode }>) {
+type SessionTriggersSectionProps = Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    read: SessionTriggersRead;
+    children?: React.ReactNode;
+    /** Habit identities already rendered by the Info composition's destination rows. */
+    excludedTriggerKeys?: ReadonlySet<string>;
+    hasRetainedContent?: boolean;
+}>;
+
+export const SessionTriggersSection = React.memo(function SessionTriggersSection(props: SessionTriggersSectionProps) {
     const scope = useActiveServerAccountScope(props.serverId);
     if (scope === null) return null;
-    return <SessionTriggersContent key={`${serverAccountScopeKeySuffix(scope)}:${props.sessionId}`} sessionId={props.sessionId} serverId={props.serverId}>{props.children}</SessionTriggersContent>;
+    return <SessionTriggersContent key={`${serverAccountScopeKeySuffix(scope)}:${props.sessionId}`} {...props} />;
 });
 
-function SessionTriggersContent(props: Readonly<{ sessionId: string; serverId?: string | null; children?: React.ReactNode }>) {
+function SessionTriggersContent(props: SessionTriggersSectionProps) {
     const { theme } = useUnistyles();
-    const read = useSessionTriggers(props.sessionId);
+    const read = props.read;
     const readRef = React.useRef(read);
     readRef.current = read;
     const { machineReachable } = useSessionMachineReachability(props.sessionId, props.serverId);
@@ -261,10 +296,10 @@ function SessionTriggersContent(props: Readonly<{ sessionId: string; serverId?: 
         if (machineReachable && readRef.current.status === 'failed') readRef.current.retry();
     }, [machineReachable]);
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow();
-    const thenOptions = useTriggerThenOptions();
-    const machines = useAllMachines();
-    const automationIds = React.useMemo(() => Object.entries(read.lastRunAtByAutomationId)
-        .filter(([, at]) => at !== null).map(([id]) => id), [read.lastRunAtByAutomationId]);
+    const [popover, setPopover] = React.useState<OpenPopover | null>(null);
+    const thenOptions = useTriggerThenOptions({ libraryEnabled: popover !== null, sets: read.sets });
+    const machines = useActiveMachineFacts();
+    const automationIds = React.useMemo(() => read.sets.map(set => set.automationId), [read.sets]);
     const lastRuns = useSessionTriggerLastRuns(automationIds);
     const lastRunsRef = React.useRef(lastRuns);
     lastRunsRef.current = lastRuns;
@@ -276,12 +311,13 @@ function SessionTriggersContent(props: Readonly<{ sessionId: string; serverId?: 
     const groups = React.useMemo(() => {
         const projected = projectSessionTriggerGroups({
             sets: read.sets,
-            lastRunAtByAutomationId: read.lastRunAtByAutomationId,
+            lastRunAtByAutomationId: lastRuns.lastRunAtByAutomationId,
             lastRunsByAutomationId: lastRuns.lastRunsByAutomationId,
             resolveWorkflowTitle: thenOptions.resolveWorkflowTitle,
             resolveMachineTitle: (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' }),
             formatAge: (at) => formatRelativeTimeShort(at, Date.now()),
-        });
+        }).map(group => ({ ...group, rows: group.rows.filter(row => !props.excludedTriggerKeys?.has(row.key)) }))
+            .filter(group => group.rows.length > 0);
         const oldRows = new Map(previousGroups.current.flatMap(group => group.rows.map(row => [row.key, row] as const)));
         const next = projected.map(group => {
             const rows = group.rows.map(row => {
@@ -294,8 +330,18 @@ function SessionTriggersContent(props: Readonly<{ sessionId: string; serverId?: 
         });
         if (!sameStrictJsonValue(previousGroups.current, next)) previousGroups.current = next;
         return previousGroups.current;
-    }, [read.lastRunAtByAutomationId, read.sets, lastRuns.lastRunsByAutomationId, thenOptions.resolveWorkflowTitle, machines]);
+    }, [read.sets, lastRuns.lastRunsByAutomationId, lastRuns.lastRunAtByAutomationId, thenOptions.resolveWorkflowTitle, machines, props.excludedTriggerKeys]);
+    const sourcePeople = useWorkflowSourcePeople(groups.flatMap(group => group.rows.map(row => row.sourceSavedBy)));
 
+    // Session Info folds an empty Habits into "Add to this session" from this read, without another.
+    const summaryScope = useActiveServerAccountScope(props.serverId);
+    useReportSessionInfoSectionSummary('habits.startsHere', summaryScope ? {
+        scope: summaryScope,
+        sessionId: props.sessionId,
+        status: read.status === 'ready' ? 'ready' : read.status === 'failed' ? 'error' : 'loading',
+        coverage: 'complete',
+        count: groups.reduce((sum, group) => sum + group.rows.length, 0),
+    } : null);
     const router = useRouter();
     const pathname = usePathname();
     const focused = useIsFocused();
@@ -346,7 +392,6 @@ function SessionTriggersContent(props: Readonly<{ sessionId: string; serverId?: 
             });
     }, []);
 
-    const [popover, setPopover] = React.useState<OpenPopover | null>(null);
     const initial = React.useMemo((): TriggerFormValue | null => {
         const row = popover?.row;
         if (!row) return null;
@@ -416,8 +461,10 @@ function SessionTriggersContent(props: Readonly<{ sessionId: string; serverId?: 
     return (
         <>
             <SessionTriggersSectionView
+                sourceProfiles={sourcePeople.profiles} viewerAccountId={sourcePeople.viewerAccountId}
                 groups={groups}
                 status={lastRuns.failed ? 'failed' : read.status}
+                hasRetainedContent={props.hasRetainedContent || groups.length > 0}
                 pendingKeys={pendingKeys}
                 onToggle={toggle}
                 onOpen={openRow}

@@ -1,9 +1,11 @@
-import { publishMachineWorkSummaryChanged } from '@/sync/store/domains/machines';
-import { type SessionMessageObservationFactsV1, type SessionMessageV1 } from '@happier-dev/protocol';
-import { readSessionFullPublicationUpdatedAt } from '@/sync/domains/session/sessionRuntimeObservation';
+import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import { type SessionMessageObservationFactsV1} from '@happier-dev/protocol/sessions';
+import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { didSessionRuntimeObservationRecover, readSessionFullPublicationUpdatedAt, sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
 import { resolveSessionViewerProjectionUpdate } from '@/sync/domains/session/readState/sessionViewer';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveRunnerMachineContentKeyTrustV1 } from '@/sync/domains/machines/runnerMachineContentKeyTrust';
+import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     isSessionAccessOwner,
@@ -12,6 +14,7 @@ import {
 import type { ApiEphemeralActivityUpdate, ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { areMachineEncryptionContextInputsEqual, readMachineEncryptionContextInput } from '@/sync/encryption/machineEncryption';
+import { isDataKeyOpeningCancelled } from '@/sync/encryption/dataKeyOpenings';
 import { AccessibleMachineAccessStoredReadV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachineKeyBasisStoredReadV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -21,7 +24,7 @@ import {
     type RawMessageNormalizationSequenceState,
 } from "@happier-dev/session-core/raw";
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
-import type { ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
+import type { ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol/actions/operations/v1';
 import {
     isPlainMachineDataKeyMarker,
     resolvePublishedMachineDataEncryptionKeyV1,
@@ -41,13 +44,15 @@ import {
 import type { DeferredTranscriptMarker } from '@/sync/domains/session/realtime/deferredTranscriptState';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import {
+    applySessionListRenderablePatch,
     deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch,
     summarizeSessionListReadableActivityFromMessageRecords,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { storedSessionMessageAttentionImpactOrNull } from "@happier-dev/session-core/messages";
-import type { MachineActivityUpdate } from "../activity/machineActivityAccumulator.js";
+import type { MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
 import { storage } from '@/sync/domains/state/storage';
+import { publishMachineWorkSummaryChanged } from '@/sync/store/domains/machines';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
@@ -59,9 +64,9 @@ import { classifySessionTupleApplyCurrentness, reconcileSessionRequestProjection
 import { reconcileSessionLifecycleProjection } from '@/sync/domains/session/sessionLifecycleProjection';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivityFromUpdate } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { notifyScmDiffSummaryResultActivity } from '@/sync/ops/scmDiffSummary/resultActivity';
 import { notifyTeamCredentialUsageChanged } from '@/sync/engine/teams/teamCredentialUsageChanges';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { applyUsageSocketUpdate } from './usageUpdates';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import { classifySessionEventDelivery } from '@happier-dev/protocol/sessions';
@@ -72,12 +77,13 @@ import { voiceHooks } from '@/voice/context/voiceHooks';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 import { deriveNewAgentRequests } from '@/sync/domains/permissions/deriveNewAgentRequests';
 import { notifyActivityAgentRequest, notifyActivitySessionUpdate } from '@/activity/notifications/runtime/activityLocalNotificationBus';
+import { compareSessionMetadataRevisions } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { SESSION_LIST_DOCUMENT_ADMISSION, observeSessionListDocumentVersions } from '@/sync/domains/session/sessionDocumentAdmission';
 import { presentSessionPersonalEvent } from '@/activity/notifications/presentSessionPersonalEvent';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
 import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
 import {
     resolveSessionRuntimePresenceFields,
-    SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import {
     createSessionApplyCoalescer,
@@ -135,13 +141,13 @@ import {
 } from '@/sync/engine/social/syncFeed';
 import { dispatchKvBatchUpdate } from './kvUpdateDispatcher';
 import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automationSocketApply';
+import type { AutomationRefreshOptions } from '@/sync/engine/automations/syncAutomations';
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { notifySessionPublicLinkInvalidated } from '@/sync/domains/social/sessionPublicLinkInvalidation';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
-import { SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/listing/sessionListRenderable';
-import { compareSessionMetadataRevisions } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { publishSessionMessageReplyInvalidation } from '@/sync/runtime/sessionMessageReplyInvalidation';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { applyUsageSocketUpdate } from './usageUpdates';
 import type { ExternalSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
 export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
@@ -160,6 +166,7 @@ type DurableMessageProjectionPatchPayload = Readonly<{
 }>;
 
 type CacheOnlySessionUpdateProjectionPatchPayload = Readonly<{
+    updateCreatedAt: number | undefined;
     patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
     updateSeq: number;
     requestMetadataLayoutVersion: number | undefined;
@@ -181,15 +188,13 @@ type ActivityRenderablePatch = Readonly<{
     activeAt: number;
     thinking: boolean;
     thinkingAt: number;
-    presence: 'online' | number;
+    presence: 'online' | number | undefined;
     updatedAt: number;
 }>;
 
 type ActivityRenderableProjectionPatchPayload = Readonly<{
     patch: ActivityRenderablePatch;
 }>;
-
-const CACHE_ONLY_ACTIVITY_TIMESTAMP_PATCH_MIN_INTERVAL_MS = Math.floor(SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS / 2);
 
 let socketSessionApplyHandlers: { applySessions: ApplySessions } | null = null;
 const socketSessionApplyTuning = loadSyncTuning();
@@ -268,14 +273,30 @@ const cacheOnlySessionUpdateProjectionPatchCoalescer = createSessionListRenderab
     buildPatch: ({ address, renderable, payload }) => {
         const key = sessionAddressKey(address);
         const previousSeq = cacheOnlySessionUpdateSeqByAddress.get(key) ?? 0;
+        const patchUpdatedAt = finiteNumber(payload.updateCreatedAt);
+        const currentUpdatedAt = finiteNumber(renderable.updatedAt) ?? 0;
+        const patchSeq = finiteNumber(payload.patch.seq);
+        const acceptsUnversionedFields = patchUpdatedAt === null
+            || patchUpdatedAt > currentUpdatedAt
+            || (patchUpdatedAt === currentUpdatedAt && (
+                payload.updateSeq > previousSeq
+                || (patchSeq !== null && patchSeq > renderable.seq)
+            ));
         cacheOnlySessionUpdateSeqByAddress.set(key, Math.max(previousSeq, Math.trunc(payload.updateSeq)));
-        if (payload.patch.agentStateVersion === undefined) return payload.patch;
+        let patch = payload.patch;
+        if (!acceptsUnversionedFields) {
+            patch = applySessionListRenderablePatch(renderable, patch, {
+                preserveUnversionedFields: true,
+                readableActivity: readCacheOnlyRenderablePatchReadableActivity(renderable.id),
+            });
+        }
+        if (payload.patch.agentStateVersion === undefined) return patch;
         // Keep the producer's layout through coalescing: legacy frames omit it,
         // and must not inherit a newer recipient layout from the cached row.
         const requestProjection = reconcileSessionRequestProjection(renderable, {
             ...renderable, ...payload.patch, metadataLayoutVersion: payload.requestMetadataLayoutVersion,
         });
-        return { ...payload.patch,
+        return { ...patch,
             agentStateVersion: requestProjection.agentStateVersion,
             hasPendingPermissionRequests: requestProjection.hasPendingPermissionRequests,
             hasPendingUserActionRequests: requestProjection.hasPendingUserActionRequests,
@@ -373,17 +394,6 @@ function isStaleTimestampOnlyActivityPatch(
     return getActivityRuntimeTimestamp(patch) <= getActivityRuntimeTimestamp(current);
 }
 
-function shouldSkipFreshTimestampOnlyRenderableActivityPatch(
-    renderable: SessionListRenderableSession,
-    patch: ActivityRenderablePatch,
-): boolean {
-    if (!isTimestampOnlyActivityPatch(renderable, patch)) return false;
-    const previousRuntimeTimestamp = getActivityRuntimeTimestamp(renderable);
-    const nextRuntimeTimestamp = getActivityRuntimeTimestamp(patch);
-    return nextRuntimeTimestamp <= previousRuntimeTimestamp
-        || nextRuntimeTimestamp - previousRuntimeTimestamp < CACHE_ONLY_ACTIVITY_TIMESTAMP_PATCH_MIN_INTERVAL_MS;
-}
-
 function shouldApplyActivityPatch(
     current: Pick<SessionListRenderableSession, 'id' | 'serverId' | 'active' | 'activeAt' | 'thinking' | 'thinkingAt' | 'presence' | 'updatedAt'>,
     patch: ActivityRenderablePatch,
@@ -409,7 +419,7 @@ function shouldApplyActivityPatch(
         : patch.activeAt >= publicationUpdatedAt;
 }
 
-function shouldApplyCacheOnlyActivityRenderablePatch(
+function shouldApplyActivityRenderablePatch(
     address: SessionAddress,
     patch: ActivityRenderablePatch,
 ): boolean {
@@ -422,7 +432,8 @@ function shouldApplyCacheOnlyActivityRenderablePatch(
     if (!renderable) return false;
 
     return shouldApplyActivityPatch(renderable, patch)
-        && !shouldSkipFreshTimestampOnlyRenderableActivityPatch(renderable, patch);
+        && (!isTimestampOnlyActivityPatch(renderable, patch)
+            || didSessionRuntimeObservationRecover(renderable, { ...renderable, ...patch }, Date.now()));
 }
 
 function createSocketMessageApplyCallbacks(
@@ -570,6 +581,7 @@ export function dropSocketSessionWork(
     dropSocketRawMessageNormalizationState(normalizedSessionId, sourceServerId);
     const address = resolveSocketProjectionAddress(normalizedSessionId, sourceServerId);
     if (address) {
+        sessionRuntimeObservations.forget(address);
         durableMessageProjectionPatchCoalescer.dropAddresses([address]);
         cacheOnlySessionUpdateProjectionPatchCoalescer.dropAddresses([address]);
         activityRenderableProjectionPatchCoalescer.dropAddresses([address]);
@@ -675,6 +687,7 @@ function requestTargetedSessionHydration(params: Readonly<{
     reason: SocketSessionHydrationReason;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
     invalidateSessions: () => void;
+    refreshSessionRows?: (sessionIds: readonly string[]) => void;
 }>): void {
     const sessionId = typeof params.sessionId === 'string' && params.sessionId.trim().length > 0
         ? params.sessionId.trim()
@@ -684,8 +697,11 @@ function requestTargetedSessionHydration(params: Readonly<{
         return;
     }
     if (!isCacheOnlySessionHydrationAnchorActive(sessionId, params.sourceServerId)) {
-        // A socket hint may invalidate list truth without admitting a full content read.
-        params.invalidateSessions();
+        // A known Session without a content consumer is a row-level change: the canonical batch
+        // row owner reads and places that row. Only a caller without that owner keeps the
+        // conservative list refresh; an unknown Session (no id) stays structural above.
+        if (params.refreshSessionRows) params.refreshSessionRows([sessionId]);
+        else params.invalidateSessions();
         return;
     }
     if (params.hydrateSessionById) {
@@ -836,7 +852,12 @@ function buildCacheOnlySessionProjectionPatch(params: Readonly<{
         typeof updateBody.lastViewedSessionSeq === 'number'
         || typeof updateBody.latestReadyEventSeq === 'number'
         || isTerminalProjectionStatus(updateBody.latestTurnStatus);
+    const documentAdmission = observeSessionListDocumentVersions(renderable[SESSION_LIST_DOCUMENT_ADMISSION], {
+        metadataVersion: updateBody.metadataDocument === 'omitted' ? updateBody.metadataVersion : updateBody.metadata?.version,
+        metadataLayoutVersion: updateBody.metadataLayoutVersion,
+    });
     return {
+        ...(documentAdmission ? { [SESSION_LIST_DOCUMENT_ADMISSION]: documentAdmission } : {}),
         viewer,
         ...(updateBody.agentState && (typeof updateBody.pendingPermissionRequestCount === 'number'
             || typeof updateBody.pendingUserActionRequestCount === 'number')
@@ -909,6 +930,7 @@ function buildCacheOnlySessionProjectionPatch(params: Readonly<{
             nextLatestReadyEventSeq,
             readableActivity: readCacheOnlyRenderablePatchReadableActivity(renderable.id),
             previousHasUnreadMessages: renderable.hasUnreadMessages,
+            previousLastViewedSessionSeq: resolveLastViewedSessionSeq(renderable),
             recomputeUnread: shouldRecomputeUnread,
         }),
     };
@@ -960,7 +982,7 @@ function pruneUnchangedSessionRenderablePatch(
     patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>,
 ): Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>> {
     const pruned: Partial<Omit<SessionListRenderableSession, 'id'>> = {};
-    for (const key of Object.keys(patch) as Array<keyof Omit<SessionListRenderableSession, 'id'>>) {
+    for (const key of Reflect.ownKeys(patch) as Array<keyof Omit<SessionListRenderableSession, 'id'>>) {
         const nextValue = patch[key];
         if (renderable[key] === nextValue) continue;
         pruned[key] = nextValue as never;
@@ -997,34 +1019,16 @@ function applyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
     shouldContinue?: () => boolean;
 }>): void {
     const patch = pruneUnchangedSessionRenderablePatch(params.renderable, params.patch);
-    if (Object.keys(patch).length === 0) return;
+    if (Reflect.ownKeys(patch).length === 0) return;
     const forceImmediate = shouldApplyCacheOnlySessionUpdateProjectionPatchImmediately({
         renderable: params.renderable,
         patch,
     });
-    const patchUpdatedAt = finiteNumber(patch.updatedAt);
-    const patchSeq = finiteNumber(patch.seq);
-    const shouldContinue = () => {
-        if (params.shouldContinue && !params.shouldContinue()) return false;
-        if (patchUpdatedAt === null) return true;
-        const currentRenderable = readSessionListRenderable(params.address);
-        if (currentRenderable && patch.agentStateVersion !== undefined
-            && patch.agentStateVersion !== currentRenderable.agentStateVersion
-            && !shouldPreserveSessionRequestProjection(currentRenderable, { ...currentRenderable, ...patch, metadataLayoutVersion: params.requestMetadataLayoutVersion })) return true;
-        const currentUpdatedAt = finiteNumber(currentRenderable?.updatedAt) ?? 0;
-        if (currentUpdatedAt < patchUpdatedAt) return true;
-        if (currentUpdatedAt > patchUpdatedAt) return false;
-        const currentUpdateSeq = cacheOnlySessionUpdateSeqByAddress.get(sessionAddressKey(params.address)) ?? 0;
-        if (currentUpdateSeq < params.updateSeq) return true;
-        if (patchSeq === null) return false;
-        const currentSeq = finiteNumber(currentRenderable?.seq) ?? 0;
-        return currentSeq < patchSeq;
-    };
     cacheOnlySessionUpdateProjectionPatchCoalescer.enqueue(
         params.address,
-        { patch, updateSeq: params.updateSeq, requestMetadataLayoutVersion: params.requestMetadataLayoutVersion },
+        { patch, updateCreatedAt: params.patch.updatedAt, updateSeq: params.updateSeq, requestMetadataLayoutVersion: params.requestMetadataLayoutVersion },
         {
-            shouldContinue,
+            shouldContinue: params.shouldContinue,
             deferLeadingPatch: !forceImmediate,
             forceImmediate,
         },
@@ -1115,7 +1119,7 @@ export async function handleSocketUpdate(params: {
     settingsScope?: AccountSettingsScope | null;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
-    onAccountChangeWake?: () => void;
+    onAccountChangeWake?: (wake: Extract<ApiUpdateContainer['body'], { t: 'account-change' | 'account-settings-changed' }>) => void;
     artifactDataKeys: ArtifactDataKeyCache;
     applySessions: ApplySessions;
     fetchSessions: () => void;
@@ -1138,12 +1142,13 @@ export async function handleSocketUpdate(params: {
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     invalidateMachines: (machineId?: string) => void;
     invalidateSessions: () => void;
-    invalidateArtifacts: () => void;
+    /** Read and place known Session rows through the canonical batch row owner instead of re-reading the list. */
+    refreshSessionRows?: (sessionIds: readonly string[]) => void;
+    invalidateArtifacts: (artifactIds: readonly string[]) => void;
     invalidateFriends: () => void;
-    invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
-    invalidateAutomations: () => void;
-    invalidateAutomationsCoalesced?: () => void;
+    invalidateAutomations: (options?: AutomationRefreshOptions) => void;
+    invalidateAutomationsCoalesced?: (options?: AutomationRefreshOptions) => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     /** Exact-target Pending refresh: the receipt for a Run-scoped `pending-changed` body. */
@@ -1179,9 +1184,9 @@ export async function handleSocketUpdate(params: {
         applyTodoSocketUpdates,
         invalidateMachines,
         invalidateSessions,
+        refreshSessionRows,
         invalidateArtifacts,
         invalidateFriends,
-        invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
         invalidateAutomationsCoalesced,
@@ -1228,9 +1233,9 @@ export async function handleSocketUpdate(params: {
         applyTodoSocketUpdates,
         invalidateMachines,
         invalidateSessions,
+        refreshSessionRows,
         invalidateArtifacts,
         invalidateFriends,
-        invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
         invalidateAutomationsCoalesced,
@@ -1251,7 +1256,7 @@ export async function handleUpdateContainer(params: {
     settingsScope?: AccountSettingsScope | null;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
-    onAccountChangeWake?: () => void;
+    onAccountChangeWake?: (wake: Extract<ApiUpdateContainer['body'], { t: 'account-change' | 'account-settings-changed' }>) => void;
     artifactDataKeys: ArtifactDataKeyCache;
     applySessions: ApplySessions;
     fetchSessions: () => void;
@@ -1274,12 +1279,13 @@ export async function handleUpdateContainer(params: {
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     invalidateMachines: (machineId?: string) => void;
     invalidateSessions: () => void;
-    invalidateArtifacts: () => void;
+    /** Read and place known Session rows through the canonical batch row owner instead of re-reading the list. */
+    refreshSessionRows?: (sessionIds: readonly string[]) => void;
+    invalidateArtifacts: (artifactIds: readonly string[]) => void;
     invalidateFriends: () => void;
-    invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
-    invalidateAutomations: () => void;
-    invalidateAutomationsCoalesced?: () => void;
+    invalidateAutomations: (options?: AutomationRefreshOptions) => void;
+    invalidateAutomationsCoalesced?: (options?: AutomationRefreshOptions) => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     refreshPendingForRecipient?: (sessionId: string, recipient: NonNullable<PendingMessage['recipient']>) => Promise<void>;
@@ -1314,9 +1320,9 @@ export async function handleUpdateContainer(params: {
         applyTodoSocketUpdates,
         invalidateMachines,
         invalidateSessions,
+        refreshSessionRows,
         invalidateArtifacts,
         invalidateFriends,
-        invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
         invalidateAutomationsCoalesced,
@@ -1371,8 +1377,8 @@ export async function handleUpdateContainer(params: {
         return mode !== 'e2ee';
     };
 
-    if (updateData.body.t === 'account-change') {
-        onAccountChangeWake?.();
+    if (updateData.body.t === 'account-change' || updateData.body.t === 'account-settings-changed') {
+        onAccountChangeWake?.(updateData.body);
         return;
     }
 
@@ -1405,7 +1411,7 @@ export async function handleUpdateContainer(params: {
             requestSessionShellRefresh: (sessionId) => {
                 if (!shouldContinue()) return;
                 requestTargetedSessionHydration({ sessionId, sourceServerId,
-                    reason: 'socket-update-attention-unknown', hydrateSessionById, invalidateSessions: fetchSessions });
+                    reason: 'socket-update-attention-unknown', hydrateSessionById, invalidateSessions: fetchSessions, refreshSessionRows });
             },
             applyCacheOnlySessionProjectionPatch: ({ sessionId, updateData, rawMessage, messageSeq }) => {
                 if (!shouldContinue()) return false;
@@ -1499,7 +1505,7 @@ export async function handleUpdateContainer(params: {
             requestSessionShellRefresh: (sessionId) => {
                 if (!shouldContinue()) return;
                 requestTargetedSessionHydration({ sessionId, sourceServerId,
-                    reason: 'socket-update-attention-unknown', hydrateSessionById, invalidateSessions: fetchSessions });
+                    reason: 'socket-update-attention-unknown', hydrateSessionById, invalidateSessions: fetchSessions, refreshSessionRows });
             },
             applyCacheOnlySessionProjectionPatch: ({ sessionId, updateData, rawMessage, messageSeq }) => {
                 if (!shouldContinue()) return false;
@@ -1558,7 +1564,14 @@ export async function handleUpdateContainer(params: {
         if (!shouldContinue()) return;
         const socketSessionId = readSocketSessionId(updateData.body);
         if (!socketSessionId || !isCacheOnlySessionHydrationAnchorActive(socketSessionId, sourceServerId)) {
-            invalidateSessions();
+            // Without a content consumer the new row is gathered and placed by the row owner.
+            requestTargetedSessionHydration({
+                sessionId: socketSessionId,
+                sourceServerId,
+                reason: 'socket-update-missing-session',
+                invalidateSessions,
+                refreshSessionRows,
+            });
             return;
         }
         const wasSessionKnown = Boolean(socketSessionId && getSocketSessionApplyBase(socketSessionId));
@@ -1584,6 +1597,7 @@ export async function handleUpdateContainer(params: {
             reason: 'socket-update-missing-session',
             hydrateSessionById,
             invalidateSessions,
+            refreshSessionRows,
         });
     } else if (updateData.body.t === 'delete-session') {
         log.log('🗑️ Delete session update received');
@@ -1632,6 +1646,7 @@ export async function handleUpdateContainer(params: {
                     reason: 'socket-update-missing-session',
                     hydrateSessionById,
                     invalidateSessions,
+                    refreshSessionRows,
                 });
             }
         } else {
@@ -1690,6 +1705,7 @@ export async function handleUpdateContainer(params: {
                 reason: 'socket-update-runtime-activity-conflict',
                 hydrateSessionById,
                 invalidateSessions,
+                refreshSessionRows,
             });
         };
         const onResponsibilityResyncRequired = () => {
@@ -1700,6 +1716,7 @@ export async function handleUpdateContainer(params: {
                 reason: 'socket-update-responsibility-invalid',
                 hydrateSessionById,
                 invalidateSessions,
+                refreshSessionRows,
             });
         };
         if (!session) {
@@ -1713,6 +1730,7 @@ export async function handleUpdateContainer(params: {
                     reason: 'socket-update-missing-session',
                     hydrateSessionById,
                     invalidateSessions,
+                    refreshSessionRows,
                 });
                 return;
             }
@@ -1743,7 +1761,7 @@ export async function handleUpdateContainer(params: {
             const hasStatePayload = Boolean(updateData.body.metadata || updateData.body.agentState);
             const contentDemanded = isCacheOnlySessionHydrationAnchorActive(updateData.body.id, sourceServerId);
             const sessionEncryption = encryption?.getSessionEncryption(updateData.body.id) ?? null;
-            if (contentDemanded && hasStatePayload && sessionEncryption && updateData.body.metadata == null) {
+            if (!metadataOmitted && contentDemanded && hasStatePayload && sessionEncryption && updateData.body.metadata == null) {
                 if (!shouldContinue()) return;
                 requestTargetedSessionHydration({
                     sessionId: updateData.body.id,
@@ -1751,6 +1769,7 @@ export async function handleUpdateContainer(params: {
                     reason: 'socket-update-unpatchable',
                     hydrateSessionById,
                     invalidateSessions,
+                    refreshSessionRows,
                 });
                 return;
             }
@@ -1788,8 +1807,15 @@ export async function handleUpdateContainer(params: {
             if ((!contentDemanded && hasStatePayload) || updateData.body.agentState != null) {
                 markSessionStateHydrationDeferred?.(updateData.body.id);
             }
-            if (!contentDemanded && updateData.body.metadata != null) invalidateSessions();
-            requestVisibleCacheOnlySessionHydration({
+            // Undemanded encrypted metadata is re-read for this row alone by the row owner.
+            if (!contentDemanded && updateData.body.metadata != null) requestTargetedSessionHydration({
+                sessionId: updateData.body.id,
+                sourceServerId,
+                reason: 'socket-update-missing-session',
+                invalidateSessions,
+                refreshSessionRows,
+            });
+            if (!metadataOmitted) requestVisibleCacheOnlySessionHydration({
                 sessionId: updateData.body.id,
                 sourceServerId,
                 hydrateSessionById,
@@ -1885,6 +1911,12 @@ export async function handleUpdateContainer(params: {
         const tupleApplyCurrentness = classifySessionTupleApplyCurrentness(currentSession, sourceRequestTuple);
         let nextSession = reconcileSessionLifecycleProjection(currentSession,
             reconcileSessionTupleProjection(currentSession, resolvedUpdate.nextSession));
+        if (updateData.body.metadataDocument === 'omitted') {
+            const admission = observeSessionListDocumentVersions(nextSession[SESSION_LIST_DOCUMENT_ADMISSION], {
+                metadataVersion: updateData.body.metadataVersion, metadataLayoutVersion: updateData.body.metadataLayoutVersion,
+            });
+            if (admission) nextSession = { ...nextSession, [SESSION_LIST_DOCUMENT_ADMISSION]: admission };
+        }
         if (shouldPreserveSessionRequestProjection(currentSession, sourceRequestTuple)) {
             nextSession = { ...nextSession,
                 agentState: currentSession.agentState, agentStateVersion: currentSession.agentStateVersion,
@@ -1920,8 +1952,10 @@ export async function handleUpdateContainer(params: {
         const agentState = nextSession.agentState;
         const readySeq = shouldReportReadyProjectionAdvance(currentSession, nextSession.latestReadyEventSeq);
         enqueueSocketSessionApplyGuarded(applySessions, [nextSession], shouldContinue);
+        // An omitted owner envelope carried forward at the next revision is already current.
         const shouldRefreshLayout1OwnerMetadata =
             updateData.body.metadata != null
+            && !('ownerMetadataCarried' in resolvedUpdate && resolvedUpdate.ownerMetadataCarried)
             && isCacheOnlySessionHydrationAnchorActive(updateData.body.id, sourceServerId)
             && isSessionAccessOwner(session.access, session.accessLevel)
             && (
@@ -1945,6 +1979,7 @@ export async function handleUpdateContainer(params: {
                     : 'socket-update-turn-projection',
                 hydrateSessionById,
                 invalidateSessions,
+                refreshSessionRows,
             });
         }
         if (readySeq !== null) {
@@ -2011,10 +2046,10 @@ export async function handleUpdateContainer(params: {
             },
             applySettings: (settings, version) => {
                 if (!shouldContinue()) return;
-                storage.getState().applySettings(settings, version);
+                storage.getState().applySettings(settings, version, accountUpdate.remoteAlertPolicyStatus);
             },
             applySettingsForScope: (scope, settings, version) =>
-                shouldContinue() ? storage.getState().applySettingsForScope(scope, settings, version) : undefined,
+                shouldContinue() ? storage.getState().applySettingsForScope(scope, settings, version, accountUpdate.remoteAlertPolicyStatus) : undefined,
             getLocalSettings: () => storage.getState().settings,
             log,
         });
@@ -2077,7 +2112,13 @@ export async function handleUpdateContainer(params: {
         ) {
             try {
                 decryptedDataKey = await encryption.decryptEncryptionKey(publishedDataEncryptionKey);
-            } catch {
+            } catch (error) {
+                // A cancelled opening publishes no locked placeholder for a key nobody
+                // refused; the canonical refresh owns this Machine's row.
+                if (isDataKeyOpeningCancelled(error)) {
+                    invalidateMachines(machineId);
+                    return;
+                }
                 // A present envelope is authoritative. The full Machine refresh
                 // may recover it, but this socket hint must never fall back.
             }
@@ -2224,7 +2265,10 @@ export async function handleUpdateContainer(params: {
             ...updatedMachine,
             ...(access.success ? { access: access.data } : {}),
         }], false, { sourceServerId });
-        if (!encryption?.getMachineEncryption(machineId)) {
+        // Opened plaintext content needs no encryptor; only unresolved content
+        // still needs the census recovery path after its socket patch applies.
+        if (!(updatedMachine.storageMode === 'plain' && readMachineInventoryRowReadiness(updatedMachine) === 'available')
+            && !encryption?.getMachineEncryption(machineId)) {
             invalidateMachines(machineId);
         }
     } else if (updateData.body.t === 'relationship-updated') {
@@ -2234,7 +2278,6 @@ export async function handleUpdateContainer(params: {
         });
         if (!normalized) {
             invalidateFriends();
-            invalidateFriendRequests();
             invalidateFeed();
             return;
         }
@@ -2243,7 +2286,6 @@ export async function handleUpdateContainer(params: {
             relationshipUpdate: normalized,
             applyRelationshipUpdate: (update) => storage.getState().applyRelationshipUpdate(update),
             invalidateFriends,
-            invalidateFriendRequests,
             invalidateFeed,
         });
     } else if (updateData.body.t === 'new-artifact') {
@@ -2361,6 +2403,7 @@ export async function handleUpdateContainer(params: {
                     reason: 'share-visibility-change',
                     hydrateSessionById,
                     invalidateSessions,
+                    refreshSessionRows,
                 });
             }
             return;
@@ -2381,6 +2424,7 @@ export async function handleUpdateContainer(params: {
                     reason: 'share-visibility-change',
                     hydrateSessionById,
                     invalidateSessions,
+                    refreshSessionRows,
                 });
             }
             return;
@@ -2392,6 +2436,7 @@ export async function handleUpdateContainer(params: {
             reason: 'share-visibility-change',
             hydrateSessionById,
             invalidateSessions,
+            refreshSessionRows,
         });
     } else if (updateData.body.t === 'session-share-revoked') {
         const sessionId = readShareSessionId(updateData.body);
@@ -2423,14 +2468,15 @@ export async function handleUpdateContainer(params: {
         }
         invalidateSessions();
     }
+
     if (sourceServerId && shouldContinue() && (
         updateData.body.t === 'new-artifact'
         || updateData.body.t === 'update-artifact'
         || updateData.body.t === 'delete-artifact'
     )) {
-        // A committed receipt must wake captured Artifact readers even when
-        // AccountChange catch-up has not reached this mutation yet.
-        publishHomeAccountChange(sourceServerId, [updateData.body.artifactId], { changeKinds: ['artifact'],
+        // Keep early/deletion observers immediate; feed-backed readers consume the planned page once.
+        publishHomeAccountChange(sourceServerId, [updateData.body.artifactId], {
+            source: 'socket', ...(onAccountChangeWake ? { changesCatchUp: true as const } : {}), changeKinds: ['artifact'],
             ...(updateData.body.t === 'delete-artifact' ? { deletedArtifactIds: [updateData.body.artifactId] } : {}) });
     }
 }
@@ -2441,8 +2487,10 @@ export function flushActivityUpdates(params: {
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
+    observePresence?: boolean;
+    recoveryCandidateSessionIds?: ReadonlySet<string>;
 }): void {
-    const { updates, applySessions, sourceServerId, shouldContinue = () => true, hydrateSessionById } = params;
+    const { updates, applySessions, sourceServerId, shouldContinue = () => true, hydrateSessionById, observePresence = true, recoveryCandidateSessionIds } = params;
     if (!shouldContinue()) return;
     const projectionServerId = resolveSocketProjectionServerId(sourceServerId);
 
@@ -2451,10 +2499,17 @@ export function flushActivityUpdates(params: {
         address: SessionAddress;
         patch: ActivityRenderablePatch;
     }> = [];
-    let renderableTimestampOnlyPatchCount = 0;
-    let renderableTimestampOnlySkippedFreshPatchCount = 0;
 
     for (const [sessionId, update] of updates) {
+        const address = normalizeSessionAddress(projectionServerId, sessionId);
+        const previousObservation = address ? sessionRuntimeObservations.read(address) : undefined;
+        if (address) sessionRuntimeObservations.observe(address, {
+            active: update.active, activeAt: update.activeAt,
+            ...(observePresence ? { thinking: update.thinking ?? false,
+                presence: update.active ? 'online' as const : update.activeAt } : {}),
+        });
+        const recoveryCandidate = recoveryCandidateSessionIds?.has(sessionId) === true || didSessionRuntimeObservationRecover(
+            previousObservation, address ? sessionRuntimeObservations.read(address) : undefined, Date.now());
         const session = storage.getState().sessions[sessionId];
         const sessionMatchesSource = session && (
             !session.serverId || !projectionServerId
@@ -2462,7 +2517,7 @@ export function flushActivityUpdates(params: {
         );
         if (sessionMatchesSource) {
             const runtimePresence = resolveSessionRuntimePresenceFields({
-                thinking: update.thinking ?? false,
+                thinking: update.thinking ?? session.thinking,
                 thinkingAt: update.activeAt,
                 latestTurnStatus: session.latestTurnStatus,
                 latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
@@ -2473,10 +2528,12 @@ export function flushActivityUpdates(params: {
                 activeAt: update.activeAt,
                 thinking: nextThinking,
                 thinkingAt: runtimePresence.thinkingAt,
-                presence: update.active ? 'online' as const : update.activeAt,
+                presence: update.active ? observePresence ? 'online' as const : session.presence : update.activeAt,
                 updatedAt: update.activeAt,
             };
-            if (shouldApplyActivityPatch(session, patch)) sessions.push({
+            // Observation has advanced above; unchanged runtime state is not content.
+            if (shouldApplyActivityPatch(session, patch) && (!isTimestampOnlyActivityPatch(session, patch)
+                || (recoveryCandidate && didSessionRuntimeObservationRecover(session, { ...session, ...patch }, Date.now())))) sessions.push({
                 ...session,
                 active: update.active,
                 activeAt: update.activeAt,
@@ -2486,14 +2543,13 @@ export function flushActivityUpdates(params: {
             });
         }
 
-        const address = normalizeSessionAddress(projectionServerId, sessionId);
         const renderable = address ? readSessionListRenderable(address) : undefined;
         if (address && renderable) {
             if (!sessionMatchesSource && isCacheOnlySessionHydrationAnchorActive(sessionId, sourceServerId)) {
                 hydrateSessionById?.(sessionId, 'socket-update-missing-session');
             }
             const runtimePresence = resolveSessionRuntimePresenceFields({
-                thinking: update.thinking ?? false,
+                thinking: update.thinking ?? renderable.thinking,
                 thinkingAt: update.activeAt,
                 latestTurnStatus: renderable.latestTurnStatus,
                 latestTurnStatusObservedAt: renderable.latestTurnStatusObservedAt,
@@ -2504,18 +2560,13 @@ export function flushActivityUpdates(params: {
                 activeAt: update.activeAt,
                 thinking: nextThinking,
                 thinkingAt: runtimePresence.thinkingAt,
-                presence: update.active ? 'online' as const : update.activeAt,
-                updatedAt: Math.max(finiteNumber(renderable.updatedAt) ?? update.activeAt, update.activeAt),
+                presence: update.active ? observePresence ? 'online' as const : renderable.presence : update.activeAt,
+                updatedAt: renderable.updatedAt,
             };
             const isTimestampOnlyPatch = isTimestampOnlyActivityPatch(renderable, patch);
             if (!shouldApplyActivityPatch(renderable, patch)) continue;
-            if (isTimestampOnlyPatch && shouldSkipFreshTimestampOnlyRenderableActivityPatch(renderable, patch)) {
-                renderableTimestampOnlySkippedFreshPatchCount += 1;
-                continue;
-            }
-            if (isTimestampOnlyPatch) {
-                renderableTimestampOnlyPatchCount += 1;
-            }
+            if (isTimestampOnlyPatch
+                && !(recoveryCandidate && didSessionRuntimeObservationRecover(renderable, { ...renderable, ...patch }, Date.now()))) continue;
             renderablePatches.push({
                 address,
                 patch,
@@ -2523,14 +2574,11 @@ export function flushActivityUpdates(params: {
         }
     }
 
-    if (sessions.length > 0 || renderablePatches.length > 0 || renderableTimestampOnlySkippedFreshPatchCount > 0) {
+    if (sessions.length > 0 || renderablePatches.length > 0) {
         syncPerformanceTelemetry.count('sync.socket.sessions.activity.flush', {
             updates: updates.size,
             sessions: sessions.length,
             renderablePatches: renderablePatches.length,
-            renderableTimestampOnlyPatches: renderableTimestampOnlyPatchCount,
-            renderableTimestampOnlySkippedFreshPatches: renderableTimestampOnlySkippedFreshPatchCount,
-            renderableStateChangePatches: renderablePatches.length - renderableTimestampOnlyPatchCount,
         });
     }
     if (sessions.length > 0) {
@@ -2545,7 +2593,7 @@ export function flushActivityUpdates(params: {
                 { patch },
                 {
                     shouldContinue: () => shouldContinue()
-                        && shouldApplyCacheOnlyActivityRenderablePatch(address, patch),
+                        && shouldApplyActivityRenderablePatch(address, patch),
                     deferLeadingPatch: true,
                 },
             );
@@ -2634,6 +2682,9 @@ export function handleEphemeralSocketUpdate(params: {
     } else if (updateData.type === 'machine-work-summary-changed') {
         if (!shouldContinue()) return Promise.resolve();
         if (sourceServerId) publishMachineWorkSummaryChanged(sourceServerId, updateData.machineId);
+    } else if (updateData.type === 'scm-diff-summary-result-updated') {
+        if (!shouldContinue()) return Promise.resolve();
+        notifyScmDiffSummaryResultActivity(sourceServerId, updateData);
     } else if (updateData.type === 'execution-run-updated') {
         if (!shouldContinue()) return Promise.resolve();
         notifyExecutionRunActivityFromUpdate(sourceServerId, updateData);

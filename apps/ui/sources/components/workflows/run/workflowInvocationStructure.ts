@@ -2,6 +2,12 @@ import type {
     WorkflowBlock,
     WorkflowDefinitionV1,
 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readWorkflowValuePathV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { projectWorkflowLoopItemDisplayLabelV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { normalizeExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type {
     WorkflowInvocationPathV1,
     WorkflowProgressEnvelopeV1,
@@ -91,6 +97,22 @@ function scopedBlockId(blockId: string, scope: Scope): string {
 type ParallelBlock = Extract<WorkflowBlock, { kind: 'parallel' }>;
 type LoopBlock = Extract<WorkflowBlock, { kind: 'loop' }>;
 type IfBlock = Extract<WorkflowBlock, { kind: 'if' }>;
+
+/** Map occurrence names and the Steps engine projection resolve the same frozen lexical item. */
+export function readWorkflowLoopOccurrenceItem(params: Readonly<{
+    loop: LoopBlock | undefined;
+    index: number;
+    inputs?: Readonly<Record<string, JsonValue>>;
+    outerItem?: JsonValue;
+}>): JsonValue | undefined {
+    const reference = params.loop?.repetition.kind === 'items' ? params.loop.repetition.items : undefined;
+    const collection = reference?.kind === 'literal' ? reference.value
+        : reference?.kind === 'input' && params.inputs?.[reference.name] !== undefined
+            ? readWorkflowValuePathV1(params.inputs[reference.name]!, reference.path ?? [])
+            : reference?.kind === 'item' && reference.field === 'value' && params.outerItem !== undefined
+                ? readWorkflowValuePathV1(params.outerItem, reference.path ?? []) : undefined;
+    return Array.isArray(collection) ? collection[params.index] : undefined;
+}
 
 /**
  * What a row's *children* mean. The coordinator assigns `memberOrdinal` inside
@@ -231,9 +253,19 @@ export function resolveWorkflowFlowNodeIdForInvocation(params: Readonly<{
 function collectWorkflowBlocksById(
     blocks: readonly WorkflowBlock[], into: Map<string, WorkflowBlock>, frozenChildren: FrozenChildren,
     workflowPath: readonly string[] = [], refs: readonly string[] = [],
+    defaultParticipant?: WorkflowDefinitionV1['defaults']['participant'],
+    itemParticipantNodes?: Set<string>,
+    acceptedItemParticipants?: ReadonlySet<string>,
 ): void {
+    const record = (block: WorkflowBlock): void => {
+        const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
+        into.set(nodeId, block);
+        const participant = block.kind === 'step' ? block.execution?.participant ?? defaultParticipant : undefined;
+        if (block.kind === 'step' && ((participant?.kind === 'item' && (participant.path?.length ?? 0) === 0)
+            || acceptedItemParticipants?.has(JSON.stringify([refs[refs.length - 1] ?? '$root', block.id])))) itemParticipantNodes?.add(nodeId);
+    };
     for (const block of blocks) {
-        into.set(resolveWorkflowFlowScopedNodeId(block.id, workflowPath), block);
+        record(block);
         switch (block.kind) {
             case 'step':
             case 'action':
@@ -241,20 +273,21 @@ function collectWorkflowBlocksById(
             case 'workflow': {
                 const child = frozenChildren[block.workflowRef];
                 if (child !== undefined && !refs.includes(block.workflowRef)) {
-                    collectWorkflowBlocksById(child.blocks, into, frozenChildren, [...workflowPath, block.id], [...refs, block.workflowRef]);
+                    collectWorkflowBlocksById(child.blocks, into, frozenChildren, [...workflowPath, block.id], [...refs, block.workflowRef],
+                        child.defaults.participant, itemParticipantNodes, acceptedItemParticipants);
                 }
                 break;
             }
             case 'parallel':
-                for (const branch of block.branches) collectWorkflowBlocksById(branch.blocks, into, frozenChildren, workflowPath, refs);
+                for (const branch of block.branches) collectWorkflowBlocksById(branch.blocks, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
                 break;
             case 'loop':
-                collectWorkflowBlocksById(block.body, into, frozenChildren, workflowPath, refs);
-                if (block.repetition.kind === 'evaluate') into.set(resolveWorkflowFlowScopedNodeId(block.repetition.evaluator.id, workflowPath), block.repetition.evaluator);
+                collectWorkflowBlocksById(block.body, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
+                if (block.repetition.kind === 'evaluate') record(block.repetition.evaluator);
                 break;
             case 'if':
-                collectWorkflowBlocksById(block.then, into, frozenChildren, workflowPath, refs);
-                collectWorkflowBlocksById(block.otherwise, into, frozenChildren, workflowPath, refs);
+                collectWorkflowBlocksById(block.then, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
+                collectWorkflowBlocksById(block.otherwise, into, frozenChildren, workflowPath, refs, defaultParticipant, itemParticipantNodes, acceptedItemParticipants);
                 break;
         }
     }
@@ -366,11 +399,18 @@ function describeOccurrence(
 export function projectWorkflowInvocationStructure(params: Readonly<{
     definition: WorkflowDefinitionV1 | null;
     frozenChildren?: FrozenChildren;
+    /** Accepted definitions flatten selection; sidecars retain the original participant binding. */
+    materializedLeaves?: readonly WorkflowMaterializedLeafV1[];
     invocations: readonly WorkflowRunInvocationIndexV1[];
     /** Exact rows already opened through the authorized Action; authoritative when present. */
     progressByInvocationId?: ReadonlyMap<string, WorkflowProgressEnvelopeV1>;
     /** Exact opened tokens qualify additional private labels; stale retained content cannot disclose them. */
     invocationEvidenceById?: ReadonlyMap<string, Readonly<{ index: WorkflowRunInvocationIndexV1; progress: WorkflowProgressEnvelopeV1 }>>;
+    /** Home-qualified Session titles from the canonical display-name projection; no private reads. */
+    sessionDisplayLabelsById?: ReadonlyMap<string, string>;
+    /** Immutable accepted inputs can name cold occurrences without opening private invocation bodies. */
+    inputs?: Readonly<Record<string, JsonValue>>;
+    serverId?: string | null;
 }>): ReadonlyMap<string, WorkflowInvocationStructureEntry> {
     const entries = new Map<string, WorkflowInvocationStructureEntry>();
     const definition = params.definition;
@@ -378,10 +418,17 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
 
     const blocksById = new Map<string, WorkflowBlock>();
     const frozenChildren = params.frozenChildren ?? {};
-    collectWorkflowBlocksById(definition.blocks, blocksById, frozenChildren);
+    const itemParticipantNodes = new Set<string>();
+    const acceptedItemParticipants = new Set(params.materializedLeaves?.flatMap(leaf => {
+        const reference = leaf.participantBindings?.reference;
+        return leaf.kind === 'step' && reference?.kind === 'item' && (reference.path?.length ?? 0) === 0
+            ? [JSON.stringify([leaf.sourceKey, leaf.blockId])] : [];
+    }));
+    collectWorkflowBlocksById(definition.blocks, blocksById, frozenChildren, [], [], definition.defaults.participant, itemParticipantNodes, acceptedItemParticipants);
     const loopsById = new Map<string, LoopBlock>();
     for (const [key, block] of blocksById) if (block.kind === 'loop') loopsById.set(key, block);
     const invocationById = new Map(params.invocations.map(invocation => [invocation.id, invocation]));
+    const currentProgressById = new Map<string, WorkflowProgressEnvelopeV1>();
     const itemLabelsById = new Map<string, Readonly<{ scopeKey: string; label: string }>>();
     for (const invocation of params.invocations) {
         const opened = params.invocationEvidenceById?.get(invocation.id);
@@ -389,6 +436,7 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
             || opened.index.attempt !== invocation.attempt || opened.index.contentRevision !== invocation.contentRevision
             || opened.progress.attempt !== invocation.attempt) continue;
         const { progress } = opened;
+        currentProgressById.set(invocation.id, progress);
         const frame = progress.frame;
         if (progress.blockKind !== 'loop' || frame?.ownerBlockId !== progress.invocationPath.blockId
             || frame.source.kind !== 'item' || frame.source.displayLabel === undefined) continue;
@@ -419,11 +467,57 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
             if (label && !itemLabels.has(label.scopeKey)) itemLabels.set(label.scopeKey, label.label);
             ancestorId = invocationById.get(ancestorId)?.parentRecordId ?? null;
         }
+        let occurrence = describeOccurrence(resolved.scope, loopsById, frameHint, itemLabels);
+        let itemValue: JsonValue | undefined;
+        let acceptedItemLabel: string | undefined;
+        let localInputs = params.inputs;
+        const workflowPath: string[] = [];
+        occurrence = occurrence.map(coordinate => {
+            if (coordinate.kind === 'workflow') {
+                workflowPath.push(coordinate.blockId);
+                // A called workflow owns its inputs. Never resolve a child against its parent's names.
+                localInputs = undefined;
+                itemValue = undefined;
+                acceptedItemLabel = undefined;
+                return coordinate;
+            }
+            if (coordinate.kind !== 'item') return coordinate;
+            const loop = loopsById.get(resolveWorkflowFlowScopedNodeId(coordinate.blockId, workflowPath));
+            itemValue = readWorkflowLoopOccurrenceItem({ loop, index: coordinate.index, inputs: localInputs, outerItem: itemValue });
+            const participant = normalizeExecutableParticipantSelectionV1(itemValue);
+            const name = participant?.kind === 'session'
+                ? params.serverId && areServerProfileIdentifiersEquivalent(participant.session.serverId, params.serverId)
+                    ? params.sessionDisplayLabelsById?.get(participant.session.sessionId) : undefined
+                : projectWorkflowLoopItemDisplayLabelV1(participant?.kind === 'model' ? participant.launch.title : itemValue);
+            acceptedItemLabel = name;
+            return name === undefined || coordinate.displayLabel !== undefined ? coordinate : { ...coordinate, displayLabel: name };
+        });
+        const nodeId = resolved.blockId === null ? null : scopedBlockId(resolved.blockId, resolved.scope);
+        if (!resolved.isFrame && nodeId !== null && itemParticipantNodes.has(nodeId)) {
+            const progress = currentProgressById.get(invocationId);
+            const execution = progress?.execution;
+            const label = progress?.invocationPath.blockId === resolved.blockId
+                && JSON.stringify(progress.invocationPath.scope) === JSON.stringify(resolved.scope)
+                && (execution?.kind === 'session' || execution?.kind === 'session_ready')
+                ? params.sessionDisplayLabelsById?.get(execution.sessionId) : undefined;
+            // The innermost item owns the participant. Keep a recorded human
+            // name while its Session inventory is unavailable; older writers
+            // accidentally recorded only the participant's wire kind.
+            let itemPosition = occurrence.length - 1;
+            while (itemPosition >= 0 && occurrence[itemPosition]?.kind !== 'item') itemPosition -= 1;
+            occurrence = occurrence.map((coordinate, position) => {
+                if (position !== itemPosition || coordinate.kind !== 'item') return coordinate;
+                const recorded = coordinate.displayLabel;
+                const displayLabel = acceptedItemLabel ?? label ?? (recorded === 'session' || recorded === 'model' || recorded === 'bot' ? undefined : recorded);
+                return { kind: 'item', blockId: coordinate.blockId, index: coordinate.index,
+                    ...(displayLabel === undefined ? {} : { displayLabel }) };
+            });
+        }
         entries.set(invocationId, {
             invocationId,
             nodeId: block === undefined ? null : resolveWorkflowFlowNodeIdForInvocation(resolved),
             blockId: resolved.blockId,
-            occurrence: describeOccurrence(resolved.scope, loopsById, frameHint, itemLabels),
+            occurrence,
             isFrame: resolved.isFrame,
             coverageKind: classifyWorkflowInvocationCoverage(blockKind, resolved.isFrame || resolved.blockId === '$root'),
         });

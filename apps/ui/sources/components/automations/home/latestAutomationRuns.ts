@@ -1,4 +1,4 @@
-import type { AutomationRunStateV3 } from '@happier-dev/protocol';
+import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowRunStateV1';
 
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/automationRunCause';
@@ -14,11 +14,11 @@ export type LatestAutomationRunTone = 'succeeded' | 'active' | 'failed' | 'atten
  * The glance follows the shared work status vocabulary (`resolveWorkStatusTone`, which owns how a Run
  * state reads); only the glyph split — a success apart from the other quiet ends — is this list's own.
  */
-export function automationRunTone(state: AutomationRunStateV3): LatestAutomationRunTone {
+export function automationRunTone(state: WorkflowRunStateV1): LatestAutomationRunTone {
     const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: { state, word: state } });
-    if (status.bucket === 'working') return 'active';
     if (status.tone === 'danger') return 'failed';
     if (status.tone === 'attention') return 'attention';
+    if (status.bucket === 'working') return 'active';
     return state === 'succeeded' ? 'succeeded' : 'neutral';
 }
 
@@ -41,12 +41,9 @@ export type LatestAutomationRunRow = Readonly<{
 type LatestRunSource = Pick<AutomationDefinition, 'id' | 'lastRunAt'>;
 
 /**
- * The Automations whose Run windows hold the Account's newest Runs.
- *
- * The server stamps `lastRunAt` when a Run of that Automation settles, so the `count` newest settled
- * Runs all belong to the `count` Automations that settled most recently: an Automation outside them
- * settled no later than each of them. A Run still in progress does not move `lastRunAt`; it shows here
- * only when its Automation is among those (the Account has no cross-Automation Run query today).
+ * The Automations whose latest started Runs are most recent. The definition API
+ * projects `lastRunAt` from the shared Run summary, including active and failed
+ * Runs; a pre-start cancellation or skip never moves that fact.
  */
 export function selectLatestRunAutomationIds(automations: readonly LatestRunSource[], count: number): string[] {
     return automations
@@ -72,7 +69,7 @@ export function projectLatestAutomationRuns(input: Readonly<{
             automationName: automation.name,
             targetType: automation.targetType,
             at: getAutomationDefinitionRunCauseAt(run),
-            tone: automationRunTone(run.state),
+            tone: automationRunTone(run.workflowRunState ?? run.state),
         });
     }
     return rows

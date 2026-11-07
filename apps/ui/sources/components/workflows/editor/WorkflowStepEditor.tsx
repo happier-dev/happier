@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
+import { computeExistingSessionComposerInputMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { resolveSessionAuthoringAgentId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 
@@ -70,6 +71,9 @@ type WorkflowStepPromptFieldProps = Readonly<{
     /** The step's own chips in the composer's chip row (Step options). */
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     agentInputContext?: React.ComponentProps<typeof ScopedAuthoringComposer>['agentInputContext'];
+    /** `false` shows the prompt's static picture until the author activates it (the host's editing demand). */
+    editing: boolean;
+    onRequestEdit?: () => void;
 }>;
 
 /**
@@ -93,6 +97,18 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
     ScopedAuthoringComposerHandle,
     WorkflowStepPromptFieldProps
 >(function WorkflowStepPromptField(props, ref): React.ReactElement {
+    // A long prompt is clipped like a Session's: the same collapsed and expanded heights and the
+    // composer's own expand toggle, so it never drowns the document (owner 2026-11-06).
+    const viewportHeight = useWindowDimensions().height;
+    const [expanded, setExpanded] = React.useState(false);
+    const collapsedMaxHeight = computeExistingSessionComposerInputMaxHeight({ viewportHeight, expanded: false });
+    const expandedMaxHeight = computeExistingSessionComposerInputMaxHeight({ viewportHeight, expanded: true });
+    const inputExpansion = React.useMemo(() => ({
+        expanded,
+        ...(collapsedMaxHeight === undefined ? {} : { collapsedMaxHeight }),
+        onToggle: () => setExpanded((current) => !current),
+    }), [expanded, collapsedMaxHeight]);
+    const inputMaxHeight = expanded ? expandedMaxHeight : collapsedMaxHeight;
     return (
         // The canonical composer owns its own field chrome, so this wrapper only
         // carries the row's stable test identity. The step-named label goes to
@@ -100,8 +116,11 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
         // focuses; a label on this view would never be read.
         <View testID={props.testID}>
             <ScopedAuthoringComposer
-                hostActionBarLayout="wrap"
                 inputAccessibilityLabel={props.accessibilityLabel}
+                // A step card is narrower than its window: its chips wrap rather than clip on a rail (M5).
+                hostActionBarLayout="wrap"
+                inputExpansion={inputExpansion}
+                {...(inputMaxHeight === undefined ? {} : { inputMaxHeight })}
                 ref={ref}
                 custody={props.custody}
                 scope={props.composerScope}
@@ -115,6 +134,8 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
                 onFocus={props.onFocusPrompt}
                 agentInputContext={props.agentInputContext}
                 {...(props.extraActionChips === undefined ? {} : { extraActionChips: props.extraActionChips })}
+                editing={props.editing}
+                {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: props.onRequestEdit })}
             />
         </View>
     );
@@ -163,6 +184,12 @@ export function WorkflowStepEditor(props: Readonly<{
     authoringFacts?: SessionAuthoringControlFacts;
     /** Registers the prompt input so Add can focus it once layout is ready. */
     registerPromptRef?: (blockId: string, focus: (() => void) | null) => void;
+    /**
+     * Whether this prompt is the one being edited. `false` shows its static picture; focusing the
+     * prompt (Add, Edit step, the keyboard, a press) asks the host through `onRequestEdit`.
+     */
+    editing?: boolean;
+    onRequestEdit?: () => void;
     /** `false`: the reading presentation (04 §4.11) — nothing here edits. */
     editable?: boolean;
     /** A reader's per-step facts, each in its fixed place (04 §4.11). */
@@ -183,8 +210,8 @@ export function WorkflowStepEditor(props: Readonly<{
     const custody = props.composerCustody.entryFor(step.id);
     // The prompt's handlers close over the current document through a ref, so
     // they stay referentially stable while the whole draft changes underneath.
-    const latestRef = React.useRef({ step, onChangeDocument, onSelect });
-    latestRef.current = { step, onChangeDocument, onSelect };
+    const latestRef = React.useRef({ step, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit });
+    latestRef.current = { step, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit };
     // The composer publishes its portable document through the protocol's
     // read-only projection of the same values the saved definition owns, so the
     // authored document is rebuilt here through the canonical value schema.
@@ -201,6 +228,7 @@ export function WorkflowStepEditor(props: Readonly<{
     const handleFocusPrompt = React.useCallback(() => {
         latestRef.current.onSelect();
     }, []);
+    const handleRequestEdit = React.useCallback(() => latestRef.current.onRequestEdit?.(), []);
 
     React.useEffect(() => {
         registerPromptRef?.(step.id, () => inputRef.current?.focus());
@@ -266,8 +294,9 @@ export function WorkflowStepEditor(props: Readonly<{
         // The native AgentInput owns opening its options. This presence also keeps
         // the effective engine chip visible in a read-only document.
         onAgentClick: enginePicker.onAgentClick,
+        ...(!editable ? props.slots?.enginePresentation : undefined),
     }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
-        editable, participant, roleName, engineSummary, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
+        editable, participant, roleName, engineSummary, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId, props.slots?.enginePresentation]);
     const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
@@ -322,6 +351,8 @@ export function WorkflowStepEditor(props: Readonly<{
                         onFocusPrompt={handleFocusPrompt}
                         agentInputContext={agentInputContext}
                         {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
+                        editing={props.editing !== false}
+                        {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: handleRequestEdit })}
                     />
                 </View>
             </WorkflowStepSessionDropZone>

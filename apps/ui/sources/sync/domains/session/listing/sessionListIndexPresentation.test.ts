@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionListQueryHomeState } from './sessionListQueryController';
+import { createSessionListQueryHomeController, type SessionListQueryHomeState } from './sessionListQueryController';
+import { HappyError } from '@/utils/errors/errors';
 import * as presentationModule from './sessionListIndexPresentation';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -43,6 +44,7 @@ function queryState(partial: Partial<SessionListQueryHomeState>): SessionListQue
         attentionHasNext: false,
         phase: 'idle',
         freshnessAt: null,
+        homeObservation: { phase: partial.phase ?? 'idle', lastSuccessAt: partial.freshnessAt ?? null },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: null,
@@ -295,7 +297,7 @@ describe('resolveSessionListQueryPresentation', () => {
         })).toEqual({ kind: 'error', retainedRows: false });
     });
 
-    it('reads a failed query as loading while the Home is still being reached, never as a settled error', () => {
+    it('reads a transport failure as loading while the Home is still being reached', () => {
         const failed = { selectedServerIds: ['home-a'], coverageComplete: false,
             statesByServerId: { 'home-a': queryState({ phase: 'error', failureReason: 'network' }) } } as const;
         expect(resolve({ ...failed, retainedRowCount: 0, settlingHomeServerId: 'home-a' })).toEqual({ kind: 'initial_loading' });
@@ -308,6 +310,38 @@ describe('resolveSessionListQueryPresentation', () => {
         expect(resolve({ selectedServerIds: ['home-a'], coverageComplete: true, retainedRowCount: 0, settlingHomeServerId: 'home-a',
             statesByServerId: { 'home-a': queryState({ phase: 'ready', appliedQueryKey: 'query' }) } })).toEqual({ kind: 'ready', complete: true });
     });
+
+    it.each([
+        { error: new HappyError('Invalid response', false, { code: 'invalid_response' }), terminal: true },
+        { error: new HappyError('List failed', true, { status: 503, code: 'list_failed' }), terminal: true },
+        { error: new TypeError('Failed to fetch'), terminal: false },
+    ])('projects the real query failure during Home settling ($error)', async ({ error, terminal }) => {
+        const controller = createSessionListQueryHomeController({
+            serverId: 'home-a', fetchPage: async () => { throw error; },
+        });
+        try {
+            await controller.update({ query: { v: 1, storage: 'active', includeInactive: true,
+                scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
+                selected: true, online: true, supported: true });
+            const input = { selectedServerIds: ['home-a'], coverageComplete: false,
+                settlingHomeServerId: 'home-a', statesByServerId: { 'home-a': controller.getSnapshot() } };
+            expect(resolve({ ...input, retainedRowCount: 0 })).toEqual(terminal
+                ? { kind: 'error', retainedRows: false } : { kind: 'initial_loading' });
+            expect(resolve({ ...input, retainedRowCount: 2 })).toEqual(terminal
+                ? { kind: 'error', retainedRows: true } : { kind: 'refreshing', retainedRows: true });
+        } finally { controller.dispose(); }
+    });
+
+    it.each(['invalid_query', 'access_denied', 'cursor_not_advancing'] as const)(
+        'keeps terminal %s visible while its Home is settling', failureReason => {
+            const input = { selectedServerIds: ['home-a'], coverageComplete: false,
+                settlingHomeServerId: 'home-a', statesByServerId: {
+                    'home-a': queryState({ phase: 'error', failureReason, failedOperation: 'replace' }),
+                } };
+            expect(resolve({ ...input, retainedRowCount: 0 })).toEqual({ kind: 'error', retainedRows: false });
+            expect(resolve({ ...input, retainedRowCount: 2 })).toEqual({ kind: 'error', retainedRows: true });
+        },
+    );
 
     it('scopes failed Run windows to their producing Home, including pagination failures', () => {
         for (const failure of [{ status: 'failed' as const, loadMoreFailed: false }, { status: 'loaded' as const, loadMoreFailed: true }]) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema } from '@happier-dev/protocol';
+import { AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
@@ -57,6 +57,15 @@ function run(id: string, automationId: string, at: number, state: AutomationDefi
 }
 
 describe('latest Automation runs', () => {
+    it.each(['interrupted', 'waiting_for_review'] as const)('keeps a Workflow %s Run out of active motion', (workflowRunState) => {
+        const rows = projectLatestAutomationRuns({
+            automations: [automation('triage', 900)],
+            runs: [{ ...run('held', 'triage', 900, 'running'), workflowRunState }],
+            count: 1,
+        });
+        expect(rows[0]?.tone).toBe('attention');
+    });
+
     it('reads the Automations that settled a Run most recently, never ones that have not run', () => {
         const ids = selectLatestRunAutomationIds([
             automation('never', null),

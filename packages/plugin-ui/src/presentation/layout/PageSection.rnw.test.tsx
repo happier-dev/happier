@@ -52,6 +52,27 @@ function mount(children: ReactNode) {
 }
 
 describe('HappierPageSheet groups, row inset and row dividers', () => {
+  it.each([false, true])('retains a mounted row when the last peer group disappears and returns (rowDividers=%s)', async (rowDividers) => {
+    const sheet = (grouped: boolean) => (
+      <HappierPageSheet surface="none" colors={COLORS} rowDividers={rowDividers}>
+        {grouped ? <HappierPageSheetGroup key="starts"><Row id="starts" /></HappierPageSheetGroup> : null}
+        <DraftRow key="destination" id="destination" />
+      </HappierPageSheet>
+    );
+    const view = mount(sheet(true));
+    const draft = () => view.container.querySelector<HTMLElement>('[data-testid="destination"]')!;
+    const original = draft();
+    act(() => original.click());
+    expect(original.textContent).toBe('1');
+    await view.render(<View testID="root">{sheet(false)}</View>);
+    expect(draft().textContent).toBe('1');
+    expect(draft() === original).toBe(true);
+    await view.render(<View testID="root">{sheet(true)}</View>);
+    expect(draft().textContent).toBe('1');
+    expect(draft() === original).toBe(true);
+    view.unmount();
+  });
+
   it.each([false, true])('retains a mounted row draft when a conditional status line appears (rowDividers=%s)', async (rowDividers) => {
     const sheet = (pending: boolean) => (
       <HappierPageSheet surface="none" colors={COLORS} rowDividers={rowDividers}>

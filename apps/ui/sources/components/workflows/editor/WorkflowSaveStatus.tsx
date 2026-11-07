@@ -13,6 +13,7 @@ import { t } from '@/text';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { buildWorkflowDefinitionCandidate } from '@/sync/domains/workflows/workflowAuthoring';
 
 
 export type WorkflowSaveConflict = Readonly<{
@@ -31,7 +32,8 @@ export type WorkflowSaveStatusState =
     | Readonly<{ kind: 'unsaved' }>
     | Readonly<{ kind: 'saving' }>
     /** `savedAtMs` is when this editor saved it; `null` when the time is not known (an opened revision). */
-    | Readonly<{ kind: 'saved'; savedAtMs: number | null; byAgent?: boolean }>
+    /** `discarded`: the saved version is back because edits were just discarded, and Undo can restore them. */
+    | Readonly<{ kind: 'saved'; savedAtMs: number | null; byAgent?: boolean; discarded?: boolean }>
     | Readonly<{ kind: 'failed'; reason: string | null }>
     | Readonly<{ kind: 'conflict'; conflict: WorkflowSaveConflict }>;
 
@@ -116,13 +118,7 @@ export function formatWorkflowArtifactRevision(revision: WorkflowArtifactRevisio
 }
 
 function readableDraft(draft: WorkflowEditorDraft): string {
-    return JSON.stringify({
-        name: draft.name,
-        defaults: draft.defaults,
-        inputs: draft.inputs,
-        blocks: draft.blocks,
-        finalOutput: draft.finalOutput,
-    }, null, 2);
+    return JSON.stringify(Object.assign({ name: draft.name }, buildWorkflowDefinitionCandidate(draft)), null, 2);
 }
 
 /** Re-renders once a minute while an age is on screen, so "Saved 2m ago" keeps its word true. */
@@ -188,7 +184,7 @@ function StatusLine(props: Readonly<{ children: React.ReactNode }>): React.React
 }
 
 /**
- * The draft's validity readout ("Ready", or "2 things to fix…" leading to the first issue), drawn
+ * The draft's validity readout ("2 things to fix…" leading to the first issue; a valid draft says nothing), drawn
  * as one fact of the status line — or alone, on a page without a save line.
  */
 export function WorkflowStatusReadout(props: Readonly<{
@@ -215,10 +211,12 @@ export function WorkflowSaveStatus(props: Readonly<{
     localDraft: WorkflowEditorDraft;
     /** The page's gated Save. Absent hides Save (a host that cannot save). */
     onSave?: () => void;
+    /** Reverses the last change; offered beside "Changes discarded". */
+    onUndo?: () => void;
     onSaveAsCopy: () => void;
     /**
-     * The draft's one validity readout ("Ready" or "3 things to fix", 07; a `WorkflowStatusReadout`),
-     * on this same line after the save state ("Saved 2m ago · Ready", lab `editor-E1`), so it never
+     * The draft's one validity readout ("3 things to fix", 07; a `WorkflowStatusReadout`; never "Ready", §2.3
+     * item 11), on this same line after the save state, so it never
      * stacks a row of its own.
      */
     readout?: React.ReactNode;
@@ -282,7 +280,7 @@ export function WorkflowSaveStatus(props: Readonly<{
         case 'saving': statusText = t('workflows.page.saveStatus.saving'); break;
         case 'failed': statusText = t('workflows.page.saveStatus.failed'); break;
         case 'saved':
-            statusText = state.byAgent === true
+            statusText = state.discarded === true ? t('workflows.page.saveStatus.discarded') : state.byAgent === true
                 ? state.savedAtMs !== null && nowMs - state.savedAtMs >= MINUTE_MS
                     ? t('workflows.authoring.savedAge', { age: formatRelativeTimeShort(state.savedAtMs, nowMs) })
                     : t('workflows.authoring.saved')
@@ -311,6 +309,13 @@ export function WorkflowSaveStatus(props: Readonly<{
                         label={t('workflows.page.save')}
                         {...(saveKeyHint === undefined ? {} : { keyHint: saveKeyHint })}
                         onPress={props.onSave}
+                    />
+                ) : null}
+                {state.kind === 'saved' && state.discarded === true && props.onUndo !== undefined ? (
+                    <StatusAction
+                        testID={`${testIDPrefix}-undo-discard`}
+                        label={t('workflows.editor.undo')}
+                        onPress={props.onUndo}
                     />
                 ) : null}
                 {state.kind === 'failed' && props.onSave !== undefined ? (

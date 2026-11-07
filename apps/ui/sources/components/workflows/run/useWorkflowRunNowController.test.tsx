@@ -6,6 +6,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import type { ExternalActionRequestEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { renderHook as renderHostHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
@@ -22,6 +23,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 import type { WorkflowRunNowRequest } from './useWorkflowRunNowController';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
@@ -128,6 +130,47 @@ function admitted(admission: 'created' | 'existing') {
 }
 
 describe('useWorkflowRunNowController', () => {
+  it('one Start only renders its own intent while preserving the admitted Run', async () => {
+    const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+    const { useAutomationRunNowController } = await import('@/components/automations/list/useAutomationRunNowController');
+    const ownCount = createRenderCommitCounter();
+    const otherCount = createRenderCommitCounter();
+    const automationCount = createRenderCommitCounter();
+    const own = await renderHook(() => {
+      useRenderCommitCounter(ownCount);
+      return useWorkflowRunNowController(undefined, 'cost:selected-start');
+    });
+    const other = await renderHook(() => {
+      useRenderCommitCounter(otherCount);
+      return useWorkflowRunNowController(undefined, 'cost:unrelated-start');
+    });
+    const automation = await renderHook(() => {
+      useRenderCommitCounter(automationCount);
+      return useAutomationRunNowController();
+    });
+    const request = createDeferred<unknown>();
+    executeMock.mockReturnValueOnce(request.promise);
+    ownCount.reset();
+    otherCount.reset();
+    automationCount.reset();
+    let started!: Promise<unknown>;
+    await act(async () => {
+      started = own.getCurrent().runNow({ runId: RUN_ID, source });
+    });
+    expect(own.getCurrent().pendingRunId).toBe(RUN_ID);
+    expect(own.getCurrent().stateFor(RUN_ID)).toBe('submitting');
+    await act(async () => {
+      request.resolve(admitted('created'));
+      await started;
+    });
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    expect(storage.getState().workflowRunsById[workflowRunStoreKey(RUN_ID)]?.id).toBe(RUN_ID);
+    expect(ownCount.read().commits).toBeGreaterThan(0);
+    expect(other.getCurrent().pendingRunId).toBeNull();
+    expect(otherCount.read()).toEqual({ renders: 0, commits: 0 });
+    expect(automation.getCurrent().stateFor('unrelated-trigger')).toBe('idle');
+    expect(automationCount.read()).toEqual({ renders: 0, commits: 0 });
+  });
   it('preserves the committed Discussion origin at the shared start boundary', async () => {
     executeMock.mockResolvedValueOnce(admitted('created'));
     const { useWorkflowRunNowController } =
@@ -436,7 +479,7 @@ describe('useWorkflowRunNowController', () => {
     });
   });
 
-  it('rejoins an absent unknown admission with the exact original request instead of waiting forever', async () => {
+  it('rejoins an absent unknown managed admission with its exact original birth carrier', async () => {
     executeMock
       .mockRejectedValueOnce(new Error('response lost'))
       .mockResolvedValueOnce(admitted('existing'));
@@ -451,14 +494,17 @@ describe('useWorkflowRunNowController', () => {
     const { useWorkflowRunNowController } =
       await import('./useWorkflowRunNowController');
     const hook = await renderHook(() => useWorkflowRunNowController());
+    const managedCreation = { homeId: 'srv_workflow_a', managedId: 'task-guest',
+      controller: { machineId: 'controller', installationId: 'installation' } };
     let pending!: ReturnType<
       ReturnType<typeof useWorkflowRunNowController>['runNow']
     >;
     await act(async () => {
-      pending = hook.getCurrent().runNow({ runId: RUN_ID, source });
+      pending = hook.getCurrent().runNow({ runId: RUN_ID, source, managedCreation });
     });
     expect(executeMock).toHaveBeenCalledTimes(2);
     await expect(pending).resolves.toMatchObject({ admission: 'existing' });
+    expect(startInput()).toMatchObject({ managedCreation });
     expect(startInput(1)).toEqual(startInput());
     expect(hook.getCurrent().isPending(RUN_ID)).toBe(false);
     expect(observations()).toHaveLength(1);
@@ -755,6 +801,157 @@ describe('useWorkflowRunNowController', () => {
         .runNow({ source, inputs: { branch: 'edited' }, refusal: 'inline' });
     });
     expect(returned.getCurrent().retainedRequest).toBeNull();
+  });
+
+  it('retains saved Artifact, Team and edited Run-as across Start remount and submits those reviewed choices', async () => {
+    executeMock.mockImplementation(async ({ input }) => ({ admission: 'created', run: createWorkflowRunSummaryFixture({
+      id: WorkflowRunStartRequestV1Schema.parse(input).runId, ownerAccountId: 'account-a' }) }));
+    const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+    const workflow = { id: 'saved-workflow', name: 'Saved workflow', description: '',
+      source: { kind: 'saved' as const, definitionId: 'saved-workflow', revision: { headerVersion: 2, bodyVersion: 3 } },
+      definition: createWorkflowDefinitionFixture() };
+    const renderStart = () => renderHook(() => useWorkflowComposerStart({ intentKey: 'session:saved-review',
+      project: { machineId: 'machine-1', directory: '/repo' }, onStarted: vi.fn() }));
+    const first = await renderStart();
+    await act(async () => { first.getCurrent().start(workflow); });
+    expect(first.getCurrent().composerProps?.sourceArtifactId).toBe('saved-workflow');
+    const overrides = [{ roleId: 'builder', runsAs: { kind: 'background_run' as const, intent: 'task' as const } }];
+    await act(async () => {
+      first.getCurrent().composerProps!.onChangeRoleOverrides!(overrides);
+      first.getCurrent().composerProps!.onChangeVisibleTeamId!('team-b');
+    });
+    await first.unmount();
+    const reopened = await renderStart();
+    await act(async () => { reopened.getCurrent().start(workflow); });
+    expect(reopened.getCurrent().composerProps).toMatchObject({ sourceArtifactId: 'saved-workflow',
+      roleOverrides: overrides, visibleTeamId: 'team-b' });
+    await act(async () => {
+      reopened.getCurrent().composerProps!.onRun(undefined, overrides, 'team-b');
+      await vi.waitFor(() => expect(reopened.getCurrent().composerProps).toBeNull());
+    });
+    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({
+      source: { ...workflow.source, visibleTeamId: 'team-b' }, roleOverrides: overrides,
+    }) }));
+  });
+
+  it('rehydrates only the same Account and Start review, then clears authored setup after acceptance or credential retirement', async () => {
+    executeMock.mockImplementation(async ({ input }) => ({ admission: 'created', run: createWorkflowRunSummaryFixture({
+      id: WorkflowRunStartRequestV1Schema.parse(input).runId, ownerAccountId: 'account-a' }) }));
+    const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const renderStart = (intentKey: string) => renderHook(() => useWorkflowComposerStart({
+      intentKey, project: { machineId: 'machine-1', directory: '/repo' }, onStarted: vi.fn(),
+    }));
+    const workflow = 'builtin:plan-with-a-panel';
+    const first = await renderStart('session:a');
+    await act(async () => { first.getCurrent().start(workflow, { retainedDraft: 'Original' }); });
+    await act(async () => {
+      first.getCurrent().composerProps!.onChangeValues({ request: 'Reviewed' });
+      first.getCurrent().composerProps!.onChangeRawTextValues({ request: 'Reviewed', previousRoundContext: '{ unfinished' });
+    });
+    await first.unmount();
+    const other = await renderStart('session:b');
+    await act(async () => { other.getCurrent().start(workflow, { retainedDraft: 'Original' }); });
+    expect(other.getCurrent().composerProps!.values.request).toBe('Original');
+    const returned = await renderStart('session:a');
+    await act(async () => { returned.getCurrent().start(workflow, { retainedDraft: 'Original' }); });
+    expect(returned.getCurrent().composerProps!.values.request).toBe('Reviewed');
+    expect(returned.getCurrent().composerProps!.rawTextValues.previousRoundContext).toBe('{ unfinished');
+    const otherStartUpdates = vi.fn();
+    const stopObserving = other.subscribe(otherStartUpdates);
+    await act(async () => {
+      returned.getCurrent().composerProps!.onChangeValues({ request: 'Reviewed again' });
+      returned.getCurrent().composerProps!.onChangeRawTextValues({ request: 'Reviewed again' });
+    });
+    expect(otherStartUpdates).not.toHaveBeenCalled();
+    stopObserving();
+    await act(async () => {
+      returned.getCurrent().composerProps!.onRun({ request: 'Reviewed again' });
+      await vi.waitFor(() => expect(returned.getCurrent().composerProps).toBeNull());
+    });
+    await returned.unmount();
+    const accepted = await renderStart('session:a');
+    await act(async () => { accepted.getCurrent().start(workflow, { retainedDraft: 'Original' }); });
+    expect(accepted.getCurrent().composerProps!.values.request).toBe('Original');
+    await act(async () => accepted.getCurrent().composerProps!.onChangeValues({ request: 'Private again' }));
+    await accepted.unmount();
+    await act(async () => {
+      const write = await TokenStorage.setCredentialsForServerUrlWithRollback('https://workflow-a.test', { serverId: homeA },
+        { token: createAccountTokenForTests('account-a', { currentAccount: true }) });
+      expect(write).not.toBeNull();
+    });
+    const retired = await renderStart('session:a');
+    await act(async () => { retired.getCurrent().start(workflow, { retainedDraft: 'Original' }); });
+    expect(retired.getCurrent().composerProps!.values.request).toBe('Original');
+    await act(async () => retired.getCurrent().composerProps!.onChangeValues({ request: 'Account A private' }));
+    await retired.unmount();
+    await act(async () => setAccountScope({ serverId: 'server-b', accountId: 'account-b' }));
+    const nextAccount = await renderStart('session:a');
+    await act(async () => { nextAccount.getCurrent().start(workflow, { retainedDraft: 'Original' }); });
+    expect(nextAccount.getCurrent().composerProps!.values.request).toBe('Original');
+  });
+
+  it('adopts an in-flight Start after remount and clears setup when accepted after the form unmounts', async () => {
+    const response = createDeferred<unknown>();
+    executeMock.mockReturnValue(response.promise);
+    const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+    const renderStart = () => renderHook(() => useWorkflowComposerStart({ intentKey: 'session:in-flight',
+      project: { machineId: 'machine-1', directory: '/repo' }, onStarted: vi.fn() }));
+    const first = await renderStart();
+    await act(async () => { first.getCurrent().start('builtin:plan-with-a-panel', { retainedDraft: 'Original' }); });
+    await act(async () => {
+      first.getCurrent().composerProps!.onChangeValues({ request: 'Reviewed' });
+      first.getCurrent().composerProps!.onRun({ request: 'Reviewed' });
+      await vi.waitFor(() => expect(executeMock).toHaveBeenCalledTimes(1));
+    });
+    const original = startInput();
+    await first.unmount();
+    const pending = await renderStart();
+    await act(async () => { pending.getCurrent().start('builtin:plan-with-a-panel', { retainedDraft: 'Original', reuseInputs: true }); });
+    expect(pending.getCurrent().composerProps!.pending).toBe(true);
+    expect(pending.getCurrent().composerProps!.values.request).toBe('Reviewed');
+    await act(async () => pending.getCurrent().composerProps!.onRun({ request: 'Duplicate' }));
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    await pending.unmount();
+    await act(async () => {
+      response.resolve({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: original.runId, ownerAccountId: 'account-a' }) });
+      await vi.waitFor(() => expect(Object.values(storage.getState().workflowRunsById).some(row => row.id === original.runId)).toBe(true));
+    });
+    const accepted = await renderStart();
+    await act(async () => { accepted.getCurrent().start('builtin:plan-with-a-panel', { retainedDraft: 'Original' }); });
+    expect(accepted.getCurrent().composerProps!.pending).toBe(false);
+    expect(accepted.getCurrent().composerProps!.retainedRequest).toBeNull();
+    expect(accepted.getCurrent().composerProps!.values.request).toBe('Original');
+    expect(executeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reopens an unresolved composer on its original reviewed request and retries the same admission', async () => {
+    executeMock.mockRejectedValue(new Error('Start response lost'));
+    homes.answer(homeA, '/v3/automations/runs/workflow-storage', { status: 404, body: { error: 'run_not_found' } });
+    const { useWorkflowComposerStart } = await import('./useWorkflowComposerStart');
+    const renderStart = () => renderHook(() => useWorkflowComposerStart({ intentKey: 'session:unresolved',
+      project: { machineId: 'machine-1', directory: '/repo' }, onStarted: vi.fn() }));
+    const first = await renderStart();
+    await act(async () => { first.getCurrent().start('builtin:plan-with-a-panel', { retainedDraft: 'Original' }); });
+    await act(async () => {
+      first.getCurrent().composerProps!.onChangeValues({ request: 'Reviewed' });
+      first.getCurrent().composerProps!.onRun({ request: 'Reviewed' });
+      await vi.waitFor(() => expect(first.getCurrent().composerProps!.retainedRequest?.unresolved).toBe(true));
+    });
+    const original = startInput();
+    const reviewedDefinition = first.getCurrent().composerProps!.definition;
+    await first.unmount();
+    const reopened = await renderStart();
+    await act(async () => { reopened.getCurrent().start('builtin:plan-with-a-panel', { retainedDraft: 'Changed origin draft', reuseInputs: true }); });
+    expect(reopened.getCurrent().composerProps!.retainedRequest).toMatchObject({ input: original, unresolved: true, reviewedDefinition });
+    executeMock.mockImplementation(async ({ input }) => ({ admission: 'existing', run: createWorkflowRunSummaryFixture({
+      id: WorkflowRunStartRequestV1Schema.parse(input).runId, ownerAccountId: 'account-a' }) }));
+    await act(async () => {
+      reopened.getCurrent().composerProps!.onRun({ request: 'Changed after reopening' });
+      await vi.waitFor(() => expect(reopened.getCurrent().composerProps).toBeNull());
+    });
+    expect(executeMock).toHaveBeenCalledTimes(3);
+    expect(startInput(2)).toEqual(original);
   });
 
   it('keeps a caller-selected new intent distinct from an unresolved explicit recovery id', async () => {

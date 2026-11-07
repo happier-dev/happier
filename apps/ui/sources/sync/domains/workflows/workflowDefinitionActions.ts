@@ -63,11 +63,12 @@ async function callDefinitionAction<TResult>(params: Readonly<{
         ...params,
         fallbackMessage: 'Workflow definition request failed',
     });
-    if (lifetime?.isCurrent() && (params.actionId === 'workflow.definition.create'
-        || params.actionId === 'workflow.definition.update' || params.actionId === 'workflow.definition.delete')) {
-        // Local writes consume the same content-free wake as writes from another client.
+    if (lifetime?.isCurrent() && params.actionId === 'workflow.definition.delete') {
+        // Deletion retains its landing receipt. The feed publishes content changes
+        // once for every client, including the client that saved them.
         publishHomeAccountChange(lifetime.scope.serverId, undefined,
-            params.deletedArtifactId === undefined ? undefined : { deletedArtifactIds: [params.deletedArtifactId] });
+            { workflowDefinitionsAffect: false,
+                ...(params.deletedArtifactId === undefined ? {} : { deletedArtifactIds: [params.deletedArtifactId] }) });
     }
     return result;
 }
@@ -80,12 +81,16 @@ function signalOption(signal: AbortSignal | undefined): Readonly<{ signal?: Abor
 export async function listWorkflowDefinitions(params: Readonly<{
     cursor?: string;
     limit?: number;
+    workflow?: string;
+    definitionId?: string;
     signal?: AbortSignal;
     accountLifetime?: ServerAccountScopeLifetime | null;
 }> = {}): Promise<WorkflowDefinitionListResultV1> {
     const input = WorkflowDefinitionListRequestV1Schema.parse({
         ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
         ...(params.limit === undefined ? {} : { limit: params.limit }),
+        ...(params.workflow === undefined ? {} : { workflow: params.workflow }),
+        ...(params.definitionId === undefined ? {} : { definitionId: params.definitionId }),
     });
     return callDefinitionAction({
         actionId: 'workflow.definition.list',

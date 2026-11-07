@@ -12,8 +12,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useTeamCredentialResources } from '@/hooks/teams/useTeamCredentialResources';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
@@ -23,7 +21,9 @@ import { askTeamManagersText } from './collection/teamsCreateGuidanceText';
 import { directorySourcePresentationState } from './identity/directoryAdministrationPresentation';
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
+import { useTeamCredentialsProjection } from './credentials/useTeamCredentialsProjection';
 import { TeamSharedSessionsSection } from './TeamSharedSessionsSection';
+import { TeamSharedWorkflowsSection } from './TeamSharedWorkflowsSection';
 import type { TeamSectionContext } from './teamSectionContext';
 import { isTeamViewerSuspended, teamViewerStandingLabel } from './teamLabels';
 import { TeamOwnerRequiredNotice } from './members/TeamOwnerRequiredNotice';
@@ -87,15 +87,7 @@ const CredentialsDestination = React.memo(function CredentialsDestination(
 ) {
   const router = useRouter();
   const { context } = props;
-  const featureEnabled = useFeatureEnabled('teams.credentialResources', {
-    scopeKind: 'spawn',
-    serverId: context.scope.serverId,
-  });
-  const projection = useTeamCredentialResources({
-    scope: context.scope,
-    address: context.address,
-    enabled: featureEnabled,
-  });
+  const { featureEnabled, projection, totalCount } = useTeamCredentialsProjection(context);
 
   if (
     !featureEnabled ||
@@ -110,10 +102,7 @@ const CredentialsDestination = React.memo(function CredentialsDestination(
       icon={<Icon name="key" />}
       title={t('teams.credentials.title')}
       subtitle={teamOverviewCredentialsSummary(
-        // A partly read or stale list cannot be counted truthfully.
-        projection.isCurrent && !projection.hasMore
-          ? projection.rows.length
-          : null,
+        totalCount,
         context.team.name,
       )}
       onPress={() => router.push(teamCredentialsPath(context.address))}
@@ -432,7 +421,10 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
       {setupSteps ? (
         <TeamSetupSection context={context} steps={setupSteps} />
       ) : (
-        <TeamSharedSessionsSection context={context} />
+        <>
+          <TeamSharedSessionsSection context={context} />
+          <TeamSharedWorkflowsSection context={context} />
+        </>
       )}
 
       <ItemGroup

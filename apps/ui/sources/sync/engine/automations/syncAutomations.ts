@@ -15,7 +15,7 @@ import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimi
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import type { AutomationDefinitionListResponse } from '@happier-dev/protocol/automations/automationApiV3';
 
-/** Only a proven source-status change can omit the retained Run-window refresh. */
+/** Only a proven source-status change can omit the presented Run-window refresh. */
 export type AutomationRefreshOptions = Readonly<{ summariesOnly: true }>;
 
 export async function fetchAndApplyAutomations(params: {
@@ -29,10 +29,10 @@ export async function fetchAndApplyAutomations(params: {
     ) => boolean;
     cursor?: string;
     traversalToken?: number;
-    loadedAutomationRunIds?: readonly string[];
+    getDemandedAutomationRunIds?: () => readonly string[];
     /**
-     * The list refresh restates the newest Run page for lists that are already
-     * cached. It is not the reader asking to start over, so it writes through
+     * The list refresh restates the newest Run page for presented histories.
+     * It is not the reader asking to start over, so it writes through
      * the projection owner that cannot rewind an in-progress traversal.
      */
     refreshAutomationRunsWindow?: (
@@ -55,7 +55,7 @@ export async function fetchAndApplyAutomations(params: {
 
     const serverId = params.requestContext?.serverId ?? getActiveServerSnapshot().serverId;
     const automationsDecision = await resolveRuntimeFeatureDecisionOrThrow({
-        featureId: 'automations',
+        featureId: 'workflows',
         serverId,
     });
     if (automationsDecision.state !== 'enabled') {
@@ -89,28 +89,23 @@ export async function fetchAndApplyAutomations(params: {
         return { nextCursor: result.nextCursor, traversalToken };
     }
 
-    const loadedAutomationRunIds = Array.from(new Set(params.loadedAutomationRunIds ?? []));
-    if (loadedAutomationRunIds.length === 0) {
+    const demandedAutomationRunIds = Array.from(new Set(params.getDemandedAutomationRunIds?.() ?? []));
+    if (demandedAutomationRunIds.length === 0) {
         return { nextCursor: result.nextCursor, traversalToken };
     }
 
     const rowIds = new Set(automations.map((automation) => automation.id));
-    const idsToRefresh = loadedAutomationRunIds.filter((automationId) => rowIds.has(automationId));
+    const idsToRefresh = demandedAutomationRunIds.filter((automationId) => rowIds.has(automationId));
     if (idsToRefresh.length === 0) {
         return { nextCursor: result.nextCursor, traversalToken };
     }
 
     const limit = params.runsLimit ?? 20;
-    // An Account may contain a high-cardinality Automation catalog with no
-    // invented aggregate definition ceiling, and every definition whose run
-    // list has been opened stays in this set for the rest of the session.
-    // Opening one request per cached list at once turned a
-    // single run update into an unbounded request burst, so the refresh runs
-    // through the same request-concurrency owner the Automation detail
-    // hydration already uses rather than a fan-out of its own.
+    // Current presentation owns demand; cache retention never expands it.
+    // Reuse the existing Automation request-concurrency owner for visible lists.
     await runTasksWithLimit(
         idsToRefresh.map((automationId) => async () => {
-            if (!shouldContinue()) return;
+            if (!shouldContinue() || !params.getDemandedAutomationRunIds?.().includes(automationId)) return;
             const result = await listAutomationDefinitionRuns({
                 credentials: params.credentials!,
                 automationId,
@@ -155,7 +150,7 @@ export async function fetchAndApplyAutomationRuns(params: {
 
     const serverId = params.requestContext?.serverId ?? getActiveServerSnapshot().serverId;
     const automationsDecision = await resolveRuntimeFeatureDecisionOrThrow({
-        featureId: 'automations',
+        featureId: 'workflows',
         serverId,
     });
     if (automationsDecision.state !== 'enabled') {

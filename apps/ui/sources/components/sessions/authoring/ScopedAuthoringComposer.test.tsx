@@ -23,7 +23,8 @@ const { AgentInput } = await import('@/components/sessions/agentInput');
 const { ScopedAuthoringComposer } = await import('@/components/sessions/authoring/ScopedAuthoringComposer');
 const { applyComposerPresentationTransaction, readComposerPresentationSnapshot } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
 async function renderScreen(element: React.ReactElement) {
-    storage.getState().applyMachines([createMachineFixture({ id: 'machine-9' })]);
+    // Match the plain Machine served by the HTTP boundary in Sync's hydrated projection too.
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-9', storageMode: 'plain' })]);
     const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
     observeMachinePresenceForTest({ serverId: runtime.serverId, accountId: 'account-a' }, ['machine-9']);
     return renderPanelScreen(element, { wrapper: runtime.Wrapper });

@@ -1,8 +1,9 @@
 import { omit } from 'zod/mini';
 import { DiscussionSelectionSourceV1Schema, readDiscussionMessagePartsV1, type DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/content';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
+import { isWorkflowDiscussionResultPublishableV1 } from '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1';
 
-import { projectDiscussionMessageReferences, resolveDiscussionWorkflowAttribution } from './discussionTimelineProjection';
+import { projectDiscussionMessageReferences, resolveDiscussionMessageSpeakerLabel, resolveDiscussionWorkflowAttribution } from './discussionTimelineProjection';
 import { formatSelectedMessagesForClipboard } from '@/components/sessions/transcript/messageSelection/formatSelectedMessagesForClipboard';
 import type { TranscriptBulkCopyFormat } from '@/components/sessions/transcript/messageSelection/_types';
 
@@ -60,6 +61,9 @@ export function projectWorkflowRunPublishedAnswerIds(
     for (const message of ordered) {
         const attribution = resolveDiscussionWorkflowAttribution(message);
         if (attribution?.outcome !== 'answer' || !isSelectableDiscussionMessage(message)) continue;
+        const producer = message.producerV1;
+        if (producer?.kind === 'workflow' && producer.execution.kind === 'action'
+            && !isWorkflowDiscussionResultPublishableV1({ blockKind: 'action', lifecycle: 'completed', execution: producer.execution })) continue;
         byRun.set(attribution.runId, [...(byRun.get(attribution.runId) ?? []), message.id]);
     }
     return byRun;
@@ -92,10 +96,14 @@ export function prepareDiscussionSelectionHandoff(params: Readonly<{
             || message.discussionId !== params.discussionId) return null;
         const accountLabel = params.resolveAccountLabel(message.authorAccountId)?.trim();
         const text = renderDiscussionContent(message, params.resolveAccountLabel, params.resolveSessionLabel);
-        if (!accountLabel || text === null) return null;
-        const label = message.producerV1?.kind !== 'agent'
-            ? accountLabel
-            : `${accountLabel} · ${params.agentAttributionLabel}`;
+        if ((message.producerV1 === null && !accountLabel) || text === null) return null;
+        const speaker = resolveDiscussionMessageSpeakerLabel(message, {
+            session: (sessionId) => params.resolveSessionLabel?.(sessionId) ?? null,
+            workflowRun: () => null,
+        });
+        const label = message.producerV1?.kind === 'agent'
+            ? `${speaker} · ${params.agentAttributionLabel}`
+            : message.producerV1?.kind === 'workflow' ? speaker : accountLabel!;
         entries.push({ id: message.id, seq: message.seq, role: 'user', label, text });
     }
     entries.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));

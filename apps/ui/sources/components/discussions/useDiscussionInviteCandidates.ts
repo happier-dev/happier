@@ -1,3 +1,4 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import type { ExecutableParticipantPickerOption } from '@/components/sessions/authoring/executableParticipantPicker';
@@ -16,7 +17,7 @@ import { useSessionListRowsByServerId, useSessionDisplayNameProjections, type Se
 import { getSessionWorkContext, getSessionWorkContextParts } from '@/utils/sessions/sessionUtils';
 import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
-import { buildDiscussionInviteCandidates } from './discussionInviteCandidates';
+import { buildDiscussionInviteCandidates, type DiscussionInviteCandidate } from './discussionInviteCandidates';
 import { useSessionReadiness } from '@/components/sessions/model/useSessionReadiness';
 
 const NO_OPERATIONS: Readonly<Record<string, SessionAccessGrantOperationModel>> = Object.freeze({});
@@ -25,6 +26,7 @@ const ACCOUNT_ONLY = Object.freeze(['account'] as const);
 const NO_MODELS: readonly ExecutableParticipantPickerOption[] = Object.freeze([]);
 const sessionContextLabel = (source: SessionDisplayNameSource | null) => source ? getSessionWorkContext(source, source.serverId) : null;
 const sessionAgentId = (source: SessionDisplayNameSource | null) => source ? getSessionWorkContextParts(source, source.serverId).agentId : null;
+const sessionMachineId = (source: SessionDisplayNameSource | null) => source ? getSessionWorkContextParts(source, source.serverId).machineId : null;
 const sessionTitleReadable = (source: SessionDisplayNameSource | null) => readableSessionDisplayTitle(source) !== null;
 
 /**
@@ -102,25 +104,33 @@ export function useDiscussionInviteCandidates(input: Readonly<{
     const source = useSessionListQuerySourceState({ enabled, homes });
     const homeIds = React.useMemo(() => enabled ? [scope.serverId] : [], [enabled, scope.serverId]);
     const rowsByHome = useSessionListRowsByServerId(homeIds);
+    const isSessionVisible = useSessionRecordingVisibility(enabled);
     const rows = readSessionListRowsForServerId(rowsByHome, scope.serverId);
     const addresses = React.useMemo(() => (source.byServerId[scope.serverId] ?? []).flatMap(item =>
-        item.type === 'session' ? [{ serverId: scope.serverId, sessionId: item.sessionId }] : []), [scope.serverId, source.byServerId]);
+        item.type === 'session' && isSessionVisible({ serverId: scope.serverId, sessionId: item.sessionId })
+            ? [{ serverId: scope.serverId, sessionId: item.sessionId }] : []), [isSessionVisible, scope.serverId, source.byServerId]);
     const labels = useSessionDisplayTitles(addresses);
     const titleReadability = useSessionDisplayNameProjections(addresses, sessionTitleReadable);
     const contexts = useSessionDisplayNameProjections(addresses, sessionContextLabel);
     const agentIds = useSessionDisplayNameProjections(addresses, sessionAgentId);
+    const machineIds = useSessionDisplayNameProjections(addresses, sessionMachineId);
     const sessions = React.useMemo(() => addresses.map((address, index) => {
         const row = rows?.[address.sessionId];
         return { address, label: labels[index] ?? null, titleReadable: titleReadability[index] === true,
-            contextLabel: contexts[index] ?? null, agentId: agentIds[index] ?? null,
+            bot: row?.metadata?.bot?.kind === 'bot',
+            contextLabel: contexts[index] ?? null, agentId: agentIds[index] ?? null, machineId: machineIds[index] ?? null,
             lastActivityAt: row ? resolveSessionListRenderableMeaningfulActivityAt(row) : null,
             access: row?.access ?? null,
             readiness: address.sessionId === readinessSessionId ? readiness.readiness : null,
             repair: address.sessionId === readinessSessionId ? readiness.repair : null };
-    }), [addresses, agentIds, contexts, labels, titleReadability, readiness.readiness, readiness.repair, readinessSessionId, rows]);
+    }), [addresses, agentIds, contexts, labels, machineIds, titleReadability, readiness.readiness, readiness.repair, readinessSessionId, rows]);
     const modelOptions = input.modelOptions ?? NO_MODELS;
-    const project = React.useCallback((people: readonly SessionAccessCandidateRowModel[]) => accountLifetime.isCurrent()
-        ? buildDiscussionInviteCandidates({ scope, people, sessions, modelOptions, roster: input.roster }) : [],
+    const previousCandidates = React.useRef<Readonly<{
+        accountLifetime: ServerAccountScopeLifetime;
+        candidates: readonly DiscussionInviteCandidate[];
+    }> | null>(null);
+    const project = React.useCallback((people: readonly SessionAccessCandidateRowModel[], previous?: readonly DiscussionInviteCandidate[]) => accountLifetime.isCurrent()
+        ? buildDiscussionInviteCandidates({ scope, people, sessions, modelOptions, roster: input.roster }, previous) : [],
     [accountLifetime, input.roster, modelOptions, scope, sessions]);
     const peopleSource = directory.sections.find(section => section.kind === 'account');
     const resolvePeople = React.useCallback(async (query: string, signal: AbortSignal) => {
@@ -140,7 +150,10 @@ export function useDiscussionInviteCandidates(input: Readonly<{
             signal.removeEventListener('abort', abort);
         }
     }, [accountLifetime, enabled, peopleSource, project, teamMatches]);
-    const candidates = React.useMemo(() => enabled ? project(peopleSource?.candidates ?? []) : [], [enabled, peopleSource?.candidates, project]);
+    const candidates = React.useMemo(() => enabled ? project(peopleSource?.candidates ?? [],
+        previousCandidates.current?.accountLifetime === accountLifetime ? previousCandidates.current.candidates : undefined) : [],
+    [accountLifetime, enabled, peopleSource?.candidates, project]);
+    React.useLayoutEffect(() => { previousCandidates.current = { accountLifetime, candidates }; }, [accountLifetime, candidates]);
     const sessionState = source.statesByServerId[scope.serverId] ?? null;
     const settlingHomeServerId = useSettlingHomeServerId();
     const choices = React.useMemo(() => readSessionChoices({ enabled, serverId: scope.serverId, state: sessionState,

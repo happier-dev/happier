@@ -1,11 +1,12 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
 import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { areServerAccountScopesEqual, serverAccountScopedResourceKey, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { getUserProfiles } from '@/sync/api/social/apiFriends';
-import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { readAccountProfiles } from '@/components/account/readAccountProfiles';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 
@@ -33,11 +34,30 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
     const accountIds = roster ? [...new Set([roster.ownerAccountId, ...roster.grants.flatMap(grant =>
         grant.principal.kind === 'account' ? [grant.principal.accountId] : [])])].sort() : [...new Set(input.accountIds ?? [])].sort();
     const accountIdsKey = JSON.stringify(accountIds);
-    const admittedAccounts = React.useMemo(() => new Map<string, SessionMessageAccountActorV1>(input.participantAccounts?.map(actor => [actor.accountId, actor]) ?? []), [input.participantAccounts]);
+    const cachedProfiles = getStorage()(useShallow(state => areServerAccountScopesEqual(state.profileScope, scope)
+        ? accountIds.map(id => state.users[id]) : []));
+    const admittedAccounts = React.useMemo(() => {
+        const actors = new Map<string, SessionMessageAccountActorV1>();
+        for (const [index, profile] of cachedProfiles.entries()) {
+            if (profile === undefined) continue;
+            actors.set(accountIds[index]!, { v: 1, accountId: accountIds[index]!, profile: profile ? {
+                name: profile.name ?? null, firstName: profile.firstName, lastName: profile.lastName,
+                username: profile.username, avatarUrl: profile.avatar?.url ?? null,
+            } : null });
+        }
+        for (const actor of input.participantAccounts ?? []) actors.set(actor.accountId, actor);
+        // The demanded roster is the current relationship owner. Its explicit
+        // accessibility beats a retained summary/profile for the same Account.
+        for (const actor of roster?.accountActors ?? []) actors.set(actor.accountId, actor);
+        return actors;
+        // The sorted id key is the complete cache-selection input.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cachedProfiles, accountIdsKey, input.participantAccounts, roster?.accountActors]);
     const missingIdsKey = JSON.stringify(accountIds.filter(id => !admittedAccounts.has(id)));
     const key = serverAccountScopedResourceKey(scope, roster?.discussionId ?? '', accountIdsKey);
     const [resolved, setResolved] = React.useState<Readonly<{
-        key: string; missingIdsKey: string; status: 'ready' | 'unavailable'; lifetime: ServerAccountScopeLifetime; profiles: ReadonlyMap<string, AccountDisplayProfileV1 | null>;
+        key: string; missingIdsKey: string; lifetime: ServerAccountScopeLifetime; profiles: ReadonlyMap<string, AccountDisplayProfileV1 | null>;
+        status: 'ready' | 'unavailable';
     }> | null>(null);
 
     React.useEffect(() => {
@@ -45,22 +65,8 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
         const abort = new AbortController();
         const retirement = accountLifetime.onRetire(() => abort.abort());
         const ids: string[] = JSON.parse(missingIdsKey);
-        void runWithServerRequestAuthorityForServerAccountScope({ scope,
-            activeRequest: async () => { throw new Error('Discussion profiles require captured Home credentials'); },
-        }, async authority => {
-            if (abort.signal.aborted || !accountLifetime.isCurrent()) return;
-            // New drafts and genuinely absent projections still need the People
-            // owner, under the same captured Account even when another Home is focused.
-            const users = await getUserProfiles({ token: authority.context.token }, ids, { retry: 'none',
-                request: (path, init, options) => authority.request(path, { ...init, signal: abort.signal }, { retry: options?.retry }),
-            });
-            if (abort.signal.aborted || !accountLifetime.isCurrent()) return;
-            const usersById = new Map(users.map(user => [user.id, user]));
-            setResolved({ key, missingIdsKey, status: 'ready', lifetime: accountLifetime, profiles: new Map(ids.map(id => {
-                const user = usersById.get(id);
-                return [id, user ? { name: user.name ?? null, firstName: user.firstName,
-                    lastName: user.lastName, username: user.username, avatarUrl: user.avatar?.url ?? null } : null];
-            })) });
+        void readAccountProfiles(accountLifetime, ids, abort.signal).then(profiles => {
+            if (!abort.signal.aborted && accountLifetime.isCurrent()) setResolved({ key, missingIdsKey, lifetime: accountLifetime, profiles, status: 'ready' });
         }).catch(() => {
             // Failure settles presentation without inventing former members or erasing admitted names.
             if (!abort.signal.aborted && accountLifetime.isCurrent()) setResolved({ key, missingIdsKey, lifetime: accountLifetime, profiles: new Map(), status: 'unavailable' });
@@ -86,7 +92,8 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
         // A default/unnamed loading profile must not erase an acknowledged Home name.
         if (roster && viewerProfile && formatAccountDisplayName(viewerProfile)
             && (roster.ownerAccountId === scope.accountId || accounts.has(scope.accountId))) {
-            accounts.set(scope.accountId, { v: 1, serverId: scope.serverId, accountId: scope.accountId, profile: viewerProfile });
+            accounts.set(scope.accountId, { ...accounts.get(scope.accountId), v: 1, serverId: scope.serverId,
+                accountId: scope.accountId, profile: viewerProfile });
         }
         const status = missingIdsKey === '[]' ? 'ready'
             : resolved?.key === key && resolved.missingIdsKey === missingIdsKey && resolved.lifetime === accountLifetime ? resolved.status : 'loading';

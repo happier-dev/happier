@@ -31,6 +31,7 @@ import { shouldIncludeSubagentSourceMessage } from '@/sync/domains/session/subag
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     compareTranscriptMessagesOldestFirst,
+    sortTranscriptMessagesOldestFirst,
     normalizeTranscriptSeq,
 } from "@happier-dev/session-core/messages";
 import { buildMessageRouteId } from "@happier-dev/session-core/messages";
@@ -54,10 +55,23 @@ import type { SessionPending } from './pending';
 import type { StoreGet, StoreSet } from './_shared';
 import { finalizeSessionListIndexUpdate } from './sessionListIndexFinalization';
 import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
+import { hasSessionMessageToolChanges, publishSessionMessageChanges, type SessionMessageChange } from '../sessionMessageChanges';
+import { applyLatestWorkerUpdateChanges, EMPTY_LATEST_WORKER_UPDATES, type LatestWorkerUpdates } from '../latestWorkerUpdates';
+import { applySessionReturnedAnswerChanges, EMPTY_SESSION_RETURNED_ANSWERS, type SessionReturnedAnswersByRequest } from '../sessionReturnedAnswers';
+import { hasExecutionRunSignals } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
+import { applySessionUserMessageHistory, removeSessionUserMessageHistory, EMPTY_SESSION_USER_MESSAGE_HISTORY, type SessionUserMessageHistory } from '../sessionUserMessageHistory';
 
 export type SessionMessages = {
     messageIdsOldestFirst: string[];
     messagesById: Record<string, Message>;
+    /** Device-local playback fact; published and retired with this transcript, never persisted. */
+    voiceInterruptedEntryIds?: ReadonlySet<string>;
+    /** Internal derived projection; replaced/retired with this transcript, never persisted. */
+    latestWorkerUpdates?: LatestWorkerUpdates;
+    /** Exact-request presentation index, derived once per transcript commit and never persisted. */
+    returnedAnswersByRequest?: SessionReturnedAnswersByRequest;
+    /** Transient kind index; plain text arrivals do not republish execution-run support. */
+    executionRunSignalMessageIds?: ReadonlySet<string>;
     messageRevisionsById?: Record<string, number>;
     // Back-compat alias for older call sites (do not use in new code).
     messagesMap: Record<string, Message>;
@@ -95,6 +109,9 @@ export type SessionMessages = {
 
 export type MessagesDomain = {
     sessionMessages: Record<string, SessionMessages>;
+    /** Ephemeral tool/transcript-lifecycle invalidation; assistant text does not move attention. */
+    sessionMessageToolVersion: number;
+    sessionUserMessageHistory: SessionUserMessageHistory;
     /** Transient materialized coverage, including final pages with no renderable messages. */
     sessionMessagesHistoryStartLoaded: Record<string, true>;
     markSessionMessagesHistoryStartLoaded: (sessionId: string) => void;
@@ -149,6 +166,29 @@ function mergeLatestNumber(existing: number | null | undefined, incoming: number
         : normalizedIncoming;
 }
 
+function applyExecutionRunSignalChanges(
+    previous: ReadonlySet<string> | undefined,
+    messages: Readonly<Record<string, Message>>,
+    changed: readonly Message[],
+): ReadonlySet<string> {
+    if (previous === undefined) {
+        return new Set(Object.values(messages).filter(message => message.kind === 'tool-call' && hasExecutionRunSignals([message])).map(message => message.id));
+    }
+    // Membership stays O(changed), even with many historical execution tools.
+    // The reducer may mutate a retained ToolCall, so its previous object is not
+    // the authority for whether this message used to contribute a signal.
+    let updated: Set<string> | undefined;
+    for (const message of changed) {
+        const present = (updated ?? previous).has(message.id);
+        const contributes = message.kind === 'tool-call' && hasExecutionRunSignals([message]);
+        if (present === contributes) continue;
+        updated ??= new Set(previous);
+        if (contributes) updated.add(message.id);
+        else updated.delete(message.id);
+    }
+    return updated ?? previous;
+}
+
 function coerceSessionMessages(input: unknown): SessionMessages {
     const raw = typeof input === 'object' && input !== null && !Array.isArray(input)
         ? input as Record<string, unknown>
@@ -176,7 +216,7 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         : (() => {
             const fromMessages: Message[] | null = Array.isArray(raw?.messages) ? (raw.messages as Message[]) : null;
             const list = fromMessages ?? Object.values(messagesById);
-            return list.slice().sort(compareTranscriptMessagesOldestFirst).map((m) => m.id);
+            return sortTranscriptMessagesOldestFirst(list).map((m) => m.id);
         })();
 
     const latestThinkingMessageId: string | null =
@@ -216,6 +256,9 @@ function coerceSessionMessages(input: unknown): SessionMessages {
     const normalized: SessionMessages = {
         messageIdsOldestFirst,
         messagesById,
+        latestWorkerUpdates: raw.latestWorkerUpdates as LatestWorkerUpdates | undefined,
+        returnedAnswersByRequest: raw.returnedAnswersByRequest as SessionReturnedAnswersByRequest | undefined,
+        executionRunSignalMessageIds: raw.executionRunSignalMessageIds as ReadonlySet<string> | undefined,
         messageRevisionsById,
         messagesMap: messagesById,
         renderableAggregate,
@@ -325,6 +368,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     mainHistoryStartLoaded?: boolean;
 }>): {
     sessionMessages: SessionMessages;
+    messageChanges: readonly SessionMessageChange[];
     sessionLatestUsage?: Session['latestUsage'];
     sessionTodos?: Session['todos'];
 } {
@@ -336,6 +380,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
 
     const messageRevisionsById = existing.messageRevisionsById ?? {};
     const previousMessages = new Map(processedMessages.map((message) => [message.id, existing.messagesById[message.id]]));
+    const messageChanges = processedMessages.map(message => ({ previous: previousMessages.get(message.id) ?? null, next: message }));
     const didStructureChange = processedMessages.some(message => transcriptStructureChanged(previousMessages.get(message.id), message))
         || reducerResult.reducerStateChanged === true;
     const orderedTranscript = applyReducedMessages(existing, processedMessages);
@@ -396,20 +441,30 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     const didThinkingMetadataChange =
         latestThinkingMessageId !== existing.latestThinkingMessageId
         || latestThinkingMessageActivityAtMs !== (existing.latestThinkingMessageActivityAtMs ?? null);
+    const needsLatestWorkerUpdates = existing.latestWorkerUpdates === undefined;
+    const needsReturnedAnswers = existing.returnedAnswersByRequest === undefined;
+    const needsExecutionRunSignals = existing.executionRunSignalMessageIds === undefined;
 
-    if (!didMessageChange && !didThinkingMetadataChange) {
+    if (!didMessageChange && !didThinkingMetadataChange && !needsLatestWorkerUpdates && !needsReturnedAnswers && !needsExecutionRunSignals) {
         return {
             sessionMessages: existing,
+            messageChanges,
             sessionLatestUsage: latestUsage,
             sessionTodos: reducerResult.todos,
         };
     }
 
     return {
+        messageChanges,
         sessionMessages: {
             ...existing,
             messageIdsOldestFirst: nextIds,
             messagesById,
+            latestWorkerUpdates: applyLatestWorkerUpdateChanges({ previous: existing.latestWorkerUpdates,
+                messages: messagesById, changed: processedMessages }),
+            returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: existing.returnedAnswersByRequest,
+                messages: messagesById, changes: messageChanges }),
+            executionRunSignalMessageIds: applyExecutionRunSignalChanges(existing.executionRunSignalMessageIds, messagesById, processedMessages),
             messageRevisionsById,
             messagesMap: messagesById,
             // This reconcile path bypasses the incremental aggregate
@@ -419,7 +474,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             reducerVersion: (existing.reducerVersion ?? 0) + 1,
             latestThinkingMessageId,
             latestThinkingMessageActivityAtMs,
-            messagesVersion: existing.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
+            messagesVersion: existing.messagesVersion + (processedMessages.length > 0 || needsLatestWorkerUpdates ? 1 : 0),
             transcriptStructureVersion: (existing.transcriptStructureVersion ?? existing.messagesVersion) + (didStructureChange ? 1 : 0),
             subagentSourceVersion: (existing.subagentSourceVersion ?? existing.messagesVersion) + (didSubagentSourceChange ? 1 : 0),
             lastAppliedAgentStateVersion: existing.lastAppliedAgentStateVersion,
@@ -434,6 +489,9 @@ function createEmptySessionMessages(): SessionMessages {
     return {
         messageIdsOldestFirst: [],
         messagesById,
+        latestWorkerUpdates: EMPTY_LATEST_WORKER_UPDATES,
+        returnedAnswersByRequest: EMPTY_SESSION_RETURNED_ANSWERS,
+        executionRunSignalMessageIds: new Set(),
         messageRevisionsById: {},
         messagesMap: messagesById,
         reducerState: createReducer(),
@@ -459,6 +517,8 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 }): MessagesDomain {
     return {
         sessionMessages: {},
+        sessionMessageToolVersion: 0,
+        sessionUserMessageHistory: EMPTY_SESSION_USER_MESSAGE_HISTORY,
         sessionMessagesHistoryStartLoaded: {},
         markSessionMessagesHistoryStartLoaded: (sessionId) => {
             let didChange = false;
@@ -470,6 +530,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 return {
                     ...state,
                     sessionMessagesHistoryStartLoaded: { ...previous, [sessionId]: true as const },
+                    sessionMessageToolVersion: state.sessionMessageToolVersion + (existing ? 1 : 0),
                     // Coverage changed the permission projection even if AgentState did not.
                     sessionMessages: existing ? {
                         ...state.sessionMessages,
@@ -512,6 +573,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             let hasReadyEvent = false;
             let latestReadyEventSeq: number | null = null;
             let latestReadyEventAt: number | null = null;
+            let messageChanges: readonly SessionMessageChange[] = [];
             set((state) => {
                 const DEBUG_MESSAGE_DECRYPT =
                     typeof globalThis !== 'undefined'
@@ -524,6 +586,14 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 const existingSession = options?.replaceExisting === true
                     ? createEmptySessionMessages()
                     : coerceSessionMessages(state.sessionMessages[sessionId]);
+                const needsLatestWorkerUpdates = state.sessionMessages[sessionId] !== undefined
+                    && existingSession.latestWorkerUpdates === undefined;
+                const needsReturnedAnswers = state.sessionMessages[sessionId] !== undefined
+                    && existingSession.returnedAnswersByRequest === undefined;
+                const needsExecutionRunSignals = state.sessionMessages[sessionId] !== undefined
+                    && existingSession.executionRunSignalMessageIds === undefined;
+                const needsUserMessageHistory = state.sessionMessages[sessionId] !== undefined
+                    && state.sessionUserMessageHistory?.[sessionId] === undefined;
 
                 // Get the session's agentState if available
                 const session = state.sessions[sessionId];
@@ -538,7 +608,8 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     || existingSession.lastAppliedAgentStateVersion !== agentStateVersion
                 );
                 telemetryFields.agentStateApplied = shouldApplyAgentState ? 1 : 0;
-                if (messages.length === 0 && !options?.metadataUpdates?.length && !shouldApplyAgentState && options?.replaceExisting !== true) {
+                if (messages.length === 0 && !options?.metadataUpdates?.length && !shouldApplyAgentState
+                    && !needsLatestWorkerUpdates && !needsReturnedAnswers && !needsExecutionRunSignals && !needsUserMessageHistory && options?.replaceExisting !== true) {
                     telemetryFields.processed = 0;
                     telemetryFields.changed = 0;
                     telemetryFields.noop = 1;
@@ -613,6 +684,12 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
                 const messageRevisionsById = existingSession.messageRevisionsById ?? {};
                 const previousMessages = new Map(processedMessages.map((message) => [message.id, existingSession.messagesById[message.id]]));
+                const reducedMessageChanges = processedMessages.map(message => ({ previous: previousMessages.get(message.id) ?? null, next: message }));
+                // A fresh reducer is published by the replacement subscription. Ordinary
+                // updates carry only their changed rows, after the store commit below.
+                if (state.sessionMessages[sessionId] && options?.replaceExisting !== true) {
+                    messageChanges = reducedMessageChanges;
+                }
                 const didStructureChange = processedMessages.some(message => transcriptStructureChanged(previousMessages.get(message.id), message))
                     || reducerResult.reducerStateChanged === true;
                 const orderedTranscript = syncPerformanceTelemetry.measure(
@@ -906,6 +983,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     || processedMessages.length > 0
                     || reducerResult.reducerStateChanged === true
                     || didThinkingMetadataChange
+                    || needsLatestWorkerUpdates
+                    || needsReturnedAnswers
+                    || needsExecutionRunSignals
+                    || needsUserMessageHistory
                     || didReadyMetadataChange
                     || didApplyNewAgentStateVersion;
                 telemetryFields.agentStateVersionChanged = didApplyNewAgentStateVersion ? 1 : 0;
@@ -933,6 +1014,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 }
                 const nextStateBase = {
                     ...state,
+                    sessionMessageToolVersion: state.sessionMessageToolVersion + (options?.replaceExisting === true
+                        || hasSessionMessageToolChanges(reducedMessageChanges) ? 1 : 0),
+                    sessionUserMessageHistory: applySessionUserMessageHistory(state.sessionUserMessageHistory, sessionId,
+                        orderedTranscript, options?.replaceExisting === true ? null : reducedMessageChanges),
                     sessionMessagesHistoryStartLoaded: nextHistoryStartLoaded,
                     sessions: updatedSessions,
                     sessionListRowsByServerId: updatedSessionListRowsByServerId,
@@ -942,6 +1027,11 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             ...existingSession,
                             messageIdsOldestFirst: nextIds,
                             messagesById,
+                            latestWorkerUpdates: applyLatestWorkerUpdateChanges({ previous: existingSession.latestWorkerUpdates,
+                                messages: messagesById, changed: processedMessages }),
+                            returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: existingSession.returnedAnswersByRequest,
+                                messages: messagesById, changes: reducedMessageChanges }),
+                            executionRunSignalMessageIds: applyExecutionRunSignalChanges(existingSession.executionRunSignalMessageIds, messagesById, processedMessages),
                             messageRevisionsById,
                             messagesMap: messagesById,
                             renderableAggregate,
@@ -955,7 +1045,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             // version: equal-width authority swaps must invalidate cached views.
                             messagesVersion: options?.replaceExisting === true
                                 ? (state.sessionMessages[sessionId]?.messagesVersion ?? 0) + 1
-                                : existingSession.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
+                                : existingSession.messagesVersion + (processedMessages.length > 0 || needsLatestWorkerUpdates ? 1 : 0),
                             transcriptStructureVersion: options?.replaceExisting === true
                                 ? (state.sessionMessages[sessionId]?.transcriptStructureVersion ?? state.sessionMessages[sessionId]?.messagesVersion ?? 0) + 1
                                 : (existingSession.transcriptStructureVersion ?? existingSession.messagesVersion) + (didStructureChange ? 1 : 0),
@@ -988,6 +1078,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 );
             });
 
+                publishSessionMessageChanges(sessionId, messageChanges);
                 telemetryFields.changed = changed.size;
                 return {
                     changed: Array.from(changed),
@@ -1005,7 +1096,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
         ),
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const rawExistingSession = state.sessionMessages[sessionId];
-            if (rawExistingSession?.isLoaded === true) {
+            if (rawExistingSession?.isLoaded === true && rawExistingSession.latestWorkerUpdates !== undefined
+                && rawExistingSession.returnedAnswersByRequest !== undefined && rawExistingSession.executionRunSignalMessageIds !== undefined
+                && state.sessionUserMessageHistory?.[sessionId] !== undefined) {
                 return state;
             }
             const existingSession = rawExistingSession ? coerceSessionMessages(rawExistingSession) : null;
@@ -1040,8 +1133,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messagesById[message.id] = message;
                         messageRevisionsById[message.id] = 1;
                     }
-                    messageIdsOldestFirst = Object.values(messagesById)
-                        .sort(compareTranscriptMessagesOldestFirst)
+                    messageIdsOldestFirst = sortTranscriptMessagesOldestFirst(Object.values(messagesById))
                         .map((m) => m.id);
                     latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: messageIdsOldestFirst, messagesById });
                     latestThinkingMessageActivityAtMs = latestThinkingMessageId ? Date.now() : null;
@@ -1063,7 +1155,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
                 return {
                     ...state,
+                    sessionUserMessageHistory: applySessionUserMessageHistory(state.sessionUserMessageHistory, sessionId,
+                        { messageIdsOldestFirst, messagesById }, null),
                     sessions: updatedSessions,
+                    sessionMessageToolVersion: state.sessionMessageToolVersion + 1,
                     sessionMessages: {
                         ...state.sessionMessages,
                         [sessionId]: {
@@ -1071,6 +1166,11 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             reducerVersion: agentState ? 1 : 0,
                             messageIdsOldestFirst,
                             messagesById,
+                            latestWorkerUpdates: applyLatestWorkerUpdateChanges({ previous: EMPTY_LATEST_WORKER_UPDATES,
+                                messages: messagesById, changed: Object.values(messagesById) }),
+                            returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: undefined,
+                                messages: messagesById, changes: [] }),
+                            executionRunSignalMessageIds: applyExecutionRunSignalChanges(undefined, messagesById, []),
                             messageRevisionsById,
                             messagesMap: messagesById,
                             latestThinkingMessageId,
@@ -1091,10 +1191,18 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
             return {
                 ...state,
+                sessionUserMessageHistory: applySessionUserMessageHistory(state.sessionUserMessageHistory, sessionId, existingSession, []),
+                sessionMessageToolVersion: state.sessionMessageToolVersion + 1,
                 sessionMessages: {
                     ...state.sessionMessages,
                     [sessionId]: {
                         ...existingSession,
+                        latestWorkerUpdates: applyLatestWorkerUpdateChanges({ previous: existingSession.latestWorkerUpdates,
+                            messages: existingSession.messagesById, changed: [] }),
+                        returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: existingSession.returnedAnswersByRequest,
+                            messages: existingSession.messagesById, changes: [] }),
+                        executionRunSignalMessageIds: applyExecutionRunSignalChanges(existingSession.executionRunSignalMessageIds, existingSession.messagesById, []),
+                        messagesVersion: existingSession.messagesVersion + (existingSession.latestWorkerUpdates === undefined ? 1 : 0),
                         isLoaded: true
                     } satisfies SessionMessages
                 }
@@ -1119,6 +1227,8 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             return {
                 ...state,
                 sessionMessages: remainingSessionMessages,
+                sessionMessageToolVersion: state.sessionMessageToolVersion + (existingSession ? 1 : 0),
+                sessionUserMessageHistory: removeSessionUserMessageHistory(state.sessionUserMessageHistory, sessionId),
                 sessionMessagesHistoryStartLoaded: remainingHistoryStartLoaded,
             };
         }),
@@ -1146,6 +1256,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     ...state.sessionMessages,
                     [sessionId]: createEmptySessionMessages(),
                 },
+                sessionMessageToolVersion: state.sessionMessageToolVersion + 1,
+                sessionUserMessageHistory: applySessionUserMessageHistory(state.sessionUserMessageHistory, sessionId,
+                    { messageIdsOldestFirst: [], messagesById: {} }, null),
             };
         }),
     };

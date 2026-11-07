@@ -37,6 +37,7 @@ import { TriggerFromActivityEvent } from '@/components/workflows/triggers/Trigge
 import { createWorkflowRunRoute, type WorkflowRunRouteTarget } from '@/sync/domains/workflows/workflowRunRoute';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { executeOccurrenceRunAction } from './occurrenceRunActions';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -117,6 +118,8 @@ function formatPrivateDetailFailure(
 
 export function formatRunTarget(target: AutomationRunDetailTarget): string {
     switch (target.kind) {
+        case 'contributedAction':
+            return `${target.action.pluginId}/${target.action.localId}`;
         case 'existingSession':
             return t('automations.detail.runDetail.existingSession', { sessionId: target.sessionId });
         case 'newSession':
@@ -167,6 +170,8 @@ export function AutomationRunLifecycleCauseItems(props: Readonly<{
 
 function getRunTargetPrompt(target: AutomationRunDetailTarget): string {
     switch (target.kind) {
+        case 'contributedAction':
+            return formatStructuredPrivateDetail(target.input);
         case 'existingSession':
             return target.prompt;
         case 'newSession':
@@ -498,9 +503,8 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
         generation: 0,
         mounted: true,
     });
-    // A successful cancellation publishes a newer bounded Run through the
-    // incumbent store. Direct reads started before that mutation must not
-    // reclaim this route after the store has accepted the cancellation.
+    // Direct reads started before a mutation must not reclaim this route
+    // after its fresh post-mutation projection arrives.
     const directReadEpochRef = React.useRef(0);
     if (
         routeCurrentRef.current.automationId !== automationId
@@ -576,6 +580,8 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
     const loading = loadingState.generation !== routeGeneration || loadingState.value
         || (props.serverId !== null && resolution.kind === 'resolving');
     const loadFailed = loadFailureState.generation === routeGeneration && loadFailureState.value;
+    const readNotCurrent = React.useRef(false);
+    readNotCurrent.current = loadFailed || directDetail === null;
     const cancelling = cancellingState.generation === routeGeneration && cancellingState.value;
     const retryingReplyHandoff = retryingReplyHandoffState.generation === routeGeneration
         && retryingReplyHandoffState.value;
@@ -666,31 +672,18 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
     }, [refresh]);
     React.useEffect(() => !props.serverId ? undefined : subscribeHomeAccountChange(event => {
         if (areServerProfileIdentifiersEquivalent(event.serverId, props.serverId)) refresh();
-    }), [props.serverId, refresh]);
+    }, { reconnect: { readNotCurrent: () => readNotCurrent.current } }), [props.serverId, refresh]);
 
     const handleCancel = React.useCallback(async () => {
-        if (!runId) return;
+        if (!runId || !run) return;
         const request = { automationId, runId, generation: routeGeneration };
-        const confirmed = await Modal.confirm(
-            t('automations.detail.cancelRunConfirmTitle'),
-            t('automations.detail.cancelRunConfirmMessage'),
-            { cancelText: t('common.keepEditing'), confirmText: t('automations.detail.cancelRunConfirmButton'), destructive: true },
-        );
-        if (!confirmed || !isCurrentRoute(request.automationId, request.runId, request.generation)) return;
+        if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
         try {
             setCancellingState({ generation: request.generation, value: true });
-            await sync.cancelAutomationRun(request.runId, props.serverId ? { accountLifetime } : {});
+            if (!await executeOccurrenceRunAction('workflow.run.cancel', { runId: request.runId, expectedRevision: run.revision }, accountLifetime)) return;
             if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
             directReadEpochRef.current += 1;
-            // The mutation's bounded Run projection is already in the one
-            // cache owner. Clear the direct private response so it cannot
-            // visually regress the freshly cancelled state.
-            if (props.serverId) { refresh(); return; }
-            setDirectDetailState({
-                generation: request.generation,
-                accountLifetime,
-                value: null,
-            });
+            refresh();
         } catch (error) {
             if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
             await Modal.alert(
@@ -702,14 +695,14 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                 setCancellingState({ generation: request.generation, value: false });
             }
         }
-    }, [accountLifetime, automationId, isCurrentRoute, props.serverId, refresh, routeGeneration, runId]);
+    }, [accountLifetime, automationId, isCurrentRoute, refresh, routeGeneration, run, runId]);
 
     const handleRetryReplyHandoff = React.useCallback(async () => {
         if (!runId) return;
         const request = { automationId, runId, generation: routeGeneration };
         try {
             setRetryingReplyHandoffState({ generation: request.generation, value: true });
-            await sync.retryAutomationReplyHandoff(request.runId, props.serverId ? { accountLifetime } : {});
+            if (!await executeOccurrenceRunAction('automation.run.reply_handoff.retry', { runId: request.runId }, accountLifetime)) return;
             if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
             directReadEpochRef.current += 1;
             if (props.serverId) { refresh(); return; }
@@ -742,19 +735,10 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
     const handleDeliverResultAgain = React.useCallback(async (expectedRevision: number) => {
         if (!runId) return;
         const request = { automationId, runId, generation: routeGeneration };
-        const confirmed = await Modal.confirm(
-            t('automations.detail.runMeta.replyHandoffDeliverAgainConfirmTitle'),
-            t('automations.detail.runMeta.replyHandoffDeliverAgainConfirmMessage'),
-            {
-                cancelText: t('common.cancel'),
-                confirmText: t('automations.detail.runMeta.replyHandoffDeliverAgainConfirmButton'),
-            },
-        );
-        if (!confirmed || !isCurrentRoute(request.automationId, request.runId, request.generation)) return;
+        if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
         try {
             setRedeliveringResultState({ generation: request.generation, value: true });
-            await sync.deliverAutomationResultAgain({ runId: request.runId, expectedRevision },
-                props.serverId ? { accountLifetime } : {});
+            if (!await executeOccurrenceRunAction('automation.run.result.redeliver', { runId: request.runId, expectedRevision }, accountLifetime)) return;
             if (!isCurrentRoute(request.automationId, request.runId, request.generation)) return;
             directReadEpochRef.current += 1;
             if (props.serverId) { refresh(); return; }
@@ -831,7 +815,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                 title={title}
                 description={t('automationPages.run.description')}
                 meta={run ? [
-                    { key: 'state', text: formatAutomationRunStateLabel(run.state) },
+                    { key: 'state', text: formatAutomationRunStateLabel(run) },
                     { key: 'cause', text: formatAutomationRunCauseLabel(run.cause) },
                     { key: 'admitted', text: formatDate(run.createdAt, unknownDate) },
                 ] : []}
@@ -887,7 +871,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
                             title={t('automationPages.run.statusTitle')}
                             description={t('automationPages.run.statusDescription')}
                         >
-                            <Item title={formatAutomationRunStateLabel(run.state)} showChevron={false} mode="info" />
+                            <Item title={formatAutomationRunStateLabel(run)} showChevron={false} mode="info" />
                             {run.errorCode ? (
                                 <Item
                                     title={t('automations.detail.runMeta.error', { message: run.errorCode })}
