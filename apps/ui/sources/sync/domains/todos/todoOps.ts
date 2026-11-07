@@ -63,8 +63,8 @@ export async function resolveTodoAccountStorageContext(
     options: Readonly<{
         encryption?: TodoAccountStorageContext['encryption'];
         request?: ServerFetch;
-        usage?: AccountEncryptionReadUsage;
-    }> = {},
+        usage: AccountEncryptionReadUsage;
+    }>,
 ): Promise<TodoAccountStorageContext> {
     try {
         return await resolveAccountStorageContext(credentials, options);

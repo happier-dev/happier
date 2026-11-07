@@ -24,6 +24,7 @@ describe('syncTodos fetchTodos retry semantics at the HTTP boundary', () => {
         credentials = { token: home.token };
         network.setHttpResponder(async (input) => {
             const path = new URL(String(input)).pathname;
+            if (path === '/v1/tasks') return Response.json({ statusCode: 404, error: 'Not Found', message: 'Route GET:/v1/tasks not found' }, { status: 404 });
             if (path === '/v1/account/encryption/currentness') {
                 return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             }

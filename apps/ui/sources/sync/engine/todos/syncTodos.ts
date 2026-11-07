@@ -55,7 +55,7 @@ export async function applyTodoSocketUpdates(params: {
     requireCurrent();
     const context = await resolveTodoAccountStorageContext(
         params.credentials,
-        { encryption, request },
+        { encryption, request, usage: 'identity' },
     );
     requireCurrent();
 
