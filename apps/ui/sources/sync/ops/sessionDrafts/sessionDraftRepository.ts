@@ -1102,7 +1102,7 @@ export class SessionDraftRepository {
                             const localRawDocument = readStoredDraftDocument(replica.localRawDocument);
                             const storedAddress = createStoredReadSchema(SessionDraftAddressV2Schema).safeParse(replica.address);
                             const address = storedAddress.success ? storedAddress.data : replica.address;
-                            state.replicas.set(key, {
+                            const restored: PersistedReplica = {
                                 ...replica,
                                 address,
                                 localRawDocument,
@@ -1127,7 +1127,11 @@ export class SessionDraftRepository {
                                     ? replica.documentRevision
                                     : 0,
                                 localSupplement: normalizeLocalSupplement(replica.localSupplement, address),
-                            });
+                            };
+                            state.replicas.set(key, restored);
+                            // Hydration defaults are a read projection, not an edit of a sibling
+                            // Session. Keep its stored representation until that replica changes.
+                            this.serializedReplicas.set(restored, JSON.stringify(replica));
                         } else state.unreadableRetainedContent = true;
                     }
                 } else state.unreadableRetainedContent = true;

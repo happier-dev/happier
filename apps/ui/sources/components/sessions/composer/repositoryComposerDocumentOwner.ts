@@ -36,6 +36,7 @@ import {
     type SessionDraftCurrentness,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { getSessionDraftDocumentField } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 const CAPABILITIES: ComposerCapabilitiesV1 = Object.freeze({
     text: true,
@@ -283,7 +284,7 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
             });
             const changes = readComposerDraftDocumentChanges(beforeClear, refresh().document);
             const changed = changes.text || changes.structuredInputMentions || changes.composerAttachments;
-            if (changed) void flushSessionDraft({ scope: input.scope, address });
+            if (changed) fireAndForget(flushSessionDraft({ scope: input.scope, address }), { tag: 'composer.clearAcceptedDraft' });
             return {
                 changed,
                 changes,
@@ -299,10 +300,10 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
             if (input.launcherDraftKey) {
                 clearSessionDraftCurrentnessLocal({ scope: input.scope, address,
                     currentness: captureSessionDraftCurrentness({ scope: input.scope, address, fieldIds }) });
-                void flushSessionDraft({ scope: input.scope, address });
+                fireAndForget(flushSessionDraft({ scope: input.scope, address }), { tag: 'composer.clearDraft' });
                 return;
             }
-            void deleteSessionDraft({ scope: input.scope, address });
+            fireAndForget(deleteSessionDraft({ scope: input.scope, address }), { tag: 'composer.deleteDraft' });
         },
         replaceDocument: (document) => {
             if (input.isCurrent?.() === false) return observed.revision;

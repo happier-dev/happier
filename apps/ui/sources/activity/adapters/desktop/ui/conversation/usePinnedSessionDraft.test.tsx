@@ -207,6 +207,37 @@ describe('usePinnedSessionDraft', () => {
     await draft.settle(2, 3);
   });
 
+  it('clears a sent draft after its idle writer retires without changing the next Bot', async () => {
+    ipc.writes = [];
+    const original = { ...flake, sessionId: 'late-idle-send-original' };
+    const next = { ...flake, sessionId: 'late-idle-send-next' };
+    const draft = await renderDraft(original);
+    await draft.push(original.sessionId, 1, '');
+    await draft.type('send this saved reply');
+    const clearSentDraft = draft.handle.draft!.setText;
+    await draft.settle(0, 2);
+
+    // The saved writer is now idle, so retarget cleanup retires it before Send settles.
+    await act(async () => draft.handle.retarget(next));
+    await flushHookEffects();
+    await draft.push(next.sessionId, 4, 'saved next reply');
+    await draft.type('keep the newest next reply');
+    let stillCurrent = true;
+    await act(async () => { stillCurrent = clearSentDraft(''); });
+    await flushHookEffects();
+
+    expect(draft.handle.draft!.text).toBe('keep the newest next reply');
+    expect(draft.handle.draft!.textRef.current).toBe('keep the newest next reply');
+    expect(stillCurrent).toBe(false);
+    await draft.settle(1, 5);
+    expect(ipc.writes.map(({ sessionId, text, expectedRevision }) => ({ sessionId, text, expectedRevision }))).toEqual([
+      { sessionId: original.sessionId, text: 'send this saved reply', expectedRevision: 1 },
+      { sessionId: next.sessionId, text: 'keep the newest next reply', expectedRevision: 4 },
+      { sessionId: original.sessionId, text: '', expectedRevision: 2 },
+    ]);
+    await draft.settle(2, 3);
+  });
+
   it.each([
     ['refuse', 'target_unavailable'],
     ['fail', 'ipc_disconnected'],

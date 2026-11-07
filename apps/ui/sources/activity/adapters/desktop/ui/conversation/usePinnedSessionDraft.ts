@@ -112,15 +112,19 @@ export function usePinnedSessionDraft(target: ExactSessionMachineTargetIdentity 
     const key = target ? readSessionKey(target) : null;
     currentKeyRef.current = key;
     const { serverId, accountId, sessionId } = target ?? { serverId: '', accountId: '', sessionId: '' };
+    // A pending send retains its addressed writer even after an idle panel has unmounted.
+    const boundWriter = React.useMemo<SessionDraftWriter | null>(() => key && sessionId
+        ? writers.get(key) ?? { target: { serverId, accountId, sessionId }, revision: null, inFlight: false, pending: null, latest: '', writeError: null, notify: null }
+        : null, [accountId, key, serverId, sessionId]);
 
     React.useEffect(() => {
-        if (!key || !sessionId) {
+        if (!key || !boundWriter) {
             textRef.current = '';
             setLocalText('');
             setWriteError(null);
             return;
         }
-        const writer = writers.get(key) ?? { target: { serverId, accountId, sessionId }, revision: null, inFlight: false, pending: null, latest: '', writeError: null, notify: null };
+        const writer = boundWriter;
         writers.set(key, writer);
         const show = () => {
             if (currentKeyRef.current !== key) return;
@@ -154,12 +158,13 @@ export function usePinnedSessionDraft(target: ExactSessionMachineTargetIdentity 
             if (stop) fireAndForget(stop(), { tag: 'DesktopActivityOverlay.pinnedDraft.unwatch' });
             if (!isBusy(writer)) writers.delete(key);
         };
-    }, [accountId, key, serverId, sessionId]);
+    }, [accountId, boundWriter, key, serverId, sessionId]);
 
     const setText = React.useCallback((next: string) => {
         const writerKey = key;
-        const writer = writerKey ? writers.get(writerKey) : undefined;
+        const writer = writerKey ? writers.get(writerKey) ?? boundWriter : null;
         if (!writerKey || !writer) return false;
+        writers.set(writerKey, writer);
         writer.latest = next;
         writer.pending = next;
         writer.writeError = null;
@@ -167,7 +172,7 @@ export function usePinnedSessionDraft(target: ExactSessionMachineTargetIdentity 
         writer.notify?.();
         drain(writerKey, writer);
         return isCurrent;
-    }, [key]);
+    }, [boundWriter, key]);
 
     const retry = React.useCallback(() => {
         const writerKey = key;
