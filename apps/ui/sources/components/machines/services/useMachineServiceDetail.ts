@@ -13,19 +13,25 @@ const settle = (promise: Promise<ActionExecuteResult>) => promise.catch((error: 
 export type MachineServiceDetailFacts = Readonly<{
   accounting: MachineServiceAccountingV1 | null;
   runtimeFacts: MachineServiceNativeRuntimeFactsV1 | null;
+  /** When this answer's sample was taken here ("Measured 10:44"). */
+  measuredAt: number;
 }>;
 
 /**
  * The open service's detail: one `machines.services.detail` read per visible open of a generation (plan 30 §3.2b:
- * one native accounting sample per detail open, none while hidden or list-only). Its facts are extra: the page
- * reads fine without them, so a refusal or failure leaves them out instead of replacing the page.
+ * one native accounting sample per detail open, none while hidden or list-only), and one more per Measure again.
+ * Its facts are extra: the page reads fine without them, so a refusal or failure leaves them out instead of replacing
+ * the page, and a new measurement keeps the last one on screen until it answers.
  */
 export function useMachineServiceDetail(input: Readonly<{
   serverId: string; machineId: string; serviceId: string; generation: string | null; active: boolean;
-}>): MachineServiceDetailFacts | null {
+}>): Readonly<{ facts: MachineServiceDetailFacts | null; measuring: boolean; measure: () => void }> {
   const { binding: lifetime } = useServerCredentialAccountScopeBinding(input.serverId);
   const key = JSON.stringify([input.serverId, input.machineId, input.serviceId, input.generation]);
   const [record, setRecord] = React.useState<Readonly<{ key: string; facts: MachineServiceDetailFacts }> | null>(null);
+  // Each Measure again is one more read of the same generation; settled says which round last answered.
+  const [round, setRound] = React.useState(0);
+  const [settled, setSettled] = React.useState(0);
   React.useEffect(() => {
     if (!input.active || input.generation === null || !lifetime?.isCurrent()) return;
     const controller = new AbortController();
@@ -34,15 +40,19 @@ export function useMachineServiceDetail(input: Readonly<{
       serverId: input.serverId, machineId: input.machineId, serviceId: input.serviceId, expectedGeneration: input.generation,
     }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId, signal: controller.signal }))
       .then((result) => {
-        if (controller.signal.aborted || !result.ok) return;
+        if (controller.signal.aborted) return;
+        setSettled(round);
+        if (!result.ok) return;
         const parsed = MachineServicesDetailResultV1Schema.safeParse(result.result);
         if (!parsed.success || parsed.data.kind !== 'service') return;
-        setRecord({ key, facts: { accounting: parsed.data.accounting ?? null, runtimeFacts: parsed.data.runtimeFacts ?? null } });
+        setRecord({ key, facts: { accounting: parsed.data.accounting ?? null, runtimeFacts: parsed.data.runtimeFacts ?? null,
+          measuredAt: Date.now() } });
       })
       .finally(() => retirement.dispose());
     return () => controller.abort();
-  }, [key, lifetime, input.active, input.serverId, input.machineId, input.serviceId, input.generation]);
-  return record?.key === key ? record.facts : null;
+  }, [key, lifetime, round, input.active, input.serverId, input.machineId, input.serviceId, input.generation]);
+  const measure = React.useCallback(() => setRound((current) => current + 1), []);
+  return { facts: record?.key === key ? record.facts : null, measuring: settled < round, measure };
 }
 
 export type MachineServiceControlOperation = 'restart' | 'stop' | 'start';

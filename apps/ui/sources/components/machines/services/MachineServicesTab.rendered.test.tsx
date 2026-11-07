@@ -796,4 +796,30 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('listening on :80'));
         expect(screen.findHostByTestId('machine-service-logs-masking')).not.toBeNull();
     });
+
+    it('measures each replica on open and again on Measure again, keeping the last figures while it reads', async () => {
+        const row = service('Web', { state: 'healthy' });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        const reads: Array<(value: unknown) => void> = [];
+        machineTransport.rpc.mockImplementation(({ method }: { method: string }) => method === RPC_METHODS.MACHINES_SERVICE_DETAIL
+            ? new Promise(resolve => { reads.push(resolve); }) : Promise.resolve({ kind: 'unavailable', reason: 'unavailable' }));
+        const sample = (cpuPercent: number, memoryMb: number) => ({ kind: 'service', service: row, accounting: { kind: 'sample', samples: [
+            { nativeResourceId: 'shop-web-1', cpuPercent, memoryBytes: memoryMb * 1024 * 1024 },
+            { nativeResourceId: 'shop-web-2', cpuPercent: null, memoryBytes: null }] } });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(reads).toHaveLength(1));
+        await act(async () => { reads[0]!(sample(12, 48)); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-usage')).not.toBeNull());
+        const usage = () => textOf(screen.findHostByTestId('machine-service-usage')!);
+        expect(usage()).toContain('12%');
+        expect(usage()).toContain('48 MB');
+        // A replica whose sample omits its figures says so instead of reading as zero.
+        expect(usage()).toContain(t('machineServices.facts.notReported'));
+        await screen.pressByTestIdAsync('machine-service-measure');
+        await vi.waitFor(() => expect(reads).toHaveLength(2));
+        expect(usage()).toContain('48 MB');
+        await act(async () => { reads[1]!(sample(30, 64)); });
+        await vi.waitFor(() => expect(usage()).toContain('64 MB'));
+        expect(usage()).toContain('30%');
+    });
 });

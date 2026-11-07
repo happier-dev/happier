@@ -157,8 +157,9 @@ function MachineServicePresent(props: Readonly<{
   // Who keeps it leads for a deployed service ("shop · Production · Compose"), trails for a watched one
   // ("systemd · postgresql@16-main.service · watched").
   const meta = (environmentId === null ? [identity, keeper] : [keeper, identity]).filter(Boolean).join(' · ');
-  const detail = useMachineServiceDetail({ serverId: props.serverId, machineId: props.machineId,
+  const { facts: detail, measuring, measure } = useMachineServiceDetail({ serverId: props.serverId, machineId: props.machineId,
     serviceId: service.serviceId, generation: service.generation, active: props.active });
+  const usage = React.useMemo(() => usageFacts(detail), [detail]);
   const control = useMachineServiceControl({ serverId: props.serverId, machineId: props.machineId, service });
   const offered = machineServiceControls(service);
   // One visible control (lab `services/detail`): Restart, or Start when the service is down; the rest sit in ⋯.
@@ -292,6 +293,21 @@ function MachineServicePresent(props: Readonly<{
           </Text>
         ) : null}
       </ItemGroup>
+      {usage && detail ? (
+        // Usage (lab `services/usage`): each replica's CPU and memory from the detail's one sample, measured on open
+        // and again only when asked; the last figures stay while a new measurement reads.
+        <ItemGroup title={t('machineServices.usage.title')} surface="none" testID="machine-service-usage">
+          <FactStrip facts={usage} testID="machine-service-usage-facts" />
+          <SurfaceFreshnessLine
+            testID="machine-service-usage-measured"
+            glyph="clock"
+            reason={t('machineServices.usage.measured', {
+              time: formatWithCachedDateTimeFormatter(detail.measuredAt, undefined, MEASURED_FORMAT) })}
+            busy={measuring}
+            action={{ label: t('machineServices.usage.measure'), onPress: measure, testID: 'machine-service-measure' }}
+          />
+        </ItemGroup>
+      ) : null}
       <ItemGroup
         title={t('machineServices.logs.title')}
         description={t('machineServices.logs.description', { service: service.name })}
@@ -411,13 +427,8 @@ function serviceFacts(service: MachineServiceRowV1, detail: MachineServiceDetail
   if (service.port != null) facts.push({ key: 'port', label: t('machineServices.facts.port'), value: String(service.port) });
   const samples = detail?.accounting?.kind === 'sample' ? detail.accounting.samples : null;
   const run = machineServiceRunFacts(service, Date.now());
-  if (samples && samples.length > 0) {
-    const known = samples.every(sample => sample.memoryBytes !== null);
-    facts.push({ key: 'memory', label: t('machineServices.facts.memory'), value: known
-      ? formatMachineBytes(samples.reduce((sum, sample) => sum + (sample.memoryBytes ?? 0), 0), 'memory')
-      : t('machineServices.facts.notReported') });
-  } else if (run.memoryBytes !== null) {
-    // The detail's own sample is the fresher one; without it the row's reported memory still says it.
+  // A sample's memory is in Usage, per replica (lab `services/usage`); without one the row's reported memory says it.
+  if (!(samples && samples.length > 0) && run.memoryBytes !== null) {
     facts.push({ key: 'memory', label: t('machineServices.facts.memory'), value: formatMachineBytes(run.memoryBytes, 'memory') });
   }
   const configuration = detail?.runtimeFacts?.configuration ?? null;
@@ -432,7 +443,25 @@ function serviceFacts(service: MachineServiceRowV1, detail: MachineServiceDetail
   return facts;
 }
 
+/**
+ * Each replica's CPU and memory, in sample order ("4% · 3%", "318 · 296 MB"); a replica whose sample omits a figure
+ * says so rather than reading as zero. Null when the detail carries no sample.
+ */
+function usageFacts(detail: MachineServiceDetailFacts | null): FactStripFact[] | null {
+  const samples = detail?.accounting?.kind === 'sample' ? detail.accounting.samples : null;
+  if (!samples || samples.length === 0) return null;
+  const notReported = t('machineServices.facts.notReported');
+  return [
+    { key: 'cpu', label: t('machineServices.usage.cpu'),
+      value: samples.map((sample) => sample.cpuPercent === null ? notReported : `${Math.round(sample.cpuPercent)}%`).join(' · ') },
+    { key: 'memory', label: t('machineServices.facts.memory'),
+      value: samples.map((sample) => sample.memoryBytes === null ? notReported
+        : formatMachineBytes(sample.memoryBytes, 'memory')).join(' · ') },
+  ];
+}
+
 const NO_IDS: readonly string[] = [];
+const MEASURED_FORMAT: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' };
 const SINCE_FORMAT: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
 
 const styles = StyleSheet.create((theme) => ({
