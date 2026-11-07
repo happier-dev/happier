@@ -35,11 +35,33 @@ export type CapabilityDetectRequest = {
   params?: Record<string, unknown>;
 };
 
+/** Host-authored protocol metadata only; never native discovery or caller authority. */
+export type CapabilityProtocol = Readonly<{
+  version: number;
+  available: boolean;
+  features: Readonly<Record<string, boolean>>;
+}>;
+
+export function parseCapabilityProtocol(value: unknown): CapabilityProtocol | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const protocol = value as Readonly<Record<string, unknown>>;
+  if (typeof protocol.version !== 'number' || !Number.isSafeInteger(protocol.version) || protocol.version < 1
+    || typeof protocol.available !== 'boolean' || protocol.features === null
+    || typeof protocol.features !== 'object' || Array.isArray(protocol.features)) return null;
+  const features: Record<string, boolean> = {};
+  for (const [key, enabled] of Object.entries(protocol.features)) {
+    if (typeof enabled !== 'boolean') return null;
+    Object.defineProperty(features, key, { value: enabled, enumerable: true });
+  }
+  return { version: protocol.version, available: protocol.available, features };
+}
+
 export type CapabilityDescriptor = {
   id: CapabilityId;
   kind: CapabilityKind;
   title?: string;
   methods?: Record<string, { title?: string }>;
+  protocol?: CapabilityProtocol;
 };
 
 export type CapabilitiesDescribeResponse = {
@@ -56,6 +78,27 @@ export type CapabilitiesDetectResponse = {
   protocolVersion: 1;
   results: Partial<Record<CapabilityId, CapabilityDetectResult>>;
 };
+
+function isCapabilityRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Keep valid capability leaves when another installed contribution is unknown or malformed. */
+export function parseCapabilitiesDetectResponse(raw: unknown): CapabilitiesDetectResponse | null {
+  if (!isCapabilityRecord(raw) || raw.protocolVersion !== 1 || !isCapabilityRecord(raw.results)) return null;
+  const results: Partial<Record<CapabilityId, CapabilityDetectResult>> = {};
+  for (const [key, value] of Object.entries(raw.results)) {
+    const id = parseCapabilityId(key);
+    if (!id || !isCapabilityRecord(value) || typeof value.ok !== 'boolean' || typeof value.checkedAt !== 'number') continue;
+    if (value.ok) {
+      results[id] = { ok: true, checkedAt: value.checkedAt, data: value.data };
+    } else if (isCapabilityRecord(value.error) && typeof value.error.message === 'string') {
+      results[id] = { ok: false, checkedAt: value.checkedAt, error: { message: value.error.message,
+        ...(typeof value.error.code === 'string' ? { code: value.error.code } : {}) } };
+    }
+  }
+  return { protocolVersion: 1, results };
+}
 
 export type CapabilitiesDetectRequest = {
   checklistId?: string;

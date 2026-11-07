@@ -171,6 +171,7 @@ export type {
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 export {
   resolveAgentIdFromSessionMetadata,
+  resolveBundledAgentIdFromContributionIdentity,
   resolveAgentExecutionTargetFromSessionMetadata,
   resolveDeclaredAgentIdFromSessionMetadata,
   resolveSessionMetadataAgentIdentity,
@@ -202,6 +203,7 @@ export {
 } from './localCli.js';
 export {
   isAgentCliAuthBackgroundCheckSafe,
+  buildMachineDetailsCapabilitiesDetectRequest,
 } from './auth.js';
 export {
   ACP_AGENT_CLI_TRANSPORT_TIMEOUTS,
@@ -608,6 +610,7 @@ export type {
 } from './runtime/session/scopedServices.js';
 export {
   isRuntimeConfigUpdateOutcomeApplied,
+  isRuntimeConfigUpdateOutcomeDeferred,
   type RuntimeConfigUpdateOutcomeV1,
 } from './runtime/session/runtimeConfigUpdateOutcome.js';
 export {

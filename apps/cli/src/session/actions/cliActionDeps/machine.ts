@@ -1,8 +1,10 @@
 import type { CliActionDepsParams } from './types';
-import { MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { MachineCapabilityInstallInputSchema, MachineCapabilityInstallOutputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
+import { parseCapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
+import { buildMachineDetailsCapabilitiesDetectRequest } from '@happier-dev/agents';
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
@@ -18,7 +20,7 @@ import type { createCliProviderConnectionsStore, createCliProviderConnectionsSto
 import type { refreshActiveProviderConnectionsCatalog } from '@/providers/settings/hydrate';
 import { revokeMachineWithProviderCleanup } from '@happier-dev/protocol/machines/account/revokeWithProviderCleanup';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 export function createCliMachineActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl' | 'isCredentialCurrent' | 'savedSecretOperationContext' | 'token' | 'serverId'>,
@@ -45,6 +47,7 @@ export function createCliMachineActionDeps(
         serverId: context.serverId ?? undefined,
         authority: context.authority,
         method: RPC_METHODS.BASH,
+        context, effectActionId: 'machines.command.run',
         request: { command: input.command, ...(input.env ? { env: input.env } : {}),
           cwd: target.project.directory, cwdMode: 'explicit', timeout: 0,
           ...(context.actionCaller?.kind === 'workflowRun'
@@ -92,6 +95,28 @@ export function createCliMachineActionDeps(
       },
     }),
     machinePageAction: async ({ actionId, input, context }) => {
+      if (actionId === MACHINE_CAPABILITIES_DETECT_ACTION_ID) {
+        const { machineId, serverId } = input;
+        const request = buildMachineDetailsCapabilitiesDetectRequest();
+        if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
+          return { ok: false, errorCode: 'daemon_transport_unavailable', error: 'An authenticated machine transport is required.' };
+        }
+        try {
+          const raw = await callMachineAction({ machineId, serverId, method: RPC_METHODS.CAPABILITIES_DETECT,
+            request, context, effectActionId: actionId, authority: context.authority, exactMachine: true,
+            timeoutMs: null, ...(context.signal ? { signal: context.signal } : {}),
+          });
+          const response = parseCapabilitiesDetectResponse(raw);
+          return response ? { status: 'completed' } : { status: 'failed', reason: 'error' };
+        } catch (error) {
+          context.signal?.throwIfAborted();
+          if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) return { status: 'failed', reason: 'not-supported' };
+          const rpcErrorCode = readRpcErrorCode(error);
+          return { status: 'failed', reason: 'error', error: {
+            ...(error instanceof Error ? { name: error.name } : {}), ...(rpcErrorCode ? { rpcErrorCode } : {}),
+          } };
+        }
+      }
       if (actionId === MACHINE_RUN_MARKERS_LIST_ACTION_ID) {
         return await callMachineAction({ machineId: input.machineId, serverId: input.serverId,
           method: RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, request: {}, context,
@@ -227,12 +252,13 @@ export function createCliMachineActionDeps(
         throw error;
       }
     },
-    machineAgentInstallStart: async ({ machineId, signal, serverId, ...request }) => {
+    machineAgentInstallStart: async ({ machineId, signal, serverId, context, effectActionId, ...request }) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'install_unavailable', error: 'An authenticated machine transport is required.' };
       }
       return DaemonAgentInstallStartResponseSchema.parse(await callMachineAction({
         machineId, serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START, request,
+        context, effectActionId, authority: context?.authority,
         ...(signal ? { signal } : {}),
       }));
     },

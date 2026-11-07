@@ -18,11 +18,13 @@ export type MachineCapabilitiesCacheState =
     | { status: 'loading'; snapshot?: MachineCapabilitiesSnapshot }
     | { status: 'loaded'; snapshot: MachineCapabilitiesSnapshot }
     | { status: 'not-supported' }
-    | { status: 'error'; snapshot?: MachineCapabilitiesSnapshot };
+    | { status: 'error'; snapshot?: MachineCapabilitiesSnapshot;
+        error?: Extract<MachineCapabilitiesDetectResult, { supported: false }>['error'] };
 
 type CacheEntry = {
     state: MachineCapabilitiesCacheState;
     updatedAt: number;
+    inputKey?: string;
     inFlightToken?: number;
     /** Successful requests can omit optional facts; mounting again is not an invalidation. */
     settledRequestKeys?: ReadonlySet<string>;
@@ -44,6 +46,7 @@ const DEFAULT_ERROR_BACKOFF_MS = 60_000;
 
 type ScheduledFetch = Readonly<{
     requestKey: string;
+    inputKey?: string;
     promise: Promise<void>;
     isCurrent(): boolean;
     retainReader(params: MachineCapabilitiesFetchParams): Promise<void>;
@@ -139,11 +142,13 @@ function recordLatestAnswers(cacheKey: string, state: MachineCapabilitiesCacheSt
     const snapshot = 'snapshot' in state ? state.snapshot : undefined;
     if (!snapshot) return;
     const parsed = JSON.parse(cacheKey) as [string, string | null, string, unknown, string | null];
+    const notifications = new Set<() => void>();
     for (const capabilityId of Object.keys(snapshot.response.results ?? {})) {
         const latestKey = toLatestKey(parsed[2], parsed[1], capabilityId, parsed[4]);
         latestKeyByCapability.set(latestKey, cacheKey);
-        for (const listener of latestListeners.get(latestKey) ?? []) listener();
+        for (const listener of latestListeners.get(latestKey) ?? []) notifications.add(listener);
     }
+    for (const notify of notifications) notify();
 }
 
 function setEntry(cacheKey: string, entry: CacheEntry) {
@@ -447,12 +452,18 @@ function shouldRefetchEntry(params: Readonly<{ entry: CacheEntry | null; staleMs
 }
 
 type MachineCapabilitiesFetchParams = {
+    fresh?: boolean;
     machineId: string;
     serverId?: string | null;
     cacheKeySalt?: string | number | null;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
     accountLifetime?: ServerAccountScopeLifetime;
+    /** Domain inputs for this answer, excluding unrelated registry revisions.
+     * A completed response establishes its own installation facts: normalize
+     * those into the same entry rather than invalidating the first acquisition.
+     */
+    cacheInputKey?: (response?: CapabilitiesDetectResponse) => string;
     signal?: AbortSignal;
     /**
      * Explicit recurring detection demand, not merely cancellation of this finite
@@ -540,8 +551,10 @@ async function fetchAndMerge(params: MachineCapabilitiesFetchParams): Promise<vo
     const cacheKey = toCacheKey(params.machineId, params.serverId, params.cacheKeySalt, params.accountLifetime?.scope.accountId);
     retainObservedErrorRetryDemand(cacheKey, [params]);
     const requestKey = detectRequestKey(params.request);
+    const inputKey = params.cacheInputKey?.();
     const scheduled = scheduledFetchByCacheKey.get(cacheKey);
-    if (scheduled && scheduled.requestKey === requestKey && scheduled.isCurrent()) {
+    // An admitted Check again gets its own fresh probe; passive readers still share one.
+    if (!params.fresh && scheduled && scheduled.requestKey === requestKey && scheduled.inputKey === inputKey && scheduled.isCurrent()) {
         return await scheduled.retainReader(params);
     }
 
@@ -603,6 +616,7 @@ async function fetchAndMerge(params: MachineCapabilitiesFetchParams): Promise<vo
         setEntry(cacheKey, {
             state: { status: 'loading', ...(prevSnapshot ? { snapshot: prevSnapshot } : {}) },
             updatedAt: Date.now(),
+            inputKey: existing?.inputKey,
             inFlightToken: token,
             settledRequestKeys: existing?.settledRequestKeys,
         });
@@ -626,6 +640,7 @@ async function fetchAndMerge(params: MachineCapabilitiesFetchParams): Promise<vo
             setEntry(cacheKey, {
                 state: prevSnapshot ? ({ status: 'error', snapshot: prevSnapshot } as const) : ({ status: 'error' } as const),
                 updatedAt: failedAt,
+                inputKey,
                 settledRequestKeys: existing?.settledRequestKeys,
             });
             retainObservedErrorRetryDemand(cacheKey, currentReaders(), failedAt);
@@ -654,15 +669,16 @@ async function fetchAndMerge(params: MachineCapabilitiesFetchParams): Promise<vo
                 return { status: 'idle' } as const;
             }
 
-            return prevSnapshot
-                ? ({ status: 'error', snapshot: prevSnapshot } as const)
-                : ({ status: 'error' } as const);
+            return { status: 'error' as const,
+                ...(prevSnapshot ? { snapshot: prevSnapshot } : {}),
+                ...(result.error ? { error: result.error } : {}) };
         })();
 
         const updatedAt = Date.now();
         setEntry(cacheKey, {
             state: nextState,
             updatedAt,
+            inputKey: result.supported ? params.cacheInputKey?.(result.response) : inputKey,
             settledRequestKeys: result.supported
                 ? new Set([...(existing?.settledRequestKeys ?? []), requestKey])
                 : existing?.settledRequestKeys,
@@ -680,6 +696,7 @@ async function fetchAndMerge(params: MachineCapabilitiesFetchParams): Promise<vo
 
     scheduledFetchByCacheKey.set(cacheKey, {
         requestKey,
+        inputKey,
         promise: finalPromise,
         isCurrent,
         retainReader,
@@ -698,13 +715,15 @@ export function prefetchMachineCapabilitiesIfStale(params: MachineCapabilitiesFe
     retainObservedErrorRetryDemand(cacheKey, [params]);
     const scheduled = scheduledFetchByCacheKey.get(cacheKey);
     const existing = getEntry(cacheKey);
-    if (scheduled?.isCurrent() && (scheduled.requestKey === detectRequestKey(params.request)
+    const inputKey = params.cacheInputKey?.();
+    if (scheduled?.isCurrent() && scheduled.inputKey === inputKey && (scheduled.requestKey === detectRequestKey(params.request)
         || (existing?.state.status === 'loading' && !requestNeedsRefetchFromState(existing.state, params.request)))) {
         return scheduled.retainReader(params);
     }
     if (!existing || existing.state.status === 'idle') {
         return fetchAndMerge(params);
     }
+    if (existing.inputKey !== inputKey) return fetchAndMerge(params);
     if (existing.state.status !== 'error'
         && requestNeedsRefetchFromState(existing.state, params.request,
             existing.settledRequestKeys?.has(detectRequestKey(params.request)))) {

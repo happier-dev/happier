@@ -1,5 +1,5 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { startPairingForHome } from '@/auth/pairing/startPairingForHome';
@@ -21,6 +21,9 @@ import { createLocalDaemonServiceAction } from './localDaemonServiceAction';
 import { createMachineAddLocalSetupAction, createMachineAddLocalCancelAction } from '@/components/machines/add/machineAddLocalSetupAction';
 import { MachineCapabilityInstallInputSchema, MachineMetadataUpdateInputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { getMachineCapabilitiesCacheState, prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
+import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readCurrentMachineUpdateItem } from '@/updates/updatesActionRuntime';
 import { runMachineItemUpdate } from '@/updates/machineUpdateRuns';
 import { machineStopDaemon, machineUpdateMetadata } from '@/sync/ops/machines';
@@ -28,11 +31,12 @@ import { machineRevokeWithProviderCleanup, machineReplaceInAccount, machineClear
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { createManagedMachineInstallationRespond } from './managedMachineInstallationAction';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
-export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction'> {
+export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
     return {
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
@@ -52,7 +56,18 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 return { ok: false, errorCode: 'account_settings_scope_changed', error: 'account_settings_scope_changed' };
             }
             if (actionId === 'machines.daemon.stop') {
-                return machineStopDaemon(input.machineId, { serverId, signal: context.signal });
+                return readMachineActionRpcResult(await machineStopDaemon(input.machineId, { serverId, signal: context.signal }));
+            }
+            if (actionId === MACHINE_CAPABILITIES_DETECT_ACTION_ID) {
+                const accountLifetime = captureActiveServerAccountScopeLifetime();
+                await prefetchMachineCapabilities({ machineId: input.machineId, serverId,
+                    request: CAPABILITIES_REQUEST_MACHINE_DETAILS, fresh: true,
+                    accountLifetime: accountLifetime ?? undefined, signal: context.signal });
+                const state = getMachineCapabilitiesCacheState(input.machineId, serverId, undefined, scope.accountId);
+                if (state?.status === 'loaded') return { status: 'completed' };
+                if (state?.status === 'not-supported') return { status: 'failed', reason: 'not-supported' };
+                return { status: 'failed', reason: state?.status === 'idle' ? 'server-switch-abort' : 'error',
+                    ...(state?.status === 'error' && state.error ? { error: state.error } : {}) };
             }
             if (actionId === 'machines.capabilities.install') {
                 const request = MachineCapabilityInstallInputSchema.parse(input);
@@ -99,6 +114,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             }, request.expectedVersion ?? machine.metadataVersion);
             return { version: result.version };
         },
+        machineManagedInstallationRespond: createManagedMachineInstallationRespond(options.account),
         machineAddSshTaskAction: createMachineAddSshTaskAction(options.runner),
         localDaemonServiceAction: createLocalDaemonServiceAction(options),
         machineAddLocalStart: createMachineAddLocalSetupAction(options.runner),
@@ -124,7 +140,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
         homeConnect: async (input, context) => {
             const outcome = await connectHomeAtAddress({ serverUrl: input.address, displayName: input.displayName,
                 signal: context.signal, confirmInsecureHttp: async () => input.acceptInsecureHttp,
-                confirmCanonicalUrl: async () => input.acceptCanonicalUrl,
+                confirmCanonicalUrl: async (change) => change ? false : input.acceptCanonicalUrl,
             });
             if (outcome.kind === 'connected') return { kind: 'connected', serverId: outcome.profile.id,
                 serverUrl: outcome.profile.serverUrl, name: outcome.profile.name };
@@ -139,11 +155,11 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             if (!profile) return { ok: false, errorCode: 'target_unavailable', error: 'Home not found' };
             const policy = resolveSetupSurfacePolicy().machine;
             if (input.method === 'ssh' ? !policy.allowRemoteSshMachineSetup : !policy.allowLocalMachineSetup) {
-                return { ok: false, errorCode: 'machine_setup_unavailable', error: 'Machine setup is unavailable' };
+                return { ok: false, errorCode: 'machine_enroll_unavailable', error: 'Machine enrollment is unavailable' };
             }
             const target = { descriptor: buildHomeConnectionDescriptorForProfile(profile), profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl };
             const command = buildMachineAddCommand({ ...target, os: input.os, ...(input.method === 'ssh' ? {
-                kind: 'sshMachine', sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
+                kind: 'sshMachine', enrollmentIdentity: input.enrollmentIdentity, sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
                     username: input.username ?? '', port: input.port === undefined ? '' : String(input.port), identityFilePath: input.identityFilePath ?? '' },
             } : { kind: 'joinHome' }) });
             return { command, descriptorFileRequired: resolveWebDesktopSetupHandoffTarget(target).kind === 'descriptor_file_required' };

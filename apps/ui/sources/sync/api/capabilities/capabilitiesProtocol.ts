@@ -6,11 +6,13 @@ import type {
     CapabilityKind,
     CapabilitiesDescribeResponse,
     CapabilitiesDetectResponse,
+    CapabilitiesDetectRequest,
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
 } from '@happier-dev/protocol/capabilities';
-import { parseCapabilityId as parseCanonicalCapabilityId } from '@happier-dev/protocol/capabilities';
+import { parseCapabilityId as parseCanonicalCapabilityId, parseCapabilityProtocol } from '@happier-dev/protocol/capabilities';
 import type { ChecklistId as ProtocolChecklistId } from '@happier-dev/protocol/checklists';
+export { parseCapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
 
 export type {
     CapabilityDetectRequest,
@@ -20,18 +22,12 @@ export type {
     CapabilityKind,
     CapabilitiesDescribeResponse,
     CapabilitiesDetectResponse,
+    CapabilitiesDetectRequest,
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
 };
 
 export type ChecklistId = ProtocolChecklistId;
-
-export type CapabilitiesDetectRequest = {
-    checklistId?: ChecklistId | string;
-    requests?: CapabilityDetectRequest[];
-    overrides?: Partial<Record<CapabilityId, { params?: Record<string, unknown> }>>;
-    bypassCache?: boolean;
-};
 
 export type CliAuthStatusData = {
     state: 'logged_in' | 'logged_out' | 'unknown';
@@ -87,6 +83,8 @@ function parseDescriptor(raw: unknown): CapabilityDescriptor | null {
     if (!(kind === 'cli' || kind === 'tool' || kind === 'dep')) return null;
 
     const out: CapabilityDescriptor = { id, kind };
+    const protocol = parseCapabilityProtocol(raw.protocol);
+    if (protocol) out.protocol = protocol;
     if (typeof raw.title === 'string') out.title = raw.title;
     if (isPlainObject(raw.methods)) {
         const methods: Record<string, { title?: string }> = {};
@@ -108,21 +106,6 @@ function parseDetectRequest(raw: unknown): CapabilityDetectRequest | null {
         id,
         ...(isPlainObject(params) ? { params } : {}),
     };
-}
-
-function parseDetectResult(raw: unknown): CapabilityDetectResult | null {
-    if (!isPlainObject(raw)) return null;
-    const ok = raw.ok;
-    const checkedAt = raw.checkedAt;
-    if (typeof ok !== 'boolean') return null;
-    if (typeof checkedAt !== 'number') return null;
-    if (ok) {
-        return { ok: true, checkedAt, data: (raw as any).data };
-    }
-    const error = (raw as any).error;
-    if (!isPlainObject(error) || typeof error.message !== 'string') return null;
-    const code = (error as any).code;
-    return { ok: false, checkedAt, error: { message: error.message, ...(typeof code === 'string' ? { code } : {}) } };
 }
 
 export function parseCapabilitiesDescribeResponse(raw: unknown): CapabilitiesDescribeResponse | null {
@@ -158,37 +141,21 @@ export function parseCapabilitiesDescribeResponse(raw: unknown): CapabilitiesDes
     };
 }
 
-export function parseCapabilitiesDetectResponse(raw: unknown): CapabilitiesDetectResponse | null {
-    if (!isPlainObject(raw)) return null;
-    if (raw.protocolVersion !== 1) return null;
-    const resultsRaw = raw.results;
-    if (!isPlainObject(resultsRaw)) return null;
-
-    const results: Partial<Record<CapabilityId, CapabilityDetectResult>> = {};
-    for (const [k, v] of Object.entries(resultsRaw)) {
-        const id = parseCapabilityId(k);
-        if (!id) continue;
-        const parsed = parseDetectResult(v);
-        if (parsed) results[id] = parsed;
-    }
-
-    return { protocolVersion: 1, results };
-}
-
 export function parseCapabilitiesInvokeResponse(raw: unknown): CapabilitiesInvokeResponse | null {
     if (!isPlainObject(raw)) return null;
     const ok = raw.ok;
     if (typeof ok !== 'boolean') return null;
     if (ok) {
-        return { ok: true, result: (raw as any).result };
+        return { ok: true, result: raw.result };
     }
-    const error = (raw as any).error;
+    const error = raw.error;
     if (!isPlainObject(error) || typeof error.message !== 'string') return null;
-    const code = (error as any).code;
-    const logPath = (raw as any).logPath;
+    const code = error.code;
+    const logPath = raw.logPath;
     return {
         ok: false,
-        error: { message: error.message, ...(typeof code === 'string' ? { code } : {}) },
+        error: { message: error.message, ...(typeof code === 'string' ? { code } : {}),
+            ...(typeof error.retryable === 'boolean' ? { retryable: error.retryable } : {}) },
         ...((typeof logPath === 'string') ? { logPath } : {}),
     };
 }

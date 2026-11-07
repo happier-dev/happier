@@ -9,8 +9,9 @@ import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabiliti
 import { useMachine, useSetting } from '@/sync/domains/state/storage';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
-import { getInstallablesRegistryEntries, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
+import { getInstallablesRegistryEntries, INSTALLABLES_PROJECTION_SECTIONS, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 import { getPreferredLanguage, t } from '@/text';
 import { Modal } from '@/modal';
@@ -38,19 +39,24 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
 
     const installablesPolicyByMachineId = useSetting('installablesPolicyByMachineId');
     const policyAction = useMountedActionExecution(serverId);
+    const accountBindings = useServerCredentialAccountScopeBindings([serverId]);
+    const accountLifetime = accountBindings.values().next().value ?? null;
 
     const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
-        machineId: machineId ?? null,
-        serverId,
+        machineId: accountLifetime?.isCurrent() ? machineId : null,
+        serverId: accountLifetime?.scope.serverId ?? serverId,
+        accountLifetime: accountLifetime ?? undefined,
         enabled: Boolean(machineId && isOnline),
         request: CAPABILITIES_REQUEST_MACHINE_DETAILS,
     });
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        accountLifetime,
         machineId: machineId ?? null,
         serverId,
         // Offline, the last projected metadata stays visible (read-only); only an online machine is asked.
         enabled: Boolean(machineId),
         load: isOnline,
+        sections: INSTALLABLES_PROJECTION_SECTIONS,
     });
     // Stale metadata labels the rows; installing stays gated on the live capabilities status.
     const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
@@ -121,7 +127,11 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
 
     const visible = installables.filter((d) => d.enabled);
     const capabilitiesStatus = isOnline ? detectedCapabilities.status : 'idle';
-    const refreshStatus = React.useCallback(() => refreshDetectedCapabilities(), [refreshDetectedCapabilities]);
+    const refreshStatus = React.useCallback(() => {
+        void policyAction.execute('machines.capabilities.detect', { serverId, machineId }).then(result => {
+            if (!result.ok) Modal.alert(t('common.error'), result.error);
+        }).catch(error => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed')));
+    }, [machineId, policyAction.execute, serverId]);
     const checking = isOnline && detectedCapabilities.status === 'loading';
     // Like the machine's Agents: what is here, then what can be added. Only a finished answer makes a tool one
     // "to install"; a tool still being checked stays with the machine's tools and says so.

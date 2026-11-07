@@ -1,15 +1,16 @@
 import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata, type LinkedExternalSessionV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import type { ExternalSessionAgentId } from '@happier-dev/protocol';
 import type { BundledAgentId } from './types.js';
 import { AGENT_IDS } from './types.js';
-import { isLegacyConfiguredBackendSentinelId } from './compat/legacyConfiguredBackend.js';
+import { isLegacyConfiguredBackendSentinelId, readLegacyConfiguredBackendIdFromMetadata } from './compat/legacyConfiguredBackend.js';
 import { getAgentResumeConfig } from './manifest.js';
 import { resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
-import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from './generated/agentIds.js';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -21,6 +22,16 @@ function hasNonEmptyStringField(metadata: Record<string, unknown>, key: string):
   const raw = metadata[key];
   if (typeof raw !== 'string') return false;
   return raw.trim().length > 0;
+}
+
+/** Exact generated identity; a coincident local id never selects a bundled Agent. */
+export function resolveBundledAgentIdFromContributionIdentity(identity: unknown): BundledAgentId | null {
+  const parsed = PluginContributionIdentityV1Schema.safeParse(identity);
+  if (!parsed.success) return null;
+  return AGENT_IDS.find(agentId => {
+    const bundled = BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId];
+    return bundled.pluginId === parsed.data.pluginId && bundled.localId === parsed.data.localId;
+  }) ?? null;
 }
 
 /**
@@ -70,14 +81,15 @@ export function resolveDeclaredAgentIdFromSessionMetadata(
 }
 
 /** Which evidence tier decided the Agent identity carried by Session metadata. */
-export type SessionMetadataAgentIdentityBasis = 'declared' | 'flavor' | 'vendorResumeKey' | 'none';
+export type SessionMetadataAgentIdentityBasis = 'declared' | 'flavor' | 'vendorResumeKey' | 'birth' | 'none';
 
 /**
  * Canonical Agent-identity reading of Session metadata.
  *
  * Precedence is authority-ordered, not evidence-counting: a declared runtime or
- * linked-external identity wins, then `flavor`, and only when neither exists may
- * a flat vendor resume key infer identity. Several non-empty flat keys with no
+ * linked-external identity wins, then `flavor`, then a flat vendor resume key.
+ * Only before a runtime identity exists can the committed birth select its Agent.
+ * Several non-empty flat keys with no
  * higher authority are ambiguous and fail closed rather than silently selecting
  * the first Agent in catalog order.
  *
@@ -139,6 +151,21 @@ export function resolveSessionMetadataAgentIdentity(metadata: unknown, admittedL
     return {
       agentId: vendorResumeKeyAgentIds[0] ?? null,
       basis: 'vendorResumeKey',
+      vendorResumeKeyAgentIds,
+      ambiguousVendorResumeKeys: false,
+    };
+  }
+
+  // Immutable creation provenance selects the first launch, never a later
+  // cutover. Keep its basis distinct so launch consumers retain initial choices.
+  const birth = SessionCreationCorrespondenceV1ReadSchema.safeParse(record.sessionCreationCorrespondenceV1);
+  if (birth.success && vendorResumeKeyAgentIds.length === 0
+    && !readAcpConfiguredBackendV1FromMetadata(record)
+    && !readLegacyConfiguredBackendIdFromMetadata(record)) {
+    const identity = birth.data.recipe.agentTarget.identity;
+    return {
+      agentId: resolveBundledAgentIdFromContributionIdentity(identity) ?? buildQualifiedPluginContributionKey(identity),
+      basis: 'birth',
       vendorResumeKeyAgentIds,
       ambiguousVendorResumeKeys: false,
     };

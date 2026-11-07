@@ -3,8 +3,10 @@ import {
     managedMachineActionEndpointPathV1, type ManagedMachineActionInputV1, type ManagedMachineActionOutputV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ServerFetch } from '@/sync/http/client';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+export { invokeManagedInstallationResponse } from './managedInstallationTransport';
 
-export type ManagedMachineHttpActionId = 'machines.managed.list' | 'machines.managed.get' | 'machines.managed.cancel' | 'machines.managed.setup.skip';
+export type ManagedMachineHttpActionId = 'machines.managed.list' | 'machines.managed.get' | 'machines.managed.birth.get' | 'machines.managed.cancel' | 'machines.managed.setup.skip';
 
 export class ManagedMachineActionError extends Error {
     constructor(public readonly status: number, public readonly code: string) {
@@ -21,7 +23,12 @@ export function createManagedMachineActionClient(params: Readonly<{ request: Ser
             const response = await params.request(managedMachineActionEndpointPathV1(actionId), {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
                 ...(options?.signal ? { signal: options.signal } : {}),
-            }, { includeAuth: true }).catch((error: unknown) => {
+            }, {
+                includeAuth: true,
+                // These POSTs only read Home rows. Keep silent peers and response
+                // bodies under the same read lifetime as the other census sources.
+                recoveryRead: getActionSpec(actionId).sideEffectClass === 'read' ? 'unbounded' : false,
+            }).catch((error: unknown) => {
                 if (error instanceof Error && error.name === 'AbortError') throw new ManagedMachineActionError(0, 'cancelled');
                 if (error instanceof TypeError) throw new ManagedMachineActionError(0, 'managed_request_failed');
                 throw error;

@@ -17,3 +17,10 @@ export function managedMachineOperationMatchesResource(machine: ManagedMachineV1
             || machine.allocation === 'confirmed-absent' && !machine.resource
                 && snapshot.actionId === 'machines.managed.acquire' && snapshot.state === 'failed';
 }
+
+/** Only the current unanswered installer question can be displayed or answered. */
+export function readManagedInstallationPromptSnapshot(snapshot: ActionOperationSnapshotV1) {
+    if (snapshot.state !== 'running' || snapshot.domainRef?.kind !== 'managedMachine') return null;
+    const task = snapshot.domainRef.bootstrapTask;
+    return task?.prompt ? { ...task.prompt, taskId: task.id } : null;
+}

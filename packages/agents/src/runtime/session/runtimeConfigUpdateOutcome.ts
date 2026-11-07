@@ -21,6 +21,18 @@ export type RuntimeConfigUpdateOutcomeV1 = Readonly<{
   reason?: string;
 }>;
 
+/** Accepted future configuration is not evidence of a currently executing model. */
+export function isRuntimeConfigUpdateOutcomeDeferred(
+  outcome: RuntimeConfigUpdateOutcomeV1 | void | null | undefined,
+): boolean {
+  return outcome?.status === 'applied' && (
+    outcome.timing === 'before_next_prompt'
+    || outcome.timing === 'queued_until_safe_window'
+    || outcome.timing === 'scheduled_for_next_prompt'
+    || outcome.timing === 'next_idle'
+  );
+}
+
 /**
  * Whether a runtime-config update outcome means the override took effect and should NOT be retried.
  *
