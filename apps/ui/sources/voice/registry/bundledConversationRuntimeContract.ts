@@ -78,14 +78,16 @@ export type BundledVoicePcmMediaController = Readonly<{
   pcm: VoicePcmConnectionMedia;
   enqueueOutput(base64Pcm16Le: string): boolean;
   clearOutput(): void;
-  waitForOutputDrain(signal: AbortSignal): Promise<void>;
+  waitForOutputDrain(signal: AbortSignal): Promise<import('@happier-dev/plugin-sdk/voice/client').VoiceOutputDrainResult | void>;
+  captureOutputPlayback?(): import('@happier-dev/plugin-sdk/voice/client').VoiceOutputPlayback;
 }>;
 
 export type BundledVoicePcmConnection = Readonly<{
   connection: VoiceRealtimeConnection;
   enqueueOutput(base64Pcm16Le: string): boolean;
   clearOutput(): void;
-  waitForOutputDrain(signal: AbortSignal): Promise<void>;
+  waitForOutputDrain(signal: AbortSignal): Promise<import('@happier-dev/plugin-sdk/voice/client').VoiceOutputDrainResult | void>;
+  captureOutputPlayback?(): import('@happier-dev/plugin-sdk/voice/client').VoiceOutputPlayback;
 }>;
 
 /**
@@ -340,6 +342,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   }>): void;
   clearAttemptStatus(controlSessionId: string): void;
   createToolBarrier(input: Readonly<{
+    playHostText?: import('@happier-dev/plugin-sdk/voice/client').VoiceHostTextPlayback;
     controlSessionId: string;
     adapterId: string;
     /** Provider-declared effect-call custody, fail-closed for undeclared adapters. */
@@ -398,6 +401,7 @@ type BundledRealtimeProviderRuntimeConfigBase = Readonly<{
   encodeToolResults(results: readonly VoiceRealtimeToolResultV1[]): readonly VoiceRealtimeJsonValue[];
   encodeToolContinuation(responseId: string): VoiceRealtimeJsonValue;
   beforeToolContinuation?(responseId: string, signal: AbortSignal): Promise<void>;
+  playHostText?: import('@happier-dev/plugin-sdk/voice/client').VoiceHostTextPlayback;
   beforeInterrupt?(): Promise<void> | void;
   encodePostCancelControls?(): readonly VoiceRealtimeJsonValue[];
   encodePostBargeInControls?(): readonly VoiceRealtimeJsonValue[];

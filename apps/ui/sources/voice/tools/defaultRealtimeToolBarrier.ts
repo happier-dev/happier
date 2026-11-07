@@ -1,7 +1,8 @@
 import type {
-  VoiceConversationToolEffectCalls,
+  VoiceConversationToolEffectCalls} from '@happier-dev/protocol/plugins/contributions/voice';
+import type {
   VoiceRealtimeToolResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
@@ -21,6 +22,7 @@ import { VoiceAssistantActionSchema } from '@happier-dev/protocol/voice/actions'
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveVoiceActionExecution, resolveVoiceExecutionToolName, VOICE_ACTION_EXECUTE_TOOL_NAME } from './voiceActionExecution';
 import { isCurrentUiContextVoiceAction } from './resolveDisabledVoiceActionIds';
+import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 import {
   createRealtimeToolBarrier,
   RealtimeToolExecutionError,
@@ -44,6 +46,7 @@ type VoiceHandlerBarrierDeps = Readonly<{
 }>;
 
 type DefaultRealtimeToolBarrierDeps = Readonly<{
+  playHostText?: VoiceHostTextPlayback;
   resolveSessionId: (explicitSessionId?: string | null) => string | null;
   exposure?: 'voice_assistant' | 'current_ui_only';
   currentSessionAddress?: SessionAddress | null;
@@ -127,6 +130,9 @@ export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrie
     handlers: createVoiceToolHandlers({
       resolveSessionId: deps.resolveSessionId,
       currentSessionAddress: deps.currentSessionAddress,
+      // Realtime lacks Local's host tool-result speaker. Missing capability
+      // therefore means ordinary Ask, never an unfinishable read-back binding.
+      playHostText: deps.playHostText ?? (async () => ({ status: 'unavailable', code: 'host_text_playback_unavailable' })),
       ...(deps.currentUiContext ? { currentUiContext: deps.currentUiContext } : {}),
     }),
     effectCalls: deps.effectCalls,

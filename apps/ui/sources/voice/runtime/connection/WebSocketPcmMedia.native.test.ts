@@ -42,6 +42,37 @@ describe('native WebSocketPcmMedia', () => {
     return { media, onInputChunk, onOutputLevel, ensureActive, inputChunkReceived: inputChunkReceived.promise };
   }
 
+  it.each(['clear', 'interrupt', 'stop', 'abort'] as const)('never reports a natural drain after %s', async outcome => {
+    const { media } = await createMedia();
+    await media.pcm.start(new AbortController().signal);
+    media.enqueueOutput('AQACAA==');
+    const controller = new AbortController();
+    const drain = media.waitForOutputDrain(controller.signal);
+    if (outcome === 'clear') media.clearOutput();
+    if (outcome === 'interrupt') { media.beginOutputInterruptionCandidate(); media.resolveOutputInterruptionCandidate('confirmed'); }
+    if (outcome === 'stop') await media.pcm.stop();
+    if (outcome === 'abort') controller.abort();
+    expect(await drain).toBe('cancelled');
+  });
+
+  it.each(['completed', 'clear', 'suspended'] as const)('captures the whole native read-back before waiting: %s', async outcome => {
+    const { media } = await createMedia();
+    await media.pcm.start(new AbortController().signal);
+    const playback = media.captureOutputPlayback();
+    media.enqueueOutput('AQACAA==');
+    if (outcome === 'clear') media.clearOutput();
+    if (outcome === 'suspended') {
+      media.pcm.setOutputFocusState?.('suspended');
+      media.pcm.setOutputFocusState?.('active');
+    }
+    const drain = playback.waitForDrain(new AbortController().signal);
+    if (outcome === 'completed') {
+      const capture = getSharedVoicePcmCapture()!.getSnapshot();
+      native.emitEvent('playbackDrained', { streamId: capture.streamId!, generation: capture.generation });
+    }
+    expect(await drain).toBe(outcome === 'completed' ? 'completed' : 'cancelled');
+  });
+
   it('uses the one shared native capture/player lifecycle with a stream-scoped output lease', async () => {
     const { media, onInputChunk, onOutputLevel, ensureActive, inputChunkReceived } = await createMedia();
     const terminal = vi.fn();

@@ -157,6 +157,68 @@ afterEach(() => {
 describe('xAI Realtime public runtime contribution', () => {
   type VoiceConnectionDriver = Parameters<VoiceConnectionMediaHost['createPcmConnection']>[0]['driver'];
 
+  it.each(['completed', 'cancelled', 'interrupted', 'unrelated', 'model', 'legacy_media'] as const)('proves the forced host summary and audible tail (%s)', async outcome => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const runtime = createXaiRealtimeProviderRuntime();
+    const prepared = await prepare(runtime);
+    let driver!: VoiceConnectionDriver;
+    let finishDrain!: (result: 'completed' | 'cancelled') => void;
+    let noteDrain!: () => void;
+    const draining = new Promise<void>(resolve => { noteDrain = resolve; });
+    const tail = new Promise<'completed' | 'cancelled'>(resolve => { finishDrain = resolve; });
+    const captureOutputPlayback = vi.fn(() => {
+      expect(FakeWebSocket.instances.at(-1)!.sent.map(raw => JSON.parse(raw).type)).not.toContain('conversation.item.create');
+      return { waitForDrain: async () => { noteDrain(); return await tail; } };
+    });
+    await runtime.createConnection({
+      session: prepared.result.session, attemptId: 1, mic: { getStream: () => null },
+      interruption: { duckGain: 0.18, retainedOutputMaxMs: 1_500 }, levels: { onOutputLevel: vi.fn() },
+      media: { createSdkHandleConnection: () => { throw new Error('unexpected'); }, createWebRtcConnection: () => { throw new Error('unexpected'); },
+        createPcmConnection: input => {
+          driver = input.driver;
+          return { connection: createConnection(), enqueueOutput: () => true, clearOutput: () => {},
+            ...(outcome === 'legacy_media' ? {} : { captureOutputPlayback }),
+            waitForOutputDrain: async () => { noteDrain(); return await tail; } };
+        } },
+      tools: [], ui: {} as never, signal: new AbortController().signal,
+      credentials: { phase: 'connection', mediated: null, raw: null }, execution: { kind: 'direct_media' },
+    });
+    await driver.open({ signal: new AbortController().signal, onControl: vi.fn(), onTransport: vi.fn(), onRemoteClose: vi.fn() });
+    expect(runtime.playHostText).toBeTypeOf('function');
+    const controller = new AbortController();
+    let settled = false;
+    const speaking = runtime.playHostText!({ text: 'Remove the webhook.', signal: controller.signal }).then(result => { settled = true; return result; });
+    const socket = FakeWebSocket.instances.at(-1)!;
+    if (outcome === 'legacy_media') {
+      expect(socket.sent.map(raw => JSON.parse(raw).type)).not.toContain('conversation.item.create');
+      expect(await speaking).toEqual({ status: 'unavailable', code: 'host_text_playback_unavailable' });
+      await driver.close({ code: 'user_stop' });
+      return;
+    }
+    expect(captureOutputPlayback).toHaveBeenCalledOnce();
+    const forced = JSON.parse(socket.sent.at(-1)!);
+    expect(socket.sent.map(raw => JSON.parse(raw)).at(-1)).toMatchObject({ type: 'conversation.item.create', item: {
+      type: 'force_message', content: [{ type: 'output_text', text: 'Remove the webhook.' }],
+    } });
+    const emit = (event: unknown) => socket.emit('message', { data: JSON.stringify(event) });
+    emit({ type: 'response.created', response: { id: 'host-response' } });
+    const itemId = outcome === 'model' ? 'model-item' : forced.item.id;
+    emit({ type: 'response.output_audio.delta', response_id: 'host-response', item_id: itemId, delta: 'AQACAA==' });
+    emit({ type: 'response.output_audio_transcript.done', response_id: 'host-response', item_id: itemId, transcript: outcome === 'unrelated' ? 'Okay.' : 'Remove the webhook.' });
+    emit({ type: 'response.done', response: { id: 'host-response', status: 'completed' } });
+    if (outcome === 'unrelated' || outcome === 'model') {
+      finishDrain('completed');
+      expect(await speaking).toEqual({ status: 'unavailable', code: 'host_text_playback_unavailable' });
+    } else {
+      await draining;
+      expect(settled).toBe(false);
+      if (outcome === 'interrupted') await runtime.beforeInterrupt?.();
+      finishDrain(outcome === 'cancelled' ? 'cancelled' : 'completed');
+      expect(await speaking).toEqual({ status: outcome === 'completed' ? 'completed' : 'cancelled' });
+    }
+    await driver.close({ code: 'user_stop' });
+  });
+
   it.each([
     ['initial', 'immediate', true],
     ['reconnect', 'immediate', false],

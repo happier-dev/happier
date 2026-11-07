@@ -11,6 +11,22 @@ import {
 } from './WebSocketPcmMedia';
 
 describe('WebSocketPcmMedia', () => {
+  it.each(['completed', 'clear', 'suspended'] as const)('captures the whole read-back playback before waiting: %s', async outcome => {
+    const harness = await createBrowserPlaybackHarness();
+    const { media } = harness;
+    await media.pcm.start(new AbortController().signal);
+    const playback = media.captureOutputPlayback();
+    harness.enqueueSeconds(1, 1_000);
+    if (outcome === 'clear') media.clearOutput();
+    if (outcome === 'suspended') {
+      media.pcm.setOutputFocusState?.('suspended');
+      media.pcm.setOutputFocusState?.('active');
+    }
+    harness.context.currentTime = 1;
+    harness.sources[0]?.onended?.();
+    expect(await playback.waitForDrain(new AbortController().signal)).toBe(outcome === 'completed' ? 'completed' : 'cancelled');
+    await media.pcm.stop();
+  });
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
     for (const cleanup of cleanups.splice(0)) await cleanup();
@@ -56,14 +72,14 @@ describe('WebSocketPcmMedia', () => {
       expect.closeTo(1_000 / 32_767), expect.closeTo(2_000 / 32_767), expect.closeTo(3_000 / 32_767),
     ]);
     let drained = false;
-    const drain = harness.media.waitForOutputDrain(new AbortController().signal).then(() => { drained = true; });
+    const drain = harness.media.waitForOutputDrain(new AbortController().signal).then(result => { drained = true; return result; });
     harness.sources[0]!.onended?.();
     harness.sources[1]!.onended?.();
     await Promise.resolve();
     expect(drained).toBe(false);
     harness.context.currentTime = 12;
     harness.sources[2]!.onended?.();
-    await drain;
+    expect(await drain).toBe('completed');
     expect(harness.media.playbackCursorMs()).toBe(12_000);
     expect(harness.sources.every((source) => source.disconnect.mock.calls.length === 1)).toBe(true);
     await harness.media.pcm.stop();
@@ -85,7 +101,7 @@ describe('WebSocketPcmMedia', () => {
     expect(harness.media.beginOutputInterruptionCandidate()).toBe('ducked');
     const drain = harness.media.waitForOutputDrain(new AbortController().signal);
     harness.media.resolveOutputInterruptionCandidate('confirmed');
-    await drain;
+    expect(await drain).toBe('cancelled');
     expect(harness.sources.every((source) => source.stop.mock.calls.length === 1 && source.onended === null)).toBe(true);
     harness.media.resolveOutputInterruptionCandidate('false_alarm');
     expect(harness.sources).toHaveLength(3);
@@ -140,7 +156,7 @@ describe('WebSocketPcmMedia', () => {
     expect(harness.sources.every((source) => source.stop.mock.calls.length === 0)).toBe(true);
     const drain = harness.media.waitForOutputDrain(new AbortController().signal);
     await harness.media.pcm.stop();
-    await drain;
+    expect(await drain).toBe('cancelled');
     expect(harness.sources.every((source) => source.stop.mock.calls.length === 1 && source.onended === null)).toBe(true);
     expect(harness.media.outputLevel()).toBe(0);
   });

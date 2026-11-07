@@ -126,6 +126,12 @@ export type VoiceRealtimeConnectionCloseReason = Readonly<{
     detail?: string;
 }>;
 export type VoiceOutputInterruptionResolution = 'false_alarm' | 'confirmed';
+/** A natural audible drain is distinct from clear, interruption and teardown. */
+export type VoiceOutputDrainResult = 'completed' | 'cancelled';
+/** Capture before requesting host speech, so earlier clear/mute cannot look like a natural drain. */
+export type VoiceOutputPlayback = Readonly<{
+    waitForDrain(signal: AbortSignal): Promise<VoiceOutputDrainResult>;
+}>;
 export type VoiceHostTextPlayback = (input: Readonly<{
     text: string;
     signal: AbortSignal;
@@ -234,7 +240,9 @@ export type VoiceConnectionMediaHost = Readonly<{
         connection: VoiceRealtimeConnection;
         enqueueOutput(base64Pcm16Le: string): boolean;
         clearOutput(): void;
-        waitForOutputDrain(signal: AbortSignal): Promise<void>;
+        /** Older media hosts return void, which is never proof of completion. */
+        waitForOutputDrain(signal: AbortSignal): Promise<VoiceOutputDrainResult | void>;
+        captureOutputPlayback?(): VoiceOutputPlayback;
     }>;
 }>;
 
@@ -513,6 +521,8 @@ export type RealtimeVoiceProviderRuntime = Readonly<{
     encodeToolResults(results: readonly VoiceRealtimeToolResult[]): readonly VoiceRealtimeJsonValue[];
     encodeToolContinuation(responseId: string): VoiceRealtimeJsonValue;
     beforeToolContinuation?(responseId: string, signal: AbortSignal): Promise<void>;
+    /** Verbatim host text; completed means this utterance actually finished playing. */
+    playHostText?: VoiceHostTextPlayback;
     beforeInterrupt?(): Promise<void> | void;
     forgetProviderConversation?(): Promise<void>;
     dispose?(): Promise<void> | void;

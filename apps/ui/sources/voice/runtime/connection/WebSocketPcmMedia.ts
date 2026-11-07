@@ -14,6 +14,8 @@ import type {
 import type {
   VoiceOutputFocusApplication,
   VoiceOutputFocusState,
+  VoiceOutputDrainResult,
+  VoiceOutputPlayback,
 } from '@happier-dev/plugin-sdk/voice/client';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 
@@ -31,7 +33,8 @@ type OutputScheduler = Readonly<{
   setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
   clear(): void;
   stop(): void;
-  waitForDrain(signal: AbortSignal): Promise<void>;
+  waitForDrain(signal: AbortSignal): Promise<VoiceOutputDrainResult>;
+  captureOutputPlayback(): VoiceOutputPlayback;
   playbackCursorMs(): number;
   outputLevel(): number;
 }>;
@@ -63,6 +66,7 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
   let stopped = false;
   let candidateMode: VoicePlaybackInterruptionMode | null = null;
   let outputFocusState: VoiceOutputFocusState = 'active';
+  let outputClearEpoch = 0;
   const gainNode = typeof input.context.createGain === 'function' ? input.context.createGain() : null;
   if (gainNode) gainNode.connect(input.context.destination);
   const setGain = (value: number): boolean => {
@@ -84,10 +88,10 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
         : 1;
     return setGain(gain) ? 'applied' : 'unsupported';
   };
-  const drainWaiters = new Set<() => void>();
+  const drainWaiters = new Set<(result: VoiceOutputDrainResult) => void>();
   const settleDrain = () => {
     if (sources.size > 0 || retainedSamples > 0) return;
-    for (const resolve of drainWaiters) resolve();
+    for (const resolve of drainWaiters) resolve('completed');
     drainWaiters.clear();
   };
   const appendRetained = (samples: Int16Array, allowPartial: boolean): boolean => {
@@ -125,6 +129,9 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
     retainedSamples = 0;
   };
   const clear = (): void => {
+    outputClearEpoch += 1;
+    for (const resolve of drainWaiters) resolve('cancelled');
+    drainWaiters.clear();
     stopScheduled(false);
     clearRetained();
     candidateMode = null;
@@ -165,7 +172,7 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
     retainedSamples = 0;
     for (const samples of pending) schedule(samples);
   };
-  return Object.freeze({
+  const scheduler: OutputScheduler = Object.freeze({
     enqueue(samples: Int16Array): boolean {
       if (stopped || samples.length === 0) return false;
       if (candidateMode === 'retained') {
@@ -211,6 +218,7 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
       settleDrain();
     },
     setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication {
+      if (state === 'suspended') outputClearEpoch += 1;
       outputFocusState = state;
       return applyOutputFocus();
     },
@@ -221,14 +229,24 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
       clear();
       try { gainNode?.disconnect(); } catch {}
     },
-    async waitForDrain(signal: AbortSignal): Promise<void> {
-      if (signal.aborted || (sources.size === 0 && retainedSamples === 0)) return;
-      await new Promise<void>((resolve) => {
-        const done = () => { signal.removeEventListener('abort', aborted); drainWaiters.delete(done); resolve(); };
-        const aborted = () => done();
+    async waitForDrain(signal: AbortSignal): Promise<VoiceOutputDrainResult> {
+      if (signal.aborted || stopped) return 'cancelled';
+      if (sources.size === 0 && retainedSamples === 0) return 'completed';
+      return await new Promise<VoiceOutputDrainResult>((resolve) => {
+        const done = (result: VoiceOutputDrainResult) => { signal.removeEventListener('abort', aborted); drainWaiters.delete(done); resolve(result); };
+        const aborted = () => done('cancelled');
         drainWaiters.add(done);
         signal.addEventListener('abort', aborted, { once: true });
       });
+    },
+    captureOutputPlayback(): VoiceOutputPlayback {
+      const epoch = outputClearEpoch;
+      const audible = outputFocusState !== 'suspended';
+      return { waitForDrain: async signal => {
+        if (!audible || epoch !== outputClearEpoch) return 'cancelled';
+        const result = await scheduler.waitForDrain(signal);
+        return epoch === outputClearEpoch ? result : 'cancelled';
+      } };
     },
     playbackCursorMs: () => {
       const now = input.context.currentTime;
@@ -243,6 +261,7 @@ function createDefaultOutputScheduler(input: Parameters<CreateOutputScheduler>[0
     },
     outputLevel: () => candidateMode === 'retained' || outputFocusState === 'suspended' ? 0 : level,
   });
+  return scheduler;
 }
 
 export function createWebSocketPcmMedia(input: Readonly<{
@@ -425,7 +444,10 @@ export function createWebSocketPcmMedia(input: Readonly<{
     },
     beginOutputInterruptionCandidate: pcm.beginOutputInterruptionCandidate,
     resolveOutputInterruptionCandidate: pcm.resolveOutputInterruptionCandidate,
-    async waitForOutputDrain(signal: AbortSignal) { await playback?.waitForDrain(signal); },
+    async waitForOutputDrain(signal: AbortSignal) { return await playback?.waitForDrain(signal) ?? 'cancelled'; },
+    captureOutputPlayback(): VoiceOutputPlayback {
+      return playback?.captureOutputPlayback() ?? { waitForDrain: async () => 'cancelled' };
+    },
     playbackCursorMs: () => playback?.playbackCursorMs() ?? 0,
     inputLevel: () => capture?.level() ?? latestInputLevel,
     outputLevel: () => playback?.outputLevel() ?? 0,

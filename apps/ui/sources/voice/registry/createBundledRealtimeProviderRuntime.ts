@@ -999,6 +999,7 @@ export function createBundledRealtimeProviderRuntime(
             enqueueOutput: pcmMedia.enqueueOutput,
             clearOutput: pcmMedia.clearOutput,
             waitForOutputDrain: pcmMedia.waitForOutputDrain,
+            ...(pcmMedia.captureOutputPlayback ? { captureOutputPlayback: pcmMedia.captureOutputPlayback } : {}),
           });
         },
       });
@@ -1478,6 +1479,7 @@ export function createBundledRealtimeProviderRuntime(
       }
     },
     createToolBarrier: ({ controlSessionId }) => host.createToolBarrier({
+      ...(config.playHostText ? { playHostText: config.playHostText } : {}),
       controlSessionId,
       adapterId: providerId,
       effectCalls: config.protocol.toolEffectCalls ?? 'none',

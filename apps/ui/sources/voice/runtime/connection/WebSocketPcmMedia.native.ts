@@ -13,6 +13,8 @@ import type {
 import type {
   VoiceOutputFocusApplication,
   VoiceOutputFocusState,
+  VoiceOutputDrainResult,
+  VoiceOutputPlayback,
 } from '@happier-dev/plugin-sdk/voice/client';
 import { decodePcm16LeBase64 } from './Pcm16LeBase64';
 
@@ -112,6 +114,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
   let latestOutputLevel = 0;
   let interruptionCandidateActive = false;
   let outputFocusState: VoiceOutputFocusState = 'active';
+  let outputClearEpoch = 0;
   const terminalListeners = new Set<(error: Error) => void>();
 
   const publishOutputLevel = (level: number): void => {
@@ -290,6 +293,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
     },
     playbackCursorMs: (): number => playbackLease?.playbackCursorMs() ?? 0,
     setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication {
+      if (state === 'suspended') outputClearEpoch += 1;
       outputFocusState = state;
       return applyOutputGain();
     },
@@ -309,6 +313,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
       if (!playback || !interruptionCandidateActive) return;
       interruptionCandidateActive = false;
       if (resolution === 'confirmed') {
+        outputClearEpoch += 1;
         playback.clear();
         publishOutputLevel(0);
         return;
@@ -317,6 +322,18 @@ export function createWebSocketPcmMedia(input: Readonly<{
     },
   });
 
+  const captureOutputPlayback = (): VoiceOutputPlayback => {
+    const playback = playbackLease;
+    const epoch = outputClearEpoch;
+    const audible = outputFocusState !== 'suspended';
+    return { async waitForDrain(signal) {
+      if (!playback || !audible || epoch !== outputClearEpoch || stopped || terminalError || signal.aborted) return 'cancelled';
+      await waitForDrainOrAbort(playback, signal);
+      return signal.aborted || stopped || terminalError || playbackLease !== playback || outputClearEpoch !== epoch
+        ? 'cancelled' : 'completed';
+    } };
+  };
+
   return Object.freeze({
     pcm,
     enqueueOutput(base64Pcm16Le: string): boolean {
@@ -324,6 +341,7 @@ export function createWebSocketPcmMedia(input: Readonly<{
       return playbackLease.enqueue(base64Pcm16Le);
     },
     clearOutput(): void {
+      outputClearEpoch += 1;
       interruptionCandidateActive = false;
       playbackLease?.clear();
       applyOutputGain();
@@ -331,11 +349,8 @@ export function createWebSocketPcmMedia(input: Readonly<{
     },
     beginOutputInterruptionCandidate: pcm.beginOutputInterruptionCandidate,
     resolveOutputInterruptionCandidate: pcm.resolveOutputInterruptionCandidate,
-    async waitForOutputDrain(signal: AbortSignal): Promise<void> {
-      const playback = playbackLease;
-      if (!playback) return;
-      await waitForDrainOrAbort(playback, signal);
-    },
+    captureOutputPlayback,
+    waitForOutputDrain: (signal: AbortSignal): Promise<VoiceOutputDrainResult> => captureOutputPlayback().waitForDrain(signal),
     playbackCursorMs: () => playbackLease?.playbackCursorMs() ?? 0,
     inputLevel: () => latestInputLevel,
     outputLevel: () => latestOutputLevel,

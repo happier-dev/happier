@@ -11,6 +11,7 @@ import type {
 import { XAI_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import { XaiRealtimeSettingsV1Schema } from '../../protocol/voice/settings.js';
 import { createXaiWebSocketDriver } from './connection.js';
+import { createHostTextPlayback } from './hostTextPlayback.js';
 import type { XaiWebSocketDriverInput } from './connection.js';
 import {
   createXaiRealtimeProtocolAdapter,
@@ -56,6 +57,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
   let activeMedia: Readonly<{
     attemptId: number;
     media: VoicePcmConnection;
+    hostText: ReturnType<typeof createHostTextPlayback>;
   }> | null = null;
 
   const protocol = createXaiRealtimeProtocolAdapter({
@@ -176,7 +178,7 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
     settingsOperations,
     microphoneMode: 'host_pcm',
     outputLevelMeter: 'measured',
-    async createConnection({ session, attemptId, media, tools }) {
+    async createConnection({ session, attemptId, media, tools, signal }) {
       const config = record(session.config);
       const settings = XaiRealtimeSettingsV1Schema.safeParse(config?.settings);
       const auth = config?.auth as VoiceClientAuthArtifact | undefined;
@@ -224,13 +226,25 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
         // finished sending, so it must not move the meter.
         onAudioDelta: (value) => attemptMedia?.enqueueOutput(value) ?? false,
       });
+      const hostText = createHostTextPlayback({ send: driver.sendControl,
+        capture: () => attemptMedia?.captureOutputPlayback?.() ?? null });
+      signal.addEventListener('abort', hostText.cancel, { once: true });
+      const observedDriver = { ...driver,
+        open: (handlers: Parameters<typeof driver.open>[0]) => driver.open({ ...handlers,
+          onControl: event => { hostText.observe(event); handlers.onControl(event); },
+          onRemoteClose: reason => { hostText.cancel(); handlers.onRemoteClose(reason); },
+        }),
+        close: async (reason: Parameters<typeof driver.close>[0]) => {
+          hostText.cancel(); signal.removeEventListener('abort', hostText.cancel); await driver.close(reason);
+        },
+      };
       attemptMedia = media.createPcmConnection({
-        driver,
+        driver: observedDriver,
         input: { sampleRate: 24_000, chunkMs: 100 },
         output: { sampleRate: 24_000 },
         onInputChunk: driver.sendAudioChunk,
       });
-      activeMedia = Object.freeze({ attemptId, media: attemptMedia });
+      activeMedia = Object.freeze({ attemptId, media: attemptMedia, hostText });
       return attemptMedia.connection;
     },
     encodeToolResults: (results) => Object.freeze(results.map(encodeXaiToolResult)),
@@ -239,8 +253,11 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
       await activeMedia?.media.waitForOutputDrain(signal);
     },
     beforeInterrupt() {
+      activeMedia?.hostText.cancel();
       activeMedia?.media.clearOutput();
     },
+    playHostText: input => activeMedia?.hostText.play(input)
+      ?? Promise.resolve({ status: 'unavailable', code: 'host_text_playback_unavailable' }),
     encodeContextUpdate: (text) => Object.freeze<readonly VoiceRealtimeJsonValue[]>([{
       type: 'conversation.item.create',
       item: {
