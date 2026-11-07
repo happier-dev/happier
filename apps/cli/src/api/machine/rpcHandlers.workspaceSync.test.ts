@@ -142,6 +142,7 @@ describe('workspace sync machine RPC handlers', () => {
     })).resolves.toEqual({
       error: 'workspace root is unsafe',
       errorCode: 'workspace_root_unsafe',
+      failureCause: expect.any(Object),
     });
     await expect(rpcHandlerManager.handleRequest({
       method: `machine-1:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ}`,
@@ -151,7 +152,7 @@ describe('workspace sync machine RPC handlers', () => {
         path: 'src/index.ts',
         maxBytes: 1024,
       },
-    })).resolves.toEqual({ error: 'permission denied' });
+    })).resolves.toEqual({ error: 'permission denied', failureCause: expect.any(Object) });
   });
 
   it('routes lifecycle, conflicts and previews through the one managed controller', async () => {

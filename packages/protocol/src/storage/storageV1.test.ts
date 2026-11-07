@@ -163,6 +163,18 @@ describe('storage V1 contract', () => {
     expect(HappierStorageSummaryV1Schema.safeParse({ ...summary, sizedAt: undefined }).success).toBe(false);
   });
 
+  it('reads suggestion preview coverage while accepting older complete summaries without a total', () => {
+    const preview = { ...summary, suggestionsTotalCount: 1200, suggestionsSafeTop: [item],
+      suggestionsSafeTotalCount: 1100, suggestionsSafeFreesBytes: 2048 };
+    expect(HappierStorageSummaryV1Schema.parse(preview)).toEqual(preview);
+    const older = { ...summary, suggestionsTop: Array.from({ length: 20 }, () => item) };
+    expect(HappierStorageSummaryV1Schema.parse(older)).toEqual(older);
+    expect(HappierStorageSummaryV1Schema.parse({ ...summary, suggestionsTop: [], suggestionsTotalCount: 0 }).suggestionsTotalCount).toBe(0);
+    for (const suggestionsTotalCount of [-1, 0.5, '1200']) {
+      expect(HappierStorageSummaryV1Schema.safeParse({ ...summary, suggestionsTotalCount }).success).toBe(false);
+    }
+  });
+
   it('preserves optional per-volume verified-Safe bytes without coercing invalid measurements', () => {
     const volume = summary.volumes[0]!;
     const withCanGo = { ...summary, volumes: [{ ...volume, canGoBytes: 2048 },
@@ -192,16 +204,16 @@ describe('storage V1 contract', () => {
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)).toMatchObject({ rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.summary.get' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST)).toMatchObject({ rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.category.list' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_WATCH)).toMatchObject({ rpcClassification: 'internal_only' });
-    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH)).toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'custodian_only', rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.size.refresh' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH)).toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'manage', rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.size.refresh' });
     for (const [method, actionSpecId] of [
       [RPC_METHODS.DAEMON_STORAGE_PILE_SET, 'machines.storage.pile.set'],
       [RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE, 'machines.storage.trash.move'],
       [RPC_METHODS.DAEMON_STORAGE_DELETE_NOW, 'machines.storage.deleteNow'],
       [RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY, 'machines.storage.trash.empty'],
       [RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE, 'machines.storage.trash.restore'],
-      [RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_DECLINE, 'machines.storage.suggestions.decline'],
     ] as const) expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'use', rpcClassification: 'action_spec_bound', actionSpecId });
-    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'use' });
-    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'custodian_only' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_DECLINE)).toMatchObject({ routeClass: 'server_required', sharedMachineAccess: 'manage', rpcClassification: 'action_spec_bound', actionSpecId: 'machines.storage.suggestions.decline' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'manage' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST)).toMatchObject({ routeClass: 'direct_ephemeral', sharedMachineAccess: 'manage' });
   });
 });

@@ -11,10 +11,11 @@ const policyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnor
 const contentPolicy = { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) };
 const credentials = { token: 'requester-bearer', encryption: null };
 
-async function networkBoundary(openCarrier: boolean) {
+async function networkBoundary(openCarrier: boolean, nativeMachineId?: string) {
   const calls: Readonly<{ credentials: StoredCredentials; machineId: string; method: string }>[] = [];
   let closed = false;
   let network: PrivateProjectSyncNetwork | undefined;
+  let configuredMachineId: string | undefined;
   async function openTunnel(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'file_transfer' }>): Promise<FiniteTransferMachineTunnel>;
   async function openTunnel(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>): Promise<WorkspaceSyncMachineTunnel>;
   async function openTunnel(request: WorkspaceSyncMachineTunnelOpenInput): Promise<FiniteTransferMachineTunnel | WorkspaceSyncMachineTunnel> {
@@ -30,9 +31,11 @@ async function networkBoundary(openCarrier: boolean) {
     snapshot: { source: 'network', workspaceRefs: [], relationships: [], organizations: [], rows: [],
       graphRevision: 'absent', loadedAtMs: 0, scopeKey: 'requester' },
     assertTransferCurrent: async () => {},
+    ...(nativeMachineId ? { executionIdentity: { kind: 'isolated' as const, separationRequired: true,
+      requester: { serverId: 'profile', accountId: 'requester', machineId: nativeMachineId, installationId: 'installation' } } } : {}),
     release: async () => {},
     context: { signal: new AbortController().signal },
-    createNativeSync: async request => { network = request.network; throw stopAtNativeBoundary; },
+    createNativeSync: async request => { network = request.network; configuredMachineId = request.configuration.machineId; throw stopAtNativeBoundary; },
   }, {
     resolveNativeAgent: async () => ({ executablePath: '/verified/agent' }),
     refreshProjectRows: readProjectAccountRows,
@@ -49,10 +52,15 @@ async function networkBoundary(openCarrier: boolean) {
     ...(openCarrier ? { openMachineCarrierTunnel: openTunnel } : {}),
   })).rejects.toBe(stopAtNativeBoundary);
   if (!network) throw new Error('Native network was not produced');
-  return { network, calls, isClosed: () => closed };
+  return { network, calls, configuredMachineId, isClosed: () => closed };
 }
 
 describe('private Workspace Sync source network boundary', () => {
+  it('places the native Sync worker on the admitted requester Machine when it is the source', async () => {
+    const boundary = await networkBoundary(true, 'source');
+    expect(boundary.configuredMachineId).toBe('source');
+  });
+
   it('refuses an unavailable requester carrier before allocating a source export', async () => {
     const boundary = await networkBoundary(false);
     await expect(boundary.network.prepareSourceSeed({ operationId: 'seed', sourceMachineId: 'source',

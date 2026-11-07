@@ -100,12 +100,12 @@ export function createCliWorkspaceSyncActionDeps(
             : {}),
         },
         context,
-        effectActionId: 'workspace.sync.relationship.create',
+        effectActionId: 'replaceRelationshipId' in input ? 'workspace.sync.relationship.replace' : 'workspace.sync.relationship.create',
         exactMachine: true,
         ...(signal ? { signal } : {}),
       });
     },
-    workspaceSyncRelationshipTerminate: async ({ input, serverId, signal }) => {
+    workspaceSyncRelationshipTerminate: async ({ input, serverId, context, signal }) => {
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
@@ -113,6 +113,7 @@ export function createCliWorkspaceSyncActionDeps(
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE,
+        context, effectActionId: 'workspace.sync.relationship.terminate',
         request: WorkspaceSyncRelationshipIdV1Schema.parse({ relationshipId: input.relationshipId }),
         exactMachine: true,
         ...(signal ? { signal } : {}),
@@ -120,7 +121,7 @@ export function createCliWorkspaceSyncActionDeps(
       if (readRecord(response).ok !== true) throw Object.assign(new Error('Invalid Workspace Sync terminate response'), { code: 'action_failed' });
       return { v: 1 as const, relationshipId: input.relationshipId, terminated: true as const };
     },
-    workspaceSyncRelationshipDisable: async ({ input, serverId, signal }) => {
+    workspaceSyncRelationshipDisable: async ({ input, serverId, context, signal }) => {
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
@@ -128,6 +129,7 @@ export function createCliWorkspaceSyncActionDeps(
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE,
+        context, effectActionId: 'workspace.sync.relationship.disable',
         request: WorkspaceSyncRelationshipIdV1Schema.parse({ relationshipId: input.relationshipId }),
         exactMachine: true,
         ...(signal ? { signal } : {}),
@@ -135,7 +137,7 @@ export function createCliWorkspaceSyncActionDeps(
       if (readRecord(response).ok !== true) throw Object.assign(new Error('Invalid Workspace Sync pause response'), { code: 'action_failed' });
       return { v: 1 as const, relationshipId: input.relationshipId, enabled: false as const };
     },
-    workspaceSyncRelationshipEnable: async ({ input, serverId, signal }) => {
+    workspaceSyncRelationshipEnable: async ({ input, serverId, context, signal }) => {
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
@@ -143,6 +145,7 @@ export function createCliWorkspaceSyncActionDeps(
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME,
+        context, effectActionId: 'workspace.sync.relationship.enable',
         request: WorkspaceSyncRelationshipIdV1Schema.parse({ relationshipId: input.relationshipId }),
         exactMachine: true,
         ...(signal ? { signal } : {}),
@@ -150,7 +153,7 @@ export function createCliWorkspaceSyncActionDeps(
       if (readRecord(response).ok !== true) throw Object.assign(new Error('Invalid Workspace Sync resume response'), { code: 'action_failed' });
       return { v: 1 as const, relationshipId: input.relationshipId, enabled: true as const };
     },
-    workspaceSyncRelationshipFlush: async ({ input, serverId, signal }) => {
+    workspaceSyncRelationshipFlush: async ({ input, serverId, context, signal }) => {
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
@@ -158,6 +161,7 @@ export function createCliWorkspaceSyncActionDeps(
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH,
+        context, effectActionId: 'workspace.sync.relationship.flush',
         request: WorkspaceSyncRelationshipIdV1Schema.parse({ relationshipId: input.relationshipId }),
         exactMachine: true,
         ...(signal ? { signal } : {}),

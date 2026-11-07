@@ -258,6 +258,21 @@ function validateDirectRouteGrantMintInput(input: MintDirectRouteGrantV1Input):
     return { ok: true, scope: scope.data, grantExpiresAt: envelope.grantExpiresAt };
 }
 
+/** The native stream opens only a prepared Sync target; it is not a Machine RPC. */
+export function isWorkspaceSyncMachineCarrierGrant(input: Pick<MintDirectRouteGrantV2Input, 'routeKind' | 'iroh' | 'scope'>): boolean {
+    const scope = input.scope;
+    return scope.kind === 'machine_rpc'
+        && input.routeKind === 'iroh_peer'
+        && input.iroh?.operationKind === 'workspace_sync'
+        && input.iroh.initiator.kind === 'machine'
+        && scope.allowedMethods.length === 1
+        && scope.allowedMethods[0] === 'workspace.sync'
+        && scope.maxCalls === 1
+        && scope.sessionId === undefined
+        && scope.highRiskSingleUseMethods?.length === 1
+        && scope.highRiskSingleUseMethods[0] === 'workspace.sync';
+}
+
 function validateDirectRouteGrantV2MintInput(input: MintDirectRouteGrantV2Input):
     | Readonly<{ ok: true; scope: DirectRouteGrantScopeV2; grantExpiresAt: number | null }>
     | MintDirectRouteGrantFailure {
@@ -277,15 +292,7 @@ function validateDirectRouteGrantV2MintInput(input: MintDirectRouteGrantV2Input)
         // workspace.sync labels the native Mutagen stream, not a dispatchable
         // Machine RPC. Admit only its existing single-operation machine/1
         // envelope; ordinary RPC grants still use the canonical RPC policy.
-        const workspaceCarrier = input.routeKind === "iroh_peer"
-            && input.iroh?.operationKind === "workspace_sync"
-            && input.iroh.initiator.kind === "machine"
-            && scope.data.allowedMethods.length === 1
-            && scope.data.allowedMethods[0] === "workspace.sync"
-            && scope.data.maxCalls === 1
-            && scope.data.sessionId === undefined
-            && scope.data.highRiskSingleUseMethods?.length === 1
-            && scope.data.highRiskSingleUseMethods[0] === "workspace.sync";
+        const workspaceCarrier = isWorkspaceSyncMachineCarrierGrant({ ...input, scope: scope.data });
         if (!workspaceCarrier) {
             const methods = validateMachineRpcGrantAllowedMethods(scope.data.allowedMethods);
             if (!methods.ok) return rejectMint(methods.reasonCode);

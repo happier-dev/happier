@@ -131,11 +131,21 @@ export function registerPeerMediationIrohMachineAdmissionRoute(
     const parsedProviderBrokerHandshake = IrohProviderBrokerHandshakeSchema.safeParse(request.body);
     const isProviderBroker = parsedProviderBrokerHandshake.success;
     const refuse = (reason: 'transport_identity_invalid' | 'resolver_unavailable' | 'binding_invalid'
-      | 'grant_invalid' | 'target_unavailable' | 'target_failed' | 'request_aborted') => {
-      if (isProviderBroker) {
-        try { logger.warnLocalFile('[ProviderBroker] Machine stream admission refused', { reason }); }
-        catch { /* Preserve the admission refusal if logging is unavailable. */ }
-      }
+      | 'grant_invalid' | 'target_unavailable' | 'target_failed' | 'request_aborted', error?: unknown) => {
+      // Typed codes only: the refusal is otherwise silent on this side and
+      // surfaces to the initiator as a bare stream EOF.
+      const code = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+        ? (error as { code: string }).code : undefined;
+      const workspaceSyncIngressRefusal = error && typeof error === 'object'
+        && 'workspaceSyncIngressRefusal' in error && typeof error.workspaceSyncIngressRefusal === 'string'
+        ? error.workspaceSyncIngressRefusal : undefined;
+      const flow = (request.body as { flow?: unknown } | null)?.flow;
+      try {
+        if (isProviderBroker) logger.warnLocalFile('[ProviderBroker] Machine stream admission refused', { reason });
+        else logger.warnLocalFile('[PeerMediation] Machine stream admission refused', {
+          reason, ...(typeof flow === 'string' ? { flow } : {}), ...(code ? { errorCode: code } : {}),
+          ...(workspaceSyncIngressRefusal ? { workspaceSyncIngressRefusal } : {}) });
+      } catch { /* Preserve the admission refusal if logging is unavailable. */ }
       return reply.code(IROH_MACHINE_ADMISSION_REJECT_STATUS).send();
     };
     // The Iroh transport supplies exactly one authenticated remote EndpointId. Node folds
@@ -267,9 +277,15 @@ export function registerPeerMediationIrohMachineAdmissionRoute(
           })
         ));
       }
+      // Prepared transfers and Sync targets own IO. Their Home-signed actor
+      // can differ from the listener's custodian; the verifier still proves
+      // that actor, ephemeral key and the authenticated exact endpoints.
+      const preparedTargetActor = options.admission.role === 'acceptor' && parsedHandshake.success
+        && (parsedHandshake.data.flow === 'workspace_sync'
+          || parsedHandshake.data.flow === 'finite_transfer' && parsedHandshake.data.initiator.kind === 'account_client');
       const verified = verifyMachineCarrierHandshakeV1({
         handshake: request.body,
-        accountId: options.accountId,
+        accountId: preparedTargetActor ? parsedHandshake.data.grant.payload.accountId : options.accountId,
         machineId: options.machineId,
         localEndpointId: options.admission.localEndpointId,
         role: options.admission.role,
@@ -286,7 +302,7 @@ export function registerPeerMediationIrohMachineAdmissionRoute(
       ), verified.handshake.flow === 'finite_transfer');
     } catch (error) {
       return refuse(admissionSignal?.aborted || error instanceof Error && error.name === 'AbortError'
-        ? 'request_aborted' : 'target_failed');
+        ? 'request_aborted' : 'target_failed', error);
     }
   });
 }

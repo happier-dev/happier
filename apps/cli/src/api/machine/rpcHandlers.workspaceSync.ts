@@ -2,6 +2,7 @@ import { ReadWorkspaceSyncFileResultV1Schema, ReadWorkspaceSyncFileV1Schema, Han
 import type { WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, ReadWorkspaceSyncFileResultV1, ReadWorkspaceSyncFileV1, HandoffTargetReplacementPreflightResultV1, HandoffTargetReplacementPreflightV1, WorkspaceSyncConflictPageRequestV1, WorkspaceSyncConflictPageV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncRelationshipCreateResultV1, WorkspaceSyncRelationshipCreateRpcRequestV1, WorkspaceContentPolicyV1, WorkspaceSyncStatusV1, WorkspaceSyncPrepareBetweenRequestV1, WorkspaceSyncPrepareBetweenResultV1, WorkspaceSyncLegacyStateInspectionV1, WorkspaceSyncTargetBootstrapPrepareResultV1, WorkspaceSyncTargetBootstrapPrepareV1, WorkspaceSyncTargetBootstrapReleaseResultV1, WorkspaceSyncTargetBootstrapReleaseV1, WorkspaceSyncTargetConflictStageV1, WorkspaceSyncConflictCaptureReleaseV1, WorkspaceSyncTargetConflictApplyV1, WorkspaceSyncTargetConflictApplyResultV1, WorkspaceSyncTargetConflictRecoverV1, WorkspaceSyncTargetConflictRecoverResultV1, WorkspaceSyncTargetFileReadV1, WorkspaceSyncTargetEntryObserveV1, WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { projectWorkspaceSyncRpcError } from './workspaceSyncRpcErrors';
 import { z } from 'zod/mini';
 import type { RpcHandler, RpcHandlerRegistrar, RpcHandlerContext } from '../rpc/types';
 import { WorkspaceSyncRelationshipCreationObservationV1Schema, WorkspaceSyncStatusWatchRequestV1Schema, WorkspaceSyncStatusWatchResultV1Schema,
@@ -42,6 +43,12 @@ export type WorkspaceSyncRpcController = Readonly<{
 }>;
 
 export type MachineWorkspaceSyncRpcService = Readonly<{
+  /** One requester Account admission for each controller call. The returned
+   * view shares the installed controller and its retained native jobs. */
+  forRequester?(context?: RpcHandlerContext, options?: Readonly<{ includeAvailability?: boolean }>): Promise<
+    Pick<MachineWorkspaceSyncRpcService, 'controller' | 'relationshipOwner'> & Readonly<{
+      requesterAvailability?: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncRequesterAvailabilityV1;
+    }>>;
   handoffSourcePhase?(request: WorkspaceSyncHandoffSourcePhaseRequestV1, context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffSourcePhaseResultV1>;
   controller: WorkspaceSyncRpcController;
   prepareBetween(request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncPrepareBetweenResultV1>;
@@ -73,6 +80,8 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
     signal?: AbortSignal,
     context?: RpcHandlerContext,
   ): Promise<HandoffTargetReplacementPreflightResultV1>;
+  /** Installed SOURCE spends the admitted normal Action at its target transport. */
+  preflightRelationshipTarget?(request: HandoffTargetReplacementPreflightV1, context: RpcHandlerContext): Promise<HandoffTargetReplacementPreflightResultV1>;
   prepareBootstrapAtTarget(
     request: WorkspaceSyncTargetBootstrapPrepareV1,
     signal?: AbortSignal,
@@ -170,81 +179,6 @@ function requireEmptyRequest(raw: unknown): void {
   throw Object.assign(new Error('Invalid workspace sync request'), { code: 'invalid_request' });
 }
 
-// Workspace Sync has no Protocol error-code schema: its transported RPCs are
-// private adapters. Keep promotion closed here so Node/fs codes never become
-// caller-visible protocol identity merely because they use `error.code`.
-const WORKSPACE_SYNC_RPC_ERROR_CODES: ReadonlySet<string> = new Set([
-  'agent_unavailable',
-  'approval_stale',
-  'approval_required',
-  'bootstrap_definition_conflict',
-  'cancelled',
-  'conflict_changed',
-  'conflict_resolution_unsupported',
-  'controller_unavailable',
-  'engine_unavailable',
-  'git_selection_unavailable',
-  'indeterminate',
-  'invalid_request',
-  'machine_carrier_unavailable',
-  'peer_unavailable',
-  'relationship_definition_conflict',
-  'relationship_not_owned',
-  'relationship_not_ready',
-  'relationship_replacement_required',
-  'relationship_runtime_mismatch',
-  'root_changed',
-  'root_mismatch',
-  'target_bootstrap_offline',
-  'target_bootstrap_required',
-  'target_unavailable',
-  'workspace_file_unsupported',
-  'workspace_machine_not_enrolled',
-  'workspace_ref_not_ready',
-  'workspace_root_identity_unavailable',
-  'workspace_root_in_use',
-  'workspace_root_ownership_compromised',
-  'workspace_root_ownership_lost',
-  'workspace_root_unsafe',
-  'workspace_sync_controller_mismatch',
-  'workspace_sync_child_unavailable',
-  'workspace_sync_settings_conflict',
-  'workspace_sync_settings_invalid',
-  'workspace_sync_settings_unavailable',
-  'workspace_sync_unavailable',
-  'workspace_sync_update_required',
-  'workspace_sync_operation_conflict',
-  'workspace_sync_prepare_missing',
-  'workspace_sync_finalize_missing',
-  'workspace_write_denied',
-  'workspace_write_escalation_denied',
-  'present_user_required',
-  'workspace_copy_not_owned',
-  'workspace_copy_preview_unavailable',
-  'workspace_copy_removal_unavailable',
-  'workspace_copy_removal_unknown',
-  'workspace_sync_relationship_in_use',
-  'workspace_sync_dependencies_unavailable',
-  'workspace_target_materialization_manual_recovery',
-] as const);
-
-function projectWorkspaceSyncRpcError(error: unknown, method: string): unknown {
-  if (readRpcErrorCode(error) !== undefined) return error;
-  if (error instanceof Error && 'code' in error && typeof error.code === 'string'
-    && WORKSPACE_SYNC_RPC_ERROR_CODES.has(error.code)) {
-    return Object.assign(new RpcError(error.message, error.code), { code: error.code });
-  }
-  if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE) {
-    // A failed create may already retain disabled intent. Always transport a
-    // failure envelope, never an untyped error mistaken for a committed copy.
-    return Object.assign(new RpcError(
-      'Workspace linking could not complete. Check the controller sync runtime before retrying the original create request.',
-      'workspace_sync_unavailable',
-    ), { cause: error });
-  }
-  return error;
-}
-
 function createWorkspaceSyncRpcRegistrar(registrar: RpcHandlerRegistrar): RpcHandlerRegistrar {
   return {
     registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>): void {
@@ -252,7 +186,7 @@ function createWorkspaceSyncRpcRegistrar(registrar: RpcHandlerRegistrar): RpcHan
         try {
           return await handler(request, context);
         } catch (error) {
-          throw projectWorkspaceSyncRpcError(error, method);
+          throw projectWorkspaceSyncRpcError(error, method, context?.transportRequestId);
         }
       });
     },
@@ -280,6 +214,10 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
 }>): void {
   const rpcHandlerManager = createWorkspaceSyncRpcRegistrar(params.rpcHandlerManager);
   const service = (): MachineWorkspaceSyncRpcService => params.service ?? unavailable();
+  const requesterService = async (context?: RpcHandlerContext, options?: Readonly<{ includeAvailability?: boolean }>) => {
+    const current = service();
+    return current.forRequester ? await current.forRequester(context, options) : current;
+  };
   const signal = (value: AbortSignal | undefined): AbortSignal => value ?? new AbortController().signal;
   const privateNativeTarget = (context: RpcHandlerContext | undefined) => {
     const capture = context?.workspaceSyncPrivateExecution;
@@ -334,24 +272,24 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);
-    const status = await service().controller.get(request.relationshipId, signal(context?.signal));
+    const status = await (await requesterService(context)).controller.get(request.relationshipId, signal(context?.signal));
     return { status: status === null ? null : WorkspaceSyncStatusV1Schema.parse(status) };
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST, async (raw, context) => {
     requireEmptyRequest(raw);
-    const statuses = await service().controller.list(signal(context?.signal));
+    const statuses = await (await requesterService(context)).controller.list(signal(context?.signal));
     return { statuses: statuses.map((status) => WorkspaceSyncStatusV1Schema.parse(status)) };
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_WATCH, async (raw, context) => {
     const request = WorkspaceSyncStatusWatchRequestV1Schema.parse(raw);
     return WorkspaceSyncStatusWatchResultV1Schema.parse(
-      await service().controller.watchStatuses(request, signal(context?.signal)),
+      await (await requesterService(context)).controller.watchStatuses(request, signal(context?.signal)),
     );
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);
-    const status = await service().controller.flush(request.relationshipId, signal(context?.signal));
+    const status = await (await requesterService(context)).controller.flush(request.relationshipId, signal(context?.signal));
     return { status: WorkspaceSyncStatusV1Schema.parse(status) };
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN, async (raw, context) => {
@@ -362,47 +300,49 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);
-    await service().relationshipOwner.setEnabled(request.relationshipId, false, signal(context?.signal));
+    await (await requesterService(context)).relationshipOwner.setEnabled(request.relationshipId, false, signal(context?.signal));
     return { ok: true as const };
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);
-    await service().relationshipOwner.setEnabled(request.relationshipId, true, signal(context?.signal));
+    await (await requesterService(context)).relationshipOwner.setEnabled(request.relationshipId, true, signal(context?.signal));
     return { ok: true as const };
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, async (raw, context) => {
     const request = WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(raw);
     return WorkspaceSyncRelationshipCreateResultV1Schema.parse(
-      await service().relationshipOwner.create(request, signal(context?.signal)),
+      await (await requesterService(context)).relationshipOwner.create(request, signal(context?.signal)),
     );
   });
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE, async raw => {
-    const observe = service().relationshipOwner.observeCreation;
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE, async (raw, context) => {
+    const observe = (await requesterService(context)).relationshipOwner.observeCreation;
     if (!observe) unavailable();
     return WorkspaceSyncRelationshipCreationObservationV1Schema.parse(await observe(WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(raw)));
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);
-    await service().relationshipOwner.stop(request.relationshipId, signal(context?.signal));
+    await (await requesterService(context)).relationshipOwner.stop(request.relationshipId, signal(context?.signal));
     return { ok: true as const };
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST, async (raw, context) => {
     const request = WorkspaceSyncConflictPageRequestV1Schema.parse(raw);
     return WorkspaceSyncConflictPageV1Schema.parse(
-      await service().controller.listConflicts(request, signal(context?.signal)),
+      await (await requesterService(context)).controller.listConflicts(request, signal(context?.signal)),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST, async (raw, context) => {
     const request = WorkspaceSyncRelationshipsListRpcRequestV1Schema.parse(raw);
-    return WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(
-      await service().controller.listRelationships(request, signal(context?.signal)),
-    );
+    const current = await requesterService(context, { includeAvailability: request.requesterAvailability });
+    const result = await current.controller.listRelationships(request, signal(context?.signal));
+    return WorkspaceSyncRelationshipsListRpcResultV1Schema.parse({ ...result,
+      ...(request.requesterAvailability ? { requesterAvailability: 'requesterAvailability' in current && current.requesterAvailability
+        ? current.requesterAvailability : { kind: 'unavailable', reason: 'requester_authority_unavailable' } } : {}) });
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT, async (raw, context) => {
     const request = WorkspaceSyncConflictInspectRpcRequestV1Schema.parse(raw);
     return WorkspaceSyncConflictInspectRpcResultV1Schema.parse(
-      await service().controller.inspectConflict(request, signal(context?.signal)),
+      await (await requesterService(context)).controller.inspectConflict(request, signal(context?.signal)),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE, async (raw, context) => {
@@ -413,7 +353,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
     }
     const { actionReceiptId, actionInput } = parsed.data;
     await assertConflictResolutionAuthorized(actionReceiptId, actionInput);
-    const result = await service().controller.resolveConflict(
+    const result = await (await requesterService(context)).controller.resolveConflict(
       actionInput,
       signal(context?.signal),
       actionReceiptId,
@@ -423,7 +363,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_FILE_READ, async (raw, context) => {
     const request = ReadWorkspaceSyncFileV1Schema.parse(raw);
     return ReadWorkspaceSyncFileResultV1Schema.parse(
-      await service().controller.readFile(request, signal(context?.signal)),
+      await (await requesterService(context)).controller.readFile(request, signal(context?.signal)),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE, async (raw, context) => {

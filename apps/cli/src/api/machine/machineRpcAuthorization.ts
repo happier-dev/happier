@@ -1,3 +1,10 @@
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import {
+  RPC_ERROR_CODES,
+  RPC_ERROR_MESSAGES,
+} from '@happier-dev/protocol/rpcErrors';
 import {
   resolveMachineRpcRoutePolicy,
   resolveMachineRpcExternalActionEffectV1,
@@ -6,7 +13,95 @@ import {
   isHostRequesterUnrestrictedOwner,
   selectHostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import axios from '@/api/client/credentialAxios';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import {
+  RequesterSessionCurrentnessPurposeV1Schema,
+  type RequesterSessionCurrentnessPurposeV1,
+} from '@happier-dev/protocol/machines/identity/installationIdentity';
+import type { SessionApprovalDecisionCurrentnessV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import {
+  MachineAccessLossCustodyRequestV1Schema,
+  MachineAdmissionVerifyResponseV1Schema,
+} from '@happier-dev/protocol/machines/machineAccessV1';
+import {
+  isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext,
+  isSocketRpcMachineAccessLossServerOriginAuthorizationContext,
+  parseSocketRpcAuthorizationContext,
+  resolveSocketRpcSessionWriteAuthorizationMethod,
+  resolveSocketRpcSessionAuthorization,
+} from '@happier-dev/protocol/socketRpc';
+import {
+  isSocketRpcMachineReadServerOriginAuthorizationContext,
+  SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS,
+} from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import {
+  PreparedTransferRpcRequestV1Schema,
+  resolvePreparedTransferRpcPhaseV1,
+} from '@happier-dev/protocol/machines/transfer/preparedTransferRpcV1';
+import { SessionTransferRpcMethodV1Schema } from '@happier-dev/protocol/socketRpc';
+import { hasFilesystemEffectTransferCustody } from '@/rpc/handlers/fileSystem/filesystemEffectTransferCustody';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import {
+  SocketRpcMachineAdmissionContextV1Schema,
+  type SocketRpcMachineAdmissionContextV1,
+  WorkspaceSyncSourceRoutingV1Schema,
+  type WorkspaceSyncSourceRoutingV1,
+  WorkspaceSyncSourceExecutionV1Schema,
+  type WorkspaceSyncSourceExecutionV1,
+  WorkspaceSyncTargetRoutingV1Schema,
+  type WorkspaceSyncTargetRoutingV1,
+  WorkspaceSyncSeedRoutingV1Schema,
+  type WorkspaceSyncSeedRoutingV1,
+  WorkspaceSyncSourceWriterTargetRoutingV1Schema,
+  type WorkspaceSyncSourceWriterTargetRoutingV1,
+} from '@happier-dev/protocol/socketRpc';
+import {
+  WorkspaceSyncHandoffSourcePhaseRequestV1Schema,
+  HandoffTargetReplacementPreflightV1Schema,
+  WorkspaceSyncTargetBootstrapPrepareV1Schema,
+  WorkspaceSyncTargetBootstrapReleaseV1Schema,
+  WorkspaceSyncTargetConflictRecoverV1Schema,
+  type WorkspaceSyncTargetConflictRecoverV1,
+  WorkspaceSyncSeedExportPrepareV1Schema,
+  WorkspaceSyncPrepareBetweenRequestV1Schema,
+} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncCommittedCopyPreviewV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import {
+  ExternalActionExecutionAuthorizationV1Schema,
+  ExternalActionDaemonDispatchRequestSchema,
+  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+  type ExternalActionExecutionAuthorizationV1,
+} from '@happier-dev/protocol/actions/externalActionApi';
+import { isSocketRpcActionApiServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+
+import type {
+  RpcAuthorizationResult,
+  RpcAdmissionPredicate,
+} from '@/api/rpc/types';
+import {
+  ManagedActivityReadRequestV1Schema,
+  ManagedActivityRpcRequestV1Schema,
+  ManagedAdmissionDrainConfirmRequestV1Schema,
+  MANAGED_ACTIVITY_READ_RPC_METHOD,
+  MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
+  type ManagedActivityRpcRequestV1,
+} from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import {
+  ManagedGuestCurrentOutputV1Schema,
+  isMachineSetupPlanRpcChildV1,
+} from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
+import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import {
+  PROJECT_ACTION_INPUT_SCHEMAS_V1,
+  PROJECT_FINITE_ACTION_RPC_METHODS_V1,
+} from '@happier-dev/protocol/actions/projectActionFamily';
 import {
   collectActionSpecRpcMethodsForScopes,
   SESSION_SPAWN_NEW_RPC_SCOPES,
@@ -17,47 +112,22 @@ import {
   PRIVATE_SPAWN_SESSION_RPC_METHODS,
   SpawnDaemonSessionRequestSchema,
 } from '@/rpc/handlers/spawnSessionOptionsContract';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
-import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import axios from 'axios';
-import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { RequesterSessionCurrentnessPurposeV1Schema, type RequesterSessionCurrentnessPurposeV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import type { SessionApprovalDecisionCurrentnessV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { MachineAccessLossCustodyRequestV1Schema, MachineAdmissionVerifyResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext, isSocketRpcMachineAccessLossServerOriginAuthorizationContext, parseSocketRpcAuthorizationContext, resolveSocketRpcSessionWriteAuthorizationMethod, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
-import { isSocketRpcMachineReadServerOriginAuthorizationContext, SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS } from '@happier-dev/protocol/socketRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { PreparedTransferRpcRequestV1Schema, resolvePreparedTransferRpcPhaseV1 } from '@happier-dev/protocol/machines/transfer/preparedTransferRpcV1';
-import { SessionTransferRpcMethodV1Schema } from '@happier-dev/protocol/socketRpc';
-import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
-import { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissionContextV1,
-  WorkspaceSyncSourceRoutingV1Schema, type WorkspaceSyncSourceRoutingV1,
-  WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceExecutionV1,
-  WorkspaceSyncTargetRoutingV1Schema, type WorkspaceSyncTargetRoutingV1,
-  WorkspaceSyncSeedRoutingV1Schema, type WorkspaceSyncSeedRoutingV1,
-  WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
-import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, HandoffTargetReplacementPreflightV1Schema,
-  WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema,
-  WorkspaceSyncTargetConflictRecoverV1Schema, type WorkspaceSyncTargetConflictRecoverV1,
-  WorkspaceSyncSeedExportPrepareV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { WorkspaceSyncCommittedCopyPreviewV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-
-import type { RpcAuthorizationResult, RpcAdmissionPredicate } from '@/api/rpc/types';
-import { ManagedActivityReadRequestV1Schema, type ManagedActivityReadRequestV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { ManagedGuestCurrentOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
-import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
-import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { logger } from '@/ui/logger';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
-import { createHttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
 import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
 import type { RetainedWorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import {
+  createHttpStatusError,
+  readHttpStatus,
+} from '@/api/client/httpStatusError';
+import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
+import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
+import {
+  ManagedInstallationServerOriginV1Schema,
+  ManagedInstallationCapabilityRequestV1Schema,
+  readManagedInstallationPurposeV1,
+} from '@happier-dev/protocol/machines/managed/actionsV1';
 
 const finiteProjectMethods: readonly string[] = Object.values(
   PROJECT_FINITE_ACTION_RPC_METHODS_V1,
@@ -122,120 +192,291 @@ const nativeTerminalMethods: readonly string[] = [
 ];
 
 /** Local binding only; Home must independently verify the original root and current grants. */
-export function doesWorkspaceSyncSourceRootMatchRouting(authorization: ExternalActionExecutionAuthorizationV1, source: WorkspaceSyncSourceRoutingV1): boolean {
+export function doesWorkspaceSyncSourceRootMatchRouting(
+  authorization: ExternalActionExecutionAuthorizationV1,
+  source: WorkspaceSyncSourceRoutingV1,
+): boolean {
   const binding = authorization.binding;
   const context = source.sourceContext;
   const handoff = binding.handoffAdmission;
-  if (binding.actionId === 'projects.open' || isProjectWorkspaceSyncPreparationActionV1(binding.actionId)) {
+  if (isWorkspaceSyncRelationshipWriteActionId(binding.actionId)) {
     const envelope = source.originalActionEnvelope;
-    const constraints = 'grant' in binding ? { models: binding.grant.models, permissionModes: binding.grant.permissionModes } : undefined;
-    return !!context && !!envelope && source.phase === 'prepare' && source.sourceSessionId === undefined
-      && source.accountServerId === binding.serverIdentityId
-      && context.machineAdmission.machineId === source.sourceMachineId
+    const constraints = 'grant' in binding
+      ? { models: binding.grant.models, permissionModes: binding.grant.permissionModes } : undefined;
+    return !!context && !!envelope && source.phase === 'prepare'
+      && source.sourceSessionId === undefined && source.operationId === binding.requestId
+      && source.accountServerId === binding.serverIdentityId && source.sourceMachineId === binding.machineId
+      && context.machineAdmission.machineId === binding.machineId
+      && context.machineAdmission.installationId === binding.installationId
       && context.machineAdmission.actorAccountId === binding.accountId
-      && (context.callerAuthority === 'account_automation' || context.callerAuthority === resolveExternalActionRootInvocationAuthority(authorization))
+      && context.machineAdmission.custodianAccountId === binding.custodianAccountId
+      && (context.callerAuthority === 'account_automation'
+        || context.callerAuthority === resolveExternalActionRootInvocationAuthority(authorization))
       && sameStrictJsonValue(binding.sessionActionOrigin ?? null, context.sessionActionOrigin ?? null)
       && sameStrictJsonValue(constraints ?? null, context.callerInputConstraints ?? null)
       && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
-      && isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope });
+      && isExternalActionAuthorizationBoundToEnvelope(binding, {
+        actionId: binding.actionId, machineId: binding.machineId, envelope });
+  }
+  if (
+    isProjectWorkspaceSyncOpenActionV1(binding.actionId) ||
+    isProjectWorkspaceSyncPreparationActionV1(binding.actionId)
+  ) {
+    const envelope = source.originalActionEnvelope;
+    const constraints =
+      'grant' in binding
+        ? {
+            models: binding.grant.models,
+            permissionModes: binding.grant.permissionModes,
+          }
+        : undefined;
+    return (
+      !!context &&
+      !!envelope &&
+      source.phase === 'prepare' &&
+      source.sourceSessionId === undefined &&
+      source.accountServerId === binding.serverIdentityId &&
+      context.machineAdmission.machineId === source.sourceMachineId &&
+      context.machineAdmission.actorAccountId === binding.accountId &&
+      (context.callerAuthority === 'account_automation' ||
+        context.callerAuthority ===
+          resolveExternalActionRootInvocationAuthority(authorization)) &&
+      sameStrictJsonValue(
+        binding.sessionActionOrigin ?? null,
+        context.sessionActionOrigin ?? null,
+      ) &&
+      sameStrictJsonValue(
+        constraints ?? null,
+        context.callerInputConstraints ?? null,
+      ) &&
+      binding.target.kind === 'machine' &&
+      binding.target.machineId === binding.machineId &&
+      isExternalActionAuthorizationBoundToEnvelope(binding, {
+        actionId: binding.actionId,
+        machineId: binding.machineId,
+        envelope,
+      })
+    );
   }
   if (!context || !handoff) return false;
   const admission = context.machineAdmission;
-  const constraints = 'grant' in binding ? { models: binding.grant.models, permissionModes: binding.grant.permissionModes } : undefined;
-  return binding.actionId === 'session.handoff' && !binding.handoffContinuation
-    && (source.phase === 'prepare' || source.phase === 'finalize')
-    && binding.machineId === handoff.sourceMachineId && binding.installationId === handoff.sourceInstallationId
-    && admission.machineId === binding.machineId && admission.installationId === binding.installationId
-    && admission.actorAccountId === binding.accountId && admission.custodianAccountId === binding.custodianAccountId
-    && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
-    && source.sourceMachineId === handoff.sourceMachineId && source.sourceSessionId === handoff.sessionId
-    && source.operationId === binding.requestId && source.accountServerId === binding.serverIdentityId
-    && (context.callerAuthority === 'account_automation' || context.callerAuthority === resolveExternalActionRootInvocationAuthority(authorization))
-    && sameStrictJsonValue(binding.sessionActionOrigin ?? null, context.sessionActionOrigin ?? null)
-    && sameStrictJsonValue(constraints ?? null, context.callerInputConstraints ?? null);
+  const constraints =
+    'grant' in binding
+      ? {
+          models: binding.grant.models,
+          permissionModes: binding.grant.permissionModes,
+        }
+      : undefined;
+  return (
+    binding.actionId === 'session.handoff' &&
+    !binding.handoffContinuation &&
+    (source.phase === 'prepare' || source.phase === 'finalize') &&
+    binding.machineId === handoff.sourceMachineId &&
+    binding.installationId === handoff.sourceInstallationId &&
+    admission.machineId === binding.machineId &&
+    admission.installationId === binding.installationId &&
+    admission.actorAccountId === binding.accountId &&
+    admission.custodianAccountId === binding.custodianAccountId &&
+    binding.target.kind === 'machine' &&
+    binding.target.machineId === binding.machineId &&
+    source.sourceMachineId === handoff.sourceMachineId &&
+    source.sourceSessionId === handoff.sessionId &&
+    source.operationId === binding.requestId &&
+    source.accountServerId === binding.serverIdentityId &&
+    (context.callerAuthority === 'account_automation' ||
+      context.callerAuthority ===
+        resolveExternalActionRootInvocationAuthority(authorization)) &&
+    sameStrictJsonValue(
+      binding.sessionActionOrigin ?? null,
+      context.sessionActionOrigin ?? null,
+    ) &&
+    sameStrictJsonValue(
+      constraints ?? null,
+      context.callerInputConstraints ?? null,
+    )
+  );
 }
 
 /** Signed Project roots retain their logical source; current Account refs prove the target at the controller. */
-export function doesWorkspaceSyncFinitePrepareRequestMatchRouting(params: unknown, authorization: ExternalActionExecutionAuthorizationV1,
-  source: WorkspaceSyncSourceRoutingV1): boolean {
+export function doesWorkspaceSyncFinitePrepareRequestMatchRouting(
+  params: unknown,
+  authorization: ExternalActionExecutionAuthorizationV1,
+  source: WorkspaceSyncSourceRoutingV1,
+): boolean {
   const actionId = authorization.binding.actionId;
   const body = WorkspaceSyncPrepareBetweenRequestV1Schema.safeParse(params);
-  if (!isProjectWorkspaceSyncPreparationActionV1(actionId) || !body.success
-    || !doesWorkspaceSyncSourceRootMatchRouting(authorization, source)) return false;
+  if (
+    !isProjectWorkspaceSyncPreparationActionV1(actionId) ||
+    !body.success ||
+    !doesWorkspaceSyncSourceRootMatchRouting(authorization, source)
+  )
+    return false;
   const envelope = source.originalActionEnvelope!;
   // Protected input is opened only by the controller's admitted requester custody,
   // before the runtime resolves either WorkspaceRef. Never use custodian keys here.
   if (envelope.v === 2) return true;
   if (actionId === 'projects.service.relocate') {
     const input = ProjectServiceRelocateInputV1Schema.safeParse(envelope.input);
-    return input.success && input.data.workspace.refId === body.data.sourceWorkspaceRefId
-      && input.data.workspace.serverId === source.accountServerId;
+    return (
+      input.success &&
+      input.data.workspace.refId === body.data.sourceWorkspaceRefId &&
+      input.data.workspace.serverId === source.accountServerId
+    );
   }
-  const input = actionId === 'localServices.launcher.start'
-    ? DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(envelope.input)
-    : PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(envelope.input);
-  return input.success && !!input.data.workspace && input.data.workspace.workspaceId === body.data.sourceWorkspaceRefId
-    && input.data.workspace.serverId === source.accountServerId
-    && input.data.workspace.machineId === source.sourceMachineId && input.data.workspace.rootPath === source.sourceRootPath;
+  const input =
+    actionId === 'localServices.launcher.start'
+      ? DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(envelope.input)
+      : PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(envelope.input);
+  return (
+    input.success &&
+    !!input.data.workspace &&
+    input.data.workspace.workspaceId === body.data.sourceWorkspaceRefId &&
+    input.data.workspace.serverId === source.accountServerId &&
+    input.data.workspace.machineId === source.sourceMachineId &&
+    input.data.workspace.rootPath === source.sourceRootPath
+  );
 }
 
 /** The named Project SOURCE body retains its original chosen child and namespace. */
-export function doesWorkspaceSyncProjectSourceRequestMatchRouting(params: unknown, authorization: ExternalActionExecutionAuthorizationV1,
-  source: WorkspaceSyncSourceRoutingV1): boolean {
+export function doesWorkspaceSyncProjectSourceRequestMatchRouting(
+  params: unknown,
+  authorization: ExternalActionExecutionAuthorizationV1,
+  source: WorkspaceSyncSourceRoutingV1,
+): boolean {
   const input = OpenProjectInputV1Schema.safeParse(params);
-  if (authorization.binding.actionId !== 'projects.open' || !input.success || !doesWorkspaceSyncSourceRootMatchRouting(authorization, source)
-    || input.data.machineId !== authorization.binding.machineId || input.data.serverId !== source.accountServerId
-    || input.data.materialization.kind !== 'sync'
-    || !['copy_once', 'create_relationship'].includes(input.data.materialization.workspaceAction.kind)) return false;
-  const selected = input.data.source.kind === 'workspace' ? input.data.source.checkout
-    : input.data.source.kind === 'source' ? input.data.source.checkout : undefined;
-  if (!selected || selected.serverId !== source.accountServerId
-    || selected.machineId !== source.sourceMachineId || selected.rootPath !== source.sourceRootPath) return false;
+  if (
+    !isProjectWorkspaceSyncOpenActionV1(authorization.binding.actionId) ||
+    !input.success ||
+    !doesWorkspaceSyncSourceRootMatchRouting(authorization, source) ||
+    input.data.machineId !== authorization.binding.machineId ||
+    input.data.serverId !== source.accountServerId ||
+    input.data.materialization.kind !== 'sync' ||
+    !['copy_once', 'create_relationship'].includes(
+      input.data.materialization.workspaceAction.kind,
+    )
+  )
+    return false;
+  const selected =
+    input.data.source.kind === 'workspace'
+      ? input.data.source.checkout
+      : input.data.source.kind === 'source'
+        ? input.data.source.checkout
+        : undefined;
+  if (
+    !selected ||
+    selected.serverId !== source.accountServerId ||
+    selected.machineId !== source.sourceMachineId ||
+    selected.rootPath !== source.sourceRootPath
+  )
+    return false;
   const envelope = source.originalActionEnvelope!;
   return envelope.v !== 1 || sameStrictJsonValue(envelope.input, input.data);
 }
 
-export function doesWorkspaceSyncSourceWriterTargetRootMatchRouting(authorization: ExternalActionExecutionAuthorizationV1,
-  routing: WorkspaceSyncSourceWriterTargetRoutingV1, admission?: SocketRpcMachineAdmissionContextV1): boolean {
-  if (authorization.binding.actionId === 'projects.open') {
+export function doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
+  authorization: ExternalActionExecutionAuthorizationV1,
+  routing: WorkspaceSyncSourceWriterTargetRoutingV1,
+  admission?: SocketRpcMachineAdmissionContextV1,
+): boolean {
+  if (isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId)) {
+    const envelope = routing.source.originalActionEnvelope;
+    const original = envelope?.v === 1 ? getActionSpec(authorization.binding.actionId).inputSchema.safeParse(envelope.input) : undefined;
     return doesWorkspaceSyncSourceRootMatchRouting(authorization, routing.source)
-      && routing.target.targetMachineId === authorization.binding.machineId
       && routing.target.accountServerId === authorization.binding.serverIdentityId
-      && (!admission || admission.machineId === authorization.binding.machineId
-        && admission.installationId === authorization.binding.installationId
+      // Protected input is opened and matched by the admitted source controller.
+      // Home and the target retain its signed envelope without reading content.
+      && (envelope?.v === 2 || !!original?.success
+        && original.data !== null && typeof original.data === 'object'
+        && 'targetMachineId' in original.data && original.data.targetMachineId === routing.target.targetMachineId
+        && 'targetPath' in original.data && original.data.targetPath === routing.target.targetRootPath)
+      && (!admission || admission.machineId === routing.target.targetMachineId
         && admission.actorAccountId === authorization.binding.accountId);
   }
+  if (isProjectWorkspaceSyncOpenActionV1(authorization.binding.actionId)) {
+    return (
+      doesWorkspaceSyncSourceRootMatchRouting(authorization, routing.source) &&
+      routing.target.targetMachineId === authorization.binding.machineId &&
+      routing.target.accountServerId ===
+        authorization.binding.serverIdentityId &&
+      (!admission ||
+        (admission.machineId === authorization.binding.machineId &&
+          admission.installationId === authorization.binding.installationId &&
+          admission.actorAccountId === authorization.binding.accountId))
+    );
+  }
   const handoff = authorization.binding.handoffAdmission;
-  return doesWorkspaceSyncSourceRootMatchRouting(authorization, routing.source) && !!handoff
-    && routing.target.targetMachineId === handoff.targetMachineId
-    && routing.target.accountServerId === authorization.binding.serverIdentityId
-    && (!admission || admission.machineId === handoff.targetMachineId
-      && admission.installationId === handoff.targetInstallationId && admission.actorAccountId === authorization.binding.accountId);
+  return (
+    doesWorkspaceSyncSourceRootMatchRouting(authorization, routing.source) &&
+    !!handoff &&
+    routing.target.targetMachineId === handoff.targetMachineId &&
+    routing.target.accountServerId === authorization.binding.serverIdentityId &&
+    (!admission ||
+      (admission.machineId === handoff.targetMachineId &&
+        admission.installationId === handoff.targetInstallationId &&
+        admission.actorAccountId === authorization.binding.accountId))
+  );
 }
 
 /** The second hop keeps the writer's snapshot and the chosen child's exact admitted caller ceiling. */
-export function doesWorkspaceSyncTargetRoutingMatchWriterTarget(target: WorkspaceSyncTargetRoutingV1,
-  writer: WorkspaceSyncSourceWriterTargetRoutingV1): boolean {
+export function doesWorkspaceSyncTargetRoutingMatchWriterTarget(
+  target: WorkspaceSyncTargetRoutingV1,
+  writer: WorkspaceSyncSourceWriterTargetRoutingV1,
+): boolean {
   const { targetContext, ...purpose } = target;
   const sourceContext = writer.source.sourceContext;
-  return sameStrictJsonValue(purpose, writer.target)
-    && targetContext.machineAdmission.machineId === writer.target.targetMachineId
-    && (['callerAuthority', 'sessionActionOrigin', 'callerInputConstraints', 'callerPermissionMode',
-      'causalPermissionAuthority', 'workspaceWrites'] as const)
-      .every(key => sameStrictJsonValue(targetContext[key] ?? null, sourceContext[key] ?? null));
+  return (
+    sameStrictJsonValue(purpose, writer.target) &&
+    targetContext.machineAdmission.machineId ===
+      writer.target.targetMachineId &&
+    (
+      [
+        'callerAuthority',
+        'sessionActionOrigin',
+        'callerInputConstraints',
+        'callerPermissionMode',
+        'causalPermissionAuthority',
+        'workspaceWrites',
+      ] as const
+    ).every((key) =>
+      sameStrictJsonValue(
+        targetContext[key] ?? null,
+        sourceContext[key] ?? null,
+      ),
+    )
+  );
 }
 
-/** Seed retains the independently verified Project root and chosen child's original SOURCE packet. */
-export function doesWorkspaceSyncSeedRootMatchRouting(authorization: ExternalActionExecutionAuthorizationV1,
-  seed: WorkspaceSyncSeedRoutingV1, execution: WorkspaceSyncSourceExecutionV1): boolean {
-  return authorization.binding.actionId === 'projects.open'
-    && doesWorkspaceSyncSourceWriterTargetRootMatchRouting(authorization, seed.sourceWriterTarget,
-      seed.target.targetContext.machineAdmission)
-    && doesWorkspaceSyncTargetRoutingMatchWriterTarget(seed.target, seed.sourceWriterTarget)
-    && execution.method === `${seed.sourceWriterTarget.sourceWriter.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`
-    && execution.externalActionExecution.effectActionId === 'projects.open'
-    && execution.externalActionExecution.installationId === authorization.binding.installationId
-    && sameStrictJsonValue(execution.externalActionExecution.authorization, authorization);
+/** Seed retains the admitted source writer and target; Project Open also retains its original SOURCE packet. */
+export function doesWorkspaceSyncSeedRootMatchRouting(
+  authorization: ExternalActionExecutionAuthorizationV1,
+  seed: WorkspaceSyncSeedRoutingV1,
+  execution?: WorkspaceSyncSourceExecutionV1,
+  operationId?: string,
+): boolean {
+  if (!doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
+      authorization,
+      seed.sourceWriterTarget,
+      seed.target.targetContext.machineAdmission,
+    ) || !doesWorkspaceSyncTargetRoutingMatchWriterTarget(
+      seed.target,
+      seed.sourceWriterTarget,
+    )) return false;
+  const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId);
+  if (operationId !== undefined && operationId !== seed.sourceWriterTarget.source.operationId
+      && !(relationshipWrite && operationId === deriveWorkspaceSyncRelationshipId(seed.sourceWriterTarget.source.operationId))) return false;
+  if (relationshipWrite) return execution === undefined;
+  return (
+    isProjectWorkspaceSyncOpenActionV1(authorization.binding.actionId) && !!execution &&
+    execution.method ===
+      `${seed.sourceWriterTarget.sourceWriter.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}` &&
+    isProjectWorkspaceSyncOpenActionV1(execution.externalActionExecution.effectActionId) &&
+    execution.externalActionExecution.installationId ===
+      authorization.binding.installationId &&
+    sameStrictJsonValue(
+      execution.externalActionExecution.authorization,
+      authorization,
+    )
+  );
 }
 
 /** Local installation facts and the current Home verification boundary. */
@@ -257,26 +498,28 @@ export type PrivateWorkspaceSyncTargetExecutionResolution =
 
 export type MachineRpcAdmissionBoundary = Readonly<{
   machineId: string;
+  resolveHomeServerIdentityId?: (
+    signal?: AbortSignal,
+  ) => Promise<string | null>;
   resolveCustodianAccountId: (signal?: AbortSignal) => Promise<string | null>;
   resolveInstallationId: () => string | null;
   /** Cheap exact active-operation lookup; never selects a requester or re-evaluates permissions. */
   resolvePrivateWorkspaceSyncTargetExecution?: (input: PrivateWorkspaceSyncTargetAdmission) => PrivateWorkspaceSyncTargetExecutionResolution;
-  verifyMachineAdmission: (input: Readonly<{
-    context: SocketRpcMachineAdmissionContextV1;
-    method: string;
-    custodySubjectAccountId?: string;
-    workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
-    workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
-    workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
-    workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
-    workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
-    callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
-    signal?: AbortSignal;
-  }>) => Promise<boolean | ReturnType<typeof MachineAdmissionVerifyResponseV1Schema.parse> | null>;
-
-resolveHomeServerIdentityId?: (
-    signal?: AbortSignal,
-  ) => Promise<string | null>;
+  verifyMachineAdmission: (
+    input: Readonly<{
+      context: SocketRpcMachineAdmissionContextV1;
+      method: string;
+      managedTarget?: ManagedActivityRpcRequestV1;
+      custodySubjectAccountId?: string;
+      workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+      workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
+      workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+      workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+      workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+      callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+      signal?: AbortSignal;
+    }>,
+  ) => Promise<boolean | ReturnType<typeof MachineAdmissionVerifyResponseV1Schema.parse> | null>;
 }>;
 
 /**
@@ -288,15 +531,29 @@ resolveHomeServerIdentityId?: (
 export function doesMachineRpcTargetMatchAdmission(
   request: unknown,
   admission: SocketRpcMachineAdmissionContextV1 | undefined,
-  target: Readonly<{ machineId: string; installationId: string; custodianAccountId: string | null }> | null,
+  target: Readonly<{
+    machineId: string;
+    installationId: string;
+    custodianAccountId: string | null;
+  }> | null,
   onDenial?: (predicate: RpcAdmissionPredicate) => void,
 ): boolean {
-  const deny = (predicate: RpcAdmissionPredicate) => { onDenial?.(predicate); return false; };
+  const deny = (predicate: RpcAdmissionPredicate) => {
+    onDenial?.(predicate);
+    return false;
+  };
   if (!target || !admission) return deny('machine_admission');
   if (admission.machineId !== target.machineId) return deny('machine_target');
-  if (admission.installationId !== target.installationId) return deny('machine_installation');
-  if (admission.custodianAccountId !== target.custodianAccountId) return deny('machine_custodian');
-  if (request && typeof request === 'object' && 'machineId' in request && request.machineId !== admission.machineId) {
+  if (admission.installationId !== target.installationId)
+    return deny('machine_installation');
+  if (admission.custodianAccountId !== target.custodianAccountId)
+    return deny('machine_custodian');
+  if (
+    request &&
+    typeof request === 'object' &&
+    'machineId' in request &&
+    request.machineId !== admission.machineId
+  ) {
     return deny('machine_request_target');
   }
   return true;
@@ -314,215 +571,588 @@ export type MachineRpcAdmissionCurrentInput = Readonly<{
   workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
   callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
   /** Actual local signer, usable only for the exact private physical SOURCE purpose. */
-  workspaceSyncSourceReceiver?: Readonly<{ machineId: string; installationId: string;
+  workspaceSyncSourceReceiver?: Readonly<{
+    machineId: string;
+    installationId: string;
     /** Installed original Project target discovers only its verified physical SOURCE recipient. */
-    destinationMachineId?: string; accountId?: string }>;
+    destinationMachineId?: string;
+    accountId?: string;
+  }>;
   /** Actual local signer, usable only for the exact private physical TARGET purposes. */
-  workspaceSyncTargetReceiver?: Readonly<{ machineId: string; installationId: string;
+  workspaceSyncTargetReceiver?: Readonly<{
+    machineId: string;
+    installationId: string;
     /** Outgoing installed D -> P2 joint purpose; the proof remains signed by D. */
-    destinationMachineId?: string }>;
+    destinationMachineId?: string;
+    accountId?: string;
+  }>;
   /** Actual installed writer/receiver; its own Account is independent of the retained actor. */
-  workspaceSyncSourceWriterTargetReceiver?: Readonly<{ machineId: string; installationId: string; accountId: string; destinationMachineId?: string }>;
+  workspaceSyncSourceWriterTargetReceiver?: Readonly<{
+    machineId: string;
+    installationId: string;
+    accountId: string;
+    destinationMachineId?: string;
+  }>;
   /** Actual installed seed sender/receiver; Home verifies both physical writers independently. */
-  workspaceSyncSeedReceiver?: Readonly<{ machineId: string; installationId: string; accountId: string; destinationMachineId?: string }>;
+  workspaceSyncSeedReceiver?: Readonly<{
+    machineId: string;
+    installationId: string;
+    accountId: string;
+    destinationMachineId?: string;
+  }>;
   privateKey: string | Uint8Array;
   daemonToken: string;
   serverHttpBaseUrl: string;
   signal?: AbortSignal;
-}> & (Readonly<{ method: string; purpose?: never }> | Readonly<{ purpose: RequesterSessionCurrentnessPurposeV1; method?: never }>);
+}> &
+  (
+    | Readonly<{ method: string; purpose?: never }>
+    | Readonly<{
+        purpose: RequesterSessionCurrentnessPurposeV1;
+        method?: never;
+      }>
+  );
 
-export async function verifyMachineRpcAdmissionCurrent(input: MachineRpcAdmissionCurrentInput): Promise<boolean> {
-  return await readMachineRpcAdmissionCurrent(input) !== null;
+export async function verifyMachineRpcAdmissionCurrent(
+  input: MachineRpcAdmissionCurrentInput,
+): Promise<boolean> {
+  return (await readMachineRpcAdmissionCurrent(input)) !== null;
 }
 
 /** Same verification owner, retaining the Home-proven destination identity for the physical writer. */
-export async function readMachineRpcAdmissionCurrent(input: MachineRpcAdmissionCurrentInput): Promise<ReturnType<typeof MachineAdmissionVerifyResponseV1Schema.parse> | null> {
-  try { return await readMachineRpcAdmissionCurrentOrThrow(input); }
-  catch { return null; }
+export async function readMachineRpcAdmissionCurrent(
+  input: MachineRpcAdmissionCurrentInput,
+): Promise<ReturnType<
+  typeof MachineAdmissionVerifyResponseV1Schema.parse
+> | null> {
+  try {
+    return await readMachineRpcAdmissionCurrentOrThrow(input);
+  } catch {
+    return null;
+  }
 }
 
 /** Requester custody must distinguish unavailable Home evidence from a denial.
  * The boolean/null adapters retain their existing fail-closed contract. */
-export async function readMachineRpcAdmissionCurrentOrThrow(input: MachineRpcAdmissionCurrentInput): Promise<ReturnType<typeof MachineAdmissionVerifyResponseV1Schema.parse> | null> {
-  type VerificationStage = 'input_validation' | 'proof_signing' | 'transport' | 'request_cancelled' | 'response_status' | 'response_schema';
+export async function readMachineRpcAdmissionCurrentOrThrow(
+  input: MachineRpcAdmissionCurrentInput,
+): Promise<ReturnType<
+  typeof MachineAdmissionVerifyResponseV1Schema.parse
+> | null> {
+  type VerificationStage =
+    | 'input_validation'
+    | 'proof_signing'
+    | 'transport'
+    | 'request_cancelled'
+    | 'response_status'
+    | 'response_schema';
   let stage: VerificationStage = 'input_validation';
-  const failed = (failureStage: VerificationStage, status?: number, transportCode?: string) => {
+  const failed = (
+    failureStage: VerificationStage,
+    status?: number,
+    transportCode?: string,
+  ) => {
     const candidateMethod = input.method?.slice(input.method.indexOf(':') + 1);
-    const method = input.purpose?.kind === 'requester_session_currentness' ? input.purpose.kind
-      : Object.values(RPC_METHODS).some(known => known === candidateMethod) ? candidateMethod : '<unregistered>';
-    logger.infoFile('[RPC] Machine admission verification failed', { method, stage: failureStage,
-      ...(status === undefined ? {} : { status }), ...(transportCode ? { transportCode } : {}) });
+    const method =
+      input.purpose?.kind === 'requester_session_currentness'
+        ? input.purpose.kind
+        : Object.values(RPC_METHODS).some((known) => known === candidateMethod)
+          ? candidateMethod
+          : '<unregistered>';
+    logger.infoFile('[RPC] Machine admission verification failed', {
+      method,
+      ...(input.purpose?.kind === 'requester_session_currentness' ? { sessionId: input.purpose.sessionId } : {}),
+      stage: failureStage,
+      ...(status === undefined ? {} : { status }),
+      ...(transportCode ? { transportCode } : {}),
+    });
     return null;
   };
   try {
-    const context = SocketRpcMachineAdmissionContextV1Schema.parse(input.context);
-    const purpose = input.purpose === undefined ? undefined : RequesterSessionCurrentnessPurposeV1Schema.parse(input.purpose);
-    if (purpose && (input.custodySubjectAccountId !== undefined || input.workspaceSyncSourceRouting !== undefined || input.workspaceSyncSourceExecution !== undefined
-      || input.workspaceSyncTargetRouting !== undefined || input.workspaceSyncSourceReceiver !== undefined
-      || input.workspaceSyncTargetReceiver !== undefined || input.callerInputAuthorization !== undefined
-      || input.workspaceSyncSeedRouting !== undefined || input.workspaceSyncSeedReceiver !== undefined
-      || input.workspaceSyncSourceWriterTargetRouting !== undefined || input.workspaceSyncSourceWriterTargetReceiver !== undefined)) return null;
+    const context = SocketRpcMachineAdmissionContextV1Schema.parse(
+      input.context,
+    );
+    const purpose =
+      input.purpose === undefined
+        ? undefined
+        : RequesterSessionCurrentnessPurposeV1Schema.parse(input.purpose);
+    if (
+      purpose &&
+      (input.custodySubjectAccountId !== undefined ||
+        input.workspaceSyncSourceRouting !== undefined ||
+        input.workspaceSyncSourceExecution !== undefined ||
+        input.workspaceSyncTargetRouting !== undefined ||
+        input.workspaceSyncSourceReceiver !== undefined ||
+        input.workspaceSyncTargetReceiver !== undefined ||
+        input.callerInputAuthorization !== undefined ||
+        input.workspaceSyncSeedRouting !== undefined ||
+        input.workspaceSyncSeedReceiver !== undefined ||
+        input.workspaceSyncSourceWriterTargetRouting !== undefined ||
+        input.workspaceSyncSourceWriterTargetReceiver !== undefined)
+    )
+      return null;
     const admissionPurpose = purpose ? { purpose } : { method: input.method! };
-    const custody = input.custodySubjectAccountId === undefined ? {} : { custodySubjectAccountId: input.custodySubjectAccountId };
-    const sourceRouting = input.workspaceSyncSourceRouting === undefined
-      ? undefined : WorkspaceSyncSourceRoutingV1Schema.parse(input.workspaceSyncSourceRouting);
-    const sourceExecution = input.workspaceSyncSourceExecution === undefined ? undefined
-      : WorkspaceSyncSourceExecutionV1Schema.parse(input.workspaceSyncSourceExecution);
-    const originalRoot = input.callerInputAuthorization === undefined
-      ? undefined : ExternalActionExecutionAuthorizationV1Schema.parse(input.callerInputAuthorization);
-    const moveChild = Boolean((originalRoot?.binding.actionId === 'projects.service.relocate'
-      || originalRoot?.binding.actionId === 'discussion.second_opinion.start'
-        && sourceExecution?.externalActionExecution.effectActionId === 'session.spawn_new'
-        && (input.method === `${context.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}`
-          || input.method === `${context.machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
-      && sourceExecution?.originalActionEnvelope && !sourceRouting && !input.workspaceSyncTargetRouting
-      && !input.workspaceSyncSourceWriterTargetRouting && !input.workspaceSyncSeedRouting
-      && sourceExecution.method === input.method && input.method?.startsWith(`${context.machineId}:`)
-      && context.actorAccountId === originalRoot.binding.accountId
-      && sameStrictJsonValue(sourceExecution.externalActionExecution.authorization, originalRoot));
-    const seed = input.workspaceSyncSeedRouting === undefined ? undefined
-      : WorkspaceSyncSeedRoutingV1Schema.parse(input.workspaceSyncSeedRouting);
+    const custody =
+      input.custodySubjectAccountId === undefined
+        ? {}
+        : { custodySubjectAccountId: input.custodySubjectAccountId };
+    const sourceRouting =
+      input.workspaceSyncSourceRouting === undefined
+        ? undefined
+        : WorkspaceSyncSourceRoutingV1Schema.parse(
+            input.workspaceSyncSourceRouting,
+          );
+    const sourceExecution =
+      input.workspaceSyncSourceExecution === undefined
+        ? undefined
+        : WorkspaceSyncSourceExecutionV1Schema.parse(
+            input.workspaceSyncSourceExecution,
+          );
+    const originalRoot =
+      input.callerInputAuthorization === undefined
+        ? undefined
+        : ExternalActionExecutionAuthorizationV1Schema.parse(
+            input.callerInputAuthorization,
+          );
+    const deploymentRouting =
+      sourceExecution?.externalActionExecution.deploymentChildRouting;
+    // Retain this exact child for Home's signed controller/receipt/member
+    // recheck; recognizing the family does not make it current locally.
+    const deploymentChild =
+      (originalRoot?.binding.deploymentChildRoot === true) &&
+      sourceExecution?.externalActionExecution.effectActionId ===
+        deploymentChildEffectActionIdForRootV1(originalRoot?.binding.actionId ?? '', originalRoot?.binding.deploymentPreparationAdmission, sourceExecution?.externalActionExecution.effectActionId) &&
+      input.method ===
+        `${context.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}` &&
+      deploymentRouting?.actionId === sourceExecution?.externalActionExecution.effectActionId &&
+      deploymentRouting?.machineId === context.machineId &&
+      deploymentRouting.installationId === context.installationId;
+    const moveChild = Boolean(
+      originalRoot &&
+      (originalRoot.binding.actionId === 'projects.service.relocate' ||
+        deploymentChild ||
+        (originalRoot?.binding.actionId === 'discussion.second_opinion.start' &&
+          sourceExecution?.externalActionExecution.effectActionId ===
+            'session.spawn_new' &&
+          (input.method ===
+            `${context.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}` ||
+            input.method ===
+              `${context.machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`)) ||
+        (isSessionStopChildRootV1(originalRoot?.binding.actionId) &&
+          input.method === `${context.machineId}:${RPC_METHODS.STOP_SESSION}` &&
+          sourceExecution &&
+          isSessionStopChildV1({
+            rootActionId: originalRoot.binding.actionId,
+            effectActionId:
+              sourceExecution.externalActionExecution.effectActionId,
+            method: RPC_METHODS.STOP_SESSION,
+            target: sourceExecution.externalActionExecution.target,
+            params: sourceExecution.params,
+          })) ||
+        (input.method ===
+          `${context.machineId}:${RPC_METHODS.MACHINE_SETUP_PLAN}` &&
+          context.role === 'manage' &&
+          isMachineSetupPlanRpcChildV1({
+            rootActionId: originalRoot?.binding.actionId,
+            effectActionId:
+              sourceExecution?.externalActionExecution.effectActionId,
+            method: RPC_METHODS.MACHINE_SETUP_PLAN,
+          }))) &&
+      sourceExecution?.originalActionEnvelope &&
+      !sourceRouting &&
+      !input.workspaceSyncTargetRouting &&
+      !input.workspaceSyncSourceWriterTargetRouting &&
+      !input.workspaceSyncSeedRouting &&
+      sourceExecution.method === input.method &&
+      input.method?.startsWith(`${context.machineId}:`) &&
+      context.actorAccountId === originalRoot.binding.accountId &&
+      sameStrictJsonValue(
+        sourceExecution.externalActionExecution.authorization,
+        originalRoot,
+      ),
+    );
+    const seed =
+      input.workspaceSyncSeedRouting === undefined
+        ? undefined
+        : WorkspaceSyncSeedRoutingV1Schema.parse(
+            input.workspaceSyncSeedRouting,
+          );
     const seedReceiver = input.workspaceSyncSeedReceiver;
-    if (seed && (!seedReceiver || !originalRoot || !sourceExecution
-      || input.workspaceSyncSourceRouting || input.workspaceSyncTargetRouting || input.workspaceSyncSourceWriterTargetRouting
-      || input.workspaceSyncSourceReceiver || input.workspaceSyncTargetReceiver || input.workspaceSyncSourceWriterTargetReceiver
-      || input.custodySubjectAccountId
-      || input.method !== `${seedReceiver.destinationMachineId ?? seedReceiver.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
-      || (seedReceiver.destinationMachineId ?? seedReceiver.machineId) !== seed.sourceWriterTarget.sourceWriter.machineId
-      || !seedReceiver.destinationMachineId && seedReceiver.installationId !== seed.sourceWriterTarget.sourceWriter.installationId
-      || !sameStrictJsonValue(context, seed.sourceWriterTarget.source.sourceContext.machineAdmission)
-      || !doesWorkspaceSyncSeedRootMatchRouting(originalRoot, seed, sourceExecution))
-      || seedReceiver && !seed) return null;
-    const projectSource = originalRoot?.binding.actionId === 'projects.open' && sourceRouting !== undefined;
-    const finiteSource = sourceRouting !== undefined && isProjectWorkspaceSyncPreparationActionV1(originalRoot?.binding.actionId);
-    const projectSourceMethod = finiteSource ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN
+    if (
+      (seed &&
+        (!seedReceiver ||
+          !originalRoot ||
+          input.workspaceSyncSourceRouting ||
+          input.workspaceSyncTargetRouting ||
+          input.workspaceSyncSourceWriterTargetRouting ||
+          input.workspaceSyncSourceReceiver ||
+          input.workspaceSyncTargetReceiver ||
+          input.workspaceSyncSourceWriterTargetReceiver ||
+          input.custodySubjectAccountId ||
+          input.method !==
+            `${seedReceiver.destinationMachineId ?? seedReceiver.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}` ||
+          (seedReceiver.destinationMachineId ?? seedReceiver.machineId) !==
+            seed.sourceWriterTarget.sourceWriter.machineId ||
+          (!seedReceiver.destinationMachineId &&
+            seedReceiver.installationId !==
+              seed.sourceWriterTarget.sourceWriter.installationId) ||
+          !sameStrictJsonValue(
+            context,
+            seed.sourceWriterTarget.source.sourceContext.machineAdmission,
+          ) ||
+          !doesWorkspaceSyncSeedRootMatchRouting(
+            originalRoot,
+            seed,
+            sourceExecution,
+          ))) ||
+      (seedReceiver && !seed)
+    )
+      return null;
+    const projectSource =
+      isProjectWorkspaceSyncOpenActionV1(originalRoot?.binding.actionId) &&
+      sourceRouting !== undefined;
+    const finiteSource =
+      sourceRouting !== undefined &&
+      isProjectWorkspaceSyncPreparationActionV1(originalRoot?.binding.actionId);
+    const projectSourceMethod = finiteSource
+      ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN
       : RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN;
     const sourceReceiver = input.workspaceSyncSourceReceiver;
-    if (sourceRouting && (!sourceReceiver
-      || input.method !== `${sourceReceiver.destinationMachineId ?? sourceReceiver.machineId}:${projectSource || finiteSource
-        ? projectSourceMethod : RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`
-      || sourceRouting.sourceMachineId !== context.machineId)
-      || sourceReceiver && !sourceRouting) return null;
-    if (sourceReceiver?.destinationMachineId !== undefined && (!(projectSource || finiteSource) || !originalRoot
-      || originalRoot.binding.machineId !== sourceReceiver.machineId || originalRoot.binding.installationId !== sourceReceiver.installationId
-      || !doesWorkspaceSyncSourceRootMatchRouting(originalRoot, sourceRouting!))) return null;
-    const writerTarget = input.workspaceSyncSourceWriterTargetRouting === undefined ? undefined
-      : WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(input.workspaceSyncSourceWriterTargetRouting);
+    if (
+      (sourceRouting &&
+        (!sourceReceiver ||
+          input.method !==
+            `${sourceReceiver.destinationMachineId ?? sourceReceiver.machineId}:${
+              projectSource || finiteSource
+                ? projectSourceMethod
+                : RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
+            }` ||
+          sourceRouting.sourceMachineId !== context.machineId)) ||
+      (sourceReceiver && !sourceRouting)
+    )
+      return null;
+    if (
+      sourceReceiver?.destinationMachineId !== undefined &&
+      (!(projectSource || finiteSource) ||
+        !originalRoot ||
+        originalRoot.binding.machineId !== sourceReceiver.machineId ||
+        originalRoot.binding.installationId !== sourceReceiver.installationId ||
+        !doesWorkspaceSyncSourceRootMatchRouting(originalRoot, sourceRouting!))
+    )
+      return null;
+    const writerTarget =
+      input.workspaceSyncSourceWriterTargetRouting === undefined
+        ? undefined
+        : WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(
+            input.workspaceSyncSourceWriterTargetRouting,
+          );
     const writerTargetReceiver = input.workspaceSyncSourceWriterTargetReceiver;
-    if (sourceExecution && (!(moveChild || seed || projectSource || finiteSource || writerTarget && originalRoot?.binding.actionId === 'projects.open')
-      || sourceReceiver?.destinationMachineId !== undefined)) return null;
-    const targetRouting = input.workspaceSyncTargetRouting === undefined
-      ? undefined : WorkspaceSyncTargetRoutingV1Schema.parse(input.workspaceSyncTargetRouting);
+    if (
+      sourceExecution &&
+      (!(
+        moveChild ||
+        seed ||
+        projectSource ||
+        finiteSource ||
+        (writerTarget && isProjectWorkspaceSyncOpenActionV1(originalRoot?.binding.actionId))
+      ) ||
+        sourceReceiver?.destinationMachineId !== undefined)
+    )
+      return null;
+    const targetRouting =
+      input.workspaceSyncTargetRouting === undefined
+        ? undefined
+        : WorkspaceSyncTargetRoutingV1Schema.parse(
+            input.workspaceSyncTargetRouting,
+          );
     const targetReceiver = input.workspaceSyncTargetReceiver;
-    if (targetReceiver?.destinationMachineId !== undefined && (!writerTarget || !targetRouting
-      || typeof targetReceiver.destinationMachineId !== 'string' || !targetReceiver.destinationMachineId.trim()
-      || targetReceiver.destinationMachineId !== targetReceiver.destinationMachineId.trim()
-      || targetReceiver.machineId !== targetRouting.targetMachineId
-      || targetReceiver.installationId !== targetRouting.targetContext.machineAdmission.installationId
-      || !sameStrictJsonValue(context, targetRouting.targetContext.machineAdmission))) return null;
-    const targetMethodMachineId = targetReceiver?.destinationMachineId ?? targetReceiver?.machineId;
-    if (writerTarget && (sourceRouting || sourceReceiver
-      || targetRouting && (!targetReceiver || writerTargetReceiver || !doesWorkspaceSyncTargetRoutingMatchWriterTarget(targetRouting, writerTarget))
-      || !targetRouting && targetReceiver
-      || input.method !== `${targetMethodMachineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId}:${readWorkspaceSyncTargetMethod(writerTarget.target.phase)}`
-      || writerTarget.target.phase !== 'release' && (!originalRoot || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(originalRoot, writerTarget)))
-      || writerTargetReceiver && !writerTarget) return null;
-    if (writerTargetReceiver?.destinationMachineId && (!writerTarget
-      || writerTargetReceiver.machineId !== writerTarget.sourceWriter.machineId
-      || writerTargetReceiver.installationId !== writerTarget.sourceWriter.installationId
-      || !sameStrictJsonValue(context, writerTarget.source.sourceContext.machineAdmission))) return null;
-    if (originalRoot && !moveChild && !writerTarget && !seed && (!sourceRouting || !sourceReceiver
-      || sourceRouting.phase !== 'prepare' && sourceRouting.phase !== 'finalize'
-      || !(originalRoot.binding.actionId === 'session.handoff' || originalRoot.binding.actionId === 'projects.open'
-        || isProjectWorkspaceSyncPreparationActionV1(originalRoot.binding.actionId)))) return null;
-    const retainedRoot = originalRoot ? { callerInputAuthorization: originalRoot } : {};
-    if (sourceRouting && targetRouting || sourceReceiver && targetReceiver
-      || targetRouting && (!targetReceiver || targetRouting.targetMachineId !== context.machineId
-        || input.method !== `${targetMethodMachineId}:${readWorkspaceSyncTargetMethod(targetRouting.phase)}`)
-      || targetReceiver && !targetRouting) return null;
-    const signer = seedReceiver ?? writerTargetReceiver ?? sourceReceiver ?? targetReceiver ?? { machineId: context.machineId, installationId: context.installationId };
-    const routing = { ...(sourceRouting ? { workspaceSyncSourceRouting: sourceRouting } : {}),
-      ...(sourceExecution ? { workspaceSyncSourceExecution: sourceExecution } : {}),
+    if (
+      targetReceiver?.destinationMachineId !== undefined &&
+      (!writerTarget ||
+        !targetRouting ||
+        typeof targetReceiver.destinationMachineId !== 'string' ||
+        !targetReceiver.destinationMachineId.trim() ||
+        targetReceiver.destinationMachineId !==
+          targetReceiver.destinationMachineId.trim() ||
+        targetReceiver.machineId !== targetRouting.targetMachineId ||
+        targetReceiver.installationId !==
+          targetRouting.targetContext.machineAdmission.installationId ||
+        !sameStrictJsonValue(
+          context,
+          targetRouting.targetContext.machineAdmission,
+        ))
+    )
+      return null;
+    const targetMethodMachineId =
+      targetReceiver?.destinationMachineId ?? targetReceiver?.machineId;
+    if (
+      (writerTarget &&
+        (sourceRouting ||
+          sourceReceiver ||
+          (targetRouting &&
+            (!targetReceiver ||
+              writerTargetReceiver ||
+              !doesWorkspaceSyncTargetRoutingMatchWriterTarget(
+                targetRouting,
+                writerTarget,
+              ))) ||
+          (!targetRouting && targetReceiver) ||
+          input.method !==
+            `${targetMethodMachineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId}:${readWorkspaceSyncTargetMethod(writerTarget.target.phase)}` ||
+          (writerTarget.target.phase !== 'release' &&
+            (!originalRoot ||
+              !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
+                originalRoot,
+                writerTarget,
+              ))))) ||
+      (writerTargetReceiver && !writerTarget)
+    )
+      return null;
+    if (
+      writerTargetReceiver?.destinationMachineId &&
+      (!writerTarget ||
+        writerTargetReceiver.machineId !==
+          writerTarget.sourceWriter.machineId ||
+        writerTargetReceiver.installationId !==
+          writerTarget.sourceWriter.installationId ||
+        !sameStrictJsonValue(
+          context,
+          writerTarget.source.sourceContext.machineAdmission,
+        ))
+    )
+      return null;
+    if (
+      originalRoot &&
+      !moveChild &&
+      !writerTarget &&
+      !seed &&
+      (!sourceRouting ||
+        !sourceReceiver ||
+        (sourceRouting.phase !== 'prepare' &&
+          sourceRouting.phase !== 'finalize') ||
+        !(
+          originalRoot.binding.actionId === 'session.handoff' ||
+          isProjectWorkspaceSyncOpenActionV1(originalRoot.binding.actionId) ||
+          isProjectWorkspaceSyncPreparationActionV1(
+            originalRoot.binding.actionId,
+          )
+        ))
+    )
+      return null;
+    const retainedRoot = originalRoot
+      ? { callerInputAuthorization: originalRoot }
+      : {};
+    if (
+      (sourceRouting && targetRouting) ||
+      (sourceReceiver && targetReceiver) ||
+      (targetRouting &&
+        (!targetReceiver ||
+          targetRouting.targetMachineId !== context.machineId ||
+          input.method !==
+            `${targetMethodMachineId}:${readWorkspaceSyncTargetMethod(targetRouting.phase)}`)) ||
+      (targetReceiver && !targetRouting)
+    )
+      return null;
+    const signer = seedReceiver ??
+      writerTargetReceiver ??
+      sourceReceiver ??
+      targetReceiver ?? {
+        machineId: context.machineId,
+        installationId: context.installationId,
+      };
+    const routing = {
+      ...(sourceRouting ? { workspaceSyncSourceRouting: sourceRouting } : {}),
+      ...(sourceExecution
+        ? { workspaceSyncSourceExecution: sourceExecution }
+        : {}),
       ...(targetRouting ? { workspaceSyncTargetRouting: targetRouting } : {}),
-      ...(writerTarget ? { workspaceSyncSourceWriterTargetRouting: writerTarget } : {}),
-      ...(seed ? { workspaceSyncSeedRouting: seed } : {}) };
+      ...(writerTarget
+        ? { workspaceSyncSourceWriterTargetRouting: writerTarget }
+        : {}),
+      ...(seed ? { workspaceSyncSeedRouting: seed } : {}),
+    };
     stage = 'proof_signing';
-    const sessionDecision = input.sessionDecision ? { sessionDecision: input.sessionDecision } : {};
-    const proof = signMachineInstallationProof({ payload: {
-      version: 1, machineId: signer.machineId, installationId: signer.installationId,
-      accountId: seedReceiver?.accountId ?? writerTargetReceiver?.accountId ?? sourceReceiver?.accountId ?? context.custodianAccountId, rpcAdmission: { context, ...admissionPurpose, ...custody, ...routing, ...retainedRoot, ...sessionDecision },
-    }, privateKey: input.privateKey });
+    const sessionDecision = input.sessionDecision
+      ? { sessionDecision: input.sessionDecision }
+      : {};
+    const proof = signMachineInstallationProof({
+      payload: {
+        version: 1,
+        machineId: signer.machineId,
+        installationId: signer.installationId,
+        accountId:
+          seedReceiver?.accountId ??
+          writerTargetReceiver?.accountId ??
+          sourceReceiver?.accountId ??
+          targetReceiver?.accountId ??
+          context.custodianAccountId,
+        rpcAdmission: {
+          context,
+          ...admissionPurpose,
+          ...custody,
+          ...routing,
+          ...retainedRoot,
+          ...sessionDecision,
+        },
+      },
+      privateKey: input.privateKey,
+    });
     stage = 'transport';
     const response = await axios.post<unknown>(
       `${input.serverHttpBaseUrl}/v1/machines/${encodeURIComponent(signer.machineId)}/admission/verify`,
-      { v: 1, context, ...admissionPurpose, proof, ...custody, ...routing, ...retainedRoot, ...sessionDecision },
-      { headers: { Authorization: `Bearer ${input.daemonToken}`, 'Content-Type': 'application/json' },
+      {
+        v: 1,
+        context,
+        ...admissionPurpose,
+        proof,
+        ...custody,
+        ...routing,
+        ...retainedRoot,
+        ...sessionDecision,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${input.daemonToken}`,
+          'Content-Type': 'application/json',
+        },
         // The containing RPC owns its deadline and cancellation. A second,
         // shorter HTTP cutoff must not turn a still-valid read into a denial.
-        timeout: input.signal ? 0 : 15_000, validateStatus: () => true,
-        ...(input.signal ? { signal: input.signal } : {}) },
+        timeout: input.signal ? 0 : 15_000,
+        validateStatus: () => true,
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
     );
     if (input.signal?.aborted) return failed('request_cancelled');
     if (response.status < 200 || response.status >= 300) {
       stage = 'response_status';
-      const error = createHttpStatusError(response.status, 'Machine admission Home verification failed');
-      if (classifyServerEndpointError(error).retryable) throw error;
+      const error = createHttpStatusError(
+        response.status,
+        'Machine admission Home verification failed',
+      );
+      if (classifyServerEndpointError(error).kind !== 'auth_failed')
+        throw error;
       return failed('response_status', response.status);
     }
-    const result = MachineAdmissionVerifyResponseV1Schema.safeParse(response.data);
-    return result.success ? result.data : failed('response_schema', response.status);
+    const result = MachineAdmissionVerifyResponseV1Schema.safeParse(
+      response.data,
+    );
+    if (result.success) return result.data;
+    stage = 'response_schema';
+    failed(stage, response.status);
+    throw new Error('machine_admission_invalid_response');
   } catch (error) {
     if (input.signal?.aborted) return failed('request_cancelled');
+    if (stage === 'response_schema') throw error;
     // Axios errors carry credentials and response bodies. Retain only known transport codes.
-    const code = axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED',
-      'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'ERR_NETWORK', 'ERR_CANCELED'].includes(error.code ?? '') ? error.code : undefined;
-    failed(stage, stage === 'response_status' ? readHttpStatus(error) ?? undefined : undefined, code);
-    if (classifyServerEndpointError(error).retryable) throw error;
+    const code =
+      axios.isAxiosError(error) &&
+      [
+        'ECONNABORTED',
+        'ETIMEDOUT',
+        'ECONNRESET',
+        'ECONNREFUSED',
+        'EPIPE',
+        'ENOTFOUND',
+        'EAI_AGAIN',
+        'ERR_NETWORK',
+        'ERR_CANCELED',
+      ].includes(error.code ?? '')
+        ? error.code
+        : undefined;
+    failed(
+      stage,
+      stage === 'response_status'
+        ? (readHttpStatus(error) ?? undefined)
+        : undefined,
+      code,
+    );
+    const classification = classifyServerEndpointError(error);
+    if (classification.retryable) throw error;
+    if (classification.kind !== 'auth_failed')
+      throw new Error('machine_admission_verification_unavailable');
     return null;
   }
 }
 
 /** Retention decisions require the guest and current controller to agree on the same retained row. */
-export async function verifyManagedActivityTargetCurrent(input: Readonly<{
-  context: SocketRpcMachineAdmissionContextV1;
-  managedTarget: ManagedActivityReadRequestV1;
-  method: string;
-  privateKey: string | Uint8Array;
-  daemonToken: string;
-  serverHttpBaseUrl: string;
-  signal?: AbortSignal;
-}>): Promise<boolean> {
+export async function verifyManagedActivityTargetCurrent(
+  input: Readonly<{
+    context: SocketRpcMachineAdmissionContextV1;
+    managedTarget: ManagedActivityRpcRequestV1;
+    method: string;
+    privateKey: string | Uint8Array;
+    daemonToken: string;
+    serverHttpBaseUrl: string;
+    signal?: AbortSignal;
+  }>,
+): Promise<boolean> {
   try {
-    const context = SocketRpcMachineAdmissionContextV1Schema.parse(input.context);
-    const managedTarget = ManagedActivityReadRequestV1Schema.parse(input.managedTarget);
+    const context = SocketRpcMachineAdmissionContextV1Schema.parse(
+      input.context,
+    );
+    const managedTarget = ManagedActivityRpcRequestV1Schema.parse(
+      input.managedTarget,
+    );
     const method = `${context.machineId}:${input.method}`;
-    const proof = signMachineInstallationProof({ payload: {
-      version: 1, machineId: context.machineId, installationId: context.installationId,
-      accountId: context.custodianAccountId, rpcAdmission: { context, method, managedTarget },
-    }, privateKey: input.privateKey });
-    const response = await axios.post<unknown>(`${input.serverHttpBaseUrl}/v1/machines/managed/guest/current`,
+    const proof = signMachineInstallationProof({
+      payload: {
+        version: 1,
+        machineId: context.machineId,
+        installationId: context.installationId,
+        accountId: context.custodianAccountId,
+        rpcAdmission: { context, method, managedTarget },
+      },
+      privateKey: input.privateKey,
+    });
+    const response = await axios.post<unknown>(
+      `${input.serverHttpBaseUrl}/v1/machines/managed/guest/current`,
       { v: 1, context, method, managedTarget, proof },
-      { headers: { Authorization: `Bearer ${input.daemonToken}`, 'Content-Type': 'application/json' },
-        validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}) });
+      {
+        headers: {
+          Authorization: `Bearer ${input.daemonToken}`,
+          'Content-Type': 'application/json',
+        },
+        validateStatus: () => true,
+        ...(input.signal ? { signal: input.signal } : {}),
+      },
+    );
     const parsed = ManagedGuestCurrentOutputV1Schema.safeParse(response.data);
-    return !input.signal?.aborted && response.status >= 200 && response.status < 300
-      && parsed.success && parsed.data.current;
-  } catch { return false; }
+    return (
+      !input.signal?.aborted &&
+      response.status >= 200 &&
+      response.status < 300 &&
+      parsed.success &&
+      parsed.data.current
+    );
+  } catch {
+    return false;
+  }
 }
 
-function readSessionIdFromParams(params: unknown, method: string): string | null {
+function readSessionIdFromParams(
+  params: unknown,
+  method: string,
+): string | null {
   if (!params || typeof params !== 'object') return null;
   const unscopedMethod = method.slice(method.lastIndexOf(':') + 1);
   const replay = Reflect.get(params, 'replay');
-  const sessionId = unscopedMethod === RPC_METHODS.SESSION_FORK || unscopedMethod === RPC_METHODS.SESSION_FORK_PROVIDER_SAFE
-    ? Reflect.get(params, 'parentSessionId')
-    : unscopedMethod === RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY
-      ? replay && typeof replay === 'object' ? Reflect.get(replay, 'previousSessionId') : undefined
-      : Reflect.get(params, resolveSocketRpcSessionAuthorization(method)?.sessionIdParam ?? 'sessionId');
-  return typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
+  const sessionId =
+    unscopedMethod === RPC_METHODS.SESSION_FORK ||
+    unscopedMethod === RPC_METHODS.SESSION_FORK_PROVIDER_SAFE
+      ? Reflect.get(params, 'parentSessionId')
+      : unscopedMethod === RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY
+        ? replay && typeof replay === 'object'
+          ? Reflect.get(replay, 'previousSessionId')
+          : undefined
+        : Reflect.get(params, resolveSocketRpcSessionAuthorization(method)?.sessionIdParam ?? 'sessionId');
+  return typeof sessionId === 'string' && sessionId.trim().length > 0
+    ? sessionId.trim()
+    : null;
 }
 
-function forbidden(admissionPredicate: RpcAdmissionPredicate = 'machine_admission'): RpcAuthorizationResult {
+function forbidden(
+  admissionPredicate: RpcAdmissionPredicate = 'machine_admission',
+): RpcAuthorizationResult {
   return {
     ok: false,
     error: RPC_ERROR_MESSAGES.FORBIDDEN,
@@ -531,27 +1161,42 @@ function forbidden(admissionPredicate: RpcAdmissionPredicate = 'machine_admissio
   };
 }
 
-export function readWorkspaceSyncTargetMethod(phase: WorkspaceSyncTargetRoutingV1['phase']): string {
+export function readWorkspaceSyncTargetMethod(
+  phase: WorkspaceSyncTargetRoutingV1['phase'],
+): string {
   switch (phase) {
-    case 'preflight': return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT;
-    case 'prepare': return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE;
-    case 'release': return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
+    case 'preflight':
+      return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT;
+    case 'prepare':
+      return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE;
+    case 'release':
+      return RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
   }
 }
 
 /** One strict binding for both the installed child sender and physical receiver. */
-export function doesWorkspaceSyncTargetRequestMatchRouting(params: unknown, routing: WorkspaceSyncTargetRoutingV1): boolean {
+export function doesWorkspaceSyncTargetRequestMatchRouting(
+  params: unknown,
+  routing: WorkspaceSyncTargetRoutingV1,
+): boolean {
   if (routing.phase === 'preflight') {
     const body = HandoffTargetReplacementPreflightV1Schema.safeParse(params);
-    return body.success && body.data.operationId === routing.operationId && body.data.serverId === routing.accountServerId
-      && body.data.machineId === routing.targetMachineId && body.data.targetPath === routing.targetRootPath;
+    return (
+      body.success &&
+      body.data.operationId === routing.operationId &&
+      body.data.serverId === routing.accountServerId &&
+      body.data.machineId === routing.targetMachineId &&
+      body.data.targetPath === routing.targetRootPath
+    );
   }
-  const body = routing.phase === 'prepare' ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(params)
-    : WorkspaceSyncTargetBootstrapReleaseV1Schema.safeParse(params);
+  const body =
+    routing.phase === 'prepare'
+      ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(params)
+      : WorkspaceSyncTargetBootstrapReleaseV1Schema.safeParse(params);
   if (!body.success) return false;
   if (body.data.bootstrapOperationId === routing.operationId) return true;
-  // This is a request binding, never authority: the receiver below also
-  // requires the exact already-admitted private Open capture for this form.
+  // This is a request binding, never authority: the receiver selects native
+  // owner custody or the exact already-admitted private Open capture below.
   const relationshipId = deriveWorkspaceSyncRelationshipId(routing.operationId);
   return body.data.bootstrapOperationId === relationshipId
     && (routing.phase === 'release' || 'owner' in body.data && body.data.owner.kind === 'relationship'
@@ -559,155 +1204,446 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(params: unknown, rout
       && body.data.transientRelationship?.relationshipId === relationshipId);
 }
 
-export async function authorizeMachineRpcRequest(request: Readonly<{
-  method: string;
-  params: unknown;
+export async function authorizeMachineRpcRequest(
+  request: Readonly<{
+    method: string;
+    params: unknown;
     callerAuthority?: import('@/api/rpc/types').RpcHandlerContext['callerAuthority'];
     sessionActionOrigin?: import('@/api/rpc/types').RpcHandlerContext['sessionActionOrigin'];
     localActionContext?: import('@/api/rpc/types').RpcHandlerContext['localActionContext'];
     inheritedLocalActionContext?: import('@/api/rpc/types').RpcHandlerContext['localActionContext'];
     requesterSessionBootstrap?: import('@/api/rpc/types').RpcHandlerContext['requesterSessionBootstrap'];
-  authorization?: SocketRpcAuthorizationContext;
-  transportResponseEnvelopeVersion?: 1;
-  machineAdmission?: SocketRpcMachineAdmissionContextV1;
-  /** Host-private admitted Session wake lifetime; never read from RPC input. */
-  verifyMachineAdmissionCurrent?: () => Promise<boolean>;
-  receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
-  workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
-  workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
-  workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
-  workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
-  workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
-  callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
-  signal?: AbortSignal;
-}>, machine?: MachineRpcAdmissionBoundary, source?: 'authenticated_home_socket'): Promise<RpcAuthorizationResult> {
-  if (isSocketRpcMachineReadServerOriginAuthorizationContext(request.authorization)) {
-    const authority = request.authorization;
-    if (!machine || authority.machineId !== machine.machineId
-      || !SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS.some(method => request.method === `${machine.machineId}:${method}`))
+    authorization?: SocketRpcAuthorizationContext;
+    transportResponseEnvelopeVersion?: 1;
+    machineAdmission?: SocketRpcMachineAdmissionContextV1;
+    /** Host-private admitted Session wake lifetime; never read from RPC input. */
+    verifyMachineAdmissionCurrent?: () => Promise<boolean>;
+    /** Consumed only from the authenticated Home socket, never a peer's wire claim. */
+    receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
+    workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+    workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
+    workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
+    workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+    workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+    callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+    signal?: AbortSignal;
+  }>,
+  machine?: MachineRpcAdmissionBoundary,
+  source?: 'authenticated_home_socket',
+): Promise<RpcAuthorizationResult> {
+  if (
+    request.machineAdmission !== undefined &&
+    isSocketRpcActionApiServerOriginAuthorizationContext(request.authorization)
+  ) {
+    // This closed relay executes the ORIGINAL Action, not a new raw grant for
+    // its custodian-only transport method. Its registered ingress verifies the
+    // signed root/effect/target before producing requester custody/currentness.
+    const dispatch = ExternalActionDaemonDispatchRequestSchema.safeParse(
+      request.params,
+    );
+    const admission = SocketRpcMachineAdmissionContextV1Schema.safeParse(
+      request.machineAdmission,
+    );
+    if (
+      !machine ||
+      !dispatch.success ||
+      !admission.success ||
+      request.method !==
+        `${machine.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`
+    )
+      return forbidden('machine_target');
+    const root = dispatch.data.executionAuthorization?.binding;
+    const context = admission.data;
+    if (
+      !root ||
+      context.actorAccountId !== root.accountId ||
+      context.custodianAccountId !== root.custodianAccountId ||
+      context.machineId !== root.machineId ||
+      context.installationId !== root.installationId ||
+      dispatch.data.placement.machineId !== machine.machineId ||
+      dispatch.data.placement.target.machineId !== machine.machineId ||
+      root.machineId !== machine.machineId
+    )
       return forbidden('machine_target');
     try {
-      const custodianAccountId = await machine.resolveCustodianAccountId(request.signal);
+      if (context.installationId !== machine.resolveInstallationId())
+        return forbidden('machine_installation');
+      if (
+        context.custodianAccountId !==
+        (await machine.resolveCustodianAccountId(request.signal))
+      )
+        return forbidden('machine_custodian');
       if (request.signal?.aborted) return forbidden('request_cancelled');
-      if (authority.accountId !== custodianAccountId) return forbidden('machine_custodian');
-    } catch { return forbidden('authorization_unavailable'); }
+      return { ok: true };
+    } catch {
+      return forbidden('authorization_unavailable');
+    }
+  }
+  if (
+    request.authorization?.kind === 'machine.managedInstallation.serverOrigin'
+  ) {
+    // Only Home mints this stamp, after admitting the purpose, and only its
+    // authenticated socket can carry it; local and other ingress never can.
+    const stamp = ManagedInstallationServerOriginV1Schema.safeParse(
+      request.authorization,
+    );
+    const body = ManagedInstallationCapabilityRequestV1Schema.safeParse(
+      request.params,
+    );
+    if (
+      source !== 'authenticated_home_socket' ||
+      !stamp.success ||
+      !stamp.data.purpose.controller ||
+      !body.success ||
+      !machine ||
+      request.machineAdmission ||
+      request.method !==
+        `${machine.machineId}:${RPC_METHODS.CAPABILITIES_INVOKE}` ||
+      stamp.data.purpose.controller.machineId !== machine.machineId ||
+      stamp.data.purpose.controller.installationId !==
+        machine.resolveInstallationId() ||
+      !sameStrictJsonValue(
+        readManagedInstallationPurposeV1(body.data.params),
+        stamp.data.purpose,
+      )
+    )
+      return forbidden();
+    try {
+      if (
+        (await machine.resolveCustodianAccountId(request.signal)) !==
+          stamp.data.custodianAccountId ||
+        request.signal?.aborted ||
+        machine.resolveInstallationId() !==
+          stamp.data.purpose.controller.installationId
+      )
+        return forbidden();
+      return { ok: true };
+    } catch {
+      return forbidden('authorization_unavailable');
+    }
+  }
+  if (
+    isSocketRpcMachineReadServerOriginAuthorizationContext(
+      request.authorization,
+    )
+  ) {
+    const authority = request.authorization;
+    if (
+      !machine ||
+      authority.machineId !== machine.machineId ||
+      !SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS.some(
+        (method) => request.method === `${machine.machineId}:${method}`,
+      )
+    )
+      return forbidden('machine_target');
+    try {
+      const custodianAccountId = await machine.resolveCustodianAccountId(
+        request.signal,
+      );
+      if (request.signal?.aborted) return forbidden('request_cancelled');
+      if (authority.accountId !== custodianAccountId)
+        return forbidden('machine_custodian');
+    } catch {
+      return forbidden('authorization_unavailable');
+    }
     // Read scope is stamped by the authenticated Home, never the generic client CALL parser.
     // Keep any additional installed-Machine admission below intact.
   }
-  const isSourcePhase = request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
-    || request.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`);
-  const isProjectSource = request.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`);
-  const isFiniteSource = request.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN}`)
-    && request.workspaceSyncSourceRouting !== undefined;
+  const isSourcePhase =
+    request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE ||
+    request.method.endsWith(
+      `:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`,
+    );
+  const isProjectSource = request.method.endsWith(
+    `:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`,
+  );
+  const isFiniteSource =
+    request.method.endsWith(
+      `:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN}`,
+    ) && request.workspaceSyncSourceRouting !== undefined;
   let sourceRouting: WorkspaceSyncSourceRoutingV1 | undefined;
   let targetRouting: WorkspaceSyncTargetRoutingV1 | undefined;
   let writerTargetRouting: WorkspaceSyncSourceWriterTargetRoutingV1 | undefined;
   let seedRouting: WorkspaceSyncSeedRoutingV1 | undefined;
   if (request.workspaceSyncSeedRouting !== undefined) {
-    const seed = WorkspaceSyncSeedRoutingV1Schema.safeParse(request.workspaceSyncSeedRouting);
-    const execution = WorkspaceSyncSourceExecutionV1Schema.safeParse(request.workspaceSyncSourceExecution);
-    const body = WorkspaceSyncSeedExportPrepareV1Schema.safeParse(request.params);
-    if (!machine || !request.machineAdmission || !seed.success || !execution.success || !body.success
-      || !request.callerInputAuthorization || request.workspaceSyncSourceRouting || request.workspaceSyncTargetRouting
-      || request.workspaceSyncSourceWriterTargetRouting
-      || request.method !== `${machine.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
-      || seed.data.sourceWriterTarget.sourceWriter.machineId !== machine.machineId
-      || !sameStrictJsonValue(request.machineAdmission, seed.data.sourceWriterTarget.source.sourceContext.machineAdmission)
-      || body.data.operationId !== seed.data.sourceWriterTarget.source.operationId
-      || !doesWorkspaceSyncSeedRootMatchRouting(request.callerInputAuthorization, seed.data, execution.data)) return forbidden();
+    const seed = WorkspaceSyncSeedRoutingV1Schema.safeParse(
+      request.workspaceSyncSeedRouting,
+    );
+    const execution = WorkspaceSyncSourceExecutionV1Schema.safeParse(
+      request.workspaceSyncSourceExecution,
+    );
+    const body = WorkspaceSyncSeedExportPrepareV1Schema.safeParse(
+      request.params,
+    );
+    if (
+      !machine ||
+      !request.machineAdmission ||
+      !seed.success ||
+      request.workspaceSyncSourceExecution !== undefined && !execution.success ||
+      !body.success ||
+      !request.callerInputAuthorization ||
+      request.workspaceSyncSourceRouting ||
+      request.workspaceSyncTargetRouting ||
+      request.workspaceSyncSourceWriterTargetRouting ||
+      request.method !==
+        `${machine.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}` ||
+      seed.data.sourceWriterTarget.sourceWriter.machineId !==
+        machine.machineId ||
+      !sameStrictJsonValue(
+        request.machineAdmission,
+        seed.data.sourceWriterTarget.source.sourceContext.machineAdmission,
+      ) ||
+      !doesWorkspaceSyncSeedRootMatchRouting(
+        request.callerInputAuthorization,
+        seed.data,
+        execution.success ? execution.data : undefined,
+        body.data.operationId,
+      )
+    )
+      return forbidden();
     seedRouting = seed.data;
   }
   if (request.workspaceSyncSourceWriterTargetRouting !== undefined) {
-    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.safeParse(request.workspaceSyncSourceWriterTargetRouting);
-    if (!machine || !request.machineAdmission || !routing.success || request.workspaceSyncSourceRouting
-      || request.method !== `${machine.machineId}:${readWorkspaceSyncTargetMethod(routing.data.target.phase)}`
-      || !doesWorkspaceSyncTargetRequestMatchRouting(request.params, { ...routing.data.target, targetContext: routing.data.source.sourceContext })
-      || routing.data.target.phase !== 'release' && (!request.callerInputAuthorization
-        || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(request.callerInputAuthorization, routing.data, request.machineAdmission))) return forbidden();
-    if (routing.data.target.phase === 'release' && !request.workspaceSyncTargetRouting && (request.machineAdmission.machineId !== routing.data.sourceWriter.machineId
-      || request.machineAdmission.installationId !== routing.data.sourceWriter.installationId
-      || request.machineAdmission.actorAccountId !== request.machineAdmission.custodianAccountId
-      || request.machineAdmission.custodianAccountId !== routing.data.source.sourceContext.machineAdmission.custodianAccountId)) return forbidden();
+    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.safeParse(
+      request.workspaceSyncSourceWriterTargetRouting,
+    );
+    if (
+      !machine ||
+      !request.machineAdmission ||
+      !routing.success ||
+      request.workspaceSyncSourceRouting ||
+      request.method !==
+        `${machine.machineId}:${readWorkspaceSyncTargetMethod(routing.data.target.phase)}` ||
+      !doesWorkspaceSyncTargetRequestMatchRouting(request.params, {
+        ...routing.data.target,
+        targetContext: routing.data.source.sourceContext,
+      }) ||
+      (routing.data.target.phase !== 'release' &&
+        (!request.callerInputAuthorization ||
+          !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
+            request.callerInputAuthorization,
+            routing.data,
+            request.machineAdmission,
+          )))
+    )
+      return forbidden();
+    if (
+      routing.data.target.phase === 'release' &&
+      !request.workspaceSyncTargetRouting &&
+      (request.machineAdmission.machineId !==
+        routing.data.sourceWriter.machineId ||
+        request.machineAdmission.installationId !==
+          routing.data.sourceWriter.installationId ||
+        request.machineAdmission.actorAccountId !==
+          request.machineAdmission.custodianAccountId ||
+        request.machineAdmission.custodianAccountId !==
+          routing.data.source.sourceContext.machineAdmission.custodianAccountId)
+    )
+      return forbidden();
     writerTargetRouting = routing.data;
   }
-  if (request.workspaceSyncSourceRouting !== undefined && request.workspaceSyncTargetRouting !== undefined) return forbidden();
+  if (
+    request.workspaceSyncSourceRouting !== undefined &&
+    request.workspaceSyncTargetRouting !== undefined
+  )
+    return forbidden();
   if (isProjectSource || isFiniteSource) {
-    const routing = WorkspaceSyncSourceRoutingV1Schema.safeParse(request.workspaceSyncSourceRouting);
-    const execution = WorkspaceSyncSourceExecutionV1Schema.safeParse(request.workspaceSyncSourceExecution);
-    if (!machine || !request.machineAdmission || !routing.success || !execution.success || !request.callerInputAuthorization
-      || request.method !== `${machine.machineId}:${isFiniteSource ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN
-        : RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`
-      || execution.data.method !== request.method
-      || !sameStrictJsonValue(execution.data.externalActionExecution.authorization, request.callerInputAuthorization)
-      || routing.data.sourceMachineId !== request.machineAdmission.machineId
-      || !sameStrictJsonValue(routing.data.sourceContext?.machineAdmission, request.machineAdmission)
-      || !(isFiniteSource ? doesWorkspaceSyncFinitePrepareRequestMatchRouting(request.params, request.callerInputAuthorization, routing.data)
-        : doesWorkspaceSyncProjectSourceRequestMatchRouting(request.params, request.callerInputAuthorization, routing.data))) return forbidden();
+    const routing = WorkspaceSyncSourceRoutingV1Schema.safeParse(
+      request.workspaceSyncSourceRouting,
+    );
+    const execution = WorkspaceSyncSourceExecutionV1Schema.safeParse(
+      request.workspaceSyncSourceExecution,
+    );
+    if (
+      !machine ||
+      !request.machineAdmission ||
+      !routing.success ||
+      !execution.success ||
+      !request.callerInputAuthorization ||
+      request.method !==
+        `${machine.machineId}:${
+          isFiniteSource
+            ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN
+            : RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN
+        }` ||
+      execution.data.method !== request.method ||
+      !sameStrictJsonValue(
+        execution.data.externalActionExecution.authorization,
+        request.callerInputAuthorization,
+      ) ||
+      routing.data.sourceMachineId !== request.machineAdmission.machineId ||
+      !sameStrictJsonValue(
+        routing.data.sourceContext?.machineAdmission,
+        request.machineAdmission,
+      ) ||
+      !(isFiniteSource
+        ? doesWorkspaceSyncFinitePrepareRequestMatchRouting(
+            request.params,
+            request.callerInputAuthorization,
+            routing.data,
+          )
+        : doesWorkspaceSyncProjectSourceRequestMatchRouting(
+            request.params,
+            request.callerInputAuthorization,
+            routing.data,
+          ))
+    )
+      return forbidden();
     sourceRouting = routing.data;
-  } else if (isSourcePhase || request.workspaceSyncSourceRouting !== undefined) {
-    const routing = WorkspaceSyncSourceRoutingV1Schema.safeParse(request.workspaceSyncSourceRouting);
-    const phase = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.safeParse(request.params);
-    if (!machine || !request.machineAdmission || !routing.success || !phase.success
-      || request.method !== `${machine.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`
-      || routing.data.phase !== phase.data.phase
-      || routing.data.operationId !== phase.data.input.operationId
-      || routing.data.accountServerId !== phase.data.input.accountServerId
-      || routing.data.sourceMachineId !== phase.data.input.sourceMachineId
-      || routing.data.sourceRootPath !== phase.data.input.sourceRootPath
-      || routing.data.sourceSessionId !== phase.data.input.sourceSessionId
-      || routing.data.sourceMachineId !== request.machineAdmission.machineId
-      || routing.data.sourceContext && !sameStrictJsonValue(routing.data.sourceContext.machineAdmission, request.machineAdmission)) return forbidden();
+  } else if (
+    isSourcePhase ||
+    request.workspaceSyncSourceRouting !== undefined
+  ) {
+    const routing = WorkspaceSyncSourceRoutingV1Schema.safeParse(
+      request.workspaceSyncSourceRouting,
+    );
+    const phase = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.safeParse(
+      request.params,
+    );
+    if (
+      !machine ||
+      !request.machineAdmission ||
+      !routing.success ||
+      !phase.success ||
+      request.method !==
+        `${machine.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}` ||
+      routing.data.phase !== phase.data.phase ||
+      routing.data.operationId !== phase.data.input.operationId ||
+      routing.data.accountServerId !== phase.data.input.accountServerId ||
+      routing.data.sourceMachineId !== phase.data.input.sourceMachineId ||
+      routing.data.sourceRootPath !== phase.data.input.sourceRootPath ||
+      routing.data.sourceSessionId !== phase.data.input.sourceSessionId ||
+      routing.data.sourceMachineId !== request.machineAdmission.machineId ||
+      (routing.data.sourceContext &&
+        !sameStrictJsonValue(
+          routing.data.sourceContext.machineAdmission,
+          request.machineAdmission,
+        ))
+    )
+      return forbidden();
     sourceRouting = routing.data;
   }
   if (request.workspaceSyncTargetRouting !== undefined) {
-    const routing = WorkspaceSyncTargetRoutingV1Schema.safeParse(request.workspaceSyncTargetRouting);
-    if (!machine || !request.machineAdmission || !routing.success
-      || request.method !== `${machine.machineId}:${readWorkspaceSyncTargetMethod(routing.data.phase)}`
-      || routing.data.targetMachineId !== request.machineAdmission.machineId
-      || !sameStrictJsonValue(routing.data.targetContext.machineAdmission, request.machineAdmission)
-      || writerTargetRouting && !doesWorkspaceSyncTargetRoutingMatchWriterTarget(routing.data, writerTargetRouting)) return forbidden();
-    if (!doesWorkspaceSyncTargetRequestMatchRouting(request.params, routing.data)) return forbidden();
+    const routing = WorkspaceSyncTargetRoutingV1Schema.safeParse(
+      request.workspaceSyncTargetRouting,
+    );
+    if (
+      !machine ||
+      !request.machineAdmission ||
+      !routing.success ||
+      request.method !==
+        `${machine.machineId}:${readWorkspaceSyncTargetMethod(routing.data.phase)}` ||
+      routing.data.targetMachineId !== request.machineAdmission.machineId ||
+      !sameStrictJsonValue(
+        routing.data.targetContext.machineAdmission,
+        request.machineAdmission,
+      ) ||
+      (writerTargetRouting &&
+        !doesWorkspaceSyncTargetRoutingMatchWriterTarget(
+          routing.data,
+          writerTargetRouting,
+        ))
+    )
+      return forbidden();
+    if (
+      !doesWorkspaceSyncTargetRequestMatchRouting(request.params, routing.data)
+    )
+      return forbidden();
     // The canonical TARGET owner resolves the selected child to this exact physical WorkspaceRef before effects.
     targetRouting = routing.data;
   }
-  const isPreviewAdmission = request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION
-    || request.method.endsWith(`:${RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION}`);
-  if (isPreviewAdmission && (!machine
-    || request.method !== `${machine.machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION}`
-    || !request.machineAdmission
-    || !isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext(request.authorization))) return forbidden();
-  const isAccessLoss = request.method.endsWith(`:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`);
-  const custodyRequest = isAccessLoss ? MachineAccessLossCustodyRequestV1Schema.safeParse(request.params) : null;
-  if (isAccessLoss && (!custodyRequest?.success || !request.machineAdmission
-    || !isSocketRpcMachineAccessLossServerOriginAuthorizationContext(request.authorization))) return forbidden();
+  const isPreviewAdmission =
+    request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION ||
+    request.method.endsWith(
+      `:${RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION}`,
+    );
+  if (
+    isPreviewAdmission &&
+    (!machine ||
+      request.method !==
+        `${machine.machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION}` ||
+      !request.machineAdmission ||
+      !isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext(
+        request.authorization,
+      ))
+  )
+    return forbidden();
+  const isAccessLoss = request.method.endsWith(
+    `:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`,
+  );
+  const custodyRequest = isAccessLoss
+    ? MachineAccessLossCustodyRequestV1Schema.safeParse(request.params)
+    : null;
+  if (
+    isAccessLoss &&
+    (!custodyRequest?.success ||
+      !request.machineAdmission ||
+      !isSocketRpcMachineAccessLossServerOriginAuthorizationContext(
+        request.authorization,
+      ))
+  )
+    return forbidden();
   if (request.machineAdmission !== undefined) {
-    const admission = SocketRpcMachineAdmissionContextV1Schema.safeParse(request.machineAdmission);
+    const admission = SocketRpcMachineAdmissionContextV1Schema.safeParse(
+      request.machineAdmission,
+    );
     if (!admission.success || !machine) return forbidden();
     const context = admission.data;
-    if (isAccessLoss && context.actorAccountId !== context.custodianAccountId) return forbidden();
+    if (isAccessLoss && context.actorAccountId !== context.custodianAccountId)
+      return forbidden();
     try {
       const installationId = machine.resolveInstallationId();
-      const custodianAccountId = !writerTargetRouting && !seedRouting
-        ? await machine.resolveCustodianAccountId(request.signal) : null;
+      const custodianAccountId =
+        !writerTargetRouting && !seedRouting
+          ? await machine.resolveCustodianAccountId(request.signal)
+          : null;
       if (request.signal?.aborted) return forbidden('request_cancelled');
       if (!installationId) return forbidden('machine_installation');
       // Passive copy review retains its controller identity on the second hop.
       // Only this exact method's strict preview may bind to the physical target;
       // the same installation, custodian and current Home checks still apply.
-      const copyPreview = request.method === `${machine.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`
-        ? WorkspaceSyncCommittedCopyPreviewV1Schema.safeParse(request.params) : null;
-      const targetRequest = copyPreview?.success && copyPreview.data.targetMachineId === machine.machineId
-        ? { machineId: copyPreview.data.targetMachineId } : request.params;
+      const copyPreview =
+        request.method ===
+        `${machine.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`
+          ? WorkspaceSyncCommittedCopyPreviewV1Schema.safeParse(request.params)
+          : null;
+      const targetRequest =
+        copyPreview?.success &&
+        copyPreview.data.targetMachineId === machine.machineId
+          ? { machineId: copyPreview.data.targetMachineId }
+          : request.params;
       let targetPredicate: RpcAdmissionPredicate = 'machine_target';
-      if (!sourceRouting && !targetRouting && !writerTargetRouting && !seedRouting
-        && !doesMachineRpcTargetMatchAdmission(targetRequest, context, {
-          machineId: machine.machineId, installationId, custodianAccountId,
-        }, predicate => { targetPredicate = predicate; })) return forbidden(targetPredicate);
-      if (!request.method.startsWith(`${machine.machineId}:`)) return forbidden('machine_scope');
-      // A finite prepare packet retains the logical source's custodian. Home
-      // independently verifies the installed relationship controller's signer.
-      if (!writerTargetRouting && !seedRouting && !isFiniteSource
-        && context.custodianAccountId !== custodianAccountId) return forbidden('machine_custodian');
+      if (
+        !sourceRouting &&
+        !targetRouting &&
+        !writerTargetRouting &&
+        !seedRouting &&
+        !doesMachineRpcTargetMatchAdmission(
+          targetRequest,
+          context,
+          {
+            machineId: machine.machineId,
+            installationId,
+            custodianAccountId,
+          },
+          (predicate) => {
+            targetPredicate = predicate;
+          },
+        )
+      )
+        return forbidden(targetPredicate);
+      if (!request.method.startsWith(`${machine.machineId}:`))
+        return forbidden('machine_scope');
+      // Routed workspace packets retain the child's custodian. Home independently
+      // verifies this installed physical controller's own Account and signer.
+      if (
+        !sourceRouting &&
+        !targetRouting &&
+        !writerTargetRouting &&
+        !seedRouting &&
+        context.custodianAccountId !== custodianAccountId
+      )
+        return forbidden('machine_custodian');
       const rpcMethod = request.method.slice(machine.machineId.length + 1);
       const privateSpawn = privateSessionMethods.includes(rpcMethod)
         ? SpawnDaemonSessionRequestSchema.safeParse(request.params)
@@ -717,27 +1653,70 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       // custodian-only raw spawn permission. Fresh spawns still use raw admission.
       const nativeSessionResume = privateSpawn?.success
         && privateSpawn.data.type === 'resume-session' && !!privateSpawn.data.sessionId;
-      const verifiedAdmission = nativeSessionResume && request.verifyMachineAdmissionCurrent
+      const managedTarget =
+        rpcMethod === MANAGED_ACTIVITY_READ_RPC_METHOD
+          ? ManagedActivityReadRequestV1Schema.safeParse(request.params)
+          : rpcMethod === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD
+            ? ManagedAdmissionDrainConfirmRequestV1Schema.safeParse(
+                request.params,
+              )
+            : null;
+      // Retain the result of this one admission; peer ingress must not borrow
+      // a receiving role from an unverified field on its incoming request.
+      const verifiedAdmission = source === 'authenticated_home_socket' ? null
+        : nativeSessionResume && request.verifyMachineAdmissionCurrent
         ? await request.verifyMachineAdmissionCurrent()
-        : await machine.verifyMachineAdmission({ context, method: request.method,
-          ...(sourceRouting ? { workspaceSyncSourceRouting: sourceRouting } : {}),
-          ...((request.workspaceSyncSourceExecution?.originalActionEnvelope || seedRouting || isProjectSource || isFiniteSource || writerTargetRouting && request.callerInputAuthorization?.binding.actionId === 'projects.open')
-            && request.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: request.workspaceSyncSourceExecution } : {}),
-          ...(targetRouting ? { workspaceSyncTargetRouting: targetRouting } : {}),
-          ...(writerTargetRouting ? { workspaceSyncSourceWriterTargetRouting: writerTargetRouting } : {}),
+        : await machine.verifyMachineAdmission({
+          context,
+          method: request.method,
+          ...(managedTarget?.success
+            ? { managedTarget: managedTarget.data }
+            : {}),
+          ...(sourceRouting
+            ? { workspaceSyncSourceRouting: sourceRouting }
+            : {}),
+          ...((request.workspaceSyncSourceExecution?.originalActionEnvelope ||
+            seedRouting ||
+            isProjectSource ||
+            isFiniteSource ||
+            (writerTargetRouting &&
+              isProjectWorkspaceSyncOpenActionV1(request.callerInputAuthorization?.binding.actionId))) &&
+          request.workspaceSyncSourceExecution
+            ? {
+                workspaceSyncSourceExecution:
+                  request.workspaceSyncSourceExecution,
+              }
+            : {}),
+          ...(targetRouting
+            ? { workspaceSyncTargetRouting: targetRouting }
+            : {}),
+          ...(writerTargetRouting
+            ? { workspaceSyncSourceWriterTargetRouting: writerTargetRouting }
+            : {}),
           ...(seedRouting ? { workspaceSyncSeedRouting: seedRouting } : {}),
-          ...((request.workspaceSyncSourceExecution?.originalActionEnvelope || sourceRouting || writerTargetRouting || seedRouting) && request.callerInputAuthorization ? { callerInputAuthorization: request.callerInputAuthorization } : {}),
-          ...(custodyRequest?.success && 'subjectAccountId' in custodyRequest.data
-            ? { custodySubjectAccountId: custodyRequest.data.subjectAccountId } : {}),
-          ...(request.signal ? { signal: request.signal } : {}) });
-      if (!verifiedAdmission) return forbidden('machine_currentness');
+          ...((request.workspaceSyncSourceExecution?.originalActionEnvelope ||
+            sourceRouting ||
+            writerTargetRouting ||
+            seedRouting) &&
+          request.callerInputAuthorization
+            ? { callerInputAuthorization: request.callerInputAuthorization }
+            : {}),
+          ...(custodyRequest?.success &&
+          'subjectAccountId' in custodyRequest.data
+            ? { custodySubjectAccountId: custodyRequest.data.subjectAccountId }
+            : {}),
+          ...(request.signal ? { signal: request.signal } : {}),
+        });
+      if (source !== 'authenticated_home_socket' && !verifiedAdmission)
+        return forbidden('machine_currentness');
       const privateRecovery = rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER
         && context.actorAccountId !== context.custodianAccountId
         && !sourceRouting && !targetRouting && !writerTargetRouting && !seedRouting
         ? WorkspaceSyncTargetConflictRecoverV1Schema.safeParse(request.params) : null;
       if (privateRecovery && !privateRecovery.success) return forbidden('machine_target');
       const recoveryHome = privateRecovery?.success ? await machine.resolveHomeServerIdentityId?.(request.signal) : null;
-      if (installationId !== machine.resolveInstallationId()) return forbidden('machine_installation');
+      if (installationId !== machine.resolveInstallationId())
+        return forbidden('machine_installation');
       if (request.signal?.aborted) return forbidden('request_cancelled');
       // These native bind phases do not launch requester processes. Home has
       // just verified the exact child/controller route; the workspace owner
@@ -747,8 +1726,7 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       const nativeManagedBindPhase =
         context.machineId !== machine.machineId &&
         !seedRouting &&
-        request.callerInputAuthorization?.binding.actionId !==
-          'projects.open' &&
+        !isProjectWorkspaceSyncOpenActionV1(request.callerInputAuthorization?.binding.actionId) &&
         !isProjectWorkspaceSyncPreparationActionV1(
           request.callerInputAuthorization?.binding.actionId,
         ) &&
@@ -769,7 +1747,13 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       // Routed deputies and
       // unrelated spawn-looking method names retain their separate refusals.
       const nativeEffectOwner =
-        context.machineId === machine.machineId &&
+        // This exact installed SOURCE writer release already passed strict
+        // routing/body and Home admission above. The retained TARGET owner
+        // alone matches operation, WorkspaceRef and writer before cleanup.
+        (writerTargetRouting?.target.phase === 'release' &&
+          rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE &&
+          !targetRouting && !seedRouting) ||
+        (context.machineId === machine.machineId &&
         !sourceRouting &&
         !targetRouting &&
         !writerTargetRouting &&
@@ -789,7 +1773,7 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
           nativeSessionMethods.includes(rpcMethod) ||
           nativeSessionResume ||
           nativeSessionEffect === 'session.spawn_new' ||
-          nativeSessionEffect === 'session.agent.transition');
+          nativeSessionEffect === 'session.agent.transition'));
       const nativeRequesterControl =
         context.machineId === machine.machineId &&
         !sourceRouting &&
@@ -823,10 +1807,6 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       if (privateSyncLookup?.kind === 'private_unavailable' || privateRecovery && !privateSyncExecution) {
         return { ok: false, errorCode: 'agent_isolation_unavailable', error: 'Private workspace Sync execution is unavailable' };
       }
-      if (privateTargetBody && privateTargetRouting
-        && privateTargetBody.bootstrapOperationId !== privateTargetRouting.operationId && !privateSyncExecution) {
-        return { ok: false, errorCode: 'agent_isolation_unavailable', error: 'Private workspace Sync execution is unavailable' };
-      }
       if (privateSyncExecution) return { ok: true, workspaceSyncPrivateExecution: privateSyncExecution };
       if (
         !nativeManagedBindPhase &&
@@ -837,7 +1817,9 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
         // owner distinguishes finite output and enforces retained custody.
         // Keep the route flag for Session admission and older-receiver floors.
         !(nativePersonTerminal && rpcMethod === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) &&
-        (workspaceTargetPhase && !privateTargetRouting || resolveMachineRpcRoutePolicy(rpcMethod)
+        (workspaceTargetPhase && (!privateTargetRouting
+          || privateTargetBody && privateTargetBody.bootstrapOperationId !== privateTargetRouting.operationId)
+          || resolveMachineRpcRoutePolicy(rpcMethod)
           .requesterExecutionIsolationRequired === true)
       ) {
         const physicalCustodianAccountId = custodianAccountId
@@ -908,17 +1890,48 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
           };
         }
       }
-      if (SessionTransferRpcMethodV1Schema.safeParse(request.method.slice(machine.machineId.length + 1)).success) {
-        const preparedTransfer = PreparedTransferRpcRequestV1Schema.safeParse(request.params);
-        if (preparedTransfer.success && request.method === `${machine.machineId}:${resolvePreparedTransferRpcPhaseV1(
-          preparedTransfer.data.path, preparedTransfer.data.httpMethod, preparedTransfer.data.body,
-        )}`) return { ok: true };
+      if (
+        SessionTransferRpcMethodV1Schema.safeParse(
+          request.method.slice(machine.machineId.length + 1),
+        ).success
+      ) {
+        const preparedTransfer = PreparedTransferRpcRequestV1Schema.safeParse(
+          request.params,
+        );
+        if (preparedTransfer.success) {
+          if (
+            request.method ===
+            `${machine.machineId}:${resolvePreparedTransferRpcPhaseV1(
+              preparedTransfer.data.path,
+              preparedTransfer.data.httpMethod,
+              preparedTransfer.data.body,
+            )}`
+          )
+            return { ok: true };
+          return forbidden('prepared_transfer_phase');
+        }
+        // Raw filesystem transfer phases consume the same installed native
+        // byte owner as file operations. Their member custody is not the
+        // detached-Run custodian rule used by other dual-scope methods.
+        if (
+          nativeEffectOwner &&
+          nativeFilesystemMethods.includes(rpcMethod)
+        ) {
+          return hasFilesystemEffectTransferCustody(rpcMethod, request.params)
+            ? { ok: true }
+            : forbidden('session_authorization');
+        }
       }
     } catch {
       return forbidden('authorization_unavailable');
     }
   }
-  if (isSocketRpcMachineReadServerOriginAuthorizationContext(request.authorization)) return { ok: true };
+  if (
+    isSocketRpcMachineReadServerOriginAuthorizationContext(
+      request.authorization,
+    )
+  )
+    return { ok: true };
   const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
   if (sessionRule?.serverMintedContext === 'session.read') {
     const authorization = parseSocketRpcAuthorizationContext(request.authorization);
@@ -928,27 +1941,40 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       ? { ok: true }
       : forbidden('session_target');
   }
-  if (sessionRule?.machineScope === true && request.machineAdmission !== undefined) {
+  if (
+    sessionRule?.machineScope === true &&
+    request.machineAdmission !== undefined
+  ) {
     // The exact installation and current Home admission were verified above.
     // Home already enforced the method declaration's sharedMachineAccess.
     // Requester-owned Runs retain their Account isolation at the Run store.
-    return request.authorization === undefined ? { ok: true } : forbidden('session_authorization');
+    return request.authorization === undefined
+      ? { ok: true }
+      : forbidden('session_authorization');
   }
   if (sessionRule?.optionalSessionScope) {
     if (request.authorization === undefined) return { ok: true };
-    return parseSocketRpcAuthorizationContext(request.authorization)?.kind === 'session.write' ? { ok: true } : forbidden('session_authorization');
+    return parseSocketRpcAuthorizationContext(request.authorization)?.kind ===
+      'session.write'
+      ? { ok: true }
+      : forbidden('session_authorization');
   }
-  const authorizationMethod = resolveSocketRpcSessionWriteAuthorizationMethod(request.method);
+  const authorizationMethod = resolveSocketRpcSessionWriteAuthorizationMethod(
+    request.method,
+  );
   if (!authorizationMethod) {
     return { ok: true };
   }
 
-  const requestedSessionId = readSessionIdFromParams(request.params, request.method);
+  const requestedSessionId = readSessionIdFromParams(
+    request.params,
+    request.method,
+  );
   if (
-    authorizationMethod === RPC_METHODS.STOP_SESSION
-    && !request.authorization
-    && request.transportResponseEnvelopeVersion === undefined
-    && requestedSessionId
+    authorizationMethod === RPC_METHODS.STOP_SESSION &&
+    !request.authorization &&
+    request.transportResponseEnvelopeVersion === undefined &&
+    requestedSessionId
   ) {
     // `server-v0.2.1` (4913c1e533c872a0712ba1c25b3104fd470aacc2)
     // forwarded encrypted Stop params only after authenticating both sockets,
@@ -958,7 +1984,9 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
     return { ok: true };
   }
 
-  const authorization = parseSocketRpcAuthorizationContext(request.authorization);
+  const authorization = parseSocketRpcAuthorizationContext(
+    request.authorization,
+  );
   if (!authorization || authorization.kind === 'session.read') return forbidden('session_authorization');
 
   if (!requestedSessionId || requestedSessionId !== authorization.sessionId) {

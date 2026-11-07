@@ -31,14 +31,16 @@ export function createProjectWorkerAction(options: Readonly<{
   isFiniteExecutionLive(): boolean;
   /** Mounted declaration starter and its current host execution ports. */
   isServiceExecutionLive?: () => boolean;
-  workspaceSync?: Readonly<{ relationshipOwner: Pick<MachineWorkspaceSyncRpcService['relationshipOwner'], 'stop'> }>;
+  workspaceSync?: Readonly<{ relationshipOwner: Pick<MachineWorkspaceSyncRpcService['relationshipOwner'], 'stop'>;
+    forRequester?: MachineWorkspaceSyncRpcService['forRequester'] }>;
 }>): NonNullable<ActionExecutorDeps['projectWorkerAction']> {
   return async ({ actionId, input, context, signal }) => {
     if (actionId !== 'projects.worker.status' && actionId !== 'projects.worker.copy.retire') {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
     }
-    const requester = context.externalActionCredential?.accountId ?? context.runtimeAccountId;
-    if ((requester && requester !== options.accountId)
+    const requester = context.externalActionExecutionAuthorization?.binding.accountId
+      ?? context.externalActionCredential?.accountId ?? context.runtimeAccountId;
+    if ((requester && requester !== options.accountId && context.machineAdmission?.actorAccountId !== requester)
       || context.serverId && !await isServerProfileHomeIdentity(options.serverId, context.serverId)) {
       return { ok: false, errorCode: 'project_worker_access_denied', error: 'project_worker_access_denied' };
     }
@@ -138,11 +140,22 @@ export function createProjectWorkerAction(options: Readonly<{
         return failure('workspace_unavailable');
       }
       const snapshot = await runWithServerHttpBaseUrl(options.serverHttpBaseUrl,
-        () => readProjectAccountRows({ credentials: options.credentials, serverId: request.workspace.serverId, signal, publication: 'installed' }));
+        () => readProjectAccountRows({ ...(context.externalActionExecutionAuthorization
+          ? { authorization: context.externalActionExecutionAuthorization, effectActionId: actionId,
+            selection: { key: { kind: 'workspace-ref' as const,
+              serverId: request.workspace.serverId, id: request.workspace.refId } } }
+          : { credentials: options.credentials, publication: 'installed' as const }),
+          serverId: request.workspace.serverId, signal }));
       if (!resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspace.refId, request.workspace.serverId)) {
         return failure('workspace_unavailable');
       }
-      await options.workspaceSync.relationshipOwner.stop(request.expectedRelationship.relationshipId, signal, {
+      const workspaceSync = options.workspaceSync.forRequester ? await options.workspaceSync.forRequester({
+        signal: signal ?? new AbortController().signal, machineAdmission: context.machineAdmission,
+        verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent,
+        callerInputAuthorization: context.externalActionExecutionAuthorization,
+        ...(context.originalActionEnvelope ? { originalActionEnvelope: context.originalActionEnvelope } : {}),
+      }) : options.workspaceSync;
+      await workspaceSync.relationshipOwner.stop(request.expectedRelationship.relationshipId, signal, {
         expectedRelationship: request.expectedRelationship,
         ...(request.removeTargetCopy ? { removeTargetCopy: request.removeTargetCopy,
           approval: { actionReceiptId: context.actionRequestId!, actionInput: request } } : {}),

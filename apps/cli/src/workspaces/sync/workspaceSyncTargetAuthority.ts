@@ -3,20 +3,26 @@ import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, resolveWorks
 import { areWorkspaceSyncWorkerCopyProvenancesEqual, getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { configuration } from '@/configuration';
-import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import { readManagedMachine, readManagedMachines } from '@/machines/managed/readManagedMachine';
 import { ManagedInspectOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import { isManagedDevcontainerChildProjectionCurrentV1, deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
 import { isDeepStrictEqual } from 'node:util';
-import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
+import { randomUUID } from 'node:crypto';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
 import { HandoffTargetReplacementApprovalV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
@@ -32,7 +38,6 @@ import { WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRout
   type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { assertWorkspaceSyncRequesterBootstrapSupported } from './workspaceSyncBootstrapAdmission';
 import { lstat, readdir, realpath, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join, normalize, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -106,7 +111,7 @@ export type WorkspaceSyncTargetPhaseDescriptor = Readonly<{
     | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
   request: unknown;
   routing: Omit<WorkspaceSyncTargetRoutingV1, 'targetContext'>;
-  /** Home-witnessed recipient retained before preparation; cleanup only, never a new target grant. */
+  /** Exact public managed controller or Home-witnessed recipient; never a Machine access grant. */
   physicalEndpoint?: MachineInstallationPublicIdentityV1;
   signal?: AbortSignal;
 }>;
@@ -122,6 +127,8 @@ export type WorkspaceSyncTargetBootstrapAtTargetResult = WorkspaceSyncTargetBoot
 }>;
 
 export type AcquireWorkspaceSyncMachineIngressRequest = Readonly<{
+  /** Home-verified native carrier actor; retained target authority owns admission. */
+  actorAccountId?: string;
   operationId: string;
   sourceMachineId: string;
   targetMachineId: string;
@@ -242,15 +249,15 @@ export type WorkspaceSyncConflictRecoveryContext = Readonly<{
 export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
   localServerId: string;
   localMachineId: string;
+  /** Account whose installed or captured rows this authority owns. */
+  localAccountId?: string;
   /** Captured native child owns this one admitted local endpoint. */
   localWorkspaceRefId?: string;
-  /** Installed physical daemon Account, derived from its own credentials. */
-  localAccountId?: string | null;
-  getProjectSnapshot?: () => ActiveProjectAccountRowsSnapshot | null;
+  getProjectSnapshot?: (operationId?: string) => ActiveProjectAccountRowsSnapshot | null;
   /** Passive preview reads current Home rows, never the daemon's retained row cache. */
   refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot>;
   /** Current ordinary/managed/native facts, supplied by the real daemon composition. */
-  readChildMachineFacts?(machineIds: readonly string[], signal?: AbortSignal): Promise<readonly WorkspaceSyncChildMachineFacts[]>;
+  readChildMachineFacts?(machineIds: readonly string[], signal?: AbortSignal, context?: RpcHandlerContext): Promise<readonly WorkspaceSyncChildMachineFacts[]>;
   /** Host-private installed-child sender. Context and callbacks are never wire input. */
   callWorkspaceTargetPhase?(descriptor: WorkspaceSyncTargetPhaseDescriptor, context: RpcHandlerContext): Promise<unknown>;
   assertConflictResolutionAuthorized?(
@@ -278,14 +285,6 @@ export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
     canonicalRoot: string;
     signal?: AbortSignal;
   }>): Promise<WorkspaceSyncOwnedLocalAgent>;
-  /**
-   * Derived once from the retired-state inspection at the daemon composition
-   * boundary. Throws the exact typed legacy-state code before any local
-   * delete/read/bootstrap-prepare mutation, routed target call, or rooted
-   * agent ingress. Release/cleanup paths stay available: they never mutate
-   * workspace state.
-   */
-  assertLegacyStateAvailable?: () => void;
   prepareSourceSeedExport?: (input: Readonly<{
     operationId: string;
     sourceWorkspaceRefId: string;
@@ -316,35 +315,78 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
   localProfileId?: string;
   credentials?: StoredCredentials;
   machineIds: readonly string[];
+  /** Exact relationship being admitted, never inferred from a foreign Machine id. */
+  relationshipId?: string;
   /** Namespace acceptance never borrows parent storage or requires parent reachability. */
   purpose?: 'physical_sync' | 'child_namespace' | 'admitted_mapping';
   signal?: AbortSignal;
   authorization?: ExternalActionExecutionAuthorizationV1;
   effectActionId?: string;
   externalAction?: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>;
+  /** Receiving physical controller consumes its own row and a current Home-proven child, not foreign Machine metadata. */
+  controllerOwnedChild?: Readonly<{ controllerMachineId: string; admission: SocketRpcMachineAdmissionContextV1;
+    verifyCurrent(): Promise<boolean> }>;
 }>): Promise<readonly WorkspaceSyncChildMachineFacts[]> {
   const localProfileId = input.localProfileId ?? configuration.activeServerId;
   return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
     const { ApiClient } = await import('@/api/api');
     if (!input.authorization && !input.credentials) throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
-    const api = input.authorization ? null : await ApiClient.create(input.credentials!);
-    const readMachine = (machineId: string) => input.authorization
-      ? ApiClient.getRequesterMachine(machineId, { authorization: input.authorization,
-        effectActionId: input.effectActionId, signal: input.signal })
-      : api!.getMachine(machineId, { signal: input.signal });
+    // Native physical preparation holds the admitted requester's credentials.
+    // Its unchanged original Action is not a generic requester HTTP grant.
+    const api = !input.authorization || input.purpose === 'physical_sync' ? await ApiClient.create(input.credentials!) : null;
+    const readMachine = (machineId: string) => api
+      ? api.getMachine(machineId, { signal: input.signal })
+      : ApiClient.getRequesterMachine(machineId, { authorization: input.authorization!,
+        effectActionId: input.effectActionId, signal: input.signal });
     const facts: WorkspaceSyncChildMachineFacts[] = [];
+    const owned = input.controllerOwnedChild;
+    const ownerAccountId = input.credentials ? readAccountIdFromToken(input.credentials.token) : null;
+    const useOwnedRow = owned !== undefined && ownerAccountId !== null && owned.admission.custodianAccountId !== ownerAccountId;
+    const ownedRows = useOwnedRow ? await (async () => {
+      if (!input.credentials || !await owned.verifyCurrent()) throw authorityError('workspace_sync_child_unavailable', 'Current child admission is unavailable');
+      const rows = await readManagedMachines({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
+        homeId: input.serverId, enrolledMachineId: owned.admission.machineId, ...(input.signal ? { signal: input.signal } : {}) });
+      return rows.filter(row => row.homeId === input.serverId && row.custodianAccountId === ownerAccountId
+        && row.creationState === 'active' && row.allocation === 'bound' && row.archivedAt === undefined
+        && row.controller?.machineId === owned.controllerMachineId && row.enrolledMachineId === owned.admission.machineId
+        && row.enrollmentAccountId === owned.admission.custodianAccountId);
+    })() : [];
+    if (useOwnedRow && ownedRows.length !== 1) throw authorityError('workspace_sync_child_unavailable', 'Exact controller-owned enrollment is unavailable');
     // Start the endpoint reads together, but consume settled results in input
     // order so per-read admission and the existing refusal precedence remain.
     const reads = [...new Set(input.machineIds)].map(machineId => ({ machineId,
-      result: readMachine(machineId).then(machine => ({ machine }), (error: unknown) => ({ error })) }));
+      result: (async () => {
+        if (input.authorization && (machineId !== input.authorization.binding.machineId
+          || machineId === input.authorization.binding.workspaceSyncAdmission?.source.machineId)) {
+          const binding = input.authorization.binding;
+          const admitted = input.relationshipId ? readWorkspaceSyncSourceAdmissionV1(binding,
+            { serverId: input.serverId, machineId, relationshipId: input.relationshipId }) : null;
+          if (!admitted) {
+            throw authorityError('workspace_sync_source_admission_unavailable', 'The admitted Sync source facts are unavailable');
+          }
+          return { admitted };
+        }
+        const retainedManaged = useOwnedRow && machineId === owned.admission.machineId ? ownedRows[0] : undefined;
+        const machine = retainedManaged ? null : await readMachine(machineId);
+        return { machine, retainedManaged };
+      })().then(value => ({ value }), (error: unknown) => ({ error })) }));
     for (const { machineId, result } of reads) {
       const settled = await result;
       if ('error' in settled) throw settled.error;
-      const machine = settled.machine;
-      if (!machine || machine.revokedAt != null || machine.replacedByMachineId) {
+      if ('admitted' in settled.value) {
+        const admitted = settled.value.admitted;
+        if (admitted.child) facts.push({ serverId: input.serverId, machineId,
+          installationId: admitted.source.installationId, projection: admitted.child.projection,
+          controller: { ...admitted.child.controller, available: true }, admittedRelationshipId: admitted.relationshipId });
+        continue;
+      }
+      const { machine, retainedManaged } = settled.value;
+      if (!retainedManaged && (!machine || machine.revokedAt != null || machine.replacedByMachineId)) {
         throw authorityError('workspace_sync_child_unavailable', 'Current Machine is unavailable');
       }
-      const projection = machine.metadata?.devcontainerChild;
+      const projection = retainedManaged ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: retainedManaged.id,
+        controllerMachineId: retainedManaged.controller?.machineId, enrolledMachineId: retainedManaged.enrolledMachineId,
+        resource: retainedManaged.resource }) : machine?.metadata?.devcontainerChild;
       if (!projection) continue;
       if (projection.observation.storage.kind === 'bind' && input.purpose !== 'child_namespace') {
         try {
@@ -367,10 +409,11 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
           throw authorityError('workspace_sync_child_unavailable', 'The physical bind Home identity is unavailable');
         }
       }
-      if (!machine.installationId || machine.metadata?.username !== projection.observation.user) {
+      const installationId = retainedManaged ? owned!.admission.installationId : machine?.installationId;
+      if (!installationId || !retainedManaged && machine?.metadata?.username !== projection.observation.user) {
         throw authorityError('workspace_sync_child_unavailable', 'Child installation or native user is unavailable');
       }
-      let managedMachine = await readManagedMachine({ credentials: input.credentials,
+      let managedMachine = retainedManaged ?? await readManagedMachine({ credentials: input.credentials,
         serverHttpBaseUrl: input.serverHttpBaseUrl, homeId: input.serverId,
         managedId: projection.relation.managedMachineId, signal: input.signal,
         ...(input.authorization ? { authorization: input.authorization, effectActionId: input.effectActionId } : {}) });
@@ -382,6 +425,8 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       if (!nativeController) throw authorityError('workspace_sync_child_unavailable', 'The physical child controller is unavailable');
       let controller: WorkspaceSyncChildMachineFacts['controller'] = { ...nativeController, available: false };
       if (projection.observation.storage.kind === 'bind' && (input.purpose ?? 'physical_sync') === 'physical_sync') {
+        if (managedMachine.controllerAccess) controller = { ...nativeController, available: true };
+        else {
         try {
           const current = await readMachine(nativeController.machineId);
           controller = { machineId: current?.id ?? '', installationId: current?.installationId ?? '',
@@ -390,13 +435,22 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
           input.signal?.throwIfAborted();
           // Native controller failure is a factual unavailable result; child-local execution does not consume it.
         }
+        }
         if (controller.available && controller.installationId === nativeController.installationId) {
           try {
             if (input.authorization && !input.externalAction) throw authorityError('workspace_sync_child_unavailable', 'Requester transport authority is unavailable');
             if (!input.credentials) throw authorityError('workspace_sync_child_unavailable', 'Requester transport custody is unavailable');
-            const inspected = ManagedInspectOutputV1Schema.parse(await callExactMachineRpc({ credentials: input.credentials,
+            const request = { homeId: input.serverId, managedId: managedMachine.id };
+            const native = managedMachine.controllerAccess && !input.authorization
+              ? await dispatchOriginalAccountAction({ actionId: 'machines.managed.inspect', input: request,
+                target: { kind: 'machine', machineId: nativeController.machineId },
+                credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
+                serverIdentityId: input.serverId, requestId: randomUUID(), ...(input.signal ? { signal: input.signal } : {}) })
+              : null;
+            if (native && !native.ok) throw authorityError('workspace_sync_child_unavailable', 'Native controller inspection was refused');
+            const inspected = ManagedInspectOutputV1Schema.parse(native?.ok ? native.result : await callExactMachineRpc({ credentials: input.credentials,
               serverUrl: input.serverHttpBaseUrl, machineId: nativeController.machineId,
-              method: 'machines.managed.inspect', request: { homeId: input.serverId, managedId: managedMachine.id },
+              method: 'machines.managed.inspect', request,
               ...(input.externalAction ? { externalAction: input.externalAction } : {}),
               requireCurrentMachine: true, timeoutMs: null, signal: input.signal }));
             if (inspected.machine.observation?.availability !== 'present'
@@ -407,22 +461,28 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
                 projection, managedMachine: inspected.machine })) {
               throw authorityError('workspace_sync_child_unavailable', 'Native child storage is no longer current');
             }
-            managedMachine = inspected.machine;
+            managedMachine = { ...inspected.machine, ...(managedMachine.controllerAccess ? { controllerAccess: managedMachine.controllerAccess } : {}) };
           } catch {
             input.signal?.throwIfAborted();
             throw authorityError('workspace_sync_child_unavailable', 'Native child storage is unavailable');
           }
         }
       }
-      facts.push({ serverId: input.serverId, machineId, installationId: machine.installationId,
+      if (retainedManaged && !await owned!.verifyCurrent()) throw authorityError('workspace_sync_child_unavailable', 'Current child admission is unavailable');
+      facts.push({ serverId: input.serverId, machineId, installationId,
         projection, managedMachine, controller });
     }
     return facts;
   });
 }
 
-function authorityError(code: string, message: string): Error {
-  return Object.assign(new Error(message), { code });
+function authorityError(code: string, message: string, workspaceSyncIngressRefusal?:
+  | 'workspace_placement_mismatch' | 'endpoint_unavailable' | 'authority_closing'
+  | 'ingress_active' | 'agent_aborted' | 'authorization_expired' | 'identity_incomplete'
+  | 'target_machine_mismatch' | 'rehydration_actor_mismatch' | 'ready_target_missing'
+  | 'ready_target_ambiguous' | 'retained_actor_mismatch' | 'target_ownership_ended'): Error {
+  return Object.assign(new Error(message), { code,
+    ...(workspaceSyncIngressRefusal ? { workspaceSyncIngressRefusal } : {}) });
 }
 
 function resolveOwnedWorkspace(
@@ -451,7 +511,7 @@ function resolveOwnedWorkspace(
 
 function assertTargetMachine(workspace: WorkspaceRefV1, targetMachineId: string): void {
   if (!targetMachineId.trim() || workspace.machineId.trim() !== targetMachineId.trim()) {
-    throw authorityError('peer_unavailable', 'Workspace sync target machine does not own the selected workspace');
+    throw authorityError('peer_unavailable', 'Workspace sync target machine does not own the selected workspace', 'workspace_placement_mismatch');
   }
 }
 
@@ -510,14 +570,15 @@ function resolveWorkspaceRef(
 ): WorkspaceRefV1 {
   const workspace = resolveWorkspaceRefById(snapshot?.workspaceRefs ?? [], workspaceRefId, serverId);
   if (!workspace) {
-    throw authorityError('peer_unavailable', 'Workspace sync endpoint is unavailable');
+    throw authorityError('peer_unavailable', 'Workspace sync endpoint is unavailable', 'endpoint_unavailable');
   }
   return workspace;
 }
 
-async function resolveEnabledRelationshipReplayTarget(input: Readonly<{
+async function resolveEnabledRelationshipPreflightTarget(input: Readonly<{
   snapshot: ActiveProjectAccountRowsSnapshot | null;
   operationId: string;
+  replaceRelationshipId?: string;
   canonicalRoot: string;
   localServerId: string;
   localMachineId: string;
@@ -526,13 +587,13 @@ async function resolveEnabledRelationshipReplayTarget(input: Readonly<{
   target: WorkspaceRefV1;
 }> | null> {
   const relationshipId = deriveWorkspaceSyncRelationshipId(input.operationId);
-  const matches = (input.snapshot?.relationships ?? []).filter((relationship) => (
-    relationship.relationshipId === relationshipId && relationship.enabled
-  ));
-  if (matches.length !== 1) return null;
+  const enabled = input.snapshot?.relationships.filter(relationship => relationship.enabled) ?? [];
+  const relationship = enabled.find(value => value.relationshipId === relationshipId)
+    ?? enabled.find(value => value.relationshipId === input.replaceRelationshipId);
+  if (!relationship) return null;
   const target = resolveWorkspaceRefById(
     input.snapshot?.workspaceRefs ?? [],
-    matches[0]!.betaWorkspaceRefId,
+    relationship.betaWorkspaceRefId,
     input.localServerId,
   );
   if (
@@ -542,12 +603,12 @@ async function resolveEnabledRelationshipReplayTarget(input: Readonly<{
   ) return null;
   const targetCanonicalRoot = await realpath(target.rootPath).catch(() => null);
   return targetCanonicalRoot === input.canonicalRoot
-    ? { relationship: matches[0]!, target }
+    ? { relationship, target }
     : null;
 }
 
 /** Initial materialization and recovery share the receiving target's persisted Home proof. */
-function resolvePersistedWorkerCopyCreation(
+export function resolvePersistedWorkerCopyCreation(
   snapshot: ActiveProjectAccountRowsSnapshot | null,
   relationship: WorkspaceSyncRelationshipV1 | null,
   sourceWorkspaceRefId: string,
@@ -836,42 +897,30 @@ export function createWorkspaceSyncTargetAuthority(
     }
     return snapshot;
   };
-  const getSnapshot = (): ActiveProjectAccountRowsSnapshot => requireSnapshot(readSnapshot());
-  const readInvocationSnapshot = async (signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot> => {
+  const getSnapshot = (operationId?: string): ActiveProjectAccountRowsSnapshot => requireSnapshot(readSnapshot(operationId));
+  const readInvocationSnapshot = async (signal?: AbortSignal, context?: RpcHandlerContext, operationId?: string): Promise<ActiveProjectAccountRowsSnapshot> => {
     const authorization = context?.callerInputAuthorization;
-    if (!authorization) return getSnapshot();
+    if (!authorization) return getSnapshot(operationId);
     const account = authorization.requesterAccountProjection;
     const http = authorization.requesterHttpProjection;
-    if (!account || !http || !dependencies.refreshProjectSnapshot
-      || account.accountId !== authorization.binding.accountId || http.accountId !== account.accountId
-      || account.serverId !== localServerId || http.serverId !== localServerId
-      || context?.machineAdmission?.actorAccountId !== account.accountId
-      || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()
-      || !await account.isCurrent() || !await http.isCurrent()) {
-      throw authorityError('project_requester_authority_unavailable', 'The admitted requester is no longer current');
+    if (!account || !http || !dependencies.refreshProjectSnapshot) {
+      throw authorityError('project_requester_authority_unavailable', 'The admitted requester projection is unavailable');
     }
     signal?.throwIfAborted();
     return await dependencies.refreshProjectSnapshot(signal, context);
   };
   const bootstrap = dependencies.bootstrap ?? null;
-  const assertStateAvailable = dependencies.assertLegacyStateAvailable ?? (() => undefined);
   const callMachineRpc: WorkspaceSyncTargetAuthorityDependencies['callMachineRpc'] = async request => {
-    const result = await dependencies.callMachineRpc(request);
-    // A handler refusal is carried inside a successful transport ACK. Admit it
-    // before parsing an operation's success schema so its typed reason survives.
-    if (result && typeof result === 'object' && 'error' in result && typeof result.error === 'string') {
-      throw createRpcCallError({ error: result.error,
-        errorCode: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : undefined });
-    }
-    return result;
+    return readMachineActionRpcResult(await dependencies.callMachineRpc(request));
   };
 
   // The receipt names the chosen execution namespace. Only the canonical native
   // mapper can bind it to this owner's physical filesystem; it never restamps it.
-  const readReplacementTarget = async (machineId: string, rootPath: string, signal?: AbortSignal) => {
-    const childMachines = await dependencies.readChildMachineFacts?.([machineId], signal) ?? [];
+  const readReplacementTarget = async (machineId: string, rootPath: string, signal?: AbortSignal, context?: RpcHandlerContext) => {
+    const childMachines = await dependencies.readChildMachineFacts?.([machineId], signal, context) ?? [];
     const facts = childMachines.filter(child => child.serverId === localServerId && child.machineId === machineId);
-    if (facts.length === 0) return { machineId, rootPath, approvalRoot: null, facts, workspace: null, endpoint: null };
+    if (facts.length === 0) return { machineId, rootPath, approvalRoot: null, facts, workspace: null, endpoint: null,
+      physicalEndpoint: undefined };
     const workspaceRefs = getSnapshot().workspaceRefs;
     const workspace = resolveWorkspaceRefV1(workspaceRefs, { serverId: localServerId, machineId, rootPath });
     if (workspace.kind !== 'resolved') {
@@ -879,20 +928,26 @@ export function createWorkspaceSyncTargetAuthority(
     }
     const mapped = resolveWorkspaceSyncEndpoint({ workspace: workspace.ref, workspaceRefs, childMachines });
     if (!mapped.ok) throw authorityError(mapped.code, 'The chosen child target storage is unavailable');
+    const child = facts.find(fact => fact.machineId === machineId);
+    const publicController = child?.managedMachine?.controllerAccess;
+    const physicalEndpoint = child && publicController && mapped.endpoint.machineId !== machineId
+      ? { machineId: child.controller.machineId, installationId: child.controller.installationId,
+        installationPublicKey: publicController.installationPublicKey } : undefined;
     return { machineId: mapped.endpoint.machineId, rootPath: mapped.endpoint.rootPath,
       approvalRoot: mapped.endpoint.id === workspace.ref.id ? null : workspace.ref.rootPath,
-      facts, workspace: workspace.ref, endpoint: mapped.endpoint };
+      facts, workspace: workspace.ref, endpoint: mapped.endpoint, physicalEndpoint };
   };
-  const bindReplacementTarget = async (machineId: string, rootPath: string, signal?: AbortSignal) => {
-    const accepted = await readReplacementTarget(machineId, rootPath, signal);
+  const bindReplacementTarget = async (machineId: string, rootPath: string, signal?: AbortSignal, context?: RpcHandlerContext) => {
+    const accepted = await readReplacementTarget(machineId, rootPath, signal, context);
     return { ...accepted, assertCurrent: async () => {
-      const current = await readReplacementTarget(machineId, rootPath, signal);
+      const current = await readReplacementTarget(machineId, rootPath, signal, context);
       const address = (workspace: WorkspaceRefV1 | null) => workspace === null ? null : {
         id: workspace.id, serverId: workspace.serverId, machineId: workspace.machineId,
         rootPath: workspace.rootPath, projectKey: workspace.projectKey,
       };
       const binding = (target: typeof accepted) => ({
         machineId: target.machineId, rootPath: target.rootPath, approvalRoot: target.approvalRoot,
+        physicalEndpoint: target.physicalEndpoint,
         workspace: address(target.workspace), endpoint: address(target.endpoint),
         facts: target.facts.map(fact => ({ installationId: fact.installationId,
           projection: fact.projection, controller: fact.controller })),
@@ -910,11 +965,11 @@ export function createWorkspaceSyncTargetAuthority(
   const readTargetRouting = async (
     context: RpcHandlerContext | undefined,
     phase: 'prepare' | 'release',
-    operationId: string,
   ): Promise<Omit<WorkspaceSyncTargetRoutingV1, 'phase'> | undefined> => {
     if (!context?.workspaceSyncTargetRouting) return undefined;
     const { phase: admittedPhase, ...routing } = WorkspaceSyncTargetRoutingV1Schema.parse(context.workspaceSyncTargetRouting);
-    if (admittedPhase !== phase || routing.operationId !== operationId || routing.accountServerId !== localServerId
+    // RPC admission owns the request binding, including derived relationship ids.
+    if (admittedPhase !== phase || routing.accountServerId !== localServerId
       || routing.targetMachineId !== context.machineAdmission?.machineId
       || !isDeepStrictEqual(routing.targetContext.machineAdmission, context.machineAdmission)
       || routing.targetContext.callerAuthority !== context.callerAuthority
@@ -928,7 +983,6 @@ export function createWorkspaceSyncTargetAuthority(
   const readSourceWriterTargetRouting = async (
     context: RpcHandlerContext | undefined,
     phase: 'prepare' | 'release',
-    operationId: string,
     targetRouting?: Omit<WorkspaceSyncTargetRoutingV1, 'phase'>,
   ): Promise<RetainedSourceWriterTargetRouting | undefined> => {
     const raw = context && 'workspaceSyncSourceWriterTargetRouting' in context
@@ -936,7 +990,7 @@ export function createWorkspaceSyncTargetAuthority(
     if (!raw) return undefined;
     const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(raw);
     const { phase: admittedPhase, ...target } = routing.target;
-    if (admittedPhase !== phase || target.operationId !== operationId || target.accountServerId !== localServerId) {
+    if (admittedPhase !== phase || target.accountServerId !== localServerId) {
       throw authorityError('bootstrap_definition_conflict', 'Source writer target phase does not match this operation');
     }
     if (phase === 'prepare') {
@@ -989,7 +1043,6 @@ export function createWorkspaceSyncTargetAuthority(
   };
   const activity: LiveWorkProducerV1 = Object.freeze({
     read(): Omit<LiveWorkInventoryV1, 'idleSince'> {
-      assertStateAvailable();
       const ids = new Set([...retained.keys(), ...inFlight.keys(), ...activeIngresses.keys(),
         ...sourceLoans.keys(), ...deferredDiscards.keys()]);
       const items: LiveWorkItemV1[] = [...ids].map(ownerRef => {
@@ -1016,7 +1069,6 @@ export function createWorkspaceSyncTargetAuthority(
   };
 
   const parseCommittedCopy = (request: WorkspaceSyncCommittedCopyRequest) => {
-    assertStateAvailable();
     request.signal?.throwIfAborted();
     // Signal is owner-local cancellation, not part of the closed wire authority envelope.
     const { signal: _signal, ...wire } = request;
@@ -1096,7 +1148,6 @@ export function createWorkspaceSyncTargetAuthority(
   };
 
   const resolveCommittedCopyPreview = (request: WorkspaceSyncCommittedCopyPreviewRequest, snapshot: ActiveProjectAccountRowsSnapshot) => {
-    assertStateAvailable();
     request.signal?.throwIfAborted();
     const { signal: _signal, ...wire } = request;
     const parsed = WorkspaceSyncCommittedCopyPreviewV1Schema.parse(wire);
@@ -1118,7 +1169,6 @@ export function createWorkspaceSyncTargetAuthority(
   };
 
   const refreshCommittedCopyPreview = async (request: WorkspaceSyncCommittedCopyPreviewRequest) => {
-    assertStateAvailable();
     request.signal?.throwIfAborted();
     if (!dependencies.refreshProjectSnapshot) {
       throw authorityError('workspace_copy_preview_unavailable', 'Current Home rows for workspace copy preview are unavailable');
@@ -1179,7 +1229,7 @@ export function createWorkspaceSyncTargetAuthority(
   const exclusive = <T>(id: string, action: () => Promise<T>, allowClosing = false): Promise<T> => {
     const prior = inFlight.get(id) ?? Promise.resolve();
     const next = prior.catch(() => undefined).then(async () => {
-      if (closing && !allowClosing) throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+      if (closing && !allowClosing) throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down', 'authority_closing');
       return await action();
     });
     const registered = next.catch(() => undefined);
@@ -1315,7 +1365,7 @@ export function createWorkspaceSyncTargetAuthority(
         return existing;
       }
       const workerCopyCreation = resolvePersistedWorkerCopyCreation(
-        input.projectSnapshot === undefined ? getSnapshot() : input.projectSnapshot,
+        input.projectSnapshot === undefined ? getSnapshot(input.relationship.relationshipId) : input.projectSnapshot,
         input.relationship, input.sourceWorkspace.id, input.targetWorkspace.id, localServerId,
       );
       const prepared = await rehydrateWorkspaceSyncTargetBootstrap({
@@ -1451,7 +1501,7 @@ export function createWorkspaceSyncTargetAuthority(
     sourceMachineId: string;
     targetMachineId: string;
   }>): Promise<void> => {
-    const snapshot = getSnapshot();
+    const snapshot = getSnapshot(facts.operationId);
     const relationships = (snapshot?.relationships ?? []).filter((candidate) => (
       candidate.relationshipId === facts.operationId && candidate.enabled
     ));
@@ -1485,12 +1535,7 @@ export function createWorkspaceSyncTargetAuthority(
       throw authorityError('root_changed', 'Workspace sync target root identity changed');
     }
     const canonicalRoot = await realpath(input.rootPath).catch(() => null);
-    const rootFingerprint = canonicalRoot
-      ? await computeWorkspaceSyncRootFingerprint(canonicalRoot).catch(() => null)
-      : null;
     if (canonicalRoot !== input.entry.handle.owner.canonicalRoot
-      || rootFingerprint === null
-      || rootFingerprint !== input.entry.result.rootFingerprint
       || input.entry.handle.owner.rootFingerprint !== input.entry.result.rootFingerprint) {
       await discardRetained(input.authorityKey);
       throw authorityError('root_changed', 'Workspace sync target root identity changed');
@@ -1517,7 +1562,7 @@ export function createWorkspaceSyncTargetAuthority(
     const sourceWorkspaceRefId = endpointRole === 'alpha'
       ? input.relationship.betaWorkspaceRefId
       : input.relationship.alphaWorkspaceRefId;
-    const sourceWorkspace = resolveWorkspaceRef(getSnapshot(), sourceWorkspaceRefId, localServerId);
+    const sourceWorkspace = resolveWorkspaceRef(getSnapshot(input.relationship.relationshipId), sourceWorkspaceRefId, localServerId);
     const authorityKey = retainedAuthorityKey({
       relationshipId: input.relationship.relationshipId,
       operationId: input.relationship.relationshipId,
@@ -1533,7 +1578,7 @@ export function createWorkspaceSyncTargetAuthority(
         sourceWorkspace,
       });
     }
-    if (!entry || !relationshipStillOwnsEndpoint(getSnapshot(), entry)) {
+    if (!entry || !relationshipStillOwnsEndpoint(getSnapshot(entry.operationId), entry)) {
       throw authorityError('relationship_not_ready', 'Workspace sync target root is not retained by a ready relationship');
     }
     const canonicalRoot = await assertRetainedRootIdentity({
@@ -1550,7 +1595,7 @@ export function createWorkspaceSyncTargetAuthority(
     workspace: WorkspaceRefV1;
   }>): Promise<void> => {
     if (retained.get(input.authorityKey) !== input.entry
-      || !relationshipStillOwnsEndpoint(getSnapshot(), input.entry)) {
+      || !relationshipStillOwnsEndpoint(getSnapshot(input.entry.operationId), input.entry)) {
       throw authorityError('relationship_not_ready', 'Workspace sync target root is no longer retained by the relationship');
     }
     await assertRetainedRootIdentity({
@@ -1562,6 +1607,26 @@ export function createWorkspaceSyncTargetAuthority(
 
   const resolveRecoveryWorkspace = async (request: WorkspaceSyncTargetConflictRecoverV1,
     context?: WorkspaceSyncConflictRecoveryContext) => {
+    // Initial SOURCE admission already lent this physical endpoint to the
+    // relationship. Its custodian's Account graph cannot describe that loan.
+    const admittedTarget = !context?.getProjectSnapshot && [...retained.entries()].find(([, entry]) => (
+      entry.relationshipId === request.relationshipId && entry.targetWorkspaceRefId === request.targetWorkspaceRefId
+      && entry.targetMachineId === request.targetMachineId && entry.sourceWriterTargetRouting
+      && entry.transientAuthority && entry.relationshipDefinition
+    ));
+    if (admittedTarget) {
+      const [authorityKey, entry] = admittedTarget;
+      const relationship = entry.relationshipDefinition!;
+      const workspace: WorkspaceRefV1 = { id: entry.targetWorkspaceRefId, serverId: localServerId,
+        machineId: entry.targetMachineId, rootPath: entry.targetRootPath, createdAtMs: relationship.createdAtMs };
+      const canonicalRoot = await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
+      return { relationship, workspace, transientAccess: { canonicalRoot, assertCurrentAuthority: async () => {
+        if (retained.get(authorityKey) !== entry) {
+          throw authorityError('relationship_not_ready', 'The admitted Sync target loan is unavailable');
+        }
+        await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
+      } } };
+    }
     const localResolutionEndpoint = context?.localResolutionEndpoint;
     const readRecoverySnapshot = context?.getProjectSnapshot;
     const getRecoverySnapshot = readRecoverySnapshot ? () => requireSnapshot(readRecoverySnapshot()) : getSnapshot;
@@ -1671,13 +1736,13 @@ export function createWorkspaceSyncTargetAuthority(
         path: request.path,
         ...(request.alternativeIndex === null ? {} : { alternativeIndex: request.alternativeIndex }),
       })
-      || request.actionInput.controllerMachineId !== (getSnapshot()?.relationships ?? [])
+      || request.actionInput.controllerMachineId !== (getSnapshot(request.relationshipId)?.relationships ?? [])
         .find((relationship) => relationship.relationshipId === request.relationshipId)?.controllerMachineId
       || !request.actionInput.relationshipIds.includes(request.relationshipId)
       || effect.targetPath !== request.path) {
       throw authorityError('approval_stale', 'Reviewed workspace conflict authority changed');
     }
-    const snapshot = getSnapshot();
+    const snapshot = getSnapshot(request.relationshipId);
     const relationships = (snapshot?.relationships ?? []).filter((candidate) => candidate.enabled);
     const topology = deriveWorkspaceSyncTopology({
       serverId: localServerId,
@@ -1708,7 +1773,7 @@ export function createWorkspaceSyncTargetAuthority(
     const endpointRelationshipId = endpoint === 'source' ? sourceRelationshipId : request.relationshipId;
     const { relationship, workspace } = resolveOwnedWorkspace(snapshot, endpointRelationshipId, workspaceRefId, localServerId);
     const approvedTarget = effect.target;
-    const targetPlacement = resolveOwnedWorkspace(getSnapshot(), request.relationshipId, request.targetWorkspaceRefId, localServerId).workspace;
+    const targetPlacement = resolveOwnedWorkspace(getSnapshot(request.relationshipId), request.relationshipId, request.targetWorkspaceRefId, localServerId).workspace;
     if (!approvedTarget || targetPlacement.machineId !== request.targetMachineId
       || ('targetExpected' in request && JSON.stringify(approvedTarget.expected) !== JSON.stringify(request.targetExpected))) {
       throw authorityError('approval_stale', 'Reviewed workspace conflict destination changed');
@@ -1794,7 +1859,6 @@ export function createWorkspaceSyncTargetAuthority(
     signal?: AbortSignal,
     context?: WorkspaceSyncConflictRecoveryContext,
   ): Promise<WorkspaceSyncTargetConflictRecoverResultV1> => {
-    assertStateAvailable();
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetConflictRecoverV1Schema.parse(rawRequest);
     const { relationship, workspace, transientAccess } = await resolveRecoveryWorkspace(request, context);
@@ -1870,7 +1934,6 @@ export function createWorkspaceSyncTargetAuthority(
   const prepareConflictResolutionExport = async (
     rawRequest: WorkspaceSyncTargetConflictStageV1,
   ): Promise<Readonly<{ payloadSource: TransferPayloadSource; onDemandScope: DirectPeerOnDemandTransferScope }>> => {
-    assertStateAvailable();
     const request = WorkspaceSyncTargetConflictStageV1Schema.parse(rawRequest);
     const source = await validateResolutionEndpoint(request, 'source');
     const effect = approvedResolutionEffect(request);
@@ -1946,12 +2009,11 @@ export function createWorkspaceSyncTargetAuthority(
     rawRequest: WorkspaceSyncTargetConflictStageV1,
     signal?: AbortSignal,
   ): Promise<void> => {
-    assertStateAvailable();
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetConflictStageV1Schema.parse(rawRequest);
     const target = await validateResolutionEndpoint(request, 'target');
     const effect = approvedResolutionEffect(request);
-    const source = resolveOwnedWorkspace(getSnapshot(), request.sourceRelationshipId, request.sourceWorkspaceRefId, localServerId).workspace;
+    const source = resolveOwnedWorkspace(getSnapshot(request.sourceRelationshipId), request.sourceRelationshipId, request.sourceWorkspaceRefId, localServerId).workspace;
     if (source.machineId !== request.sourceMachineId || request.sourceWorkspaceRefId !== effect.source.workspaceRefId
       || JSON.stringify(request.sourceExpected) !== JSON.stringify(effect.source.expected)) {
       throw authorityError('approval_stale', 'Reviewed workspace conflict source changed');
@@ -1997,7 +2059,6 @@ export function createWorkspaceSyncTargetAuthority(
     rawRequest: WorkspaceSyncTargetConflictApplyV1,
     signal?: AbortSignal,
   ): Promise<WorkspaceSyncTargetConflictApplyResultV1> => {
-    assertStateAvailable();
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetConflictApplyV1Schema.parse(rawRequest);
     const target = await validateResolutionEndpoint(request, 'target');
@@ -2058,10 +2119,9 @@ export function createWorkspaceSyncTargetAuthority(
     rawRequest: WorkspaceSyncTargetFileReadV1,
     signal?: AbortSignal,
   ): Promise<ReadWorkspaceSyncFileResultV1> => {
-    assertStateAvailable();
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetFileReadV1Schema.parse(rawRequest);
-    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(), request.relationshipId, request.workspaceRefId, localServerId);
+    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(request.relationshipId), request.relationshipId, request.workspaceRefId, localServerId);
     assertLocalWorkspacePlacement(workspace, localServerId, localMachineId);
     // Disclosure uses the same retained relationship/root object authority as
     // conflict deletion. A replacement root at the granted pathname is not the
@@ -2085,10 +2145,9 @@ export function createWorkspaceSyncTargetAuthority(
     rawRequest: WorkspaceSyncTargetEntryObserveV1,
     signal?: AbortSignal,
   ): Promise<WorkspaceSyncEntryExpectationV1> => {
-    assertStateAvailable();
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetEntryObserveV1Schema.parse(rawRequest);
-    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(), request.relationshipId, request.workspaceRefId, localServerId);
+    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(request.relationshipId), request.relationshipId, request.workspaceRefId, localServerId);
     assertLocalWorkspacePlacement(workspace, localServerId, localMachineId);
     const retainedEndpoint = await requireRetainedRelationshipEndpoint({ relationship, workspace });
     signal?.throwIfAborted();
@@ -2114,10 +2173,10 @@ export function createWorkspaceSyncTargetAuthority(
     if (!openRootedAgent) throw authorityError('agent_unavailable', 'Verified rooted workspace sync agent is unavailable');
     const authorityKey = input.authorityKey;
     if ((activeIngresses.get(authorityKey)?.size ?? 0) > 0) {
-      throw authorityError('peer_unavailable', 'Workspace sync machine ingress is already active');
+      throw authorityError('peer_unavailable', 'Workspace sync machine ingress is already active', 'ingress_active');
     }
     if (closing) {
-      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down', 'authority_closing');
     }
     input.assertCurrent();
     const agentAbort = new AbortController();
@@ -2202,11 +2261,11 @@ export function createWorkspaceSyncTargetAuthority(
     closeIngress = closeLateAgent;
     if (agentAbort.signal.aborted) {
       await activeCloser();
-      throw authorityError('peer_unavailable', 'Workspace sync machine ingress ended before the rooted agent was ready');
+      throw authorityError('peer_unavailable', 'Workspace sync machine ingress ended before the rooted agent was ready', 'agent_aborted');
     }
     if (closing) {
       await activeCloser();
-      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down', 'authority_closing');
     }
     try { input.assertCurrent(); } catch (error) { await activeCloser(); throw error; }
     const server = createServer({ allowHalfOpen: true });
@@ -2306,7 +2365,7 @@ export function createWorkspaceSyncTargetAuthority(
     try { input.assertCurrent(); } catch (error) { await close(); throw error; }
     if (closing) {
       await close();
-      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down', 'authority_closing');
     }
     if (request.expiresAtMs !== undefined) {
       const scheduleExpiry: (callback: () => void, delayMs: number) => NodeJS.Timeout = setTimeout;
@@ -2364,7 +2423,6 @@ export function createWorkspaceSyncTargetAuthority(
     inspectCommittedCopyAtTarget: async (request) => await committedCopyAtTarget(request, 'inspect'),
     removeCommittedCopyAtTarget: async (request) => await committedCopyAtTarget(request, 'remove'),
     borrowSourceRootForCopy: async ({ operationId, workspaceRefId }) => {
-      assertStateAvailable();
       const snapshot = getSnapshot();
       const workspace = resolveWorkspaceRefById(snapshot?.workspaceRefs ?? [], workspaceRefId, localServerId);
       if (!workspace || workspace.machineId.trim() !== localMachineId || workspace.serverId.trim() !== localServerId) return null;
@@ -2410,13 +2468,22 @@ export function createWorkspaceSyncTargetAuthority(
       });
     },
     preflightHandoffTargetReplacementHere: async (rawRequest, signal, context) => {
-      assertStateAvailable();
       signal?.throwIfAborted();
       const request = HandoffTargetReplacementPreflightV1Schema.parse(rawRequest);
       if (request.serverId !== localServerId) {
         throw authorityError('target_unavailable', 'Handoff target placement does not match this daemon');
       }
-      const target = await bindReplacementTarget(request.machineId, request.targetPath, signal);
+      const writer = context?.workspaceSyncSourceWriterTargetRouting;
+      const normalWriter = writer && context?.callerInputAuthorization
+        && isWorkspaceSyncRelationshipWriteActionId(context.callerInputAuthorization.binding.actionId)
+        && !context.workspaceSyncTargetRouting;
+      // Home and the signed source packet already bind the requester to this
+      // physical destination. Its custodian's Account catalog is irrelevant.
+      const target = normalWriter
+        ? { machineId: localMachineId, rootPath: request.targetPath, approvalRoot: null, facts: [],
+            workspace: null, endpoint: null, physicalEndpoint: undefined,
+            assertCurrent: async () => { signal?.throwIfAborted(); } }
+        : await bindReplacementTarget(request.machineId, request.targetPath, signal, context);
       if (context?.workspaceSyncTargetRouting) {
         const routing = WorkspaceSyncTargetRoutingV1Schema.parse(context.workspaceSyncTargetRouting);
         if (routing.phase !== 'preflight' || routing.operationId !== request.operationId
@@ -2455,6 +2522,7 @@ export function createWorkspaceSyncTargetAuthority(
         await target.assertCurrent();
         return HandoffTargetReplacementPreflightResultV1Schema.parse(await dependencies.callWorkspaceTargetPhase({
           machineId: target.machineId,
+          ...(target.physicalEndpoint ? { physicalEndpoint: target.physicalEndpoint } : {}),
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
           request,
           routing: { v: 1, phase: 'preflight', operationId: request.operationId,
@@ -2511,43 +2579,46 @@ export function createWorkspaceSyncTargetAuthority(
         throw authorityError('workspace_root_unsafe', 'Handoff target parent is unavailable');
       }
       if (!bootstrap) throw authorityError('workspace_sync_unavailable', 'Workspace sync bootstrap authority is unavailable');
-      const snapshot = getSnapshot();
-      const replayTarget = await resolveEnabledRelationshipReplayTarget({
+      const snapshot = normalWriter ? null : getSnapshot(request.operationId);
+      const preflightTarget = await resolveEnabledRelationshipPreflightTarget({
         snapshot,
         operationId: request.operationId,
+        replaceRelationshipId: request.replaceRelationshipId,
         canonicalRoot,
         localServerId,
         localMachineId,
       });
-      if (replayTarget) {
+      let borrowedOwnership: WorkspaceRootOwnershipHandle | undefined;
+      if (preflightTarget) {
         const authorityKey = retainedAuthorityKey({
-          relationshipId: replayTarget.relationship.relationshipId,
-          operationId: replayTarget.relationship.relationshipId,
+          relationshipId: preflightTarget.relationship.relationshipId,
+          operationId: preflightTarget.relationship.relationshipId,
           endpointRole: 'beta',
-          targetWorkspaceRefId: replayTarget.target.id,
+          targetWorkspaceRefId: preflightTarget.target.id,
         });
         const entry = retained.get(authorityKey);
-        // Only already-retained target custody can bypass a competing
-        // preflight acquisition. Settings prove the stable Action-derived
-        // relationship and endpoint; the retained owner proves this daemon
-        // still holds that exact physical root. The relationship owner remains
-        // responsible for full immutable-definition equality on re-entry.
+        // Inspect under the exact live target loan, never a second acquisition
+        // of the selected link's root. Creation still owns retirement and full
+        // immutable-definition validation after destination approval.
         if (entry
-          && entry.relationshipId === replayTarget.relationship.relationshipId
-          && entry.targetWorkspaceRefId === replayTarget.target.id) {
+          && entry.relationshipId === preflightTarget.relationship.relationshipId
+          && entry.targetWorkspaceRefId === preflightTarget.target.id) {
           const retainedRoot = await assertRetainedRootIdentity({
             authorityKey,
             entry,
-            rootPath: replayTarget.target.rootPath,
+            rootPath: preflightTarget.target.rootPath,
           });
           if (retainedRoot === canonicalRoot) {
-            await target.assertCurrent();
-            return HandoffTargetReplacementPreflightResultV1Schema.parse({ type: 'not_required',
-              ...(targetWorkspace ? { targetWorkspace } : {}) });
+            if (entry.relationshipId === deriveWorkspaceSyncRelationshipId(request.operationId)) {
+              await target.assertCurrent();
+              return HandoffTargetReplacementPreflightResultV1Schema.parse({ type: 'not_required',
+                ...(targetWorkspace ? { targetWorkspace } : {}) });
+            }
+            borrowedOwnership = entry.handle;
           }
         }
       }
-      const ownership = await bootstrap.rootOwnershipManager.tryAcquire({
+      const ownership = borrowedOwnership ?? await bootstrap.rootOwnershipManager.tryAcquire({
         ownerId: request.operationId,
         canonicalRoot,
         operation: 'handoff',
@@ -2611,7 +2682,7 @@ export function createWorkspaceSyncTargetAuthority(
           }),
         });
       } finally {
-        await ownership.release();
+        if (!borrowedOwnership) await ownership.release();
       }
     },
 
@@ -2623,8 +2694,8 @@ export function createWorkspaceSyncTargetAuthority(
       }
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
       if (context?.callerInputAuthorization && source) {
+        context.signal.throwIfAborted();
         if (!source.sourceContext || source.accountServerId !== localServerId || source.operationId !== wireRequest.operationId
-          || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()
           || !dependencies.callWorkspaceTargetPhase) {
           throw authorityError('workspace_sync_update_required', 'The admitted original target transport is unavailable');
         }
@@ -2667,9 +2738,9 @@ export function createWorkspaceSyncTargetAuthority(
     readFileHere,
     observeEntryHere,
     stageConflictResolutionAtTarget: async (request) => {
-      assertStateAvailable();
-      const parsed = WorkspaceSyncTargetConflictStageV1Schema.parse(request);
-      const { workspace } = resolveOwnedWorkspace(getSnapshot(), parsed.relationshipId, parsed.targetWorkspaceRefId, localServerId);
+      const { signal: _signal, ...wireRequest } = request;
+      const parsed = WorkspaceSyncTargetConflictStageV1Schema.parse(wireRequest);
+      const { workspace } = resolveOwnedWorkspace(getSnapshot(parsed.relationshipId), parsed.relationshipId, parsed.targetWorkspaceRefId, localServerId);
       if (workspace.machineId !== parsed.targetMachineId) {
         throw authorityError('approval_stale', 'Reviewed workspace conflict target Machine changed');
       }
@@ -2686,9 +2757,9 @@ export function createWorkspaceSyncTargetAuthority(
       assertOkResult(response);
     },
     applyStagedConflictResolutionAtTarget: async (request) => {
-      assertStateAvailable();
-      const parsed = WorkspaceSyncTargetConflictApplyV1Schema.parse(request);
-      const { workspace } = resolveOwnedWorkspace(getSnapshot(), parsed.relationshipId, parsed.targetWorkspaceRefId, localServerId);
+      const { signal: _signal, ...wireRequest } = request;
+      const parsed = WorkspaceSyncTargetConflictApplyV1Schema.parse(wireRequest);
+      const { workspace } = resolveOwnedWorkspace(getSnapshot(parsed.relationshipId), parsed.relationshipId, parsed.targetWorkspaceRefId, localServerId);
       if (workspace.machineId !== parsed.targetMachineId) {
         throw authorityError('approval_stale', 'Reviewed workspace conflict target Machine changed');
       }
@@ -2703,7 +2774,8 @@ export function createWorkspaceSyncTargetAuthority(
       }));
     },
     discardStagedConflictResolutionAtTarget: async (request) => {
-      const parsed = WorkspaceSyncTargetConflictApplyV1Schema.parse(request);
+      const { signal: _signal, ...wireRequest } = request;
+      const parsed = WorkspaceSyncTargetConflictApplyV1Schema.parse(wireRequest);
       if (parsed.targetMachineId === localMachineId) {
         await discardStagedConflictResolutionHere(parsed, request.signal);
         return;
@@ -2730,7 +2802,6 @@ export function createWorkspaceSyncTargetAuthority(
       assertOkResult(response);
     },
     recoverConflictResolutionAtTarget: async (request) => {
-      assertStateAvailable();
       const parsed = WorkspaceSyncTargetConflictRecoverV1Schema.parse({
         relationshipId: request.relationshipId,
         targetMachineId: request.targetMachineId,
@@ -2749,7 +2820,6 @@ export function createWorkspaceSyncTargetAuthority(
       }));
     },
     readFileAtTarget: async (request) => {
-      assertStateAvailable();
       const targetRequest = WorkspaceSyncTargetFileReadV1Schema.parse({
         relationshipId: request.relationshipId,
         workspaceRefId: request.targetWorkspaceRefId,
@@ -2757,7 +2827,7 @@ export function createWorkspaceSyncTargetAuthority(
         maxBytes: request.maxBytes,
         ...(request.expectedDigest === undefined ? {} : { expectedDigest: request.expectedDigest }),
       });
-      const { workspace } = resolveOwnedWorkspace(getSnapshot(), targetRequest.relationshipId, targetRequest.workspaceRefId, localServerId);
+      const { workspace } = resolveOwnedWorkspace(getSnapshot(targetRequest.relationshipId), targetRequest.relationshipId, targetRequest.workspaceRefId, localServerId);
       assertTargetMachine(workspace, request.targetMachineId);
       if (workspace.machineId.trim() === localMachineId) {
         return await readFileHere(targetRequest, request.signal);
@@ -2770,13 +2840,12 @@ export function createWorkspaceSyncTargetAuthority(
       }));
     },
     observeEntryAtTarget: async (request) => {
-      assertStateAvailable();
       const targetRequest = WorkspaceSyncTargetEntryObserveV1Schema.parse({
         relationshipId: request.relationshipId,
         workspaceRefId: request.targetWorkspaceRefId,
         path: request.path,
       });
-      const { workspace } = resolveOwnedWorkspace(getSnapshot(), targetRequest.relationshipId, targetRequest.workspaceRefId, localServerId);
+      const { workspace } = resolveOwnedWorkspace(getSnapshot(targetRequest.relationshipId), targetRequest.relationshipId, targetRequest.workspaceRefId, localServerId);
       assertTargetMachine(workspace, request.targetMachineId);
       if (workspace.machineId.trim() === localMachineId) {
         return await observeEntryHere(targetRequest, request.signal);
@@ -2790,7 +2859,6 @@ export function createWorkspaceSyncTargetAuthority(
     },
 
     prepareBootstrapHere: async (rawRequest, signal, context) => {
-      assertStateAvailable();
       signal?.throwIfAborted();
       const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(rawRequest);
       if (!bootstrap) {
@@ -2798,20 +2866,46 @@ export function createWorkspaceSyncTargetAuthority(
       }
       const writerTarget = context?.workspaceSyncSourceWriterTargetRouting
         ? WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(context.workspaceSyncSourceWriterTargetRouting) : undefined;
+      // The installed SOURCE has admitted the requester's Account and stages
+      // this exact relationship before signing the physical TARGET call. These
+      // are invocation projections of that SOURCE custody, never TARGET rows.
+      const normalRelationship = writerTarget && context?.callerInputAuthorization
+        && isWorkspaceSyncRelationshipWriteActionId(context.callerInputAuthorization.binding.actionId)
+        && !context.workspaceSyncTargetRouting && request.owner.kind === 'relationship'
+        ? request.transientRelationship : undefined;
+      let sourceInvocation: ActiveProjectAccountRowsSnapshot | undefined;
+      if (normalRelationship && writerTarget) {
+        if (request.owner.kind !== 'relationship' || normalRelationship.relationshipId !== request.owner.relationshipId
+          || normalRelationship.controllerMachineId !== writerTarget.source.sourceMachineId
+          || writerTarget.target.targetMachineId !== localMachineId) {
+          throw authorityError('bootstrap_definition_conflict', 'The admitted Sync relationship placement changed');
+        }
+        const sourceId = request.endpointRole === 'beta' ? normalRelationship.alphaWorkspaceRefId : normalRelationship.betaWorkspaceRefId;
+        const targetId = request.endpointRole === 'beta' ? normalRelationship.betaWorkspaceRefId : normalRelationship.alphaWorkspaceRefId;
+        sourceInvocation = { source: 'network', workspaceRefs: [
+          { id: sourceId, serverId: localServerId, machineId: writerTarget.source.sourceMachineId,
+            rootPath: writerTarget.source.sourceRootPath, createdAtMs: normalRelationship.createdAtMs },
+          { id: targetId, serverId: localServerId, machineId: localMachineId,
+            rootPath: writerTarget.target.targetRootPath, createdAtMs: normalRelationship.createdAtMs },
+        ], relationships: [normalRelationship], organizations: [], rows: [], graphRevision: 'absent',
+          loadedAtMs: 0, scopeKey: context!.callerInputAuthorization!.binding.accountId };
+      }
       const admittedContext = writerTarget && !context?.workspaceSyncTargetRouting
         && writerTarget.target.targetMachineId === localMachineId && context?.machineAdmission
         ? { ...context, workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({ ...writerTarget.target,
             targetContext: { ...writerTarget.source.sourceContext, machineAdmission: context.machineAdmission } }) }
         : context;
-      const targetRouting = await readTargetRouting(admittedContext, 'prepare', request.bootstrapOperationId);
-      const sourceWriterTargetRouting = await readSourceWriterTargetRouting(context, 'prepare', request.bootstrapOperationId, targetRouting);
+      const targetRouting = await readTargetRouting(admittedContext, 'prepare');
+      const sourceWriterTargetRouting = await readSourceWriterTargetRouting(context, 'prepare', targetRouting);
       let admittedTarget: Awaited<ReturnType<typeof bindReplacementTarget>> | undefined;
       let independentTarget: WorkspaceRefV1 | undefined;
       if (sourceWriterTargetRouting && targetRouting) {
-        assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization, admission: context?.machineAdmission,
-          receivingAccountId: dependencies.localAccountId, ownerKind: request.owner.kind });
-        assertPrepareWrites(request, targetRouting.targetContext);
-        admittedTarget = await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal);
+        if (sourceInvocation) {
+          independentTarget = resolveWorkspaceRef(sourceInvocation, request.targetWorkspaceRefId, localServerId);
+          admittedTarget = { machineId: localMachineId, rootPath: independentTarget.rootPath, approvalRoot: null,
+            facts: [], workspace: independentTarget, endpoint: independentTarget, physicalEndpoint: undefined,
+            assertCurrent: async () => { signal?.throwIfAborted(); } };
+        } else admittedTarget = await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal, context);
         const child = admittedTarget.facts.find(fact => fact.machineId === targetRouting.targetMachineId);
         if (!child && context?.callerInputAuthorization?.binding.actionId === 'projects.open'
           && context.workspaceSyncSourceExecution && !context.workspaceSyncTargetRouting
@@ -2847,6 +2941,7 @@ export function createWorkspaceSyncTargetAuthority(
           await admittedTarget.assertCurrent();
           return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(await dependencies.callWorkspaceTargetPhase({
             machineId: admittedTarget.machineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+            ...(admittedTarget.physicalEndpoint ? { physicalEndpoint: admittedTarget.physicalEndpoint } : {}),
             request, routing: { v: 1, phase: 'prepare', operationId: request.bootstrapOperationId,
               accountServerId: localServerId, targetMachineId: targetRouting.targetMachineId,
               targetRootPath: targetRouting.targetRootPath }, ...(signal ? { signal } : {}),
@@ -2858,7 +2953,8 @@ export function createWorkspaceSyncTargetAuthority(
       // row when serving the seed, rather than sharing the borrower's graph.
       const admittedCopy = sourceWriterTargetRouting && admittedTarget?.endpoint && request.owner.kind === 'copy_once'
         ? { target: admittedTarget.endpoint, sourceWriterMachineId: sourceWriterTargetRouting.sourceWriter.machineId } : undefined;
-      const invocationSnapshot = admittedCopy ? getSnapshot() : await readInvocationSnapshot(signal, context);
+      const installedWriterTarget = sourceWriterTargetRouting && admittedTarget?.endpoint;
+      const invocationSnapshot = sourceInvocation ?? (installedWriterTarget ? getSnapshot() : await readInvocationSnapshot(signal, context, request.bootstrapOperationId));
       const owner = resolveBootstrapOwner(invocationSnapshot, request, localServerId, admittedCopy);
       assertLocalWorkspacePlacement(owner.targetWorkspace, localServerId, localMachineId);
       // resolveBootstrapOwner may use a caller's transient runtime definition. Only
@@ -2869,13 +2965,13 @@ export function createWorkspaceSyncTargetAuthority(
       if (owner.sourceMachineId === localMachineId && localSourceRootPath === undefined) {
         throw authorityError('workspace_ref_not_ready', 'The local source root is unavailable');
       }
-      if (sourceWriterTargetRouting && (request.owner.kind !== 'copy_once'
-        || request.owner.operation.operationId !== sourceWriterTargetRouting.source.operationId)) {
+      if (sourceWriterTargetRouting && request.owner.kind === 'copy_once'
+        && request.owner.operation.operationId !== sourceWriterTargetRouting.source.operationId) {
         throw authorityError('bootstrap_definition_conflict', 'The source writer copy operation changed');
       }
       if (targetRouting) {
         assertPrepareWrites(request, targetRouting.targetContext, owner.relationship);
-        admittedTarget ??= await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal);
+        admittedTarget ??= await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal, context);
         const child = admittedTarget.facts.find(fact => fact.machineId === targetRouting.targetMachineId);
         if ((!child && !independentTarget) || child && child.installationId !== targetRouting.targetContext.machineAdmission.installationId
           || admittedTarget.machineId !== localMachineId || admittedTarget.rootPath !== owner.targetRootPath
@@ -2883,10 +2979,6 @@ export function createWorkspaceSyncTargetAuthority(
           throw authorityError('workspace_sync_child_unavailable', 'The admitted child target does not resolve to this endpoint');
         }
       }
-      assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization, admission: context?.machineAdmission,
-        receivingAccountId: dependencies.localAccountId, ownerKind: request.owner.kind, targetReplacement: request.targetReplacementApproval !== undefined,
-        materializesRemoteSource: request.targetBootstrap === 'materialize_from_source_workspace'
-          && owner.sourceMachineId !== localMachineId && admittedCopy === undefined });
       // Exact mirroring authorizes deleting target-only files for the life of
       // the relationship, whichever way this endpoint is established: attaching
       // an existing folder is non-destructive today and still deletes its
@@ -2908,7 +3000,9 @@ export function createWorkspaceSyncTargetAuthority(
           || request.targetReplacementApprovalActionInput === undefined) {
           throw authorityError('approval_stale', 'Workspace target replacement approval has no Action receipt');
         }
-        await dependencies.assertTargetReplacementAuthorized(
+        // A verified normal SOURCE invocation already checked its requester's
+        // persisted receipt. Other families retain the existing target check.
+        if (!sourceInvocation) await dependencies.assertTargetReplacementAuthorized(
           request.targetReplacementApprovalReceiptId,
           request.targetReplacementApprovalActionInput,
           approval,
@@ -2916,7 +3010,9 @@ export function createWorkspaceSyncTargetAuthority(
         if (approval.serverId !== localServerId) {
           throw authorityError('approval_stale', 'Workspace target replacement approval placement is stale');
         }
-        approvedTarget = await bindReplacementTarget(approval.machineId, approval.canonicalRoot, signal);
+        approvedTarget = sourceInvocation ? admittedTarget
+          : await bindReplacementTarget(approval.machineId, approval.canonicalRoot, signal, context);
+        if (!approvedTarget) throw authorityError('approval_stale', 'The admitted Workspace target is unavailable');
         if (approvedTarget.machineId !== localMachineId
           || (approvedTarget.endpoint !== null && (approvedTarget.endpoint.id !== owner.targetWorkspaceRefId
             || approvedTarget.rootPath !== owner.targetRootPath))) {
@@ -2974,14 +3070,18 @@ export function createWorkspaceSyncTargetAuthority(
           }
         }
       }
+      const settleNormalTargetRecovery = async () => {
+        if (!sourceInvocation || !owner.relationshipId) return;
+        const recovered = await recoverConflictResolutionHere({ relationshipId: owner.relationshipId,
+          targetMachineId: localMachineId, targetWorkspaceRefId: owner.targetWorkspaceRefId }, signal);
+        if (recovered.status === 'recovery_needed') {
+          throw Object.assign(authorityError('workspace_sync_recovery_needed', 'Workspace target recovery must settle before Sync can start'),
+            { recoveryPath: recovered.recoveryPath });
+        }
+      };
       return await exclusive(authorityKey, async () => {
         signal?.throwIfAborted();
         await admittedTarget?.assertCurrent();
-        if (context?.callerInputAuthorization
-          && !isDeepStrictEqual(owner, resolveBootstrapOwner(admittedCopy ? getSnapshot()
-            : await readInvocationSnapshot(signal, context), request, localServerId, admittedCopy))) {
-          throw authorityError('workspace_ref_not_ready', 'The admitted requester endpoint changed before preparation');
-        }
         const retainedEntry = retained.get(authorityKey);
         if (retainedEntry) {
           if (retainedEntry.bootstrapOperationId === request.bootstrapOperationId
@@ -3011,6 +3111,7 @@ export function createWorkspaceSyncTargetAuthority(
               }
               retained.set(authorityKey, { ...retainedEntry, definition });
             }
+            await settleNormalTargetRecovery();
             return retainedEntry.result;
           }
           const currentRoot = await realpath(owner.targetRootPath).catch(() => null);
@@ -3036,6 +3137,7 @@ export function createWorkspaceSyncTargetAuthority(
             ...(targetRouting ? { targetRouting } : {}),
             ...(sourceWriterTargetRouting ? { sourceWriterTargetRouting } : {}),
           });
+          await settleNormalTargetRecovery();
           return reboundResult;
         }
         signal?.throwIfAborted();
@@ -3144,7 +3246,7 @@ export function createWorkspaceSyncTargetAuthority(
           created: prepared.created,
           rootFingerprint: prepared.rootFingerprint,
           policyDigest: prepared.policyDigest,
-          ...(admittedCopy ? { targetWorkspace: owner.targetWorkspace } : {}),
+          ...(sourceInvocation || installedWriterTarget ? { targetWorkspace: owner.targetWorkspace } : {}),
         });
         const entry: RetainedBootstrap = {
           bootstrapOperationId: request.bootstrapOperationId,
@@ -3166,7 +3268,7 @@ export function createWorkspaceSyncTargetAuthority(
           targetRootPath: owner.targetRootPath,
           endpointRole: owner.endpointRole,
           relationshipDefinition: owner.relationship,
-          transientAuthority: request.transientRelationship !== undefined
+          transientAuthority: sourceInvocation !== undefined || request.transientRelationship !== undefined
             && !invocationSnapshot.relationships.some((candidate) => (
               candidate.relationshipId === owner.relationshipId && candidate.enabled
             )),
@@ -3176,6 +3278,7 @@ export function createWorkspaceSyncTargetAuthority(
         };
         retained.set(authorityKey, entry);
         await commitPublishedMaterializationCustody(entry);
+        await settleNormalTargetRecovery();
         return result;
       });
     },
@@ -3183,8 +3286,8 @@ export function createWorkspaceSyncTargetAuthority(
     releaseBootstrapHere: async (rawRequest, signal, context) => {
       signal?.throwIfAborted();
       const request = WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(rawRequest);
-      const targetRouting = await readTargetRouting(context, 'release', request.bootstrapOperationId);
-      const sourceWriterTargetRouting = await readSourceWriterTargetRouting(context, 'release', request.bootstrapOperationId);
+      const targetRouting = await readTargetRouting(context, 'release');
+      const sourceWriterTargetRouting = await readSourceWriterTargetRouting(context, 'release');
       const match = [...retained.entries()].find(([, entry]) => (
         entry.bootstrapOperationId === request.bootstrapOperationId
       ));
@@ -3212,9 +3315,9 @@ export function createWorkspaceSyncTargetAuthority(
           throw authorityError('bootstrap_definition_conflict', 'Workspace sync target cleanup authority does not match the retained operation');
         }
         const durableRelationshipOwnsEndpoint = entry.relationshipId
-          ? relationshipOwnsEndpoint(getSnapshot(), entry, false)
+          ? relationshipOwnsEndpoint(getSnapshot(entry.operationId), entry, false)
           : false;
-        if (entry.relationshipId && (relationshipStillOwnsEndpoint(getSnapshot(), entry)
+        if (entry.relationshipId && (relationshipStillOwnsEndpoint(getSnapshot(entry.operationId), entry)
           || (request.reason === 'relationship_committed'
             && (durableRelationshipOwnsEndpoint || entry.transientAuthority)))) {
           if (request.reason === 'relationship_committed') {
@@ -3236,7 +3339,6 @@ export function createWorkspaceSyncTargetAuthority(
     },
 
     prepareBootstrapAtTarget: async (request, context) => {
-      assertStateAvailable();
       const wireRequest = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse({
         v: request.v,
         bootstrapOperationId: request.bootstrapOperationId,
@@ -3257,11 +3359,9 @@ export function createWorkspaceSyncTargetAuthority(
       });
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
       if (context?.callerInputAuthorization && source) {
-        assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context.callerInputAuthorization, admission: context.machineAdmission,
-          receivingAccountId: dependencies.localAccountId, ownerKind: wireRequest.owner.kind });
+        context.signal.throwIfAborted();
         if (!source.sourceContext || !request.admittedTarget || source.accountServerId !== localServerId
           || source.operationId !== wireRequest.bootstrapOperationId
-          || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()
           || !dependencies.callWorkspaceTargetPhase) {
           throw authorityError('workspace_sync_update_required', 'The admitted original target transport is unavailable');
         }
@@ -3274,7 +3374,7 @@ export function createWorkspaceSyncTargetAuthority(
             targetRootPath: request.admittedTarget.rootPath }, ...(request.signal ? { signal: request.signal } : {}),
         }, context));
       }
-      const workspace = resolveWorkspaceRef(await readInvocationSnapshot(request.signal, context), wireRequest.targetWorkspaceRefId, localServerId);
+      const workspace = resolveWorkspaceRef(await readInvocationSnapshot(request.signal, context, request.bootstrapOperationId), wireRequest.targetWorkspaceRefId, localServerId);
       assertTargetMachine(workspace, request.targetMachineId);
       const admittedMachineId = request.admittedTarget?.machineId ?? workspace.machineId.trim();
       if (admittedMachineId === localMachineId) {
@@ -3331,7 +3431,7 @@ export function createWorkspaceSyncTargetAuthority(
         }
         throw authorityError('workspace_sync_update_required', 'The original requester target cleanup transport is unavailable');
       }
-      const workspace = resolveWorkspaceRef(getSnapshot(), wireRequest.targetWorkspaceRefId, localServerId);
+      const workspace = resolveWorkspaceRef(getSnapshot(request.bootstrapOperationId), wireRequest.targetWorkspaceRefId, localServerId);
       assertTargetMachine(workspace, request.targetMachineId);
       const admittedMachineId = request.admittedTarget?.machineId ?? workspace.machineId.trim();
       if (admittedMachineId === localMachineId) {
@@ -3358,7 +3458,6 @@ export function createWorkspaceSyncTargetAuthority(
     },
 
     acquireWorkspaceSyncMachineIngress: async (request) => {
-      assertStateAvailable();
       request.signal?.throwIfAborted();
       if (!dependencies.openRootedAgent) {
         throw authorityError('agent_unavailable', 'Verified rooted workspace sync agent is unavailable');
@@ -3369,13 +3468,13 @@ export function createWorkspaceSyncTargetAuthority(
         targetMachineId: request.targetMachineId.trim(),
       };
       if (request.expiresAtMs !== undefined && request.expiresAtMs <= Date.now()) {
-        throw authorityError('peer_unavailable', 'Workspace sync machine ingress authorization expired');
+        throw authorityError('peer_unavailable', 'Workspace sync machine ingress authorization expired', 'authorization_expired');
       }
       if (Object.values(facts).some((value) => !value)) {
-        throw authorityError('peer_unavailable', 'Workspace sync machine ingress identity is incomplete');
+        throw authorityError('peer_unavailable', 'Workspace sync machine ingress identity is incomplete', 'identity_incomplete');
       }
       if (facts.targetMachineId !== localMachineId) {
-        throw authorityError('peer_unavailable', 'Workspace sync machine ingress targets another daemon');
+        throw authorityError('peer_unavailable', 'Workspace sync machine ingress targets another daemon', 'target_machine_mismatch');
       }
       return await exclusive(`machine-ingress:${facts.operationId}:${facts.sourceMachineId}:${facts.targetMachineId}`, async () => {
       let matches = [...retained.entries()].filter(([, entry]) => (
@@ -3384,6 +3483,11 @@ export function createWorkspaceSyncTargetAuthority(
         && entry.targetMachineId === facts.targetMachineId
       ));
       if (matches.length === 0) {
+        // Restart rehydration restores installed custody only, so its actor is
+        // the local Account; refuse another actor before re-taking the root.
+        if (request.actorAccountId !== undefined && request.actorAccountId !== dependencies.localAccountId) {
+          throw authorityError('peer_unavailable', 'Workspace sync machine ingress belongs to another Account', 'rehydration_actor_mismatch');
+        }
         await rehydrateIngressOwner(facts);
         matches = [...retained.entries()].filter(([, entry]) => (
           entry.operationId === facts.operationId
@@ -3392,22 +3496,35 @@ export function createWorkspaceSyncTargetAuthority(
         ));
       }
       if (matches.length !== 1) {
-        throw authorityError('peer_unavailable', 'Workspace sync machine ingress is not owned by a ready target');
+        throw authorityError('peer_unavailable', 'Workspace sync machine ingress is not owned by a ready target',
+          matches.length === 0 ? 'ready_target_missing' : 'ready_target_ambiguous');
       }
       const [authorityKey, entry] = matches[0]!;
-      const target = resolveWorkspaceRef(getSnapshot(), entry.targetWorkspaceRefId, localServerId);
-      assertLocalWorkspacePlacement(target, localServerId, localMachineId);
+      const actorAccountId = entry.targetRouting?.targetContext.machineAdmission.actorAccountId
+        ?? dependencies.localAccountId;
+      if (request.actorAccountId !== undefined && request.actorAccountId !== actorAccountId) {
+        throw authorityError('peer_unavailable', 'Workspace sync machine ingress belongs to another Account', 'retained_actor_mismatch');
+      }
+      // A signed SOURCE preparation lends this endpoint to its requester.
+      // The custodian's Account graph does not contain that requester's ref;
+      // the retained preparation owns its placement and root until release.
+      let targetRootPath = entry.targetRootPath;
+      if (!entry.transientAuthority || !entry.sourceWriterTargetRouting) {
+        const target = resolveWorkspaceRef(getSnapshot(entry.operationId), entry.targetWorkspaceRefId, localServerId);
+        assertLocalWorkspacePlacement(target, localServerId, localMachineId);
+        targetRootPath = target.rootPath;
+      }
       const currentRoot = await assertRetainedRootIdentity({
         authorityKey,
         entry,
-        rootPath: target.rootPath,
+        rootPath: targetRootPath,
       });
 
       return await openLocalAgentIngress(request, { authorityKey, operationId: facts.operationId,
         role: entry.endpointRole, workspaceRefId: entry.targetWorkspaceRefId, canonicalRoot: currentRoot,
         assertCurrent: () => {
-          if (retained.get(authorityKey) !== entry) throw authorityError('peer_unavailable', 'Workspace sync target ownership ended before ingress was ready');
-          if (entry.relationshipId && !entry.transientAuthority && !relationshipStillOwnsEndpoint(getSnapshot(), entry)) {
+          if (retained.get(authorityKey) !== entry) throw authorityError('peer_unavailable', 'Workspace sync target ownership ended before ingress was ready', 'target_ownership_ended');
+          if (entry.relationshipId && !entry.transientAuthority && !relationshipStillOwnsEndpoint(getSnapshot(entry.operationId), entry)) {
             throw authorityError('relationship_not_ready', 'Workspace sync relationship no longer owns the target endpoint');
           }
         } });
@@ -3428,7 +3545,10 @@ export function createWorkspaceSyncTargetAuthority(
         });
       };
       for (const [authorityKey, entry] of [...retained.entries()]) {
-        if (entry.relationshipId) {
+        const snapshot = getSnapshot(entry.operationId);
+        // Installed Account publication cannot withdraw a signed SOURCE loan.
+        // Its retained preparation ends through release, not unrelated rows.
+        if (entry.relationshipId && (!entry.transientAuthority || !entry.sourceWriterTargetRouting)) {
           const enabledOwner = relationshipStillOwnsEndpoint(snapshot, entry);
           const stagedOwner = entry.transientAuthority && relationshipOwnsEndpoint(snapshot, entry, false);
           if (!enabledOwner && !stagedOwner) {

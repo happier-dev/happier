@@ -90,7 +90,9 @@ describe('CLI Workspace Sync relationship lifecycle composition', () => {
 
         for (const [actionId, method, result] of cases) {
           await expect(executor.execute(actionId, input, context)).resolves.toEqual({ ok: true, result });
-          expect(invoke).toHaveBeenLastCalledWith(method, { relationshipId }, undefined);
+          expect(invoke).toHaveBeenLastCalledWith(method, { relationshipId }, {
+            localActionContext: { surface: 'agent', authority: 'account_automation' },
+          });
         }
         expect(invoke).toHaveBeenCalledTimes(cases.length);
         expect(getActionSpec('workspace.sync.relationship.disable')).toMatchObject({ approvalPolicy: { uiConfirmation: 'direct' } });

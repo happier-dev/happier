@@ -33,11 +33,16 @@ describe('Home route issuance consumed by the production workspace carrier', () 
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it.each(['file_transfer', 'workspace_sync'] as const)('uses the default Home signer for %s and preserves a route refusal before native dial', async flow => {
+    it.each([
+        { flow: 'file_transfer', sharedTarget: false },
+        { flow: 'workspace_sync', sharedTarget: false },
+        { flow: 'workspace_sync', sharedTarget: true },
+    ] as const)('uses the default Home signer for $flow (shared target: $sharedTarget) and preserves a route refusal before native dial', async ({ flow, sharedTarget }) => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const targetCustodian = sharedTarget ? await db.account.create({ data: { encryptionMode: 'plain' } }) : account;
         const endpoints = ['a'.repeat(64), 'b'.repeat(64)];
-        const machines = await Promise.all(endpoints.map(endpointId => db.machine.create({ data: {
-            id: randomUUID(), accountId: account.id, active: true, installationId: randomUUID(),
+        const machines = await Promise.all(endpoints.map((endpointId, index) => db.machine.create({ data: {
+            id: randomUUID(), accountId: index === 1 ? targetCustodian.id : account.id, active: true, installationId: randomUUID(),
             metadata: encodePlainMachineStoredContent({ host: 'carrier', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/carrier', happyHomeDir: '/home/carrier/.happier' }),
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
@@ -47,6 +52,9 @@ describe('Home route issuance consumed by the production workspace carrier', () 
         } })));
         const source = machines[0]!;
         const target = machines[1]!;
+        if (sharedTarget) await db.machineAccountGrant.create({ data: {
+            machineId: target.id, accountId: account.id, accessLevel: 'admin', createdByAccountId: targetCustodian.id,
+        } });
         const home = Fastify().withTypeProvider<ZodTypeProvider>();
         home.setValidatorCompiler(validatorCompiler);
         home.setSerializerCompiler(serializerCompiler);
@@ -87,10 +95,14 @@ describe('Home route issuance consumed by the production workspace carrier', () 
             const api = await ApiClient.create({ token, encryption: null });
             const roots = resolveServerFeaturesForGating(harness.envBase).capabilities.machines.peerMediation.grantSigningKeys;
             expect(roots).toHaveLength(1);
+            const mintedRequests: unknown[] = [];
             const open = createWorkspaceMachineCarrierTunnelOpen({ accountId: account.id, localMachineId: source.id,
                 runtime, resolveTrustRoots: () => roots,
                 readTargetMachine: async (machineId, signal) => api.getMachine(machineId, signal ? { signal } : undefined),
-                mintGrant: async (request, signal) => api.mintPeerMediationRouteGrant(request, signal ? { signal } : undefined),
+                mintGrant: async (request, signal) => {
+                    mintedRequests.push(request);
+                    return api.mintPeerMediationRouteGrant(request, signal ? { signal } : undefined);
+                },
             });
             const operationId = randomUUID();
             const openRequestedTunnel = () => flow === 'file_transfer'
@@ -105,6 +117,16 @@ describe('Home route issuance consumed by the production workspace carrier', () 
                 expect(tunnel).toMatchObject({ localPort: 48123, observedPath: 'direct' });
                 await tunnel.close();
                 expect(nativeDials).toBe(1);
+                if (sharedTarget) {
+                    // Transport-only issuance still needs the requester's current
+                    // Machine admission; a withdrawn share mints nothing.
+                    await db.machineAccountGrant.deleteMany({ where: { machineId: target.id, accountId: account.id } });
+                    await expect(api.mintPeerMediationRouteGrant(mintedRequests.at(-1))).rejects.toMatchObject({
+                        code: 'peer_unavailable', reasonCode: expect.any(String) });
+                    await db.machineAccountGrant.create({ data: {
+                        machineId: target.id, accountId: account.id, accessLevel: 'admin', createdByAccountId: targetCustodian.id,
+                    } });
+                }
 
                 await db.machine.update({ where: { id: source.id }, data: { operationProtocolCapabilities: {} } });
                 await expect(openRequestedTunnel()).rejects.toMatchObject({ code: 'peer_unavailable',
@@ -115,6 +137,9 @@ describe('Home route issuance consumed by the production workspace carrier', () 
                 } } });
                 await expect(openRequestedTunnel()).rejects.toMatchObject({ code: 'peer_unavailable',
                     reasonCode: 'machine_iroh_endpoint_mismatch' });
+                await db.machine.update({ where: { id: source.id }, data: { revokedAt: new Date() } });
+                await expect(openRequestedTunnel()).rejects.toMatchObject({ code: 'peer_unavailable',
+                    reasonCode: 'machine_unavailable' });
                 expect(nativeDials).toBe(1);
             });
         } finally {

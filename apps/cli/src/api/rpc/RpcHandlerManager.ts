@@ -1,4 +1,7 @@
+import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 /**
  * Generic RPC handler manager for session and machine clients
  * Manages RPC method registration, encryption/decryption, and handler execution
@@ -33,6 +36,7 @@ import { isSocketRpcActionApiServerOriginAuthorizationContext, isSocketRpcAutoma
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -50,7 +54,8 @@ import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterT
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedSecondOpinionModelSpawnChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild, isReviewedDeploymentChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { isDiscussionSecondOpinionModelRpcMethodV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -60,8 +65,16 @@ import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObs
 import { timeWebLatencyPhase, withStorageReadTrace, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { AgentModelsProbeObservationSchema, type AgentModelsProbeObservation } from '@happier-dev/protocol/capabilities';
 import { SpawnFailureV1Schema, type SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
+import { ManagedInstallationServerOriginV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { invokeReviewedServiceMoveChild } from './reviewedServiceMoveChild';
+import { readCapabilityRefusalDetails } from '@/capabilities/errors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+
+type RpcTransportReply = {
+    signal?: AbortSignal;
+    isCancelled(): boolean;
+};
 
 type OwnedHandlerRegistrationContext = {
     ownerId: string;
@@ -107,6 +120,7 @@ type RequestDiagnostic = {
     acknowledgementOutcomeCode?: string;
     goalControlFailure?: SessionGoalControlFailureV1;
     modelProbe?: ModelProbeDiagnostic;
+    capabilityFailure?: ReturnType<typeof readCapabilityRefusalDetails>;
     failure?: Readonly<{
         failedPhase?: string;
         cancelled?: boolean;
@@ -124,6 +138,7 @@ const SERVER_ORIGIN_RPC_FAMILIES: readonly Readonly<{
     serverOnly: boolean;
     requiresMachineAdmission?: boolean;
     bindsMachineRead?: boolean;
+    bindsManagedInstallation?: boolean;
 }>[] = [
     { methods: [AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1], isAuthorization: isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext, serverOnly: true },
     { methods: [SESSION_SERVER_START_DAEMON_RPC_METHOD_V1], isAuthorization: isSocketRpcSessionServerStartServerOriginAuthorizationContext, serverOnly: true },
@@ -131,24 +146,39 @@ const SERVER_ORIGIN_RPC_FAMILIES: readonly Readonly<{
     { methods: [RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS], isAuthorization: isSocketRpcMachineAccessLossServerOriginAuthorizationContext, serverOnly: true },
     { methods: [RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION], isAuthorization: isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext, serverOnly: true, requiresMachineAdmission: true },
     { methods: SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS, isAuthorization: isSocketRpcMachineReadServerOriginAuthorizationContext, serverOnly: false, bindsMachineRead: true },
+    { methods: [RPC_METHODS.CAPABILITIES_INVOKE], isAuthorization: value => ManagedInstallationServerOriginV1Schema.safeParse(value).success,
+        serverOnly: false, bindsManagedInstallation: true },
 ];
 
-function readOutcomeCode(value: unknown, thrown = false): string {
+function readOutcomeCode(value: unknown, thrown = false, method?: string): string {
     if (!value || typeof value !== 'object') return thrown ? 'unclassified_error' : 'ok';
     const result = value as Record<string, unknown>;
-    const domainCode = result.status === 'error' && result.error && typeof result.error === 'object'
+    const domainCode = (result.status === 'error' || result.ok === false) && result.error && typeof result.error === 'object'
         && 'code' in result.error ? result.error.code : undefined;
     const code = (thrown && result.code === 'RPC_REQUEST_TIMEOUT' ? result.code : undefined)
         ?? readRpcErrorCode(value) ?? result.errorCode
         ?? (thrown || result.ok === false ? result.code : undefined)
-        ?? (result.ok === false ? result.error : undefined) ?? domainCode;
+        ?? domainCode ?? (result.ok === false ? result.error : undefined);
     // Retain typed native refusals as well as transport codes, never error prose.
     // Match the existing RPC provider diagnostic token budget (128 characters).
     // The end assertion rejects trailing newlines too, unlike JavaScript's `$`.
-    if (typeof code === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,127}(?![\s\S])/.test(code)) return code;
+    // Capability codes already use hyphens (invoke-failed, preflight refusals).
+    // Other RPC diagnostic vocabularies retain their existing stricter grammar.
+    const token = method === RPC_METHODS.CAPABILITIES_INVOKE
+        ? /^[A-Za-z][A-Za-z0-9_-]{0,127}(?![\s\S])/
+        : /^[A-Za-z][A-Za-z0-9_]{0,127}(?![\s\S])/;
+    if (typeof code === 'string' && token.test(code)) return code;
     if (thrown && result.name === 'AbortError') return 'request_cancelled';
     return thrown || code !== undefined || typeof result.error === 'string' || result.ok === false || result.status === 'error'
         ? 'unclassified_error' : 'ok';
+}
+
+function readCapabilityFailureDiagnostic(method: string, value: unknown) {
+    if (method !== RPC_METHODS.CAPABILITIES_INVOKE && method !== RPC_METHODS.CAPABILITIES_DETECT) return;
+    if (value && typeof value === 'object' && 'ok' in value && value.ok === false && 'error' in value) {
+        return readCapabilityRefusalDetails(value.error);
+    }
+    return readCapabilityRefusalDetails(value);
 }
 
 function readModelProbeDiagnostic(method: string, value: unknown): ModelProbeDiagnostic | undefined {
@@ -177,9 +207,9 @@ function readModelProbeDiagnostic(method: string, value: unknown): ModelProbeDia
 export class RpcHandlerManager {
     private handlers: RpcHandlerMap = new Map();
     private readonly scopePrefix: string;
+    private readonly scopeKind: RpcHandlerConfig['scopeKind'];
     private readonly localMachineId: string | null;
     private rpcContent: SocketRpcContent | null;
-    private readonly scopeKind: RpcHandlerConfig['scopeKind'];
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly resolveSessionDecisionContext: RpcHandlerConfig['resolveSessionDecisionContext'];
     private readonly prepareRequesterAccountContext: RpcHandlerConfig['prepareRequesterAccountContext'];
@@ -218,13 +248,13 @@ export class RpcHandlerManager {
 
     constructor(config: RpcHandlerConfig) {
         this.scopePrefix = config.scopePrefix;
+        this.scopeKind = config.scopeKind;
         this.localMachineId = config.localMachineId ?? null;
         this.rpcContent = this.createEncryptionContent(config);
-        this.scopeKind = config.scopeKind;
         const authorizeRequest = config.authorizeRequest;
-        this.authorizeRequest = authorizeRequest ? async request => {
+        this.authorizeRequest = authorizeRequest ? async (request, source) => {
             request.signal?.throwIfAborted();
-            const pending = Promise.resolve(authorizeRequest(request));
+            const pending = Promise.resolve(authorizeRequest(request, source));
             // Admission cannot retain a retired request even when a shared read
             // or external transport settles later. Accepted work omits this signal.
             return await (request.signal ? waitForObservation(pending, request.signal) : pending);
@@ -278,13 +308,13 @@ export class RpcHandlerManager {
             }
         }
         const prefixedMethod = this.getPrefixedMethod(method);
+        const alreadyRegistered = this.handlers.has(prefixedMethod);
 
-        // Store the handler
+        // The relay registers the method name, while invocation reads this handler.
+        // Replacing its implementation leaves the current registration intact.
         this.handlers.set(prefixedMethod, handler);
-        this.permanentlyRejectedRegistrationMethods.delete(prefixedMethod);
 
-        if (this.socket) {
-            this.acknowledgedRegistrationMethods.delete(prefixedMethod);
+        if (!alreadyRegistered && this.socket) {
             this.publishHandlerRegistration(prefixedMethod);
         }
     }
@@ -317,45 +347,69 @@ export class RpcHandlerManager {
      */
     async handleRequest(
         request: RpcRequest,
+        callback?: (response: unknown) => void,
+        source?: 'authenticated_home_socket',
     ): Promise<any> {
         const requestStartedAtMs = Date.now();
+        const reply: RpcTransportReply | undefined = callback ? {
+            isCancelled() {
+                return this.signal?.aborted === true && request.waitForResultOnCancel !== true;
+            },
+        } : undefined;
         // Diagnostic correlation never supplies cancellation or admission authority.
         const trace = SocketRpcRequestIdSchema.safeParse(request.traceId);
         const diagnosticId = trace.success ? trace.data : request.requestId;
         const traceRequestId = typeof diagnosticId === 'string' ? diagnosticId.replace(/^rpc_/u, '') : diagnosticId;
-        return withWebLatencyTrace(traceRequestId, () => this.observeRequest(request.method, diagnosticId,
-            diagnostic => this.dispatchRequest(request, diagnostic, requestStartedAtMs, trace.success)));
+        const response = await withWebLatencyTrace(traceRequestId, () => this.observeRequest(request.method, diagnosticId,
+            diagnostic => this.dispatchRequest(request, diagnostic, requestStartedAtMs, trace.success, reply, source)));
+        // Cancellation can arrive during asynchronous encoding or requester cleanup.
+        // Only this owner may release the captured native acknowledgement.
+        if (!reply?.isCancelled()) callback?.(response);
+        return response;
+    }
+
+    /** Payload-free identity shared by handler and native transport diagnostics. */
+    projectRequestDiagnostic(request: Readonly<{ method: string; requestId?: unknown; traceId?: unknown }>): Readonly<{
+        method: string; requestId?: string;
+    }> {
+        const trace = request.traceId === undefined ? undefined : SocketRpcRequestIdSchema.safeParse(request.traceId);
+        const parsed = trace?.success ? trace : SocketRpcRequestIdSchema.safeParse(request.requestId);
+        const registeredMethod = this.handlers.has(request.method) ? this.readUnprefixedMethod(request.method) : null;
+        // Only registered declarations supply diagnostic names, never caller routes/scopes.
+        const safeMethod = registeredMethod === null ? '<unregistered>'
+            : /^[a-zA-Z0-9_.-]+$/.test(registeredMethod) ? registeredMethod : '<registered>';
+        // The relay mints rpc_<UUID>. Opaque ids are correlated by digest, never copied as
+        // text: the typed transport slot also accepts paths, credentials and LF.
+        return {
+            method: safeMethod,
+            ...(parsed.success ? { requestId: /^(?:rpc_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.data)
+                ? parsed.data : `sha256:${createHash('sha256').update(parsed.data).digest('hex')}` } : {}),
+        };
     }
 
     private async observeRequest(
         method: string, requestId: unknown, dispatch: (diagnostic: RequestDiagnostic) => Promise<unknown>, local = false,
     ): Promise<unknown> {
         const receivedAtMs = this.nowMs();
-        const parsed = SocketRpcRequestIdSchema.safeParse(requestId);
-        const registeredMethod = this.handlers.has(method) ? this.readUnprefixedMethod(method) : null;
-        // Only registered declarations supply diagnostic names, never caller routes/scopes.
-        const safeMethod = registeredMethod === null ? '<unregistered>'
-            : /^[a-zA-Z0-9_.-]+$/.test(registeredMethod) ? registeredMethod : '<registered>';
-        // The relay mints rpc_<UUID>. Opaque ids are correlated by digest, never copied as
-        // text: the typed transport slot also accepts paths, credentials and LF.
+        const identity = this.projectRequestDiagnostic({ method, requestId });
         const diagnostic: RequestDiagnostic = {
-            method: safeMethod, transportCorrelated: !local && parsed.success,
-            requestId: parsed.success ? /^(?:rpc_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.data)
-                ? parsed.data : `sha256:${createHash('sha256').update(parsed.data).digest('hex')}` : randomUUID(),
+            method: identity.method, transportCorrelated: !local && identity.requestId !== undefined,
+            requestId: identity.requestId ?? randomUUID(),
             outcomeCode: 'unclassified_error', callerClass: local ? 'local' : 'unattributed', admissionPredicate: 'request_admission',
         };
         try {
             if (diagnostic.transportCorrelated) this.completionLogger('[RPC] Request received', {
                 method: diagnostic.method, requestId: diagnostic.requestId,
             });
-            const storageRead = registeredMethod === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET
-                || registeredMethod === RPC_METHODS.DAEMON_STORAGE_SCAN_GET
-                || registeredMethod === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST;
+            const storageRead = diagnostic.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET
+                || diagnostic.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET
+                || diagnostic.method === RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST;
             const response = await (storageRead ? withStorageReadTrace(diagnostic.requestId,
                 () => timeWebLatencyPhase('storage.dispatch', () => dispatch(diagnostic))) : dispatch(diagnostic));
             if (local) {
-                diagnostic.outcomeCode = readOutcomeCode(response);
+                diagnostic.outcomeCode = readOutcomeCode(response, false, diagnostic.method);
                 diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, response);
+                diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, response);
                 const failure = SessionGoalControlFailureV1Schema.safeParse(
                     response && typeof response === 'object' ? Reflect.get(response, 'goalControlFailure') : undefined);
                 if (failure.success) diagnostic.goalControlFailure = failure.data;
@@ -363,6 +417,7 @@ export class RpcHandlerManager {
             return response;
         } catch (error) {
             diagnostic.outcomeCode = readOutcomeCode(error, true);
+            diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, error);
             throw error;
         } finally {
             this.completionLogger('[RPC] Request completed', {
@@ -374,6 +429,7 @@ export class RpcHandlerManager {
                 ...(diagnostic.acknowledgementOutcomeCode ? { acknowledgementOutcomeCode: diagnostic.acknowledgementOutcomeCode } : {}),
                 ...(diagnostic.goalControlFailure ? { goalControlFailure: diagnostic.goalControlFailure } : {}),
                 ...(diagnostic.modelProbe ? { modelProbe: diagnostic.modelProbe } : {}),
+                ...(diagnostic.capabilityFailure ? { capabilityFailure: diagnostic.capabilityFailure } : {}),
                 ...(diagnostic.failure ?? {}),
             });
         }
@@ -391,7 +447,7 @@ export class RpcHandlerManager {
             phaseDurationsMs: { ...diagnostic.failure?.phaseDurationsMs, ...operation.phaseDurationsMs } };
     }
 
-    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean): Promise<unknown> {
+    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, reply?: RpcTransportReply, source?: 'authenticated_home_socket'): Promise<unknown> {
         // Admission captures its reply codec; later key adoption only affects new requests.
         const admittedContent = this.rpcContent;
         if (!admittedContent) {
@@ -407,8 +463,15 @@ export class RpcHandlerManager {
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY;
         let callId: string | null = null;
         const respond = (request: RpcRequest, result: unknown, acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null) => {
-            diagnostic.outcomeCode = readOutcomeCode(result);
+            // A retired transport caller needs neither encryption nor serialization.
+            // In-process invocations and cooperative result custody retain their result.
+            if (reply?.isCancelled()) {
+                diagnostic.outcomeCode = 'cancelled';
+                return undefined;
+            }
+            diagnostic.outcomeCode = readOutcomeCode(result, false, diagnostic.method);
             diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, result);
+            diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, result);
             const failure = SessionGoalControlFailureV1Schema.safeParse(
                 result && typeof result === 'object' ? Reflect.get(result, 'goalControlFailure') : undefined);
             if (failure.success) diagnostic.goalControlFailure = failure.data;
@@ -418,7 +481,14 @@ export class RpcHandlerManager {
             if (diagnostic.callerClass === 'unattributed') diagnostic.callerClass = 'unadmitted';
             diagnostic.admissionPredicate = predicate;
             diagnostic.admissionDenied = true;
-            return respond(request, result);
+            // These predicates are fixed labels at the existing admission checks,
+            // never request data. A refusal precedes handler effects.
+            const refusal = result && typeof result === 'object'
+                && Reflect.get(result, 'errorCode') === RPC_ERROR_CODES.FORBIDDEN
+                ? { ...result, effectAttempted: false,
+                    failureCause: projectActionFailureCauseV1({ code: RPC_ERROR_CODES.FORBIDDEN }, `rpc.admission.${predicate}`) }
+                : result;
+            return respond(request, refusal);
         };
         const machineAdmission = request.machineAdmission === undefined
             ? null : SocketRpcMachineAdmissionContextV1Schema.safeParse(request.machineAdmission);
@@ -465,7 +535,8 @@ export class RpcHandlerManager {
             const installation = readInstallationIdentityIfExistsSync();
             const installedRouting = workspaceSyncSeedRouting?.success ? workspaceSyncSeedRouting.data
                 : workspaceSyncSourceWriterTargetRouting?.success ? workspaceSyncSourceWriterTargetRouting.data
-                : (isProjectSource || isFiniteSource) && workspaceSyncSourceRouting?.success ? workspaceSyncSourceRouting.data : undefined;
+                : isWorkspaceSourcePhase && workspaceSyncSourceRouting?.success ? workspaceSyncSourceRouting.data
+                : isWorkspaceTargetPhase && workspaceSyncTargetRouting?.success ? workspaceSyncTargetRouting.data : undefined;
             const content = installation && installedRouting && typeof request.params === 'string'
                 ? openWorkspaceSyncTargetContent({ ciphertext: request.params, installation, machineId: this.scopePrefix,
                     method: request.method, routing: installedRouting }) : null;
@@ -498,13 +569,45 @@ export class RpcHandlerManager {
         }
         const parsedInputAuthorization = request.callerInputAuthorization === undefined
             ? null : ExternalActionExecutionAuthorizationV1Schema.safeParse(request.callerInputAuthorization);
+        const archiveExecution = workspaceSyncSourceExecution?.success ? workspaceSyncSourceExecution.data.externalActionExecution : undefined;
+        const archiveProof = archiveExecution?.deploymentChildExecution;
+        const archiveRouting = archiveProof?.externalActionExecution.deploymentChildRouting;
+        const deploymentArchiveChild = Boolean(parsedInputAuthorization?.success && archiveExecution && archiveProof?.archiveOrigin && archiveRouting
+            && (archiveRouting.kind === 'build' || archiveRouting.kind === 'member' && archiveRouting.phase !== 'cleanup')
+            && (parsedInputAuthorization.data.binding.deploymentChildRoot === true)
+            && archiveRouting.actionId === `deployments.${deploymentOperationForRootActionV1(parsedInputAuthorization.data.binding.actionId,
+                parsedInputAuthorization.data.binding.deploymentPreparationAdmission)}`
+            && readDeploymentArchiveRpcEffectV1(targetMethod) === archiveExecution.effectActionId
+            && archiveExecution.installationId === archiveRouting.installationId
+            && sameStrictJsonValue(archiveExecution.authorization, parsedInputAuthorization.data)
+            && sameStrictJsonValue(archiveProof.externalActionExecution.authorization, parsedInputAuthorization.data)
+            && sameStrictJsonValue(archiveExecution.target, parsedInputAuthorization.data.binding.target)
+            && workspaceSyncSourceExecution?.success && workspaceSyncSourceExecution.data.method === request.method
+            && sameStrictJsonValue(workspaceSyncSourceExecution.data.params, request.params)
+            && machineAdmission?.success && this.authorizeRequest
+            && machineAdmission.data.machineId === this.scopePrefix && this.scopePrefix === this.localMachineId
+            && (request.callerAuthority === 'account_automation'
+                || request.callerAuthority === 'present_user'
+                    && resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data) === 'present_user')
+            && isDeepStrictEqual(request.sessionActionOrigin, parsedInputAuthorization.data.binding.sessionActionOrigin));
         const serviceMoveChild = Boolean(parsedInputAuthorization?.success && originalActionEnvelope?.success
             && workspaceSyncSourceExecution?.success && machineAdmission?.success && this.authorizeRequest
             && (parsedInputAuthorization.data.binding.actionId === 'projects.service.relocate'
                 && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readProjectServiceMoveChildEffectV1(targetMethod)
               || parsedInputAuthorization.data.binding.actionId === 'discussion.second_opinion.start'
                 && isDiscussionSecondOpinionModelRpcMethodV1(targetMethod)
-                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === 'session.spawn_new')
+                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === 'session.spawn_new'
+              || isSessionStopChildRootV1(parsedInputAuthorization.data.binding.actionId)
+                && targetMethod === RPC_METHODS.STOP_SESSION
+                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === 'session.stop'
+              || machineAdmission.data.role === 'manage' && isMachineSetupPlanRpcChildV1({
+                rootActionId: parsedInputAuthorization.data.binding.actionId, method: targetMethod,
+                effectActionId: workspaceSyncSourceExecution.data.externalActionExecution.effectActionId })
+              || (parsedInputAuthorization.data.binding.deploymentChildRoot === true)
+                && targetMethod === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD
+                && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === deploymentChildEffectActionIdForRootV1(
+                    parsedInputAuthorization.data.binding.actionId, parsedInputAuthorization.data.binding.deploymentPreparationAdmission,
+                    workspaceSyncSourceExecution.data.externalActionExecution.effectActionId))
             && workspaceSyncSourceExecution.data.externalActionExecution.installationId === parsedInputAuthorization.data.binding.installationId
             && isDeepStrictEqual(workspaceSyncSourceExecution.data.externalActionExecution.authorization, parsedInputAuthorization.data)
             && isDeepStrictEqual(workspaceSyncSourceExecution.data.originalActionEnvelope, originalActionEnvelope.data)
@@ -512,14 +615,17 @@ export class RpcHandlerManager {
             && sameStrictJsonValue(workspaceSyncSourceExecution.data.params, request.params)
             && machineAdmission.data.machineId === this.scopePrefix && this.scopePrefix === this.localMachineId
             && machineAdmission.data.actorAccountId === parsedInputAuthorization.data.binding.accountId
-            && request.callerAuthority === resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data)
+            // Home may lower the signed root's authority for this finite child.
+            // Keep that ceiling; credential provenance only sets its maximum.
+            && (request.callerAuthority === 'account_automation'
+                || request.callerAuthority === resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data))
             && isDeepStrictEqual(request.sessionActionOrigin, parsedInputAuthorization.data.binding.sessionActionOrigin));
         const projectWriterTarget = workspaceSyncSourceWriterTargetRouting?.success
             && parsedInputAuthorization?.success && parsedInputAuthorization.data.binding.actionId === 'projects.open';
         const seedInputAuthorizationMatchesRequest = !!(workspaceSyncSeedRouting?.success && parsedInputAuthorization?.success
-            && workspaceSyncSourceExecution?.success && machineAdmission?.success && this.authorizeRequest
+            && (!workspaceSyncSourceExecution || workspaceSyncSourceExecution.success) && machineAdmission?.success && this.authorizeRequest
             && doesWorkspaceSyncSeedRootMatchRouting(parsedInputAuthorization.data, workspaceSyncSeedRouting.data,
-                workspaceSyncSourceExecution.data));
+                workspaceSyncSourceExecution?.success ? workspaceSyncSourceExecution.data : undefined));
         if (workspaceSyncSeedRouting && !seedInputAuthorizationMatchesRequest) {
             return await deny('workspace_seed_authorization');
         }
@@ -531,11 +637,14 @@ export class RpcHandlerManager {
                 || !isDeepStrictEqual(workspaceSyncSourceExecution.data.externalActionExecution.authorization, parsedInputAuthorization.data))) {
             return await deny('workspace_source_execution');
         }
-        if (workspaceSyncSourceExecution && ((!serviceMoveChild && !isProjectSource && !isFiniteSource && !projectWriterTarget && !seedInputAuthorizationMatchesRequest) || !workspaceSyncSourceExecution.success)
+        if (workspaceSyncSourceExecution && ((!serviceMoveChild && !deploymentArchiveChild && !isProjectSource && !isFiniteSource && !projectWriterTarget && !seedInputAuthorizationMatchesRequest) || !workspaceSyncSourceExecution.success)
             || originalActionEnvelope && (!originalActionEnvelope.success || !parsedInputAuthorization?.success
                 || !(serviceMoveChild || parsedInputAuthorization.data.binding.actionId === 'projects.open' && targetMethod === RPC_METHODS.PROJECTS_OPEN
                     || parsedInputAuthorization.data.binding.actionId === 'projects.script.run' && targetMethod === RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN
-                    || parsedInputAuthorization.data.binding.actionId === 'projects.compute.exec' && targetMethod === RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC)
+                    || parsedInputAuthorization.data.binding.actionId === 'projects.compute.exec' && targetMethod === RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC
+                    || parsedInputAuthorization.data.binding.actionId === 'action.operations.cancel' && targetMethod === ACTION_OPERATION_RPC_METHODS_V1.cancel
+                    || isWorkspaceSyncRelationshipWriteActionId(parsedInputAuthorization.data.binding.actionId)
+                        && resolveMachineRpcExternalActionEffectV1(targetMethod, parsedInputAuthorization.data.binding) === parsedInputAuthorization.data.binding.actionId)
                 || request.method !== `${this.scopePrefix}:${targetMethod}`
                 || !isExternalActionAuthorizationBoundToEnvelope(parsedInputAuthorization.data.binding,
                     { actionId: parsedInputAuthorization.data.binding.actionId, machineId: serviceMoveChild ? parsedInputAuthorization.data.binding.machineId : this.scopePrefix, envelope: originalActionEnvelope.data }))) {
@@ -596,8 +705,7 @@ export class RpcHandlerManager {
             return !!binding.workflowActionOrigin?.sessionAuthority && binding.target.kind === 'session'
                 && binding.target.sessionId === this.scopePrefix && request.callerAuthority === 'account_automation'
                 && request.method === `${this.scopePrefix}:${targetMethod}`
-                && (binding.actionId === targetMethod && targetMethod.startsWith('session.') && isRoleActionIdV1(targetMethod)
-                    || binding.actionId === 'session.roles.apply_to_reports' && targetMethod === SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET);
+                && binding.actionId === targetMethod && targetMethod.startsWith('session.') && isRoleActionIdV1(targetMethod);
         })();
         const sessionActionOrigin = request.sessionActionOrigin === undefined
             ? null : SessionActionRpcOriginV1Schema.safeParse(request.sessionActionOrigin);
@@ -639,7 +747,7 @@ export class RpcHandlerManager {
             ? parsedRequestId.data
             : null;
         if (parsedInputAuthorization) {
-            let matchesRequest = serviceMoveChild || machineInputAuthorizationMatchesRequest || sessionTransitionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest
+            let matchesRequest = serviceMoveChild || deploymentArchiveChild || machineInputAuthorizationMatchesRequest || sessionTransitionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest
                 || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest || workflowRoleInputAuthorizationMatchesRequest;
             if (!matchesRequest && parsedInputAuthorization.success && requestId) {
                 const binding = parsedInputAuthorization.data.binding;
@@ -676,6 +784,7 @@ export class RpcHandlerManager {
         let countedInFlight = !this.pausedRequestAdmission.has(receivingMethod);
         if (countedInFlight) this.beginInFlightRequest(receivingMethod);
         const controller = new AbortController();
+        if (reply) reply.signal = controller.signal;
         this.activeTransportRequestControllers.add(controller);
         if (requestId) {
             this.activeTransportRequestControllersByRequestId.set(requestId, controller);
@@ -815,17 +924,21 @@ export class RpcHandlerManager {
             }
 
             const authorizationRequest = Object.freeze({
+                    callerAuthority: request.callerAuthority === 'present_user' ? 'present_user' as const : 'account_automation' as const,
+                    ...(sessionActionOrigin?.success ? { sessionActionOrigin: sessionActionOrigin.data } : {}),
                     method: request.method,
                     params: decryptedParams,
                     authorization: request.authorization,
                     transportResponseEnvelopeVersion: request.transportResponseEnvelopeVersion,
                     ...(machineAdmission?.success ? { machineAdmission: Object.freeze(machineAdmission.data) } : {}),
+                    ...(source === 'authenticated_home_socket' && request.receivingMachineAdmission
+                        ? { receivingMachineAdmission: request.receivingMachineAdmission } : {}),
                     ...(workspaceSyncSourceRouting?.success ? { workspaceSyncSourceRouting: Object.freeze(workspaceSyncSourceRouting.data) } : {}),
                     ...(workspaceSyncSourceExecution?.success ? { workspaceSyncSourceExecution: Object.freeze(workspaceSyncSourceExecution.data) } : {}),
                     ...(workspaceSyncTargetRouting?.success ? { workspaceSyncTargetRouting: Object.freeze(workspaceSyncTargetRouting.data) } : {}),
                     ...(workspaceSyncSourceWriterTargetRouting?.success ? { workspaceSyncSourceWriterTargetRouting: Object.freeze(workspaceSyncSourceWriterTargetRouting.data) } : {}),
                     ...(workspaceSyncSeedRouting?.success ? { workspaceSyncSeedRouting: Object.freeze(workspaceSyncSeedRouting.data) } : {}),
-                    ...((serviceMoveChild || sessionTransitionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest || workflowRoleInputAuthorizationMatchesRequest) && parsedInputAuthorization?.success
+                    ...((serviceMoveChild || deploymentArchiveChild || sessionTransitionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest || workflowRoleInputAuthorizationMatchesRequest) && parsedInputAuthorization?.success
                         ? { callerInputAuthorization: parsedInputAuthorization.data } : {}),
                     signal: controller.signal,
             });
@@ -834,7 +947,7 @@ export class RpcHandlerManager {
                 nextPhase('authorize_request');
                 diagnostic.callerClass = 'unadmitted';
                 diagnostic.admissionPredicate = 'authorize_request';
-                const authorization = await timeWebLatencyPhase('machineRpc.authorize', () => this.authorizeRequest!(authorizationRequest));
+                const authorization = await timeWebLatencyPhase('machineRpc.authorize', () => this.authorizeRequest!(authorizationRequest, source));
                 // Home verification can settle false because this request was cancelled.
                 // Preserve that lifecycle result before interpreting an access refusal.
                 controller.signal.throwIfAborted();
@@ -848,6 +961,7 @@ export class RpcHandlerManager {
                         ok: false,
                         error: confidential ? 'confidential_continuation_failed' : authorization.error,
                         ...(confidential ? { errorCode: 'confidential_continuation_failed' } : authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
+                        ...(!confidential && authorization.failureCause ? { failureCause: authorization.failureCause } : {}),
                         effectAttempted: false,
                     });
                 }
@@ -941,6 +1055,19 @@ export class RpcHandlerManager {
 
             let callerInputAuthorization = parsedInputAuthorization?.success ? parsedInputAuthorization.data : undefined;
             let requesterInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
+            const decryptedDeploymentChild = callerInputAuthorization && targetMethod === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD
+                ? readDeploymentChildRpcV1({ deploymentChildRoot: callerInputAuthorization.binding.deploymentChildRoot, rootActionId: callerInputAuthorization.binding.actionId,
+                    rootPreparationAdmission: callerInputAuthorization.binding.deploymentPreparationAdmission,
+                    effectActionId: workspaceSyncSourceExecution?.success ? workspaceSyncSourceExecution.data.externalActionExecution.effectActionId : '',
+                    method: targetMethod, params: decryptedParams }) : null;
+            if (targetMethod === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD
+                && (!decryptedDeploymentChild || !serviceMoveChild || !workspaceSyncSourceExecution?.success
+                    || !machineAdmission?.success || decryptedDeploymentChild.machineId !== this.scopePrefix
+                    || decryptedDeploymentChild.installationId !== machineAdmission.data.installationId
+                    || !sameStrictJsonValue(projectDeploymentChildRoutingV1(decryptedDeploymentChild),
+                        workspaceSyncSourceExecution.data.externalActionExecution.deploymentChildRouting))) {
+                return await deny('deployment_child_routing');
+            }
             if (machineInputAuthorizationMatchesRequest && callerInputAuthorization?.binding.actionId === 'session.agent.transition') {
                 const phase = decryptedParams && typeof decryptedParams === 'object' && !Array.isArray(decryptedParams)
                     ? decryptedParams as Record<string, unknown> : null;
@@ -956,7 +1083,7 @@ export class RpcHandlerManager {
                     return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
                 }
             }
-            if (callerInputAuthorization?.requesterAccountContext) {
+            if (callerInputAuthorization?.requesterAccountContext && !deploymentArchiveChild) {
                 const finitePreparation = isFiniteSource && sourceInputAuthorizationMatchesRequest;
                 if ((!serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionTransitionInputAuthorizationMatchesRequest && !finitePreparation) || !this.prepareRequesterAccountContext
                     || controller.signal.aborted) {
@@ -972,14 +1099,13 @@ export class RpcHandlerManager {
                             request: preparationRequest.data }
                         : { kind: 'machine_rpc', method: this.readUnprefixedMethod(request.method), params: decryptedParams,
                             ...(serviceMoveChild && installation ? { recipient: { machineId: this.scopePrefix, installationId: installation.installationId } } : {}) },
-                    ...(serviceMoveChild ? { verifyServiceMoveChildCurrent: async () => {
-                        try { return !controller.signal.aborted && this.authorizeRequest !== undefined
-                            && (await this.authorizeRequest(authorizationRequest)).ok; } catch { return false; }
-                    } } : {}),
-                    ...(finitePreparation ? { verifyWorkspaceSyncPrepareCurrent: async () => {
-                        try { return !controller.signal.aborted && this.authorizeRequest !== undefined
-                            && (await this.authorizeRequest(authorizationRequest)).ok; } catch { return false; }
-                    } } : {}), signal: controller.signal }));
+                    // The exact signed child/SOURCE request was admitted above.
+                    // Private preparation shares its local cancellation lifetime.
+                    ...(serviceMoveChild ? { verifyServiceMoveChildCurrent: async () => !controller.signal.aborted } : {}),
+                    ...(decryptedDeploymentChild && workspaceSyncSourceExecution?.success
+                        ? { deploymentChildExecution: workspaceSyncSourceExecution.data } : {}),
+                    ...(finitePreparation ? { verifyWorkspaceSyncPrepareCurrent: async () => !controller.signal.aborted } : {}),
+                    signal: controller.signal }));
                 nextPhase('input_binding');
                 if (!prepared) {
                     return await deny('requester_account_preparation');
@@ -993,16 +1119,32 @@ export class RpcHandlerManager {
                 requesterInvocation = prepared.invocation;
             }
 
-            if (serviceMoveChild) {
+            if (serviceMoveChild && callerInputAuthorization?.binding.actionId !== 'projects.service.relocate') {
                 if (!callerInputAuthorization || !originalActionEnvelope?.success) return await deny('caller_input_authorization');
                 const opinionChild = callerInputAuthorization.binding.actionId === 'discussion.second_opinion.start';
-                const child = opinionChild ? isDiscussionSecondOpinionModelRpcMethodV1(targetMethod) ? 'session.spawn_new' : null
+                const stopChild = isSessionStopChildRootV1(callerInputAuthorization.binding.actionId);
+                const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: callerInputAuthorization.binding.actionId,
+                    effectActionId: workspaceSyncSourceExecution?.success
+                        ? workspaceSyncSourceExecution.data.externalActionExecution.effectActionId : undefined, method: targetMethod });
+                const deploymentChild = decryptedDeploymentChild;
+                if (deploymentChild && (deploymentChild.machineId !== this.scopePrefix
+                    || !machineAdmission?.success || deploymentChild.installationId !== machineAdmission.data.installationId)) {
+                    return await deny('caller_input_authorization');
+                }
+                const child = setupPlanChild ? 'machines.setup.plan'
+                    : deploymentChild ? deploymentChild.actionId : stopChild ? targetMethod === RPC_METHODS.STOP_SESSION ? 'session.stop' : null
+                    : opinionChild ? isDiscussionSecondOpinionModelRpcMethodV1(targetMethod) ? 'session.spawn_new' : null
                     : readProjectServiceMoveChildEffectV1(targetMethod);
-                const review = opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
+                const review = setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
+                    : opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
                 if (!child || !await review({ authorization: callerInputAuthorization,
                     envelope: originalActionEnvelope.data, signal: controller.signal,
                     actionId: child, machineId: this.scopePrefix, params: decryptedParams,
-                    ...(opinionChild ? { method: targetMethod } : {}) })) {
+                    ...(deploymentChild && workspaceSyncSourceExecution?.success
+                        ? { reviewedChild: workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild } : {}),
+                    ...(stopChild ? { target: workspaceSyncSourceExecution?.success
+                        ? workspaceSyncSourceExecution.data.externalActionExecution.target : undefined } : {}),
+                    ...(opinionChild || deploymentChild || setupPlanChild ? { method: targetMethod } : {}) })) {
                     return await deny('caller_input_authorization');
                 }
                 if (child === 'localServices.launcher.start') {
@@ -1023,7 +1165,7 @@ export class RpcHandlerManager {
             handlerExecutionId = this.beginHandlerExecution(
                 this.readUnprefixedMethod(request.method),
             );
-            const result = await handler(decryptedParams, Object.freeze({
+            const handlerContext: RpcHandlerContext = Object.freeze({
                 ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
                 // The same codec choice as encodeResponse for this call, fixed at admission.
                 contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)
@@ -1057,8 +1199,10 @@ export class RpcHandlerManager {
                 ...(requestId ? { transportRequestId: requestId } : {}),
                 ...(request.authorization ? { authorization: request.authorization } : {}),
                 ...(requesterApprovalDecision ? { requesterApprovalDecision } : {}),
-                ...(machineAdmission?.success ? {
-                    machineAdmission: machineAdmission.data,
+                // Finite managed-installation requests have no Machine receipt.
+                // Both forms were admitted above; finite work retains only local cancellation.
+                ...(machineAdmission?.success || isServerOriginRequest && serverOriginFamily?.bindsManagedInstallation ? {
+                    ...(machineAdmission?.success ? { machineAdmission: machineAdmission.data } : {}),
                     verifyMachineAuthorityCurrent: async () => {
                         try {
                             // Accepted daemon-owned work outlives the caller's transport lifetime.
@@ -1067,15 +1211,13 @@ export class RpcHandlerManager {
                                 && (await this.authorizeRequest({ ...authorizationRequest, signal: undefined })).ok;
                         } catch { return false; }
                     },
-                    verifyMachineAdmissionCurrent: async () => {
-                        try {
-                            return !controller.signal.aborted && this.authorizeRequest !== undefined
-                                && (await this.authorizeRequest(authorizationRequest)).ok
-                                && !controller.signal.aborted;
-                        } catch { return false; }
-                    },
+                    verifyMachineAdmissionCurrent: async () => !controller.signal.aborted,
                 } : {}),
-            }));
+            });
+            const result = serviceMoveChild && callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
+                ? await invokeReviewedServiceMoveChild({ method: targetMethod, params: decryptedParams, context: handlerContext,
+                    execute: context => Promise.resolve(handler(decryptedParams, context)) })
+                : await handler(decryptedParams, handlerContext);
 
             // Encrypt and return the response
             nextPhase('response');
@@ -1101,16 +1243,24 @@ export class RpcHandlerManager {
             }
             const rpcErrorCode = readRpcErrorCode(controller.signal.aborted ? controller.signal.reason : error)
                 ?? readRpcErrorCode(error);
+            const capabilityDetails = readCapabilityFailureDiagnostic(diagnostic.method, error);
+            const pluginError = isPluginError(error) ? error : null;
             const forwardedCause = ActionFailureCauseV1Schema.safeParse(
-                error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
+                pluginError?.data.failureCause
+                    ?? (error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined),
             );
             const errorResponse = {
-                error: redactBugReportSensitiveText(error instanceof Error ? error.message : 'Unknown error'),
+                error: redactBugReportSensitiveText(capabilityDetails ? readOutcomeCode(error, true)
+                    : error instanceof Error ? error.message : 'Unknown error'),
                 ...(rpcErrorCode ? { errorCode: rpcErrorCode } : {}),
+                ...(capabilityDetails ? { details: capabilityDetails } : {}),
                 failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.handler'),
             };
             const outcomeCode = readOutcomeCode(controller.signal.aborted ? controller.signal.reason : error, true);
-            const response = await respond(request, errorResponse);
+            const response = await respond(request, pluginError ? {
+                name: 'PluginError', code: pluginError.code, message: errorResponse.error,
+                retryable: pluginError.retryable, failureCause: errorResponse.failureCause,
+            } satisfies PluginErrorContractData : errorResponse);
             // Native OS/process codes and cancellation are diagnostic facts;
             // preserve them before the existing transport projection drops them.
             diagnostic.outcomeCode = outcomeCode;
@@ -1139,12 +1289,14 @@ export class RpcHandlerManager {
      */
     async invokeLocal(method: string, params: unknown, options?: Readonly<{
         signal?: AbortSignal;
-        admissionResult?: Extract<RpcAuthorizationResult, { ok: true }>;
         localActionContext?: import('./types').RpcLocalActionContext;
         verifiedPeerAuthority?: 'present_user' | 'account_automation';
+        /** Installed ingress result for this exact invocation; only its host-private authority reaches the handler. */
+        admissionResult?: Extract<RpcAuthorizationResult, { ok: true }>;
         /** Installed host forwards an already-admitted requester; input never supplies authority. */
         rpcContext?: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'callerInputAuthorization'
-            | 'callerAuthority' | 'callerInputConstraints' | 'sessionActionOrigin' | 'originalActionEnvelope' | 'requesterSessionBootstrap' | 'localActionContext'>;
+            | 'callerAuthority' | 'callerInputConstraints' | 'sessionActionOrigin' | 'originalActionEnvelope'
+            | 'requesterSessionBootstrap' | 'localActionContext'>;
     }>): Promise<unknown> {
         return await this.invokeLocalHandler(method, params, this.handlers.get(this.getPrefixedMethod(method)), options);
     }
@@ -1200,7 +1352,8 @@ export class RpcHandlerManager {
                 });
                 signal.throwIfAborted();
                 if (!authorization.ok) return { ok: false, error: authorization.error,
-                    ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}), effectAttempted: false };
+                    ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
+                    ...(authorization.failureCause ? { failureCause: authorization.failureCause } : {}), effectAttempted: false };
             }
             let countedInFlight = !this.pausedRequestAdmission.has(method);
             if (countedInFlight) this.beginInFlightRequest(method);
@@ -1239,8 +1392,7 @@ export class RpcHandlerManager {
                     reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
                     reportOperationDiagnostics: (operation: RpcOperationDiagnostics) => this.reportOperationDiagnostics(diagnostic, operation),
                     reportAdmissionDenial: (predicate: RpcAdmissionPredicate) => this.reportAdmissionDenial(diagnostic, predicate),
-                    ...((options?.rpcContext?.callerAuthority ?? options?.verifiedPeerAuthority)
-                        ? { callerAuthority: options?.rpcContext?.callerAuthority ?? options?.verifiedPeerAuthority } : {}),
+                    ...(callerAuthority ? { callerAuthority } : {}),
                     ...(options?.localActionContext
                         ? { localActionContext: options.localActionContext }
                         : {}),
@@ -1673,6 +1825,11 @@ export class RpcHandlerManager {
     private isServerOriginRequest(request: RpcRequest): boolean {
         const family = this.readServerOriginRpcFamily(request);
         if (!family?.isAuthorization(request.authorization)) return false;
+        if (family.bindsManagedInstallation) {
+            const authorization = ManagedInstallationServerOriginV1Schema.safeParse(request.authorization);
+            return authorization.success && authorization.data.purpose.controller.machineId === this.scopePrefix
+                && this.localMachineId === this.scopePrefix && this.authorizeRequest !== undefined;
+        }
         if (!family.bindsMachineRead) return true;
         return isSocketRpcMachineReadServerOriginAuthorizationContext(request.authorization)
             && request.authorization.machineId === this.scopePrefix

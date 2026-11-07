@@ -50,6 +50,34 @@ const result = {
 };
 
 describe('workspace.sync.relationship.create Action', () => {
+  it('binds exact-mirror replacement approval to the replacement Action and its exact old link', async () => {
+    const exactInput = { ...input, mode: 'mirror_exactly' as const, replaceRelationshipId: 'old-link' };
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'replace-approval' }));
+    const create = vi.fn(async () => result);
+    const executor = createActionExecutor({
+      sessionHandoffTargetReplacementApprovalPreflight: async args => {
+        expect(args.effectActionId).toBe('workspace.sync.relationship.replace');
+        expect(args.destinationIntent).toBe('use_existing');
+        expect(args.activatesExactMirror).toBe(true);
+        expect(args).toMatchObject({ replaceRelationshipId: 'old-link' });
+        return { type: 'approval_required' as const, approval: {
+          v: 1 as const, consequences: ['delete_target_only_files_during_exact_mirror'] as const,
+          serverId: 'server-a', machineId: 'target-machine', canonicalRoot: '/work/existing',
+          rootFingerprint: 'a'.repeat(64), operationId: 'replace-request',
+        } };
+      },
+      workspaceSyncRelationshipCreate: create,
+      isActionApprovalRequired: () => false,
+      approvalsCreate,
+    } satisfies ActionExecutorDeps);
+    expect(await executor.execute('workspace.sync.relationship.replace', exactInput, {
+      surface: 'ui', authority: 'present_user', serverId: 'server-a', actionRequestId: 'replace-request',
+    })).toMatchObject({ ok: true, result: { artifactId: 'replace-approval' } });
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
+      actionId: 'workspace.sync.relationship.replace', actionArgs: exactInput,
+    }) }));
+    expect(create).not.toHaveBeenCalled();
+  });
   it('preserves the controller RPC refusal instead of validating it as a committed relationship', async () => {
     const executor = createActionExecutor({
       sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'not_required' as const }),
@@ -151,7 +179,7 @@ describe('workspace.sync.relationship.create Action', () => {
     const exactInput = { ...input, targetPath: '/work/empty', mode: 'mirror_exactly' as const };
 
     const requested = await executor.execute('workspace.sync.relationship.create', exactInput, {
-      surface: 'ui', authority: 'present_user', serverId: 'home-1', actionRequestId: 'link-request-2',
+      surface: 'ui', authority: 'present_user', serverId: 'home-1', defaultSessionMachineId: 'source-machine', actionRequestId: 'link-request-2',
     });
     expect(requested).toMatchObject({
       ok: true,

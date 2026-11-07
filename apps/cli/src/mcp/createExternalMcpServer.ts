@@ -1,17 +1,16 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { randomUUID } from 'node:crypto';
 
 import { getActionSpec, resolveActionExecutionPlacementForInput, isActionSpecSurfacedOn, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isActionExecutableFromStandaloneMcp } from '@happier-dev/protocol/actions/actionToolExposure';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import type { ActionId } from '@happier-dev/protocol';
+import { REGISTRY_ACTION_IDS_V1 } from '@happier-dev/protocol/registries';
+import { DeploymentActionInputSchemasV1, type ActionId } from '@happier-dev/protocol';
 
-import {
-  readStoredCredentialsForServerId,
-  sameStoredCredentials,
-  type StoredCredentials,
-} from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { listHappierMcpToolNames, registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
@@ -23,7 +22,9 @@ import {
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { cacheMcpToolList } from '@/mcp/server/cacheMcpToolList';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
-import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { isControllerDeploymentMutationAction } from '@/session/actions/createCliActionDeps';
+import { createCliActionExecutorFromCredentials, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { dispatchOriginalAccountAction, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
@@ -35,7 +36,7 @@ import {
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
-import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
+import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import {
   resolveServerHttpBaseUrl,
@@ -110,7 +111,7 @@ export function createExternalMcpServer(params: Readonly<{
     return sessionId ? { serverId, sessionId } : null;
   })();
   const daemonRelayUnavailable = (actionId: string, cause: 'target_absent' | 'request_failed') => {
-    logger.warnLocalFile('[happierMCP] Client Action daemon relay unavailable', {
+    logger.warnLocalFile('[happierMCP] Action daemon relay unavailable', {
       actionId,
       serverId,
       ...(defaultSessionAddress ? { sessionId: defaultSessionAddress.sessionId } : {}),
@@ -132,10 +133,8 @@ export function createExternalMcpServer(params: Readonly<{
         const cryptoContext = ctx
           ? { mode: 'e2ee' as const, ctx }
           : { mode: 'plain' as const, ctx: null };
-        const isCredentialCurrent = async () => sameStoredCredentials(
-          params.credentials,
-          await readStoredCredentialsForServerId(serverId).catch(() => null),
-        );
+        // The command captured these credentials; each Action's signal owns cancellation.
+        const isCredentialCurrent = async () => true;
         const { projectWorkerAction: projectWorkerAccountAction, ...accountServerActionPorts } = createAccountServerActionDeps({
           token: params.credentials.token,
           credentials: params.credentials,
@@ -221,7 +220,48 @@ export function createExternalMcpServer(params: Readonly<{
         return {
           execute: async (...args: Parameters<typeof baseExecutor.execute>) => {
             const [actionId, input, context] = args;
+            if (isControllerDeploymentMutationAction(actionId)) {
+              const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+              if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+              const deploymentAction = deps.deploymentAction;
+              if (!deploymentAction) return { ok: false as const, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' };
+              // The Environment controller prepares and admits the original
+              // intent; local admission would create an unprepared Ask first.
+              const result = await deploymentAction(actionId, parsed.data, {
+                ...context,
+                surface: 'mcp',
+                authority: 'account_automation',
+                actionRequestId: context?.actionRequestId ?? randomUUID(),
+              });
+              if ('errorCode' in result) return result;
+              if ('kind' in result) return { ok: true as const, result };
+              if (!result.ok) return { ok: false as const, errorCode: result.error, error: result.error, details: result };
+              return { ok: true as const, result };
+            }
             const builtInActionId = ActionIdSchema.safeParse(actionId);
+            if (builtInActionId.success && isWorkspaceSyncRelationshipWriteActionId(builtInActionId.data)) {
+              const parsed = WorkspaceSyncRelationshipWriteActionInputV1Schema.safeParse(input);
+              if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+              const source = await resolveAccountWorkspaceMachine({ credentials: params.credentials,
+                workspace: { serverId: serverIdentityId ?? serverId, id: parsed.data.sourceWorkspaceRefId }, serverId,
+                ...(serverIdentityId ? { serverIdentityId } : {}), serverApiUrl: serverHttpBaseUrl,
+                ...(context?.signal ? { signal: context.signal } : {}) });
+              if (!source.ok) return { ok: false as const, errorCode: source.code, error: source.code };
+              const target = context?.externalActionTarget;
+              if (target && (target.kind !== 'machine' || target.machineId !== source.machineId)) {
+                return { ok: false as const, errorCode: 'target_mismatch', error: 'target_mismatch' };
+              }
+              const invocation = readExternalActionRequesterInvocation({ ...context,
+                surface: 'mcp', authority: context?.authority ?? 'account_automation' });
+              if (!invocation) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+              // Home admits the original requester before the source daemon
+              // creates Ask; approval retains that authority for target phases.
+              return await dispatchOriginalAccountAction({ actionId: builtInActionId.data, input: parsed.data,
+                requestId: context?.actionRequestId ?? randomUUID(), target: { kind: 'machine', machineId: source.machineId },
+                credentials: params.credentials, serverHttpBaseUrl,
+                ...(serverIdentityId ? { serverIdentityId } : {}), invocation, authority: invocation.authority,
+                ...(context?.signal ? { signal: context.signal } : {}) });
+            }
             const executionPlacement = builtInActionId.success
               ? resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input) : null;
             const controlControllerTarget = await resolveManagedControlControllerTarget({ actionId, rawInput: input,
@@ -229,11 +269,12 @@ export function createExternalMcpServer(params: Readonly<{
             if (!builtInActionId.success || (
               executionPlacement !== 'client'
               && !requiresManagedMachineDaemonIngress(builtInActionId.data, executionPlacement, controlControllerTarget)
+              && !REGISTRY_ACTION_IDS_V1.some(id => id === builtInActionId.data)
             )) {
               return await pluginExecutor.execute(...args);
             }
             // Delegate before local admission: this exact Home's daemon owns
-            // the one approval decision and its connected-client delivery.
+            // client delivery and the admitted plugin registry occurrence.
             if (daemonControlTarget === null) return daemonRelayUnavailable(actionId, 'target_absent');
             const admittedActionId = SignedRootActionIdSchema.safeParse(actionId);
             if (!admittedActionId.success) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
@@ -282,7 +323,6 @@ export function createExternalMcpServer(params: Readonly<{
           },
         };
       })();
-
   const mcp = new McpServer({
     name: 'Happier MCP',
     version: '1.0.0',

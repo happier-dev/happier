@@ -3,6 +3,7 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
+import { MACHINE_SERVICE_ACTION_IDS } from '../../../../local/services/actionIdsV1.js';
 
 export type MachineRpcGovernanceClassification = 'action_spec_bound' | 'internal_only' | 'advisory_unclassified';
 
@@ -15,7 +16,11 @@ export type MachineRpcGovernanceMetadataV1 = Readonly<{
 
 const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST]: 'machines.runs.list',
+  [RPC_METHODS.MACHINES_COMMAND_RUN]: 'machines.command.run',
+  [RPC_METHODS.MACHINE_ADMIN_ACCESS_SET]: 'machines.setup.adminAccess.set',
+  [RPC_METHODS.MACHINE_ADMIN_ACCESS_INSPECT]: 'machines.setup.adminAccess.inspect',
   [RPC_METHODS.MACHINES_REACHABILITY_INSPECT]: 'machines.reachability.inspect',
+  [RPC_METHODS.MACHINES_REACHABILITY_CONFIGURE]: 'machines.reachability.configure',
   [RPC_METHODS.DAEMON_TERMINAL_ENSURE]: 'machines.terminal.open',
   [RPC_METHODS.DAEMON_TERMINAL_LIST]: 'machines.terminal.list',
   [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES]: 'machines.terminal.read',
@@ -23,6 +28,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_TERMINAL_CLOSE]: 'machines.terminal.close',
   [RPC_METHODS.DAEMON_TERMINAL_RESTART]: 'machines.terminal.restart',
   [RPC_METHODS.MACHINES_VITALS_GET]: 'machines.vitals.get',
+  ...Object.fromEntries(MACHINE_SERVICE_ACTION_IDS.map(id => [id, id])),
   [RPC_METHODS.MACHINES_PROCESSES_LIST]: 'machines.processes.list',
   [RPC_METHODS.MACHINES_PROCESSES_GET]: 'machines.processes.get',
   [RPC_METHODS.MACHINES_PROCESSES_CHECK]: 'machines.processes.check',
@@ -40,6 +46,9 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST]: 'machines.storage.worktrees.list',
   [RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST]: 'machines.storage.suggestions.list',
   [RPC_METHODS.MACHINES_RESOURCES_POLICY_SET]: 'machines.resources.policy.set',
+  'machines.agentIsolation.preview': 'machines.agentIsolation.preview',
+  'machines.agentIsolation.status': 'machines.agentIsolation.status',
+  'machines.agentIsolation.set': 'machines.agentIsolation.set',
   [RPC_METHODS.MACHINES_VITALS_HISTORY_GET]: 'machines.vitals.history.get',
   [RPC_METHODS.DAEMON_SESSION_GOAL_SET_V2]: 'session.goal.set',
   [RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT]: 'projects.worker.copy.inspect',
@@ -244,6 +253,7 @@ const SESSION_SPAWN_PRIVATE_INTERNAL_METHODS = new Set<string>([
 // together rather than inferring effects from a route class or method suffix.
 const READ_ONLY_RPC_GOVERNANCE = Object.freeze({
   [RPC_METHODS.CAPABILITIES_DESCRIBE]: 'internal_only',
+  [SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1]: 'internal_only',
   [RPC_METHODS.CAPABILITIES_DETECT]: 'advisory_unclassified',
   [RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION]: 'advisory_unclassified',
   [RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE]: 'internal_only',
@@ -262,6 +272,7 @@ const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY,
   // Private operands of the admitted login-import Action; never an agent-readable key API.
   RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY,
+  RPC_METHODS.DAEMON_SERVICE_HEALTH_DELIVER,
   SESSION_RPC_METHODS.SESSION_GUARD_NOTICE,
   SESSION_RPC_METHODS.SESSION_PLUGIN_CATALOG_INVALIDATE_V1,
   SESSION_RPC_METHODS.SESSION_PROVIDER_CLI_ATTACH_PREPARE,
@@ -283,6 +294,7 @@ const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_SESSION_FOLLOW_SOURCE_KEY_PREPARE,
   RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE,
   RPC_METHODS.DAEMON_SERVICE_MOVE_START_CLAIM,
+  RPC_METHODS.DAEMON_DEPLOYMENT_CHILD,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
@@ -336,6 +348,9 @@ const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_COPY_URL,
   RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH,
   RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE,
+  RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE,
+  RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT,
+  RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
   RPC_METHODS.DAEMON_BROWSER_VIEW_LIST,
   RPC_METHODS.DAEMON_BROWSER_CONTEXT_DISPATCH,
   RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT,

@@ -21,6 +21,7 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -177,7 +178,7 @@ describe('exact target worker status Action', () => {
       data: url.endsWith('/v2/account/settings') ? { content: { t: 'plain', v: {} }, version: 0 } : { mode: 'plain', updatedAt: 0 } }));
     let writes = 0;
     vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
-      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+      if (url.endsWith('/list') || url.endsWith('/read')) return projectAccountRowsReadHttpResponse(rows, url, raw);
       writes++;
       const mutation = ProjectAccountRowMutationRequestV1Schema.parse(raw);
       return { status: 200, data: ProjectAccountRowMutationResponseV1Schema.parse({ status: 'updated', cursor: 1,
@@ -189,7 +190,8 @@ describe('exact target worker status Action', () => {
     const unused = async (): Promise<never> => { throw new Error('Unproven retirement must not touch target effects'); };
     const owner = createWorkspaceSyncRelationshipOwner({ localMachineId: 'controller',
       mutateProjectSnapshot: createProjectAccountSnapshotMutation(credentials),
-      readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home' }),
+      readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home',
+        selection: { kinds: ['workspace-ref', 'relationship-graph'] } }),
       readRelationshipDependencies: async () => admission.dependencies(),
       ensureRelationship: unused, flushRelationship: unused, commitRelationshipTarget: unused,
       terminateRelationshipRuntime: unused, waitForProjectReconciliation: async () => undefined });
@@ -203,7 +205,8 @@ describe('exact target worker status Action', () => {
       presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'workspace_copy_not_worker' });
     expect(writes).toBe(0);
-    expect((await readProjectAccountRows({ credentials, serverId: 'home' })).relationships).toHaveLength(1);
+    expect((await readProjectAccountRows({ credentials, serverId: 'home',
+      selection: { kinds: ['workspace-ref', 'relationship-graph'] } })).relationships).toHaveLength(1);
   });
 
   it('reads only the actual target-edge clean timestamp without flushing or starting accepted work', async () => {
@@ -316,7 +319,11 @@ describe('exact target worker status Action', () => {
     });
     const graphKey = { kind: 'relationship-graph' };
     let networkRows: unknown[] = [...rows, { key: graphKey, revision: 0,
-      content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } }];
+      content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } },
+      ...Array.from({ length: 1024 }, (_, index) => {
+        const key = { kind: 'project-organization', serverId: 'home', projectKey: `unrelated-${index}` };
+        return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+      })];
     vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
       data: url.endsWith('/v2/account/settings')
         ? { content: { t: 'plain', v: {} }, version: 0 }
@@ -324,9 +331,18 @@ describe('exact target worker status Action', () => {
     }));
     let writes = 0;
     let graphRetired = false;
+    const readDemands: unknown[] = [];
+    let preflightRows: unknown[] = [];
     vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
       if (graphRetired && settlement !== 'retired') return { status: 503, data: { status: 'unavailable' } };
-      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows: networkRows } };
+      if (url.endsWith('/list') || url.endsWith('/read')) {
+        const response = projectAccountRowsReadHttpResponse(networkRows, url, raw);
+        if (readDemands.length === 0) {
+          preflightRows = response.data.rows ?? (response.data.row ? [response.data.row] : []);
+        }
+        readDemands.push(raw);
+        return response;
+      }
       writes++;
       const mutation = ProjectAccountRowMutationRequestV1Schema.parse(raw);
       graphRetired = true;
@@ -341,12 +357,14 @@ describe('exact target worker status Action', () => {
     const unused = async (): Promise<never> => { throw new Error('Retirement must not launch or bootstrap'); };
     const owner = createWorkspaceSyncRelationshipOwner({ localMachineId: 'controller',
       mutateProjectSnapshot: createProjectAccountSnapshotMutation(credentials),
-      readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home' }),
+      readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home',
+        selection: { kinds: ['workspace-ref', 'relationship-graph'] } }),
       readRelationshipDependencies: async () => admission.dependencies(),
       ensureRelationship: unused, flushRelationship: unused, commitRelationshipTarget: unused,
       // The external Sync process has no running handle in this fixture.
       terminateRelationshipRuntime: async () => {},
-      waitForProjectReconciliation: async () => { await readProjectAccountRows({ credentials, serverId: 'home' }); } });
+      waitForProjectReconciliation: async () => { await readProjectAccountRows({ credentials, serverId: 'home',
+        selection: { kinds: ['workspace-ref', 'relationship-graph'] } }); } });
     const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'home', serverApiUrl: 'https://home.invalid', machineId: 'controller',
       pluginActionExecutionOwner: 'current_process', projectWorkerAction: createProjectWorkerAction({
         machineId: 'controller', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', credentials,
@@ -362,6 +380,12 @@ describe('exact target worker status Action', () => {
       workspace: { serverId: 'home', refId: ref.id }, machineId: 'controller', expectedRelationship: relationship,
     }, { surface: 'cli', authority: 'present_user', serverId: 'home',
       presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } });
+    // Ref existence belongs to preflight; the real retirement owner still
+    // acquires complete topology before its relationship CAS and reconciliation.
+    expect(preflightRows).toHaveLength(1);
+    expect(preflightRows).toMatchObject([{ key: { kind: 'workspace-ref', serverId: 'home', id: ref.id } }]);
+    expect(readDemands[0]).toEqual({ key: { kind: 'workspace-ref', serverId: 'home', id: ref.id } });
+    expect(readDemands.slice(1)).toContainEqual({ kinds: ['workspace-ref', 'relationship-graph'] });
     expect(graphRetired).toBe(true);
     expect(writes).toBe(1);
     if (settlement === 'retired') {

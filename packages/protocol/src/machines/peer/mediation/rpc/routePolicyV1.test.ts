@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import beforeEffectiveAccess from './fixtures/routePolicyV1.effective-access-before.json';
+
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, ExternalActionExecutionAuthorizationV1Schema } from '../../../../actions/externalActionApi.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../../../../auth/apiTokenGrant.js';
 import {
@@ -14,23 +16,24 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '../../../../connect/connectedServicePoolSelection.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../connect/connectedAccountDaemonRpcV1.js';
 import { resolveSocketRpcSessionAuthorization } from '../../../../rpc/socket.js';
+import { ACTION_IDS, isWorkspaceSyncRelationshipWriteActionId } from '../../../../actions/actionIds.js';
 
 async function importRpcPolicy() {
   return await import('./index').catch((error: unknown) => ({ importError: error }));
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
-  it('routes only automatic retained recovery to requester admission while preserving isolation and raw sync custody', async () => {
-    const { resolveMachineRpcRoutePolicy: resolve } = await import('./routePolicyV1');
-    expect(resolve(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER)).toMatchObject({
-      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true, routeClass: 'server_required',
+  it('preserves declared methods and effective access through declaration consolidation', async () => {
+    const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    // Captured from the public table before removing access overlays, including
+    // duplicate rows and their order; independent of the rewritten declarations.
+    expect(MACHINE_RPC_ROUTE_POLICIES.map(({ method, sharedMachineAccess }) => [method, sharedMachineAccess]))
+      .toEqual(beforeEffectiveAccess);
+    expect(resolveMachineRpcRoutePolicy('unknown.method')).toMatchObject({
+      routeClass: 'server_required', sharedMachineAccess: 'custodian_only', serverRequiredReason: 'unclassified',
     });
-    for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE,
-      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_APPLY, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE_DISCARD,
-      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE]) {
-      expect(resolve(method).sharedMachineAccess).toBe('custodian_only');
-    }
   });
+
   it.each([CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD])(
     'explicitly classifies custodian Account connected-account access for %s', async method => {
       const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
@@ -40,7 +43,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       });
     },
   );
-  it('keeps the isolation set proof for its exact-target admission preview', async () => {
+  it('keeps isolation Preview and Set as distinct signed effects', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'set-proof', binding: {
       accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
@@ -48,15 +51,63 @@ describe('MachineRpcRoutePolicyV1', () => {
       actionId: 'machines.agentIsolation.set', requestId: 'first-set', requestEnvelopeDigest: 'a'.repeat(43),
       target: { kind: 'machine', machineId: 'guest' },
     } }).binding;
-    const selected = { machineId: 'guest', installationId: 'guest-installation' };
-    expect(resolve('machines.agentIsolation.preview', binding, selected)).toBe('machines.agentIsolation.set');
+    expect(resolve('machines.agentIsolation.preview', binding)).toBe('machines.agentIsolation.preview');
     expect(resolve('machines.agentIsolation.preview')).toBe('machines.agentIsolation.preview');
-    expect(resolve('machines.agentIsolation.preview', { ...binding,
-      target: { kind: 'machine', machineId: 'foreign' } }, selected)).toBeNull();
-    expect(resolve('machines.agentIsolation.preview', binding, { ...selected, machineId: 'foreign' })).toBeNull();
-    expect(resolve('machines.agentIsolation.preview', binding, { ...selected, installationId: 'replacement' })).toBeNull();
-    expect(resolve('machines.agentIsolation.set', { ...binding, actionId: 'machines.agentIsolation.preview' }, selected))
+    expect(resolve('machines.agentIsolation.set', { ...binding, actionId: 'machines.agentIsolation.preview' }))
       .toBe('machines.agentIsolation.set'); // Caller still must match the returned effect to its signed binding.
+  });
+  it('admits Workflow Start only through its server-required requester execution policy', async () => {
+    const { resolveMachineRpcRoutePolicy: resolve } = await import('./routePolicyV1');
+    expect(resolve('workflow.run.start')).toMatchObject({ routeClass: 'server_required',
+      serverRequiredReason: 'auth', sharedMachineAccess: 'use', rpcClassification: 'action_spec_bound',
+      actionSpecId: 'workflow.run.start', requesterExecutionIsolationRequired: true,
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true } });
+    for (const method of ['not.registered', RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE]) {
+      expect(resolve(method)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    }
+  });
+
+  it('admits requester-owned Sync controls while preserving isolation and separate raw target custody', async () => {
+    const { resolveMachineRpcRoutePolicy: resolve } = await import('./routePolicyV1');
+    for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET, RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_WATCH, RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST, RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_FILE_READ]) {
+      expect(resolve(method), method).toMatchObject({ sharedMachineAccess: 'use',
+        requesterExecutionIsolationRequired: true, routeClass: 'server_required' });
+    }
+    expect(resolve(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER)).toMatchObject({
+      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true, routeClass: 'server_required',
+    });
+    expect(resolve(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT)).toMatchObject({
+      sharedMachineAccess: 'manage', routeClass: 'server_required',
+    });
+    for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_APPLY, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE_DISCARD,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE]) {
+      expect(resolve(method).sharedMachineAccess).toBe('custodian_only');
+    }
+  });
+  it('retains the exact Sync write Action root for create and observe without accepting another Action', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'sync-write-root', binding: {
+      accountId: 'requester', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'guest', installationId: 'guest-installation',
+      actionId: 'workspace.sync.relationship.create', requestId: 'sync-create', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'guest' },
+    } }).binding;
+    for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE]) {
+      for (const actionId of ACTION_IDS.filter(isWorkspaceSyncRelationshipWriteActionId)) {
+        expect(resolve(method, { ...binding, actionId })).toBe(actionId);
+      }
+      expect(resolve(method, { ...binding, actionId: 'machines.terminal.open' })).toBeNull();
+      expect(resolve(method, { ...binding, target: { kind: 'machine', machineId: 'another-machine' } })).toBeNull();
+      expect(resolve(method)).toBeNull();
+    }
   });
   it('spends the exact Agent inventory root on both inventory observation phases', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
@@ -79,16 +130,26 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
     expect(resolve(RPC_METHODS.CAPABILITIES_INVOKE, binding, selected)).toBeNull();
   });
+  it('admits personal desktop controls with Use while retaining Manage for the host desktop', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    expect(resolveMachineRpcRoutePolicy('daemon.computer.personal.actions.execute')).toMatchObject({
+      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true, rpcClassification: 'internal_only',
+    });
+    expect(resolveMachineRpcRoutePolicy('daemon.machines.liveStream.source.admit')).toMatchObject({
+      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true, rpcClassification: 'internal_only',
+    });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START)).toMatchObject({
+      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true, rpcClassification: 'internal_only',
+    });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START)).toMatchObject({ sharedMachineAccess: 'manage' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toMatchObject({ sharedMachineAccess: 'manage' });
+  });
   it('admits private native vault operations only with Machine Manage authority', async () => {
     const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE)).toMatchObject({
       routeClass: 'direct_ephemeral', sharedMachineAccess: 'manage',
       scope: { accountRequired: true, machineRequired: true, serverRequired: false },
     });
-  });
-  it('requires Manage for raw host desktop controls', async () => {
-    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
-    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toMatchObject({ sharedMachineAccess: 'manage' });
   });
   it('routes revision file reads through the server under their SCM Action', async () => {
     const protocol = await importRpcPolicy();
@@ -149,7 +210,7 @@ describe('MachineRpcRoutePolicyV1', () => {
         expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, actionId: 'skills.list' })).toBeNull();
         expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, target: { kind: 'machine', machineId: 'another' } })).toBeNull();
       }
-      expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT, binding)).toBeNull();
+      expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, binding)).toBeNull();
       expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_INIT, binding)).toBeNull();
     }
   });
@@ -295,7 +356,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       routeClass: 'server_required', serverRequiredReason: 'auth',
       rpcClassification: 'action_spec_bound', actionSpecId: 'connectedServices.pools.selection.get',
       sharedMachineAccess: 'custodian_only', commandReceiptRequired: false,
-      scope: { accountRequired: true, machineRequired: true, serverRequired: true, sessionRequired: false },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(resolveMachineRpcExternalActionEffectV1(CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD)).toBe('connectedServices.pools.selection.get');
   });
@@ -314,7 +375,10 @@ describe('MachineRpcRoutePolicyV1', () => {
     for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
       RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE]) {
       expect(resolveMachineRpcExternalActionEffectV1(method, binding)).toBe('session.handoff.prepare_target');
-      expect(resolveMachineRpcRoutePolicy(method).sharedMachineAccess).toBe('custodian_only');
+      // Machine Manage covers inspection of the selected destination (owner ruling 2026-10-31).
+      // Bootstrap continuations retain their private custody.
+      expect(resolveMachineRpcRoutePolicy(method).sharedMachineAccess).toBe(
+        method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT ? 'manage' : 'custodian_only');
       expect(resolveMachineRpcExternalActionEffectV1(method)).toBeNull();
       expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, handoffContinuation: undefined })).toBeNull();
       expect(resolveMachineRpcExternalActionEffectV1(method, { ...binding, machineId: 'foreign-target' })).toBeNull();
@@ -376,7 +440,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
       routeClass: 'server_required', serverRequiredReason: 'ambiguous', sharedMachineAccess: 'use',
       rpcClassification: 'action_spec_bound', actionSpecId: 'scm.hostingRepository.resolveAddress',
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
   });
@@ -389,7 +453,7 @@ describe('MachineRpcRoutePolicyV1', () => {
         expect(protocol.resolveMachineRpcRoutePolicy(methods[key])).toMatchObject({
           routeClass: 'server_required', serverRequiredReason: 'auth', sharedMachineAccess: 'use',
           rpcClassification: 'action_spec_bound', actionSpecId,
-          scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+          scope: { accountRequired: true, machineRequired: true, serverRequired: true },
         });
         expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(methods[key])).toBeNull();
       }
@@ -441,7 +505,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
       routeClass: 'server_required', serverRequiredReason: 'auth', rpcClassification: 'internal_only',
       sharedMachineAccess: 'use',
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
   });
@@ -453,7 +517,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required', serverRequiredReason: 'auth', rpcClassification: 'action_spec_bound',
         actionSpecId: 'projects.open', sharedMachineAccess: method === RPC_METHODS.PROJECTS_OPEN ? 'use' : 'custodian_only',
-        scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: true },
+        scope: { accountRequired: true, machineRequired: true, serverRequired: true },
       });
       expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
     }
@@ -488,13 +552,75 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toMatchObject({ sharedMachineAccess: 'use', actionSpecId: 'machines.runs.list' });
-    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET)).toMatchObject({ sharedMachineAccess: 'use' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SPAWN_HAPPY_SESSION)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT)).toMatchObject({ sharedMachineAccess: 'use', routeClass: 'server_required', rpcClassification: 'internal_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SESSION_FORK_PROVIDER_SAFE)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
     expect(protocol.resolveMachineRpcRoutePolicy('not.registered')).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+  });
+  it('requires Manage for Machine execution and control without upgrading Project execution or private Account access', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    for (const method of [RPC_METHODS.BASH, 'machines.command.run', RPC_METHODS.MACHINES_SERVICE_EXEC, RPC_METHODS.MACHINES_SERVICE_CONTROL,
+      RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_TERMINATE_DETECTED,
+      RPC_METHODS.MACHINES_REBOOT, RPC_METHODS.MACHINE_ADMIN_ACCESS_SET, RPC_METHODS.MACHINES_REACHABILITY_CONFIGURE,
+      RPC_METHODS.MACHINES_GUARD_ACTIVITY_UNDO, RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET,
+      RPC_METHODS.MACHINES_RESOURCES_POLICY_SET, 'machines.setup.plan', 'machines.setup.apply', 'machines.setup.remove',
+      RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE]) {
+      expect(resolveMachineRpcRoutePolicy(method), method).toMatchObject({ sharedMachineAccess: 'manage' });
+    }
+    for (const method of [RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN, RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC,
+      RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+      RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_OPEN_PREVIEW, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_FORGET]) {
+      expect(resolveMachineRpcRoutePolicy(method), method).toMatchObject({ sharedMachineAccess: 'use' });
+    }
+    // Client-placed Copy is answered by the custodian's App.
+    for (const method of [RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_COPY_URL]) {
+      expect(resolveMachineRpcRoutePolicy(method), method).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    }
+  });
+  it('requires Manage to start an Agent installation without restricting ordinary capability discovery', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_AGENTS_INSTALL_START))
+      .toMatchObject({ sharedMachineAccess: 'manage', rpcClassification: 'internal_only' });
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.CAPABILITIES_INVOKE)).toMatchObject({ sharedMachineAccess: 'use' });
+    for (const actionId of ['machines.agents.install', 'machines.agents.uninstall'] as const) {
+      expect(getActionSpec(actionId).bindings?.rpcMethod).toBe(RPC_METHODS.DAEMON_AGENTS_INSTALL_START);
+    }
+    expect(getActionSpec('machines.capabilities.install').bindings?.rpcMethod).toBe(RPC_METHODS.CAPABILITIES_INVOKE);
+  });
+  it('keeps shared execution methods bound to their exact original Action and Machine', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const original = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'installed-root', binding: {
+      accountId: 'requester', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'machines.agents.install', requestId: 'install', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    for (const [method, actionId] of [[RPC_METHODS.DAEMON_AGENTS_INSTALL_START, 'machines.agents.install'],
+      [RPC_METHODS.DAEMON_AGENTS_INSTALL_START, 'machines.agents.uninstall'],
+      [RPC_METHODS.CAPABILITIES_INVOKE, 'machines.capabilities.install'],
+      [RPC_METHODS.BASH, 'machines.command.run']] as const) {
+      const binding = { ...original, actionId };
+      expect(resolve(method, binding), actionId).toBe(actionId);
+      expect(resolve(method)).toBeNull();
+      expect(resolve(method, { ...binding, actionId: 'machines.setup.apply' })).toBeNull();
+      expect(resolve(method, { ...binding, target: { kind: 'machine', machineId: 'foreign' } })).toBeNull();
+      expect(resolve(method, binding, { machineId: 'machine', installationId: 'replacement' })).toBeNull();
+    }
+  });
+  it('declares passive service reads separately from saved watches and raw Deployment execution', async () => {
+    const { resolveMachineRpcRoutePolicy: resolve } = await import('./routePolicyV1');
+    for (const method of [RPC_METHODS.MACHINES_SERVICE_LIST, RPC_METHODS.MACHINES_SERVICE_DISCOVERY, RPC_METHODS.MACHINES_SERVICE_DETAIL]) {
+      expect(resolve(method), method).toMatchObject({ sharedMachineAccess: 'use', rpcClassification: 'action_spec_bound' });
+    }
+    for (const method of [RPC_METHODS.MACHINES_SERVICE_WATCH, RPC_METHODS.MACHINES_SERVICE_UNWATCH]) {
+      expect(resolve(method), method).toMatchObject({ sharedMachineAccess: 'manage', rpcClassification: 'action_spec_bound' });
+    }
+    expect(resolve(RPC_METHODS.DAEMON_DEPLOYMENT_CHILD)).toMatchObject({ routeClass: 'server_required',
+      sharedMachineAccess: 'manage', rpcClassification: 'internal_only' });
+    expect(resolve(RPC_METHODS.DAEMON_DEPLOYMENT_CHILD).actionSpecId).toBeUndefined();
   });
   it('keeps session role, notes and runtime mutations on the exact Session server route without granting Runner Machine access', async () => {
     const protocol = await importRpcPolicy();
@@ -512,7 +638,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
         routeClass: 'server_required', serverRequiredReason: 'durable_session_write',
-        scope: { accountRequired: true, machineRequired: true, sessionRequired: true, serverRequired: true },
+        scope: { accountRequired: true, machineRequired: true, serverRequired: true },
       });
       expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();
     }
@@ -526,7 +652,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(policy).toMatchObject({
       routeClass: 'server_required', serverRequiredReason: 'auth',
       sharedMachineAccess: 'custodian_only', commandReceiptRequired: false,
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: true, serverRequired: true },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(protocol.isMachineRpcDirectRoutePolicy(policy)).toBe(false);
     expect(protocol.validateMachineRpcGrantAllowedMethods([method])).toEqual({
@@ -575,6 +701,23 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority('daemon.session.log.tail')).toBeNull();
+    for (const method of [RPC_METHODS.DAEMON_SESSION_LOG_TAIL, RPC_METHODS.SESSION_LOG_TAIL,
+      RPC_METHODS.BUGREPORT_GET_LOG_TAIL, RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', requesterExecutionIsolationRequired: true,
+      });
+    }
+  });
+
+  it('requires requester enforcement for the executable and file-mutating capability invocation family', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    for (const method of [RPC_METHODS.CAPABILITIES_INVOKE, RPC_METHODS.CAPABILITIES_DETECT]) {
+      expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required', requesterExecutionIsolationRequired: true,
+      });
+    }
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.CAPABILITIES_DESCRIBE).requesterExecutionIsolationRequired)
+      .not.toBe(true);
   });
 
   it('admits session-filtered browser view discovery through exact-machine internal transport', async () => {
@@ -583,7 +726,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(resolveMachineRpcGovernance(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST)).toEqual({ rpcClassification: 'internal_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST)).toMatchObject({
       routeClass: 'direct_ephemeral', rpcClassification: 'internal_only', commandReceiptRequired: false,
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: false, serverRequired: false },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: false },
     });
   });
   it('keeps daemon_voice_audio as an RPC fallback classification outside peer media flows', () => {
@@ -597,7 +740,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(resolveMachineRpcGovernance(SESSION_RPC_METHODS.SESSION_GUARD_NOTICE)).toEqual({ rpcClassification: 'internal_only' });
     expect(protocol.resolveMachineRpcRoutePolicy(SESSION_RPC_METHODS.SESSION_GUARD_NOTICE)).toMatchObject({
       routeClass: 'server_required', serverRequiredReason: 'durable_session_write', rpcClassification: 'internal_only',
-      scope: { accountRequired: true, machineRequired: true, sessionRequired: true, serverRequired: true },
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(SESSION_RPC_METHODS.SESSION_GUARD_NOTICE)).toBeNull();
   });
@@ -677,6 +820,16 @@ describe('MachineRpcRoutePolicyV1', () => {
       routeClass: 'server_required',
       serverRequiredReason: 'unclassified',
     });
+    expect(protocol.resolveMachineRpcRoutePolicy('not.registered').requesterExecutionIsolationRequired).toBeUndefined();
+    // The supported predecessor registered this retired raw Session method.
+    // Protection does not restore registration or grant shared/direct access.
+    expect(protocol.resolveMachineRpcRoutePolicy('ripgrep')).toMatchObject({
+      routeClass: 'server_required',
+      serverRequiredReason: 'unclassified',
+      sharedMachineAccess: 'custodian_only',
+      commandReceiptRequired: false,
+      requesterExecutionIsolationRequired: true,
+    });
   });
 
   it('routes approved Artifact replay through authenticated server authority to its exact daemon', async () => {
@@ -693,7 +846,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: true,
       },
     });
@@ -714,7 +866,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: true,
           serverRequired: true,
         }),
       });
@@ -739,7 +890,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: {
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: true,
         },
       });
@@ -759,7 +909,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: true,
       }),
     });
@@ -778,7 +927,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: true,
       },
     });
@@ -797,7 +945,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: true,
         serverRequired: true,
       },
     });
@@ -983,7 +1130,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         serverRequiredReason: 'auth',
         commandReceiptRequired: false,
         scope: expect.objectContaining({
-          sessionRequired: true,
           serverRequired: true,
         }),
       });
@@ -998,7 +1144,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         serverRequiredReason: 'billing',
         commandReceiptRequired: false,
         scope: expect.objectContaining({
-          sessionRequired: true,
           serverRequired: true,
         }),
       });
@@ -1011,7 +1156,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       actionSpecId: 'session.terminalComposer.clear',
       commandReceiptRequired: false,
       scope: expect.objectContaining({
-        sessionRequired: true,
         serverRequired: true,
       }),
     });
@@ -1025,7 +1169,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       actionSpecId: 'session.pendingInput.interruptAndRun',
       commandReceiptRequired: false,
       scope: expect.objectContaining({
-        sessionRequired: true,
         serverRequired: true,
       }),
     });
@@ -1038,7 +1181,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       sharedMachineAccess: 'custodian_only',
       commandReceiptRequired: false,
       scope: expect.objectContaining({
-        sessionRequired: false,
         serverRequired: true,
       }),
     });
@@ -1090,7 +1232,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
       });
@@ -1113,7 +1254,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       },
     });
@@ -1131,7 +1271,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1149,7 +1288,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1160,7 +1298,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1171,7 +1308,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1184,7 +1320,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1195,7 +1330,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1206,7 +1340,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1217,7 +1350,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1240,7 +1372,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       },
     });
@@ -1275,7 +1406,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
       });
@@ -1292,7 +1422,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
       });
@@ -1315,7 +1444,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
       });
@@ -1336,7 +1464,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
       });
@@ -1359,7 +1486,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: true,
           serverRequired: true,
         }),
       });
@@ -1384,7 +1510,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: true,
           serverRequired: true,
         }),
       });
@@ -1403,7 +1528,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       }),
     });
@@ -1421,7 +1545,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: true,
         serverRequired: true,
       }),
     });
@@ -1498,7 +1621,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
       });
@@ -1520,7 +1642,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       },
     } as const;
@@ -1546,7 +1667,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       },
     } as const;
@@ -1695,7 +1815,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: expect.objectContaining({
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: true,
       }),
     });
@@ -1740,7 +1859,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH,
-      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS,
     ];
 
     for (const method of methods) {
@@ -1751,7 +1869,6 @@ describe('MachineRpcRoutePolicyV1', () => {
         scope: expect.objectContaining({
           accountRequired: true,
           machineRequired: true,
-          sessionRequired: false,
           serverRequired: false,
         }),
         relayFallback: {
@@ -1809,9 +1926,13 @@ describe('MachineRpcRoutePolicyV1', () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH))
+      .toEqual({ ...protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_PROVIDERS_PROBE),
+        method: RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH });
 
     for (const method of [
       RPC_METHODS.DAEMON_PROVIDERS_PROBE,
+      RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH,
       RPC_METHODS.DAEMON_PROVIDERS_MODELS,
       RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD,
       RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
@@ -1919,7 +2040,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       },
       relayFallback: {
@@ -1954,7 +2074,6 @@ describe('MachineRpcRoutePolicyV1', () => {
       scope: {
         accountRequired: true,
         machineRequired: true,
-        sessionRequired: false,
         serverRequired: false,
       },
       relayFallback: {

@@ -1,4 +1,3 @@
-import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import { createHash } from 'node:crypto';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,13 +7,16 @@ import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema,
+  projectExternalActionManagedAdmissionV1, deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readProjectAccountRows, getActiveProjectAccountRowsSnapshot, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import axios from 'axios';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedListInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -35,6 +37,7 @@ import * as installationStore from '@/daemon/identity/store';
 import { verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SOCKET_RPC_EVENTS, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 
 const socketIo = vi.hoisted(() => vi.fn());
 // Genuine transport boundary; the exact-Machine codec and managed observation reader remain real.
@@ -43,6 +46,7 @@ vi.mock('socket.io-client', () => ({ io: socketIo }));
 import {
   computeWorkspaceSyncPolicyDigest,
   deriveWorkspaceSyncConflictOperationId,
+  HandoffTargetReplacementPreflightResultV1Schema,
   type WorkspaceSyncTargetBootstrapPrepareV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -53,7 +57,6 @@ import type { RpcHandler, RpcHandlerRegistrar, RpcHandlerContext } from '@/api/r
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createScmBackendRegistry } from '@/scm/registry';
-import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
 import { createWorkspaceRootOwnershipManager, type WorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import { createWorkspaceSyncTargetAuthority, readWorkspaceSyncChildMachineFacts } from './workspaceSyncTargetAuthority';
 import { prepareWorkspaceSyncBetween } from './workspaceSyncPreparation';
@@ -118,7 +121,7 @@ describe('endpoint Machine read costs', () => {
 });
 
 describe('bind-child replacement approval at the physical target owner', () => {
-  it('qualifies an independent installed Project target from its own row without a Parent route', async () => {
+  it.each([false, true])('qualifies an independent installed Project target with one finite prepare admission (withdraw afterwards=%s)', async withdrawAfterAdmission => {
     const [project, actionHeaders, signing, execution, socketSchemas, installedContent] = await Promise.all([
       import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/actions/externalActionApi'),
       import('@happier-dev/protocol/actions/externalActionExecutionAuthorization'), import('@/api/externalActionExecutionAuthorization'),
@@ -135,6 +138,7 @@ describe('bind-child replacement approval at the physical target owner', () => {
       admission: ReturnType<typeof SocketRpcMachineAdmissionContextV1Schema.parse>; machineId: string; installationId: string;
       method: string }> | undefined;
     let current = true;
+    let prepareAdmissionReads = 0;
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, separateTargetParent: true, targetCredentials,
       readAdditionalHttpPostResponse: async (url, raw) => {
         if (!url.endsWith('/admission/verify')) return undefined;
@@ -152,14 +156,21 @@ describe('bind-child replacement approval at the physical target owner', () => {
             machineId: proofMachineId, installationId: proofInstallationId, accountId: isWriter ? 'owner' : 'target-owner',
             rpcAdmission: { context: proofAdmission, method: binding.method, callerInputAuthorization: binding.root,
               workspaceSyncSourceWriterTargetRouting: binding.routing, workspaceSyncSourceExecution: binding.packet } } })).toBe(true);
-        return current ? { status: 200, data: { v: 1, ok: true, ...(isWriter ? { destinationInstallation: {
+        const admitted = current;
+        if (!isWriter && binding.method === `${binding.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`) {
+          prepareAdmissionReads += 1;
+          if (withdrawAfterAdmission) current = false;
+        }
+        return admitted ? { status: 200, data: { v: 1, ok: true, ...(isWriter ? { destinationInstallation: {
           machineId: binding.machineId, installationId: binding.installationId,
           installationPublicKey: Buffer.from(installed.publicKey).toString('base64url') } } : {}) } }
           : { status: 403, data: { error: 'access_denied' } };
       } });
     if (!fixture.targetParent) throw new Error('Independent target runtime was not composed');
     const machineId = fixture.targetRef.machineId;
-    const installationId = fixture.managedTargetChild.controller.installationId;
+    const nativeTargetController = fixture.managedTargetChild.controller;
+    if (!nativeTargetController) throw new Error('The native fixture requires its installed controller.');
+    const installationId = nativeTargetController.installationId;
     const operationId = 'independent-project-target-preflight';
     const input = project.OpenProjectInputV1Schema.parse({ serverId: fixture.serverId, machineId,
       source: { kind: 'workspace', workspaceId: fixture.childRef.id, checkout: { serverId: fixture.serverId,
@@ -171,6 +182,9 @@ describe('bind-child replacement approval at the physical target owner', () => {
       accountId: 'borrower', principalId: 'borrower', credentialId: 'independent-project-pat', grant: API_TOKEN_FULL_GRANT_V1,
       custodianAccountId: 'target-owner', serverIdentityId: fixture.serverId, machineId, installationId,
       actionId: 'projects.open', requestId: envelope.requestId, target: envelope.target,
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId!),
+        sourceWorkspaceRefId: fixture.childRef.id, source: { actorAccountId: 'borrower', custodianAccountId: 'owner',
+          machineId: fixture.childRef.machineId, installationId: fixture.childInstallationId, role: 'use', encryptionMode: 'plain' } },
       requestEnvelopeDigest: signing.computeExternalActionRequestEnvelopeDigestV1(envelope) } });
     const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId,
       accountServerId: fixture.serverId, sourceMachineId: fixture.childRef.machineId, sourceRootPath: fixture.childRef.rootPath,
@@ -276,13 +290,15 @@ describe('bind-child replacement approval at the physical target owner', () => {
         targetBootstrap: 'materialize_from_source_workspace' } });
     expect(prepared).toMatchObject({ state: 'ready', targetWorkspaceRefId: fixture.targetRef.id,
       targetWorkspace: fixture.targetRef });
+    expect(prepareAdmissionReads).toBe(1);
     expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
   });
 
   it.each([
-    { title: 'prepares through the original chosen TARGET owner without reading its rows from the SOURCE writer', lostAcknowledgement: false },
-    { title: 'releases cross-custodian target custody from the preflight endpoint after a completed prepare acknowledgement is lost', lostAcknowledgement: true },
-  ])('$title', async ({ lostAcknowledgement }) => {
+    { title: 'prepares through the original chosen TARGET owner without reading its rows from the SOURCE writer', lostAcknowledgement: false, replacesTarget: false },
+    { title: 'releases cross-custodian target custody from the preflight endpoint after a completed prepare acknowledgement is lost', lostAcknowledgement: true, replacesTarget: false },
+    { title: 'replaces an approved target through the admitted signed SOURCE writer and registered TARGET owners', lostAcknowledgement: false, replacesTarget: true },
+  ])('$title', async ({ lostAcknowledgement, replacesTarget }) => {
     const sourceKey = tweetnacl.sign.keyPair();
     const childKey = tweetnacl.sign.keyPair();
     const parentKey = tweetnacl.sign.keyPair();
@@ -305,6 +321,7 @@ describe('bind-child replacement approval at the physical target owner', () => {
     ].join('.'), encryption: null } : undefined;
     const targetCustodianAccountId = targetCredentials ? 'target-owner' : 'owner';
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, separateTargetParent: true, withTargetChildRuntime: true,
+      ...(replacesTarget ? { resolutionTransfer: true, withScmRuntime: true } : {}),
       ...(targetCredentials ? { targetCredentials } : {}),
       callWorkspaceTargetPhase: async (descriptor, context) => {
         if (!chosenClient) throw new Error('The actual chosen target client was not installed');
@@ -424,14 +441,23 @@ describe('bind-child replacement approval at the physical target owner', () => {
     const targetRouting = WorkspaceSyncTargetRoutingV1Schema.parse({ ...routing.target,
       targetContext: { ...source.sourceContext, machineAdmission: admission } });
     binding = { root, routing, targetRouting };
+    const nativeTargetController = fixture.managedTargetChild.controller;
+    if (!nativeTargetController) throw new Error('The native fixture requires its installed controller.');
     const identity = (physical: boolean) => ({ version: 1 as const, createdAt: 1,
-      installationId: physical ? fixture.managedTargetChild.controller.installationId : admission.installationId,
+      installationId: physical ? nativeTargetController.installationId : admission.installationId,
       publicKey: Buffer.from(physical ? parentKey.publicKey : childKey.publicKey).toString('base64url'),
       privateKey: Buffer.from(physical ? parentKey.secretKey : childKey.secretKey).toString('base64url') });
     const osIdentity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(identity(false));
+    const prepareDiagnostics: unknown[] = [];
     const receiving = (physical: boolean) => new RpcHandlerManager({
       scopePrefix: physical ? fixture.targetRef.machineId : admission.machineId,
-      localMachineId: physical ? fixture.targetRef.machineId : admission.machineId, encryptionMode: 'plain', logger: () => {},
+      localMachineId: physical ? fixture.targetRef.machineId : admission.machineId, encryptionMode: 'plain',
+      logger: (message, data) => {
+        if (message === '[RPC] Request completed' && data && typeof data === 'object'
+          && 'method' in data && data.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE) {
+          prepareDiagnostics.push({ physical, ...data });
+        }
+      },
       authorizeRequest: request => authorizeMachineRpcRequest(request, {
         machineId: physical ? fixture.targetRef.machineId : admission.machineId, resolveCustodianAccountId: async () => targetCustodianAccountId,
         resolveInstallationId: () => identity(physical).installationId,
@@ -470,11 +496,12 @@ describe('bind-child replacement approval at the physical target owner', () => {
       forwarded = true;
       osIdentity.mockReturnValue(identity(true));
       try {
-        return { ok: true, result: await physical.handleRequest({ ...raw, method: raw.method, requestId: raw.requestId, params: raw.params,
+        const result = await physical.handleRequest({ ...raw, method: raw.method, requestId: raw.requestId, params: raw.params,
           externalActionExecution: signed,
           machineAdmission: admission,
           callerInputAuthorization: root, callerAuthority: 'account_automation',
-          callerInputConstraints: source.sourceContext!.callerInputConstraints }) };
+          callerInputConstraints: source.sourceContext!.callerInputConstraints });
+        return { ok: true, result };
       } finally { osIdentity.mockReturnValue(identity(false)); }
     } }));
     try {
@@ -512,6 +539,10 @@ describe('bind-child replacement approval at the physical target owner', () => {
       expect(refusedLoan).not.toHaveProperty('kind');
       if (!('kind' in refusedLoan)) await refusedLoan.release();
       wrongPhysicalDestination = false;
+      if (replacesTarget) {
+        await mkdir(fixture.targetPath);
+        await writeFile(join(fixture.targetPath, 'reviewed-target.txt'), 'reviewed target contents');
+      }
       await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
         credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
       expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([fixture.sourceRef, fixture.childRef]);
@@ -609,15 +640,35 @@ describe('bind-child replacement approval at the physical target owner', () => {
       const physicalEndpoint = MachineInstallationPublicIdentityV1Schema.parse(witnessedPreflight.physicalEndpoint);
       expect(physicalEndpoint).toEqual({ machineId: fixture.targetRef.machineId, installationId: identity(true).installationId,
         installationPublicKey: identity(true).publicKey });
+      const targetReplacement = replacesTarget
+        ? HandoffTargetReplacementPreflightResultV1Schema.parse(witnessedPreflight) : undefined;
+      if (targetReplacement && targetReplacement.type !== 'approval_required') {
+        throw new Error('The nonempty target must require a replacement approval');
+      }
       binding = { root, routing: prepareRouting, targetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({
         ...prepareRouting.target, targetContext: targetRouting.targetContext }) };
-      const preparation = sourceAuthority.prepareBootstrapAtTarget({ v: 1, bootstrapOperationId: operationId,
+      const prepareTarget = () => sourceAuthority.prepareBootstrapAtTarget({ v: 1, bootstrapOperationId: operationId,
         owner: { kind: 'copy_once', operation: { v: 1, operationId, controllerMachineId: fixture.sourceRef.machineId,
           alphaWorkspaceRefId: fixture.sourceRef.id, betaWorkspaceRefId: fixture.targetChildRef.id, contentPolicy } },
         targetWorkspaceRefId: fixture.targetChildRef.id, targetMachineId: admission.machineId,
         admittedTarget: { machineId: admission.machineId, rootPath: fixture.targetChildRef.rootPath },
         endpointRole: 'beta', policyDigest: contentPolicy.policyDigest, createIfMissing: true,
-        targetBootstrap: 'materialize_from_source_workspace', ...(lostAcknowledgement ? { signal: workAbort.signal } : {}) }, sourceContext);
+        targetBootstrap: 'materialize_from_source_workspace',
+        ...(targetReplacement?.type === 'approval_required' ? {
+          targetReplacementApproval: targetReplacement.approval,
+          targetReplacementApprovalReceiptId: 'approved-signed-target-replacement',
+          targetReplacementApprovalActionInput: { sessionId: 'source-session', targetMachineId: admission.machineId,
+            targetPath: fixture.targetChildRef.rootPath },
+        } : {}),
+        ...(lostAcknowledgement ? { signal: workAbort.signal } : {}) }, sourceContext);
+      const sourceLoan = replacesTarget ? await fixture.probeSource() : undefined;
+      if (sourceLoan && 'kind' in sourceLoan) throw new Error('The replacement SOURCE root could not be fenced');
+      const preparation = sourceLoan && !('kind' in sourceLoan)
+        ? fixture.parentManagedWorkspaceSync.withSourceSeedAuthorization({ v: 1, operationId,
+            controllerMachineId: fixture.sourceRef.machineId, alphaWorkspaceRefId: fixture.sourceRef.id,
+            betaWorkspaceRefId: fixture.targetRef.id, contentPolicy }, [sourceLoan], prepareTarget, fixture.targetRef)
+            .finally(() => sourceLoan.release())
+        : prepareTarget();
       if (lostAcknowledgement) {
         await expect(preparation).rejects.toMatchObject({ name: 'AbortError' });
         expect(completedTargetPreparation).toBe(true);
@@ -659,6 +710,7 @@ describe('bind-child replacement approval at the physical target owner', () => {
         }
         releaseRouting = retainedRouting;
         expect(await sourceClient.callWorkspaceSyncTargetPhase(cleanup)).toEqual({ ok: true, released: true });
+        expect(await sourceClient.callWorkspaceSyncTargetPhase(cleanup)).toEqual({ ok: true, released: false });
         await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
         const releasedLoan = await fixture.probeTarget();
         expect(releasedLoan).not.toHaveProperty('kind');
@@ -666,11 +718,14 @@ describe('bind-child replacement approval at the physical target owner', () => {
         expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
         return;
       }
-      const prepared = await preparation;
+      const prepared = await preparation.catch(error => {
+        throw new Error(`Registered target preparation failed: ${JSON.stringify(prepareDiagnostics)}; seed failures: ${JSON.stringify(fixture.seedExportFailures)}`, { cause: error });
+      });
       expect(prepared).toMatchObject({ state: 'ready', targetWorkspaceRefId: fixture.targetRef.id,
         physicalEndpoint: { machineId: fixture.targetRef.machineId, installationId: identity(true).installationId,
           installationPublicKey: identity(true).publicKey } });
       expect(prepareReachedChosenOwner).toBe(true);
+      if (replacesTarget) await expect(readFile(join(fixture.targetPath, 'reviewed-target.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
       expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([fixture.sourceRef, fixture.childRef]);
     } finally { osIdentity.mockRestore(); }
@@ -735,7 +790,9 @@ describe('bind-child replacement approval at the physical target owner', () => {
     const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, sourceWriter: fixture.controller, source,
       target: { v: 1, phase: 'preflight', operationId, accountServerId: fixture.serverId,
         targetMachineId: targetAdmission.machineId, targetRootPath: fixture.targetChildRef.rootPath } });
-    const installationId = fixture.managedTargetChild.controller.installationId;
+    const nativeTargetController = fixture.managedTargetChild.controller;
+    if (!nativeTargetController) throw new Error('The native fixture requires its installed controller.');
+    const installationId = nativeTargetController.installationId;
     const method = `${fixture.targetRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
     proofBinding = { root, routing, admission: targetAdmission, machineId: fixture.targetRef.machineId, installationId, method };
     const rpc = new RpcHandlerManager({ scopePrefix: fixture.targetRef.machineId, localMachineId: fixture.targetRef.machineId,
@@ -993,20 +1050,35 @@ type AuthorityHarness = Readonly<{
 let harnessCounter = 0;
 
 describe('current child storage at the Sync authority', () => {
-  it('requires passive native presence before flushing the parent writer despite unchanged retained Machine facts', async () => {
+  it.each(['same', 'requester', 'controller'] as const)('requires passive native presence before flushing the parent writer without foreign Machine access (%s)', async role => {
+    const foreign = role !== 'same';
     const homeId = 'srv_sync_native_home';
     const child = { id: 'child-workspace', serverId: homeId, machineId: 'child', rootPath: '/child/project', createdAtMs: 1 };
     const observation = { nativeResourceId: 'native-current', user: 'coder', workspaceFolder: child.rootPath,
       storage: { kind: 'bind' as const, hostPath: '/parent/project', childPath: child.rootPath } };
     const projection = { relation: { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer' as const, parentMachineId: 'machine-a' }, observation };
-    const retained: ManagedMachineV1 = { id: 'managed-child', homeId, custodianAccountId: 'account',
+    const retained: ManagedMachineV1 & { controller: NonNullable<ManagedMachineV1['controller']> } = { id: 'managed-child', homeId, custodianAccountId: 'account',
       controller: { machineId: 'machine-a', installationId: 'parent-installation' },
       launch: { provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, name: 'Child', choices: {} },
       resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: {}, devcontainerObservation: observation },
       allocation: 'bound', creationState: 'active', enrolledMachineId: 'child', desired: 'start', desiredWhen: 'now', intentRevision: 1,
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+    if (foreign) {
+      retained.enrollmentAccountId = 'requester';
+      if (role === 'requester') retained.controllerAccess = { custodian: { accountId: 'account' },
+        installationPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
+    }
+    const inspected = () => {
+      // The native controller owns its private row, not the requester's public key projection.
+      const { controllerAccess: _publicAccess, ...nativeRow } = retained;
+      return { machine: { ...nativeRow, resource: { ...retained.resource!, devcontainerObservation: inspectedObservation },
+        observation: { availability: nativeAvailability, observedAt: 1 } } };
+    };
     let nativeAvailability: 'present' | 'absent' | 'unavailable' = 'present';
     let inspectedObservation = observation;
+    let childCurrent = true;
+    let ownedListReads = 0;
+    let ownedListRows = 0;
     const nativeCalls: unknown[] = [];
     socketIo.mockImplementation(() => createApiSessionSocketStub({ emitWithAck: async (_event, payload) => {
       if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Invalid RPC boundary');
@@ -1020,6 +1092,8 @@ describe('current child storage at the Sync authority', () => {
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       const id = url.slice(url.lastIndexOf('/') + 1);
+      if (role === 'requester' && id === 'machine-a') throw new Error('Requester has no parent Machine access');
+      if (role === 'controller' && id === 'child') throw new Error('Controller has no requester child Machine access');
       return { status: 200, data: { machine: { id, active: true,
         devcontainerChild: id === 'child' ? projection : null,
         installationId: id === 'machine-a' ? 'parent-installation' : `${id}-installation`,
@@ -1027,8 +1101,34 @@ describe('current child storage at the Sync authority', () => {
         metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/coder', username: 'coder',
           happyCliVersion: 'test', happyHomeDir: '/home/coder/.happier', ...(id === 'child' ? { devcontainerChild: projection } : {}) }) } } };
     });
-    const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
       if (url.endsWith('/machines/managed/actions/get')) return { status: 200, data: retained };
+      if (url.endsWith('/machines/managed/actions/list')) {
+        ownedListReads++;
+        const query = ManagedListInputV1Schema.parse(raw);
+        const accountOwnedCloud: ManagedMachineV1 = { ...retained, id: 'account-cloud', controller: undefined,
+          enrolledMachineId: 'cloud-machine',
+          resource: { contributionRef: { pluginId: 'happier.cloud', localId: 'cloud' }, schemaVersion: 1, value: { id: 'cloud-native' } },
+          launch: { provider: { pluginId: 'happier.cloud', localId: 'cloud' }, schemaVersion: 1, name: 'Cloud', choices: {} } };
+        const machines = [accountOwnedCloud, retained].filter(row => !query.enrolledMachineId || row.enrolledMachineId === query.enrolledMachineId);
+        ownedListRows += machines.length;
+        return { status: 200, data: { machines } };
+      }
+      if (role === 'requester' && url.endsWith('/execution-authorization')) {
+        const body = { envelope: ExternalActionRequestEnvelopeSchema.parse(Reflect.get(raw, 'envelope')) };
+        return { status: 200, data: { v: 1, token: 'managed-home-root', binding: {
+          accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+          serverIdentityId: homeId, custodianAccountId: 'account', machineId: 'machine-a', installationId: 'parent-installation',
+          actionId: 'machines.managed.inspect', requestId: body.envelope.requestId, target: body.envelope.target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
+          managedAdmission: projectExternalActionManagedAdmissionV1('machines.managed.inspect', body.envelope.input) } } };
+      }
+      if (role === 'requester' && url.endsWith('/machines.managed.inspect')) {
+        const body = raw as { envelope: { requestId: string } };
+        nativeCalls.push({ method: 'machine-a:machines.managed.inspect', params: { homeId, managedId: retained.id } });
+        return { status: 200, data: { v: 1, actionId: 'machines.managed.inspect', requestId: body.envelope.requestId,
+          execution: { ok: true, result: inspected() } } };
+      }
       throw new Error(`Unexpected boundary: ${url}`);
     });
     const initial = snapshot('/parent/project', '/peer/project');
@@ -1044,14 +1144,38 @@ describe('current child storage at the Sync authority', () => {
       readCurrent: async () => ({ workspaceRefs: [...current.workspaceRefs, child], relationships: current.relationships,
         childMachines: await readWorkspaceSyncChildMachineFacts({ serverId: homeId, serverHttpBaseUrl: 'https://home.example',
           localProfileId: 'native-test-profile',
-          credentials: { token: 'token', encryption: null }, machineIds: ['child', 'machine-b'] }) }),
+          ...(role === 'controller' ? { controllerOwnedChild: { controllerMachineId: 'machine-a',
+            admission: { machineId: 'child', installationId: 'child-installation', custodianAccountId: 'requester',
+              actorAccountId: 'requester', role: 'manage' as const, encryptionMode: 'plain' as const },
+              verifyCurrent: async () => childCurrent } } : {}),
+          credentials: { token: foreign ? `e30.${Buffer.from(JSON.stringify({ sub: role === 'controller' ? 'account' : 'requester', tokenEpoch: 1,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature` : 'token',
+            encryption: null }, machineIds: ['child', 'machine-b'] }) }),
       flush: async (id: string) => { flushed.push(id); return { relationshipId: id, controllerMachineId: 'machine-a', state: 'watching' as const,
         alphaPath: '/parent/project', betaPath: '/peer/project', mode: 'keep_both_in_sync' as const, conflictCount: 0, lastCycleObservedAtMs: null,
         endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
           beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } } }; } };
     try {
+      if (role === 'requester') expect((await input.readCurrent()).childMachines[0]?.managedMachine?.controllerAccess)
+        .toEqual(retained.controllerAccess);
       await expect(prepareWorkspaceSyncBetween(input)).resolves.toMatchObject({ ok: true, traversed: [{ relationshipId }] });
       expect(flushed).toEqual([relationshipId]);
+      if (role === 'controller') {
+        const previousListReads = ownedListReads;
+        const previousListRows = ownedListRows;
+        await input.readCurrent();
+        expect(ownedListReads - previousListReads).toBe(1); // One existing Account list for the whole endpoint batch.
+        expect(ownedListRows - previousListRows).toBe(1); // Only the admitted child is projected from this Account's inventory.
+        childCurrent = false;
+        await expect(input.readCurrent()).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
+        childCurrent = true;
+        retained.enrollmentAccountId = 'other-account';
+        await expect(input.readCurrent()).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
+        retained.enrollmentAccountId = 'requester';
+        retained.controller.machineId = 'other-parent';
+        await expect(input.readCurrent()).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
+        retained.controller.machineId = 'machine-a';
+      }
       for (const unavailable of ['absent', 'unavailable'] as const) {
         nativeAvailability = unavailable;
         flushed.length = 0;
@@ -1148,7 +1272,7 @@ describe('committed-copy retirement at the target authority', () => {
     }
   });
 
-  it('refuses an ordinary committed copy after graph deletion despite an executing approved caller-forged worker marker', async () => {
+  it('refuses an ordinary committed copy after graph deletion despite a caller-forged worker marker', async () => {
     const fixture = await realpath(await mkdtemp(join(tmpdir(), 'forged-worker-copy-removal-')));
     const source = join(fixture, 'source');
     const target = join(fixture, 'copy');
@@ -1157,17 +1281,7 @@ describe('committed-copy retirement at the target authority', () => {
     const expectedRelationship = { ...originalGraph.relationships[0]!, provenance: {
       kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: 'workspace-beta',
     } };
-    let approvedInput: unknown;
-    const authorize = productionWorkspaceSync.createWorkspaceCommittedCopyRemovalAuthorizer({ serverId: 'server-1',
-      // Only Artifact persistence is substituted. The executing-receipt validator remains real.
-      approvalsGet: async () => ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
-        createdBy: { surface: 'system' }, approval: { flow: 'deferred', result: 'required' },
-        actionId: 'projects.worker.copy.retire', actionArgs: approvedInput, summary: 'Approve removal',
-        decision: { kind: 'approve', decidedAtMs: 2 },
-        executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
-          serverId: 'server-1', machineId: 'machine-a', actionId: 'projects.worker.copy.retire', requestId: 'forged-review' },
-      }),
-    });
+    const authorize = productionWorkspaceSync.createWorkspaceCommittedCopyRemovalAuthorizer({ serverId: 'server-1' });
     const receiver = createAuthorityHarness({
       getProjectSnapshot: () => snapshot(source, target, { includeRelationship: false }),
       assertCommittedCopyRemovalAuthorized: authorize,
@@ -1184,7 +1298,6 @@ describe('committed-copy retirement at the target authority', () => {
       const receiptBytes = await readFile(receiptPath, 'utf8');
       const actionInput = { workspace: { serverId: 'server-1', refId: 'workspace-alpha' }, machineId: 'machine-a', expectedRelationship,
         removeTargetCopy: { workspaceRefId: 'workspace-beta', rootFingerprint: await computeWorkspaceSyncRootFingerprint(target) } };
-      approvedInput = actionInput;
       await expect(receiver.authority.removeCommittedCopyHere({ actionReceiptId: 'executing-forged-review', actionInput }))
         .rejects.toMatchObject({ code: 'workspace_copy_not_worker' });
       expect(await readFile(join(target, 'ordinary.txt'), 'utf8')).toBe('ordinary committed copy');
@@ -1790,6 +1903,52 @@ async function waitForCondition(predicate: () => boolean | Promise<boolean>, tim
 }
 
 describe('workspace sync target authority', () => {
+  it.each(['stage', 'apply', 'discard', 'recover'] as const)('keeps cancellation local while validating the %s conflict wire request', async phase => {
+    const cancellation = new AbortController();
+    const actionInput = {
+      controllerMachineId: 'machine-a', hubWorkspaceRefId: 'workspace-alpha', path: 'reviewed.txt',
+      source: { workspaceRefId: 'workspace-alpha', expected: { kind: 'missing' as const } },
+      targets: [{ workspaceRefId: 'workspace-beta', expected: { kind: 'missing' as const } }],
+      relationshipIds: [relationshipId], strategy: 'use_source' as const,
+    };
+    const effect = {
+      actionReceiptId: 'local-cancellation', actionInput, alternativeIndex: null,
+      operationId: deriveWorkspaceSyncConflictOperationId({ actionReceiptId: 'local-cancellation', kind: 'selected',
+        workspaceRefId: 'workspace-beta', path: 'reviewed.txt' }),
+      relationshipId, targetMachineId: 'machine-b', targetWorkspaceRefId: 'workspace-beta', path: 'reviewed.txt',
+    };
+    const request = phase === 'recover'
+      ? { relationshipId, targetMachineId: 'machine-b', targetWorkspaceRefId: 'workspace-beta' }
+      : phase === 'stage'
+        ? { ...effect, sourceRelationshipId: relationshipId, sourceMachineId: 'machine-a', sourceWorkspaceRefId: 'workspace-alpha',
+          sourceExpected: actionInput.source.expected, targetExpected: actionInput.targets[0]!.expected }
+        : effect;
+    const authority = createWorkspaceSyncTargetAuthority({
+      localServerId: 'server-1', localMachineId: 'machine-a', getProjectSnapshot: () => snapshot('/alpha', '/beta'),
+      // Machine transport is the boundary. Schema admission and endpoint resolution remain real.
+      callMachineRpc: async input => {
+        expect(input.machineId).toBe('machine-b');
+        expect(input.request).toEqual(request);
+        expect(input.request).not.toHaveProperty('signal');
+        expect(input.signal).toBe(cancellation.signal);
+        input.signal?.throwIfAborted();
+        return phase === 'apply' ? { status: 'installed' } : phase === 'recover' ? { status: 'settled' } : { ok: true };
+      },
+    });
+    const invoke = () => {
+      const input = { ...request, signal: cancellation.signal };
+      if (phase === 'stage') return authority.stageConflictResolutionAtTarget({ ...effect,
+        sourceRelationshipId: relationshipId, sourceMachineId: 'machine-a', sourceWorkspaceRefId: 'workspace-alpha',
+        sourceExpected: actionInput.source.expected, targetExpected: actionInput.targets[0]!.expected, signal: cancellation.signal });
+      if (phase === 'apply') return authority.applyStagedConflictResolutionAtTarget({ ...effect, signal: cancellation.signal });
+      if (phase === 'discard') return authority.discardStagedConflictResolutionAtTarget({ ...effect, signal: cancellation.signal });
+      return authority.recoverConflictResolutionAtTarget(input);
+    };
+    await expect(invoke()).resolves.toEqual(phase === 'apply' ? { status: 'installed' } : phase === 'recover' ? { status: 'settled' } : undefined);
+    cancellation.abort(new Error('Stopped at transport'));
+    await expect(invoke()).rejects.toThrow('Stopped at transport');
+  });
+
   it('refuses unavailable Project rows before reading or contacting a target', async () => {
     const callMachineRpc = vi.fn(async () => { throw new Error('Unexpected target RPC'); });
     const harness = createAuthorityHarness({ getProjectSnapshot: () => null, callMachineRpc });
@@ -2741,46 +2900,6 @@ describe('workspace sync target authority', () => {
     })).rejects.toMatchObject({ code: 'peer_unavailable' });
   });
 
-  it('fail-closes local mutations, routed target calls and ingress with the exact typed legacy-state code', async () => {
-    for (const code of ['legacy_workspace_sync_state_unsupported', 'legacy_workspace_sync_state_unknown'] as const) {
-      const callMachineRpc = vi.fn(async () => undefined);
-      const authority = createWorkspaceSyncTargetAuthority({
-        localServerId: 'server-1',
-        localMachineId: 'machine-b',
-        getProjectSnapshot: () => snapshot('/alpha', '/beta'),
-        callMachineRpc,
-        assertLegacyStateAvailable: () => { throw Object.assign(new Error('legacy workspace sync state'), { code }); },
-      });
-      const expectTyped = (run: Promise<unknown>) => expect(run).rejects.toMatchObject({ code });
-      await expectTyped(authority.readFileHere({
-        relationshipId, workspaceRefId: 'workspace-beta', path: 'src/x.ts', maxBytes: 64,
-      }));
-      await expectTyped(authority.prepareBootstrapHere({
-        v: 1, bootstrapOperationId: 'boot-op-1',
-        owner: { kind: 'relationship', relationshipId },
-        targetWorkspaceRefId: 'workspace-beta', endpointRole: 'beta',
-        policyDigest: contentPolicy.policyDigest, createIfMissing: true,
-      }));
-      await expectTyped(authority.readFileAtTarget({
-        relationshipId, targetMachineId: 'machine-c', targetWorkspaceRefId: 'workspace-beta',
-        path: 'src/x.ts', maxBytes: 64,
-      }));
-      await expectTyped(authority.prepareBootstrapAtTarget({
-        v: 1, bootstrapOperationId: 'boot-op-1',
-        owner: { kind: 'relationship', relationshipId },
-        targetWorkspaceRefId: 'workspace-beta', targetMachineId: 'machine-b', endpointRole: 'beta',
-        policyDigest: contentPolicy.policyDigest, createIfMissing: true,
-      }));
-      await expectTyped(authority.acquireWorkspaceSyncMachineIngress({
-        operationId: relationshipId, sourceMachineId: 'machine-a', targetMachineId: 'machine-b',
-      }));
-      // Safe cleanup/release paths stay available, and no machine RPC was reached.
-      await expect(authority.releaseBootstrapHere({
-        v: 1, bootstrapOperationId: 'boot-op-1', targetWorkspaceRefId: 'workspace-beta', reason: 'abort',
-      })).resolves.toMatchObject({ ok: true, released: false });
-      expect(callMachineRpc).not.toHaveBeenCalled();
-    }
-  });
 });
 
 describe('workspace sync target bootstrap authority', () => {
@@ -4307,33 +4426,53 @@ describe('workspace sync target bootstrap authority', () => {
       await first.releaseAllRetainedBootstraps();
 
       const openRootedAgent = vi.fn(async () => ownedRootedAgent());
+      const restartedRootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory });
       const restarted = createWorkspaceSyncTargetAuthority({
         localServerId: 'server-1',
         localMachineId: 'machine-b',
+        localAccountId: 'installed-account-b',
         getProjectSnapshot: currentSnapshot,
         assertConflictResolutionAuthorized: async () => undefined,
         callMachineRpc: async () => { throw new Error('unexpected machine RPC'); },
         openRootedAgent,
         bootstrap: {
           materializationDirectory,
-          rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory }),
+          rootOwnershipManager: restartedRootOwnershipManager,
         },
       });
-      await restarted.reconcileRetainedBootstraps();
-      const ingress = await restarted.acquireWorkspaceSyncMachineIngress({
-        operationId: relationshipId,
-        sourceMachineId: 'machine-a',
-        targetMachineId: 'machine-b',
-      });
-      expect(openRootedAgent).toHaveBeenCalledWith({
-        operationId: relationshipId,
-        role: 'beta',
-        workspaceRefId: 'workspace-beta',
-        canonicalRoot: await realpath(betaRoot),
-        signal: expect.any(AbortSignal),
-      });
-      await ingress.close();
-      await restarted.releaseAllRetainedBootstraps();
+      try {
+        const unrelatedActor = await restarted.acquireWorkspaceSyncMachineIngress({
+          actorAccountId: 'unrelated-account', operationId: relationshipId,
+          sourceMachineId: 'machine-a', targetMachineId: 'machine-b',
+        }).then(async ingress => {
+          await ingress.close();
+          return { kind: 'admitted' };
+        }, (error: unknown) => ({ kind: 'refused', code: (error as { code?: string }).code }));
+        expect(unrelatedActor).toEqual({ kind: 'refused', code: 'peer_unavailable' });
+        const rootProbe = await restartedRootOwnershipManager.tryAcquire({
+          ownerId: 'independent-root-owner', operation: 'sync', canonicalRoot: await realpath(betaRoot),
+        });
+        const rootRemainedAvailable = !('kind' in rootProbe);
+        if (!('kind' in rootProbe)) await rootProbe.release();
+        expect(rootRemainedAvailable).toBe(true);
+        await restarted.reconcileRetainedBootstraps();
+        const ingress = await restarted.acquireWorkspaceSyncMachineIngress({
+          actorAccountId: 'installed-account-b',
+          operationId: relationshipId,
+          sourceMachineId: 'machine-a',
+          targetMachineId: 'machine-b',
+        });
+        expect(openRootedAgent).toHaveBeenCalledWith({
+          operationId: relationshipId,
+          role: 'beta',
+          workspaceRefId: 'workspace-beta',
+          canonicalRoot: await realpath(betaRoot),
+          signal: expect.any(AbortSignal),
+        });
+        await ingress.close();
+      } finally {
+        await restarted.releaseAllRetainedBootstraps();
+      }
     } finally {
       await first.releaseAllRetainedBootstraps();
       await rm(fixture, { recursive: true, force: true });

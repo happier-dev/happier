@@ -1,6 +1,3 @@
-/** Closed server-to-exact-daemon method; never a public Action or SDK method. */
-export const EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 = 'daemon.actions.external.dispatch' as const;
-
 /**
  * Canonical RPC method literals, separated from the RPC barrel so browser-safe
  * consumers can read ActionSpecs without evaluating daemon-only projections.
@@ -10,38 +7,22 @@ export const CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD = 'session.presentation
 export const CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD = 'session.presentation.unbind' as const;
 export const CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD = 'session.presentation.apply' as const;
 
+/** Closed server-to-exact-daemon method; never a public Action or SDK method. */
+export const EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 = 'daemon.actions.external.dispatch' as const;
+
 export const RPC_METHODS = {
-  MACHINES_COMMAND_RUN: 'machines.command.run',
-  MACHINE_SETUP_UPDATES_APPLY: 'machines.setup.updates.apply',
-  DAEMON_DEPLOYMENT_CHILD: 'daemon.deployments.child.v1',
-  DAEMON_SERVICE_HEALTH_DELIVER: 'daemon.serviceHealth.deliver.v1',
-  MACHINES_SERVICE_LOGS_READ: 'machines.services.logs.read',
-
-  MACHINES_SERVICE_CONTROL: 'machines.services.control',
-
-  MACHINES_SERVICE_UNWATCH: 'machines.services.unwatch',
-
-  MACHINES_SERVICE_WATCH: 'machines.services.watch',
-
-  MACHINES_SERVICE_DETAIL: 'machines.services.detail',
-
-  MACHINES_SERVICE_DISCOVERY: 'machines.services.discovery',
-
-  MACHINES_SERVICE_EXEC: 'machines.services.exec',
-  MACHINES_SERVICE_ADOPT: 'machines.services.adopt',
-
-  MACHINES_SERVICE_LIST: 'machines.services.list',
-
-  MACHINES_REACHABILITY_CONFIGURE: 'machines.reachability.configure',
-
-  MACHINES_REACHABILITY_INSPECT: 'machines.reachability.inspect',
-  MACHINE_SETUP_REMOVE: 'machines.setup.remove',
-  MACHINE_SETUP_PLAN: 'machines.setup.plan',
-
   DAEMON_BROWSER_PROFILE_LOGIN_SOURCES: 'daemon.browser.profile.loginSources',
   DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ: 'daemon.browser.profile.cookieSource.read',
   DAEMON_BROWSER_PROFILE_COOKIES_APPLY: 'daemon.browser.profile.cookies.apply',
   DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY: 'daemon.browser.profile.passkeys.apply',
+    MACHINES_REACHABILITY_INSPECT: 'machines.reachability.inspect',
+    MACHINES_REACHABILITY_CONFIGURE: 'machines.reachability.configure',
+  MACHINE_SETUP_PLAN: 'machines.setup.plan',
+  MACHINE_SETUP_REMOVE: 'machines.setup.remove',
+  MACHINE_SETUP_UPDATES_APPLY: 'machines.setup.updates.apply',
+  MACHINES_COMMAND_RUN: 'machines.command.run',
+  MACHINE_ADMIN_ACCESS_SET: 'machines.setup.adminAccess.set',
+  MACHINE_ADMIN_ACCESS_INSPECT: 'machines.setup.adminAccess.inspect',
   USAGE_SOURCES_DISCOVER: 'usage.sources.discover',
   USAGE_SOURCES_GET: 'usage.sources.get',
   USAGE_SOURCES_CONSENT_SET: 'usage.sources.consent.set',
@@ -53,6 +34,8 @@ export const RPC_METHODS = {
   DAEMON_MACHINE_ACCESS_LOSS: 'daemon.machineAccessLoss',
   /** Server-origin current-service preview admission; never a client-callable inventory. */
   DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION: 'daemon.localServices.preview.admission',
+  /** Same-Account exact-controller delivery of an already committed private C1 item. */
+  DAEMON_SERVICE_HEALTH_DELIVER: 'daemon.serviceHealth.deliver.v1',
   DAEMON_PROJECTS_PREPARE: 'daemon.projects.prepare.v1',
   DAEMON_PROJECTS_SCRIPT_RUN: 'daemon.projects.script.run.v1',
   DAEMON_PROJECTS_COMPUTE_EXEC: 'daemon.projects.compute.exec.v1',
@@ -71,6 +54,8 @@ export const RPC_METHODS = {
   DAEMON_EXECUTION_RUNS_LIST: 'daemon.executionRuns.list',
   DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE: 'daemon.executionRuns.brokerAuthority.resolve.v1',
   DAEMON_SERVICE_MOVE_START_CLAIM: 'actionOperation.serviceMoveStart.claim.v1',
+  /** Private referenced work under an incumbent deployment Action and receipt. */
+  DAEMON_DEPLOYMENT_CHILD: 'daemon.deployments.child.v1',
   DAEMON_EXECUTION_RUN_PERMISSION_RESPOND: 'daemon.executionRuns.permission.respond.v1',
   DAEMON_TERMINAL_ENSURE: 'daemon.terminal.ensure',
   DAEMON_TERMINAL_LIST: 'daemon.terminal.list',
@@ -190,9 +175,21 @@ export const RPC_METHODS = {
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN: 'daemon.plugins.ui.resources.watch.open',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT: 'daemon.plugins.ui.resources.watch.next',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE: 'daemon.plugins.ui.resources.watch.close',
-  MACHINES_REBOOT: 'machines.reboot',
   MACHINES_VITALS_GET: 'machines.vitals.get',
   MACHINES_RESOURCES_POLICY_SET: 'machines.resources.policy.set',
+  MACHINES_SERVICE_LOGS_READ: 'machines.services.logs.read',
+  MACHINES_SERVICE_CONTROL: 'machines.services.control',
+  MACHINES_SERVICE_EXEC: 'machines.services.exec',
+  MACHINES_REBOOT: 'machines.reboot',
+  MACHINES_SERVICE_LIST: 'machines.services.list',
+  MACHINES_SERVICE_DISCOVERY: 'machines.services.discovery',
+  MACHINES_SERVICE_DETAIL: 'machines.services.detail',
+  MACHINES_SERVICE_WATCH: 'machines.services.watch',
+  MACHINES_SERVICE_UNWATCH: 'machines.services.unwatch',
+  MACHINES_SERVICE_ADOPT: 'machines.services.adopt',
+  MACHINES_AGENT_ISOLATION_PREVIEW: 'machines.agentIsolation.preview',
+  MACHINES_AGENT_ISOLATION_STATUS: 'machines.agentIsolation.status',
+  MACHINES_AGENT_ISOLATION_SET: 'machines.agentIsolation.set',
   MACHINES_GUARD_GET: 'machines.guard.get',
   MACHINES_GUARD_ACTIVITY_LIST: 'machines.guard.activity.list',
   MACHINES_GUARD_ACTIVITY_UNDO: 'machines.guard.activity.undo',
@@ -256,8 +253,7 @@ export const RPC_METHODS = {
   DAEMON_BROWSER_CONTROL_DISPATCH: 'daemon.browser.control.dispatch',
   // Owner-scoped present-user computer Actions (choose a window, look, stop, hand back, permission pane).
   DAEMON_COMPUTER_ACTION_EXECUTE: 'daemon.computer.actions.execute',
-  DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT: 'daemon.machines.liveStream.source.admit',
-  DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START: 'daemon.machines.liveStream.personal.relay.start',
+  // Present-user controls scoped to the authenticated requester's personal desktop.
   DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE: 'daemon.computer.personal.actions.execute',
   DAEMON_BROWSER_VIEW_LIST: 'daemon.browser.view.list',
   DAEMON_BROWSER_CONTEXT_DISPATCH: 'daemon.browser.context.dispatch',
@@ -286,6 +282,8 @@ export const RPC_METHODS = {
   // daemon over the canonical machine-RPC channel; the daemon then emits the start on its own
   // machine-scoped socket where the server verifies the signature and creates relay state.
   DAEMON_LIVE_STREAM_RELAY_START: 'daemon.machines.liveStream.relay.start',
+  DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT: 'daemon.machines.liveStream.source.admit',
+  DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START: 'daemon.machines.liveStream.personal.relay.start',
   // Preserve the established wire literals for mixed-version UI/daemon compatibility.
   DAEMON_TRANSFER_UPLOAD_INIT: 'daemon.bulkTransfer.upload.init',
   DAEMON_TRANSFER_UPLOAD_CHUNK: 'daemon.bulkTransfer.upload.chunk',
@@ -597,7 +595,6 @@ export const RPC_METHODS = {
   BUGREPORT_COLLECT_DIAGNOSTICS: 'bugreport.collectDiagnostics',
   BUGREPORT_GET_LOG_TAIL: 'bugreport.getLogTail',
   BUGREPORT_UPLOAD_ARTIFACT: 'bugreport.uploadArtifact',
-
 } as const;
 
 export const SESSION_RPC_METHODS = {
@@ -610,6 +607,8 @@ export const SESSION_RPC_METHODS = {
   SESSION_USER_MESSAGE_SEND: 'session.userMessage.send',
   /** Host-private native Agent tool transport; the live Session stamps all authority. */
   SESSION_AGENT_TOOL_CALL_V1: 'session.agentTool.call.v1',
+  /** Private read of the exact active native Session turn's applied child selection. */
+  SESSION_AGENT_START_SELECTION_READ_V1: 'session.agentStart.selection.read.v1',
   /** Host-private Discussion publication through the exact authenticated Session client. */
   DISCUSSION_AGENT_POST_V1: 'discussion.agentPost.v1',
   /** Explicit answer/pass through the exact receiving Session publisher. */

@@ -1,4 +1,3 @@
-import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +25,7 @@ import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { inTx } from '@/storage/inTx';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { forwardRpcCall } from './forwardRpcCall';
+import { createServerRpcForwarder } from '../serverRpcForwarder';
 import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
@@ -37,8 +37,18 @@ import { createTestGitRpcManager } from '../../../../../../cli/src/scm/rpc/__tes
 import { ScmBranchListResponseSchema } from '@happier-dev/protocol/scm';
 import { callSocketRpc } from '../../../../../../../packages/sync-client/src/rpc/callSocketRpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { createCliSessionHandoffActionDeps } from '../../../../../../cli/src/session/handoff/cliActionDeps';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { readMachineRecipientCensusInTx, commitMachineRecipientKeyEnvelopesInTx } from '@/app/machines/machineAccess';
+import { computeContentPublicKeyFingerprint, encodeBase64, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { encryptWithDataKey, decryptWithDataKey } from '../../../../../../cli/src/api/encryption';
+import { authorizeMachineRpcRequest } from '../../../../../../cli/src/api/machine/machineRpcAuthorization';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerStatusResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import { RpcHandlerManager } from '../../../../../../cli/src/api/rpc/RpcHandlerManager';
 import { registerExecutionRunRpcHandlers } from '../../../../../../cli/src/rpc/handlers/executionRuns/registerExecutionRunRpcHandlers';
 import { retainExecutionRunState } from '../../../../../../cli/src/daemon/executionRunRegistry';
@@ -61,51 +71,6 @@ function deferred<T>() {
 }
 
 describe("Session RPC final access admission on SQLite", () => {
-    it('admits shared Machine sign-in status with the granted role and refuses an unrelated Account', async () => {
-        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
-            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'sign-in-worker',
-                platform: 'linux', happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
-            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-        await db.machineAccountGrant.createMany({ data: [
-            { machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id },
-            { machineId: machine.id, accountId: manager.id, accessLevel: 'admin', createdByAccountId: owner.id },
-        ] });
-        const method = `${machine.id}:${AGENT_SIGN_IN_STATUS_RPC_METHOD}`;
-        // Only Socket.IO is substituted: token issuance, grant reads, admission
-        // and relay use their production owners. The daemon consumes this stamp.
-        const received: SocketRpcRequestPayload[] = [];
-        const target = { id: 'sign-in-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
-            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
-            timeout: () => ({ emitWithAck: async (_event: string, request: SocketRpcRequestPayload) => {
-                received.push(request);
-                return { status: 'signedIn' };
-            } }) };
-        const io = createSocketRoomDiscoveryHarness(async room =>
-            room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
-        for (const [account, role] of [[guest, 'use'], [manager, 'manage'], [owner, 'manage'], [stranger, null]] as const) {
-            const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
-            const caller = Object.assign(createAuthenticatedFakeSocket({ id: `sign-in-${account.id}`, data: {
-                clientType: 'user-scoped', accountStoredContentCompatibility,
-            } }), { handshake: { auth: { token } } });
-            registerSocketRpcHandlers({ userId: account.id, socket: caller as unknown as Socket, io });
-            const callback = vi.fn();
-            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { agentId: 'cursor' } }, callback);
-            if (role) {
-                expect(callback).toHaveBeenCalledWith({ ok: true, result: { status: 'signedIn' } });
-                expect(received.at(-1)?.machineAdmission).toMatchObject({ actorAccountId: account.id,
-                    custodianAccountId: owner.id, role, machineId: machine.id, installationId: machine.installationId });
-            } else {
-                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-            }
-        }
-        expect(received).toHaveLength(3);
-    });
-
-
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {
@@ -246,6 +211,194 @@ describe("Session RPC final access admission on SQLite", () => {
                 failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }),
             }));
         }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits an admin worker-copy destination through the native Action preflight and preserves next-request refusals (%s)', async mode => {
+        const ownerKeys = tweetnacl.box.keyPair();
+        const actorKeys = tweetnacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(ownerKeys.publicKey) : {}) } });
+        const actor = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(actorKeys.publicKey) : {}) } });
+        const dataKey = tweetnacl.randomBytes(32);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), metadata: mode === 'plain' ? encodePlainMachineStoredContent({ host: 'worker', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }) : 'encrypted-metadata',
+            dataEncryptionKey: mode === 'plain' ? decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')
+                : sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerKeys.publicKey, randomBytes: tweetnacl.randomBytes }) } });
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+            accessLevel: 'admin', createdByAccountId: owner.id } });
+        if (mode === 'e2ee') {
+            const census = await inTx(tx => readMachineRecipientCensusInTx(tx, { actorAccountId: owner.id, machineId: machine.id }));
+            if ('kind' in census) throw new Error(census.code);
+            await inTx(tx => commitMachineRecipientKeyEnvelopesInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+                expectedMachineOwnerEnvelopeFingerprint: census.machineOwnerEnvelopeFingerprint!,
+                expectedCallerDataEncryptionKey: census.callerDataEncryptionKey!, expectedMetadataVersion: census.content.metadataVersion,
+                expectedDaemonStateVersion: census.content.daemonStateVersion, recipientKeyEnvelopes: [{ recipientAccountId: actor.id,
+                    encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: actorKeys.publicKey,
+                        randomBytes: tweetnacl.randomBytes })), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(actorKeys.publicKey) }] }));
+        }
+        const content: SocketRpcContent = mode === 'plain' ? { mode } : { mode, cipher: {
+            encryptRaw: async value => encodeBase64(encryptWithDataKey(value, dataKey)),
+            decryptRaw: async value => decryptWithDataKey(decodeBase64(value, 'base64'), dataKey),
+        } };
+        const token = await createAccountTokenForTests(actor.id, { kind: 'account', authority: 'present_user' });
+        const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'worker-copy-client', data: {
+            clientType: 'user-scoped', accountStoredContentCompatibility,
+        } }), { handshake: { auth: { token } } });
+        const method = `${machine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
+        const received: SocketRpcRequestPayload[] = [];
+        // Substitute the remote daemon's network response, keeping the real
+        // Action, native preflight adapter, bearer issuer and Home/SQLite admission.
+        const target = { id: 'worker-copy-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
+            timeout: () => ({ emitWithAck: async (_event: string, request: SocketRpcRequestPayload) => {
+                received.push(request);
+                const decoded = await socketRpcCodec.decodeRequestParams(content, request.params, method);
+                const authorized = await authorizeMachineRpcRequest({ ...request, params: decoded.params }, {
+                    machineId: machine.id, resolveInstallationId: () => machine.installationId,
+                    resolveCustodianAccountId: async () => owner.id, resolveHomeServerIdentityId: async () => 'worker-home',
+                    verifyMachineAdmission: async () => { throw new Error('Authenticated Home admission must be consumed once'); },
+                }, 'authenticated_home_socket');
+                if (!authorized.ok) return socketRpcCodec.encodeResponse(content, authorized, decoded.callId);
+                return socketRpcCodec.encodeResponse(content, { type: 'approval_required', approval: { v: 1, serverId: 'worker-home', machineId: machine.id,
+                    canonicalRoot: '/worker/clean-copy', rootFingerprint: 'a'.repeat(64), operationId: 'worker-copy',
+                    consequences: ['replace_nonempty_workspace_target', 'delete_target_only_files_during_exact_mirror'] } }, decoded.callId);
+            } }) };
+        const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
+        registerSocketRpcHandlers({ userId: actor.id, socket: caller as unknown as Socket, io });
+        const responses: unknown[] = [];
+        const handoffDeps = createCliSessionHandoffActionDeps({ token, credentials: { token, encryption: null } }, {
+            callMachineAction: async input => callSocketRpc({ socket: {
+                emitWithAck: async (event, payload) => {
+                    const callback = vi.fn();
+                    await triggerSocketHandler(caller, event, payload, callback);
+                    responses.push(callback.mock.calls[0]?.[0]);
+                    return callback.mock.calls[0]?.[0];
+                }, emit: () => {},
+            }, target: { kind: 'machine', id: input.machineId }, method: input.method,
+                content, params: input.request }),
+            notSupported: () => { throw new Error('Unexpected Session transport'); },
+            resolveTransportForSession: async () => { throw new Error('Worker copy has no Session'); },
+        });
+        const approvals: unknown[] = [];
+        const executor = createActionExecutor({ ...handoffDeps, isActionApprovalRequired: () => false,
+            // Artifact persistence is a boundary; no relationship may run before consent.
+            approvalsCreate: async input => { approvals.push(input); return { artifactId: 'worker-approval' }; },
+        });
+        const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const input = { v: 1, sourceWorkspaceRefId: 'actor-source-workspace', targetMachineId: machine.id,
+            targetPath: '/worker/clean-copy', mode: 'mirror_exactly', destinationIntent: 'materialize_from_source_workspace',
+            purpose: 'worker_clean_copy', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } };
+        const execute = () => executor.execute('workspace.sync.relationship.create', input, {
+            surface: 'mcp', authority: 'present_user', serverId: 'worker-home', actionRequestId: 'worker-copy',
+        });
+        const outcome = await execute();
+        expect(outcome, JSON.stringify({ outcome, response: responses[0] })).toMatchObject({ ok: true,
+            result: { kind: 'approval_request_created', artifactId: 'worker-approval' } });
+        expect(approvals).toMatchObject([{ request: { actionId: 'workspace.sync.relationship.create', actionArgs: input } }]);
+        expect(received).toHaveLength(1);
+        expect(received[0]?.machineAdmission).toMatchObject({ actorAccountId: actor.id, custodianAccountId: owner.id,
+            machineId: machine.id, installationId: machine.installationId, role: 'manage' });
+        // The grant never authorizes a stale installation or a new request after downgrade.
+        target.data.verifiedMachineInstallationId = randomUUID();
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        target.data.verifiedMachineInstallationId = machine.installationId;
+        await db.machineAccountGrant.update({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } }, data: { accessLevel: 'view' } });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        expect(received).toHaveLength(1);
+        expect(approvals).toHaveLength(1);
+    });
+
+    it('admits shared Machine sign-in status with the granted role and refuses an unrelated Account', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'sign-in-worker',
+                platform: 'linux', happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        await db.machineAccountGrant.createMany({ data: [
+            { machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id },
+            { machineId: machine.id, accountId: manager.id, accessLevel: 'admin', createdByAccountId: owner.id },
+        ] });
+        const method = `${machine.id}:${AGENT_SIGN_IN_STATUS_RPC_METHOD}`;
+        // Only Socket.IO is substituted: token issuance, grant reads, admission
+        // and relay use their production owners. The daemon consumes this stamp.
+        const received: SocketRpcRequestPayload[] = [];
+        const target = { id: 'sign-in-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
+            timeout: () => ({ emitWithAck: async (_event: string, request: SocketRpcRequestPayload) => {
+                received.push(request);
+                return { status: 'signedIn' };
+            } }) };
+        const io = createSocketRoomDiscoveryHarness(async room =>
+            room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
+        for (const [account, role] of [[guest, 'use'], [manager, 'manage'], [owner, 'manage'], [stranger, null]] as const) {
+            const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+            const caller = Object.assign(createAuthenticatedFakeSocket({ id: `sign-in-${account.id}`, data: {
+                clientType: 'user-scoped', accountStoredContentCompatibility,
+            } }), { handshake: { auth: { token } } });
+            registerSocketRpcHandlers({ userId: account.id, socket: caller as unknown as Socket, io });
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { agentId: 'cursor' } }, callback);
+            if (role) {
+                expect(callback).toHaveBeenCalledWith({ ok: true, result: { status: 'signedIn' } });
+                expect(received.at(-1)?.machineAdmission).toMatchObject({ actorAccountId: account.id,
+                    custodianAccountId: owner.id, role, machineId: machine.id, installationId: machine.installationId });
+            } else {
+                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            }
+        }
+        expect(received).toHaveLength(3);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('reserves Run follow-frontier for Home reads and refuses direct custodian calls (%s)', async encryptionMode => {
+        const owner = await db.account.create({ data: { encryptionMode } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
+            metadata: encryptionMode === 'plain' ? encodePlainMachineStoredContent({ host: 'follow-worker', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }) : '{}',
+            ...(encryptionMode === 'plain' ? { dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } : {}) } });
+        const method = `${machine.id}:${SESSION_RPC_METHODS.EXECUTION_RUN_FOLLOW_FRONTIER}`;
+        const request = { machineId: machine.id, runId: randomUUID() };
+        const frontier = { machineId: machine.id, sessionId: null, runId: request.runId, status: 'running', terminalEventId: null };
+        // Only the Socket.IO peer is substituted. Home routing, credential
+        // verification and Machine admission use their real production owners.
+        const effect = vi.fn(async () => frontier);
+        const target = { id: 'follow-frontier-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility },
+            timeout: () => ({ emitWithAck: effect }) };
+        const io = createSocketRoomDiscoveryHarness(async room =>
+            room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
+        const join = vi.fn(async () => undefined);
+        const daemon = Object.assign(createAuthenticatedFakeSocket({ id: target.id, data: target.data }), {
+            join, leave: vi.fn(async () => undefined),
+        });
+        registerSocketRpcHandlers({ userId: owner.id, socket: daemon as unknown as Socket, io });
+        await triggerSocketHandler(daemon, SOCKET_RPC_EVENTS.REGISTER, { method });
+        expect(join).toHaveBeenCalledWith(`rpc:${owner.id}:${method}`);
+        const forward = createServerRpcForwarder({ io });
+        expect(await forward({ userId: owner.id, method, params: request })).toEqual({ ok: true, result: frontier });
+        expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({ method, params: request,
+            authorization: { kind: 'machine.read.serverOrigin', accountId: owner.id, machineId: machine.id } }));
+        effect.mockClear();
+        const token = await createAccountTokenForTests(owner.id, { kind: 'account', authority: 'present_user' });
+        const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'custodian-client', data: {
+            clientType: 'user-scoped', accountStoredContentCompatibility,
+        } }), { handshake: { auth: { token } } });
+        registerSocketRpcHandlers({ userId: owner.id, socket: caller as unknown as Socket, io });
+        for (const directMethod of [method, SESSION_RPC_METHODS.EXECUTION_RUN_FOLLOW_FRONTIER]) {
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method: directMethod, params: request }, callback);
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        }
+        expect(effect).not.toHaveBeenCalled();
+        // The legitimate Home read remains usable after refused client traffic.
+        expect(await forward({ userId: owner.id, method, params: request })).toEqual({ ok: true, result: frontier });
     });
 
     it.each(['skills.read', 'session.user_action.answer'] as const)('admits a paired terminal daemon Session %s and rechecks credential, installation and Session binding', async (rpcMethod) => {
@@ -568,7 +721,7 @@ describe("Session RPC final access admission on SQLite", () => {
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it("routes a shared actor to the exact custodian and refuses access or installation lost during discovery", async () => {
+    it("routes an admitted shared actor once and applies grant withdrawal at the next request", async () => {
         const owner = await db.account.create({ data: { publicKey: `machine-owner-${randomUUID()}`, encryptionMode: "plain" } });
         const actor = await db.account.create({ data: { publicKey: `machine-actor-${randomUUID()}`, encryptionMode: "plain" } });
         const installationId = randomUUID();
@@ -610,16 +763,22 @@ describe("Session RPC final access admission on SQLite", () => {
         duringDiscovery = () => db.machineAccountGrant.delete({ where: { machineId_accountId: {
             machineId: machine.id, accountId: actor.id,
         } } }).then(() => undefined);
+        expect(await call()).toHaveBeenCalledWith({ ok: true, result: { status: "ready" } });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-        expect(effect).not.toHaveBeenCalled();
+        expect(effect).toHaveBeenCalledOnce();
+        effect.mockClear();
         await db.machineAccountGrant.create({ data: grant });
         duringLatestTarget = () => db.machineAccountGrant.delete({ where: { machineId_accountId: {
             machineId: machine.id, accountId: actor.id,
         } } }).then(() => undefined);
+        expect(await call()).toHaveBeenCalledWith({ ok: true, result: { status: "ready" } });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-        expect(effect).not.toHaveBeenCalled();
+        expect(effect).toHaveBeenCalledOnce();
+        effect.mockClear();
         await db.machineAccountGrant.create({ data: grant });
-        duringDiscovery = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } }).then(() => undefined);
+        // A different receiving installation is a different target, rather than
+        // a reason to re-evaluate the admitted actor's grant.
+        duringDiscovery = async () => { target.data.verifiedMachineInstallationId = randomUUID(); };
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
     });
@@ -798,7 +957,7 @@ describe("Session RPC final access admission on SQLite", () => {
         expect(accepted).toHaveBeenCalledWith({ ok: true, result: { ok: true, status: "applied" } });
     });
 
-    it("surfaces the typed authentication requirement lost during target discovery", async () => {
+    it("finishes admitted Team work and applies changed authentication policy at the next request", async () => {
         harness.resetEnv({ HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1" });
         const { owner, editor, session, team } = await seedRestrictedTeamEditor();
         const method = `${session.id}:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`;
@@ -841,7 +1000,10 @@ describe("Session RPC final access admission on SQLite", () => {
         resumeDiscovery.resolve();
         await call;
 
-        expect(targetEffect).not.toHaveBeenCalled();
+        expect(targetEffect).toHaveBeenCalledOnce();
+        expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        callback.mockClear();
+        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { v: 1, goal: "do the work" } }, callback);
         expect(callback).toHaveBeenCalledWith({
             ok: false,
             error: "Team authentication required",
@@ -849,7 +1011,7 @@ describe("Session RPC final access admission on SQLite", () => {
         });
     });
 
-    it("does not dispatch an ordinary effectful Session RPC when access is revoked during target discovery", async () => {
+    it("finishes admitted Session work and applies access revocation at the next request", async () => {
         const { owner, editor, session } = await seedDirectEditor();
         const method = `${session.id}:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`;
         const targetEffect = vi.fn(async () => ({ ok: true }));
@@ -893,11 +1055,14 @@ describe("Session RPC final access admission on SQLite", () => {
         resumeDiscovery.resolve();
         await call;
 
-        expect(targetEffect).not.toHaveBeenCalled();
+        expect(targetEffect).toHaveBeenCalledOnce();
+        expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        callback.mockClear();
+        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { v: 1, goal: "do the work" } }, callback);
         expect(callback).toHaveBeenCalledWith({
             ok: false,
-            error: "RPC method not available",
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            error: "Forbidden",
+            errorCode: RPC_ERROR_CODES.FORBIDDEN,
         });
     });
 

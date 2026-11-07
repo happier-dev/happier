@@ -1,51 +1,25 @@
-import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipsListActionOutputV1Schema, WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipDisableActionOutputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionOutputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { RPC_METHODS } from '../../rpc/methods.js';
+import { WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS } from '../actionIds.js';
+import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipsListActionOutputV1Schema, WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipReplaceActionInputV1Schema, WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipDisableActionOutputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionOutputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readNonEmptyString, readRecord } from '../../inputs/inputRecords.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
-export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
-  {
-    id: 'workspace.sync.conflict.resolve', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
+function createWorkspaceSyncActionSpecs() {
+  const relationshipControlExecution = { executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed',
+    requesterCredentials: 'none', daemonIngressSurfaces: ['cli'] },
+    machineRuntimeDemandForInput: (input, context) => {
+      const machineId = readNonEmptyString(readRecord(input).controllerMachineId);
+      return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
+    },
+  } satisfies Pick<PreNormalizedActionSpec, 'executionPlacement' | 'originalExecution' | 'machineRuntimeDemandForInput'>;
+  const relationshipCreate = {
+    id: 'workspace.sync.relationship.create', executionPlacement: 'machine', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
     workspaceWrite: true,
-    operation: {
-      version: 1,
-      visibility: 'activity',
-      progress: 'reported',
-      presentation: { onStart: 'current' },
-    },
-    title: 'Resolve workspace conflict',
-    description: 'Apply the exact reviewed workspace entry to the explicitly approved current destinations.',
-    safety: 'danger',
-    placements: [],
-    bindings: { mcpToolName: 'workspace_sync_conflict_resolve' },
-    surfaces: {
-      ui: true,
-      voice: false,
-      agent: true,
-      mcp: true,
-      cli: false,
-      rpc: false,
-    },
-    inputHints: {
-      description: 'Settle a conflict between linked folders by keeping the version you reviewed.',
-      title: 'Resolve workspace conflict',
-      fields: [
-        { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
-        { path: 'hubWorkspaceRefId', title: 'Hub workspace ref id', widget: 'text', required: true },
-        { path: 'path', title: 'Conflict path', widget: 'text', required: true },
-        { path: 'source', title: 'Reviewed source', widget: 'json', required: true },
-        { path: 'targets', title: 'Approved destinations', widget: 'json', required: true },
-        { path: 'relationshipIds', title: 'Relationship ids', widget: 'json', required: true },
-        { path: 'strategy', title: 'Resolution strategy', widget: 'select', options: [{ value: 'use_source', label: 'Use reviewed source' }, { value: 'keep_both', label: 'Use source and keep alternatives' }], required: true },
-      ],
-    },
-    outputSchema: WorkspaceSyncConflictResolutionResultV1Schema,
-    inputSchema: WorkspaceSyncConflictResolveActionInputV1Schema,
-  } satisfies PreNormalizedActionSpec,
-  {
-    id: 'workspace.sync.relationship.create', executionPlacement: 'session', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
-    workspaceWrite: true,
+    originalExecution: { accountRoot: 'allowed' },
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE },
     operation: {
       version: 1,
       visibility: 'activity',
@@ -112,12 +86,74 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     },
     outputSchema: WorkspaceSyncRelationshipCreateResultV1Schema,
     inputSchema: WorkspaceSyncRelationshipCreateActionInputV1Schema,
+  } satisfies PreNormalizedActionSpec;
+
+  return Object.freeze([
+  {
+    id: 'workspace.sync.conflict.resolve', executionPlacement: 'session', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
+    workspaceWrite: true,
+    operation: {
+      version: 1,
+      visibility: 'activity',
+      progress: 'reported',
+      presentation: { onStart: 'current' },
+    },
+    title: 'Resolve workspace conflict',
+    description: 'Apply the exact reviewed workspace entry to the explicitly approved current destinations.',
+    safety: 'danger',
+    placements: [],
+    bindings: { mcpToolName: 'workspace_sync_conflict_resolve' },
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: true,
+      mcp: true,
+      cli: false,
+      rpc: false,
+    },
+    inputHints: {
+      description: 'Settle a conflict between linked folders by keeping the version you reviewed.',
+      title: 'Resolve workspace conflict',
+      fields: [
+        { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
+        { path: 'hubWorkspaceRefId', title: 'Hub workspace ref id', widget: 'text', required: true },
+        { path: 'path', title: 'Conflict path', widget: 'text', required: true },
+        { path: 'source', title: 'Reviewed source', widget: 'json', required: true },
+        { path: 'targets', title: 'Approved destinations', widget: 'json', required: true },
+        { path: 'relationshipIds', title: 'Relationship ids', widget: 'json', required: true },
+        { path: 'strategy', title: 'Resolution strategy', widget: 'select', options: [{ value: 'use_source', label: 'Use reviewed source' }, { value: 'keep_both', label: 'Use source and keep alternatives' }], required: true },
+      ],
+    },
+    outputSchema: WorkspaceSyncConflictResolutionResultV1Schema,
+    inputSchema: WorkspaceSyncConflictResolveActionInputV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  relationshipCreate,
+  {
+    ...relationshipCreate,
+    id: 'workspace.sync.relationship.replace',
+    title: 'Replace workspace sync link',
+    description: 'Stop the selected link and start a new synchronization history with the reviewed mode and content policy. Both folders stay in place.',
+    bindings: { mcpToolName: 'workspace_sync_relationship_replace' },
+    inputHints: {
+      ...relationshipCreate.inputHints,
+      title: 'Replace workspace sync link',
+      description: 'Replaces the selected link with a new mode or content policy while preserving both folders.',
+      fields: [
+        { path: 'replaceRelationshipId', title: 'Link to replace', widget: 'text', required: true },
+        ...relationshipCreate.inputHints.fields.filter(field => field.path !== 'destinationIntent'),
+        { path: 'destinationIntent', title: 'Destination', widget: 'select', required: true,
+          options: [{ value: 'use_existing', label: 'Keep existing folders' }] },
+      ],
+    },
+    inputSchema: WorkspaceSyncRelationshipReplaceActionInputV1Schema,
+    outputSchema: WorkspaceSyncRelationshipCreateResultV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.disable', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.disable', ...relationshipControlExecution, sideEffectClass: 'danger', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Pause workspace sync', description: 'Pause automatic syncing between two linked folders.',
-    safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_disable' },
+    safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_disable',
+      rpcMethod: WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS['workspace.sync.relationship.disable'] },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputHints: { description: 'Pause automatic syncing until it is resumed.', fields: [
       { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
@@ -127,10 +163,11 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipDisableActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.enable', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.enable', ...relationshipControlExecution, sideEffectClass: 'danger', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Resume workspace sync', description: 'Resume automatic syncing between two linked folders.',
-    safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_enable' },
+    safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_enable',
+      rpcMethod: WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS['workspace.sync.relationship.enable'] },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputHints: { description: 'Resume automatic syncing between these linked folders.', fields: [
       { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
@@ -140,14 +177,11 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipEnableActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.flush', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
-    machineRuntimeDemandForInput: (input, context) => {
-      const machineId = readNonEmptyString(readRecord(input).controllerMachineId);
-      return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
-    },
+    id: 'workspace.sync.relationship.flush', ...relationshipControlExecution, sideEffectClass: 'danger', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' }, workspaceWrite: true,
     title: 'Sync workspace now', description: 'Run one synchronization cycle between two linked folders.',
-    safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_flush' },
+    safety: 'danger', placements: [], bindings: { mcpToolName: 'workspace_sync_relationship_flush',
+      rpcMethod: WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS['workspace.sync.relationship.flush'] },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     inputHints: { description: 'Synchronize these linked folders now.', fields: [
       { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
@@ -157,14 +191,15 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncRelationshipFlushActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.terminate', executionPlacement: 'session', approval: { result: 'required', flow: 'deferred' },
+    id: 'workspace.sync.relationship.terminate', ...relationshipControlExecution, sideEffectClass: 'danger', approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'policy' },
     workspaceWrite: true,
     title: 'Stop workspace sync',
     description: 'Permanently stop syncing two linked folders without deleting either one.',
     safety: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'workspace_sync_relationship_terminate' },
+    bindings: { mcpToolName: 'workspace_sync_relationship_terminate',
+      rpcMethod: WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS['workspace.sync.relationship.terminate'] },
     surfaces: {
       ui: true,
       voice: false,
@@ -274,4 +309,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncConflictInspectActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const WORKSPACE_SYNC_ACTION_SPECS: ReturnType<typeof createWorkspaceSyncActionSpecs> = lazyActionSpecArray(createWorkspaceSyncActionSpecs);
 

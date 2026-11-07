@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { projectDeploymentReceiptInvalidationsForHost } from '@/deployments/receiptEventInvalidation';
 import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accountEntityInvalidation';
 import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import type { PendingSessionResumePort } from '../sessions/activatePendingInactiveSession';
@@ -6,11 +7,12 @@ import type { DaemonShutdownSource } from '../lifecycle/shutdown';
 import os from 'os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 import { readLocalHostIdentity } from '@happier-dev/cli-common/process';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 
-import type { ApiMachineClient } from '@/api/apiMachine';
+import type { ApiMachineClient, MachinePublicationOutcome } from '@/api/apiMachine';
 import { rotateMachineIdForActiveServer } from '@/api/machine/ensureMachineRegistered';
 import type { MachineRpcHandlerDeps } from '@/api/machine/rpcHandlers';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -20,6 +22,8 @@ import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/sessionHandoff/handlers';
 import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+import { readDaemonPluginUiArtifactBytes } from '@/rpc/handlers/daemonContributionRegistryProjection';
+import type { DirectTransferExportPrepareRequest } from '@/api/machine/rpcHandlers.directTransferExports';
 import type { DirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { prepareFoundSkillExport } from '@/machines/transfer/prepareFoundSkillExport';
@@ -36,14 +40,13 @@ import type {
 } from '@happier-dev/protocol';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import {
+  HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1, parseHostEventPayloadV1, type HostEventEnvelopeV1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
@@ -65,7 +68,7 @@ import { activateInactiveUsageLimitResume } from '@/daemon/sessions/activateInac
 import { publishOrphanedStartupSessionEnds } from '@/daemon/sessions/publishOrphanedStartupSessionEnds';
 import { readOrphanedDeadPlainRunnerMarkers, type OrphanedDeadDaemonSession } from '@/daemon/sessions/reattachFromMarkers';
 import { retireOrphanedTerminalControlServiceability } from '@/daemon/sessions/retireOrphanedTerminalControlServiceability';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
 import { subscribeMemorySessionRemoval } from '../memory/subscribeMemorySessionRemoval';
@@ -76,6 +79,7 @@ import type { DaemonServerWorkScheduler } from '../serverWork';
 import { createDaemonConnectivityCoordinator } from '../connection/createDaemonConnectivityCoordinator';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { logger } from '@/ui/logger';
+import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { bindPluginDaemonConnectionStateSource } from '@/agent/runtime/registry/pluginConnectionStateSource';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -89,7 +93,7 @@ import {
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
-import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
+import { createRuntimeProviderModelManagementServices, createProviderAccountOperationScope, type RuntimeProviderAccountModelProjectionContext } from '@/providers/modelManagement/runtimeServices';
 import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, subscribeActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -131,7 +135,7 @@ import type { NormalizedLocalServiceInventorySnapshot } from '../local/services/
 import { projectProviderDiscoveryCandidates } from '@/providers/discovery/project';
 import { createProviderLocalInstallationReader } from '@/providers/discovery/installations';
 import { createDaemonSpawnToolResolutionContext } from '../spawnHooks';
-import { createProviderLocalCatalogFallbackRunner } from '@/providers/probe/localCommand';
+import { createProviderLocalCatalogFallbackRunner, type ProviderLocalCommandRunner } from '@/providers/probe/localCommand';
 import type { createAgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { resolveDaemonSpawnSessionByNonce } from '../controlClient';
 import {
@@ -169,6 +173,7 @@ import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/
 import { createWorkflowRecoveryTriggers } from '@/daemon/workflows/recoveryTriggers';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import type { WorkflowRecoveryTrigger } from '@/daemon/workflows/recovery';
+import { runMachineReconnectPhase } from './reconnectPhase';
 
 function readAccountSettingsChangedHintVersion(update: unknown): number | null {
   if (!update || typeof update !== 'object') return null;
@@ -347,6 +352,7 @@ function reconcileMachineIrohEndpoint(
   runtime: DaemonMachineIrohRuntime | undefined,
 ): DaemonState {
   const base = StoredMachinePublishedDaemonStateV1Schema.parse(state);
+  if (!runtime && !base.peerMediation?.iroh) return base;
   return {
     ...base,
     peerMediation: {
@@ -367,7 +373,7 @@ function removeMachineIrohEndpoint(state: DaemonState | null): DaemonState {
   return reconcileMachineIrohEndpoint(state, undefined);
 }
 
-async function maybeStartPeerMediationLoopback(params: Readonly<{
+export async function maybeStartPeerMediationLoopback(params: Readonly<{
   config: PeerMediationMachineRpcBootstrapConfig | undefined;
   connectedApiMachine: ApiMachineClient;
   credentials: StoredCredentials | undefined;
@@ -441,6 +447,7 @@ async function maybeStartPeerMediationLoopback(params: Readonly<{
           if (!params.acquireWorkspaceSyncMachineIngress) return null;
           if (handshake.initiator.kind !== 'machine') return null;
           const ingress = await params.acquireWorkspaceSyncMachineIngress({
+            actorAccountId: handshake.accountId,
             operationId: handshake.operationId,
             sourceMachineId: handshake.initiator.machineId,
             targetMachineId: handshake.target.machineId,
@@ -645,14 +652,11 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   prepareWorkspaceSyncResolutionExport?: NonNullable<import('@/api/machine/rpcHandlers.workspaceSync').MachineWorkspaceSyncRpcService['prepareConflictResolutionExport']>;
   machineIrohRuntime?: DaemonMachineIrohRuntime;
   acquireLocalServicePreviewApplication?: import('../local/services/preview/routes').LocalServicePreviewRoutes['acquireNativeApplication'];
+  resolveLocalServicePreviewApplication?: import('../local/services/preview/routes').LocalServicePreviewRoutes['resolveApplication'];
   prepareServerTransportForReconnect?: () => Promise<ReadinessProbeResult>;
-  acquireWorkspaceSyncMachineIngress?: (input: Readonly<{
-    operationId: string;
-    sourceMachineId: string;
-    targetMachineId: string;
-    expiresAtMs?: number;
-    signal?: AbortSignal;
-  }>) => Promise<Readonly<{
+  acquireWorkspaceSyncMachineIngress?: (
+    input: import('@/workspaces/sync/workspaceSyncTargetAuthority').AcquireWorkspaceSyncMachineIngressRequest,
+  ) => Promise<Readonly<{
     port: number;
     localCapability: string;
     close(): Promise<void>;
@@ -670,6 +674,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
     attemptId: string;
   }>) => Promise<unknown> | unknown;
   checkRuntimeAuthUsageLimitRecovery?: import('@/session/usageLimitRecoveryControls/runtimeAuthUsageLimitRecoveryControl').CheckRuntimeAuthUsageLimitRecovery;
+  wakeRuntimeAuthRecoveryPresentation?: (sessionId?: string) => void;
   setDaemonServerWorkOnline?: (online: boolean) => void;
   onMachineConnectionOnline?: () => void | Promise<void>;
   reconcileConnectedServicesProjection?: Parameters<ApiMachineClient['onConnectedServicesProjection']>[0];
@@ -734,11 +739,9 @@ export async function bootstrapMachineSyncRuntime(
     };
   }
 
-  // ApiMachineClient discards a persisted endpoint before it can connect.
-  // Retain the withdrawal fact until the reconnect publisher has removed the
-  // old server-side daemon state as well.
-  let needsPersistedIrohEndpointWithdrawal = Boolean(params.machine.daemonState?.peerMediation?.iroh);
-  const connectedApiMachine = await params.createConnectedApiMachine(params.machine);
+  // The Machine client owns persisted-endpoint withdrawal as well as write ordering.
+  const connectedApiMachine = await timeWebLatencyPhase('machine.bootstrap.connectedClient',
+    () => params.createConnectedApiMachine(params.machine));
   const workflowRecoveryTriggers = params.recoverWorkflowRuns
     ? createWorkflowRecoveryTriggers(params.recoverWorkflowRuns)
     : null;
@@ -762,52 +765,26 @@ export async function bootstrapMachineSyncRuntime(
   let cleanupPeerTcpTunnelRelay: (() => void) | null = null;
   let resumeMachineConnectionPublications = async (): Promise<void> => {};
   let disposeInactiveSessionUsageLimitRecovery: (() => void) | null = null;
-  let peerMediationPublicationInFlight: Promise<Awaited<ReturnType<ApiMachineClient['updateDaemonState']>> | null> | null = null;
-  let peerMediationPublicationRequested = false;
   const refreshPeerMediationEndpointPublication = async () => {
-    const hadPendingPublication = peerMediationPublicationRequested;
-    peerMediationPublicationRequested = true;
     if (!connectedApiMachine || params.isShuttingDown()) return 'suppressed' as const;
-    if (peerMediationPublicationInFlight) return peerMediationPublicationInFlight;
-    if (!hadPendingPublication && !peerMediationLoopback && !needsPersistedIrohEndpointWithdrawal
-      && !params.machine.daemonState?.peerMediation?.iroh
-      && !params.machine.daemonState?.peerMediation?.loopback) {
-      peerMediationPublicationRequested = false;
-      return 'unchanged' as const;
-    }
-    const operation = (async () => {
-      let outcome: Awaited<ReturnType<ApiMachineClient['updateDaemonState']>> = 'unchanged';
-      while (peerMediationPublicationRequested && !params.isShuttingDown()) {
-        peerMediationPublicationRequested = false;
-        outcome = await connectedApiMachine.updateDaemonState((state) => {
-          // Read the live owner inside the CAS handler, including conflict retries:
-          // a captured startup advert must never revive a stopped listener.
-          const loopback = peerMediationLoopback;
-          const endpoint = loopback?.readEndpoint();
-          return reconcileMachineIrohEndpoint(
-            loopback && endpoint
-              ? mergePeerMediationLoopbackEndpoint(state, endpoint, loopback.activeFlows)
-              : removePeerMediationLoopbackEndpoint(state),
-            activeMachineIrohRuntime,
-          );
-        });
-        if (outcome === 'suppressed') {
-          peerMediationPublicationRequested = true;
-          break;
-        }
-        if (outcome === 'published') needsPersistedIrohEndpointWithdrawal = false;
-      }
-      return outcome;
-    })().catch((error) => {
-      peerMediationPublicationRequested = true;
+    try {
+      return await runMachineReconnectPhase('endpoint-publication', () => connectedApiMachine!.updateDaemonState((state) => {
+        // The canonical Machine drain owns ordering and conflict reconciliation.
+        // Always read the live listener when this reducer actually runs.
+        const loopback = peerMediationLoopback;
+        const endpoint = loopback?.readEndpoint();
+        return reconcileMachineIrohEndpoint(
+          loopback && endpoint
+            ? mergePeerMediationLoopbackEndpoint(state, endpoint, loopback.activeFlows)
+            : removePeerMediationLoopbackEndpoint(state),
+          activeMachineIrohRuntime,
+        );
+      }));
+    } catch (error) {
+      // The existing connect/resume wake re-reads the live owner, including a
+      // failed withdrawal after its listener has stopped. No timed retry.
       logger.warn('[DAEMON RUN] Failed to reconcile peer mediation endpoints', error);
       return null;
-    });
-    peerMediationPublicationInFlight = operation;
-    try {
-      return await operation;
-    } finally {
-      if (peerMediationPublicationInFlight === operation) peerMediationPublicationInFlight = null;
     }
   };
 
@@ -882,44 +859,38 @@ export async function bootstrapMachineSyncRuntime(
           directPeerServerLifecycle.clearPublishedTransfer(transferId, filesystemScope);
         },
         prepareExportSession: async (
-          input:
-            | Readonly<{
-                t: 'prompt_asset_download_v1';
-                path: string;
-              }>
-            | Readonly<{
-                t: 'prompt_registry_download_v1';
-                kind: 'skill';
-                sourceId: string;
-                itemId: string;
-                version: string;
-              }>
-            | Readonly<{
-                t: 'workspace_file_download_v1';
-                workingDirectory: string;
-                path: string;
-                asZip: boolean;
-                confinedToWorkingDirectory?: boolean;
-              }>
-            | Readonly<{
-                t: 'workspace_sync_seed_v1';
-                operationId: string;
-                sourceWorkspaceRefId: string;
-                targetMachineId: string;
-                contentPolicy: WorkspaceContentPolicyV1;
-              }>
-            | Readonly<{
-                t: 'workspace_sync_resolution_v1';
-              } & import('@happier-dev/protocol').WorkspaceSyncTargetConflictStageV1>
-            | Readonly<{
-                t: 'composer_media_stage_inspect_v1';
-                handle: ComposerContentHandleV1;
-                offset: number;
-                maxBytes: number;
-              }>,
+          input: DirectTransferExportPrepareRequest,
           filesystemScope?: PreparedFilesystemTransferScope,
           context?: RpcHandlerContext,
         ) => {
+          if (input.t === 'plugin_ui_artifact_download_v1') {
+            context?.signal?.throwIfAborted();
+            const response = await readDaemonPluginUiArtifactBytes(input.request);
+            context?.signal?.throwIfAborted();
+            const body = JSON.stringify(response);
+            const directory = createHappierTempDir({ purpose: 'plugin-ui-artifact-download' });
+            const name = 'plugin-ui-artifact.json';
+            const filePath = join(directory, name);
+            const sizeBytes = Buffer.byteLength(body, 'utf8');
+            try {
+              await fs.writeFile(filePath, body, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+              context?.signal?.throwIfAborted();
+              const payloadSource = createFileTransferPayloadSource({ filePath, sizeBytes, name,
+                dispose: async () => { await removeHappierTempDirAsync(directory); } });
+              const published = await directPeerServerLifecycle.publishTransferWhenReady({
+                transferId: `plugin-ui-artifact:${randomUUID()}`, payloadSource,
+              });
+              if (context?.signal?.aborted) {
+                directPeerServerLifecycle.clearPublishedTransfer(published.transferId);
+                context.signal.throwIfAborted();
+              }
+              return { transferId: published.transferId, endpointCandidates: published.endpointCandidates,
+                expiresAt: published.expiresAt, name, sizeBytes };
+            } catch (error) {
+              await removeHappierTempDirAsync(directory);
+              throw error;
+            }
+          }
           if (input.t === 'prompt_asset_download_v1') {
             return await prepareFoundSkillExport({
               lifecycle: directPeerServerLifecycle,
@@ -1054,13 +1025,13 @@ export async function bootstrapMachineSyncRuntime(
       if (!inactiveUsageLimitRecoveryCheckOwner.hasRunner(context.sessionId)) {
         return {
           status: 'wait',
-          nextCheckAtMs: Date.now() + 60_000,
+          nextCheckAtMs: null,
           lastProbeError: 'usage_limit_recovery_runner_unavailable',
         };
       }
       const result = await inactiveUsageLimitRecoveryCheckOwner.run(context.sessionId);
       return resolveInactiveUsageLimitRecoverySchedulerResult({
-        result, nowMs: Date.now(), fallbackRetryDelayMs: 60_000,
+        result,
       });
     },
   });
@@ -1069,18 +1040,19 @@ export async function bootstrapMachineSyncRuntime(
 
   if (connectedApiMachine) {
     if (storedCredentials) {
-      machineConnectionStateCleanup = await subscribeManagedSessionDirectoryRemoval({
+      machineConnectionStateCleanup = await timeWebLatencyPhase('machine.bootstrap.sessionRemoval', () => subscribeManagedSessionDirectoryRemoval({
         directories: createManagedSessionDirectories(),
         token: storedCredentials.token,
         stopSession: params.stopSession,
         onSessionDeletedChange: (listener) => connectedApiMachine.onSessionDeletedChange(listener),
         onSessionAccessReset: (listener) => connectedApiMachine.onSessionAccessReset(listener),
-        onConnectionStateChange: (listener) => connectedApiMachine.onConnectionStateChange(listener),
-      });
+      }));
     }
-    automationWorker = await params.startAutomationWorkerForMachine(params.machineId);
+    automationWorker = await timeWebLatencyPhase('machine.bootstrap.automation',
+      () => params.startAutomationWorkerForMachine(params.machineId));
     const activeAutomationWorker = automationWorker;
-    memoryWorker = await params.startMemoryWorkerForMachine(params.machineId);
+    memoryWorker = await timeWebLatencyPhase('machine.bootstrap.memory',
+      () => params.startMemoryWorkerForMachine(params.machineId));
     if (memoryWorker) {
       // Derived daemon-memory rows for a deleted, access-revoked, or
       // archive-excluded Session are cleared through the memory owner's single
@@ -1088,6 +1060,7 @@ export async function bootstrapMachineSyncRuntime(
       // change cursor's custody window, so a failure replays the fact.
       const disposeMemorySessionRemoval = subscribeMemorySessionRemoval({
         memoryWorker,
+        onSessionChanged: (listener) => connectedApiMachine.onSessionChanged(listener),
         onSessionTranscriptRevised: (listener) => connectedApiMachine.onSessionTranscriptRevised(listener),
         onSessionDeletedChange: (listener) => connectedApiMachine.onSessionDeletedChange(listener),
         onSessionAccessRevoked: (listener) => connectedApiMachine.onSessionAccessRevoked(listener),
@@ -1104,11 +1077,11 @@ export async function bootstrapMachineSyncRuntime(
         },
       };
     }
-    voiceInferenceWorker = await params.startVoiceInferenceWorkerForMachine(
+    voiceInferenceWorker = await timeWebLatencyPhase('machine.bootstrap.voice', () => params.startVoiceInferenceWorkerForMachine(
       params.machineId,
       normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
         ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
-    );
+    ));
     const providerFeatureGate = {
       isEnabled: (featureId: 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement') => {
         const serverSnapshot = params.getServerFeaturesSnapshot?.();
@@ -1141,7 +1114,11 @@ export async function bootstrapMachineSyncRuntime(
       }
     };
     void triggerProviderLegacyProfileMigration();
-    const providerLocalToolContext = createDaemonSpawnToolResolutionContext({ processEnv: process.env });
+    const providerLocalToolContext = {
+      ...createDaemonSpawnToolResolutionContext({ processEnv: process.env }),
+      runSystemTool: ({ signal, ...request }: Parameters<ProviderLocalCommandRunner['runSystemTool']>[0]) =>
+        createDaemonSpawnToolResolutionContext({ processEnv: process.env, signal }).runSystemTool(request),
+    };
     const resolveSharedGateway = createMachineSharedProviderGatewayResolver({
       machineId: params.machineId,
       readAccountId: () => normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
@@ -1150,16 +1127,21 @@ export async function bootstrapMachineSyncRuntime(
     });
     let providerRuntimeServices!: ReturnType<typeof createRuntimeProviderModelManagementServices>;
     let providerLocalInstallationReader!: ReturnType<typeof createProviderLocalInstallationReader>;
-    const providerConnectionRuntimeServices = params.credentials
-      ? createRuntimeProviderConnectionServices({
+    const createConnectionRuntimeServices = (accountContext?: RuntimeProviderAccountModelProjectionContext) => {
+      const credentials = accountContext ? accountContext.savedSecretOperationContext?.credentials : params.credentials;
+      if (!credentials) return null;
+      return createRuntimeProviderConnectionServices({
           machineId: params.machineId,
-          credentials: params.credentials,
+          credentials,
+          ...(accountContext?.savedSecretOperationContext ? { operationContext: accountContext.savedSecretOperationContext } : {}),
           happyHomeDir: configuration.happyHomeDir,
           featureGate: providerFeatureGate,
-          resolveSharedGateway,
-          runtimeSummary: (input) => providerRuntimeServices.summary(input),
+          ...(accountContext ? accountContext.managedRuntimeAccount
+            ? { resolveSharedGateway: accountContext.managedRuntimeAccount.resolveSharedGateway } : {} : { resolveSharedGateway }),
+          runtimeSummary: (input) => providerRuntimeServices.summary(input,
+            accountContext ? createProviderAccountOperationScope(accountContext) : undefined),
           refreshOnEnable: (input) => providerRuntimeServices.probe(input),
-          ...(params.resolveManagedPurposeBindingIntent
+          ...(accountContext ? { resolveManagedPurposeBindingIntent: accountContext.resolveManagedPurposeBindingIntent } : params.resolveManagedPurposeBindingIntent
             ? {
                 resolveManagedPurposeBindingIntent:
                   params.resolveManagedPurposeBindingIntent,
@@ -1176,8 +1158,9 @@ export async function bootstrapMachineSyncRuntime(
               : [];
           },
           localInstallations: (request) => providerLocalInstallationReader.read(request),
-        })
-      : null;
+        });
+    };
+    const providerConnectionRuntimeServices = createConnectionRuntimeServices();
     const providerConnectionUnavailable = async (request: Readonly<{ connectionId?: string; machineId: string }>) => ({
       status: 'error' as const,
       error: createProviderErrorV1('provider_feature_disabled', {
@@ -1185,12 +1168,12 @@ export async function bootstrapMachineSyncRuntime(
         machineId: request.machineId,
       }),
     });
-    const providerHomeServerUrl = resolveServerHttpBaseUrl();
+    const readProviderHomeServerUrl = captureServerHttpBaseUrl();
     const readProviderModelProjection: ProviderRuntimeModelProjectionReader | undefined = storedCredentials
       ? (request, signal) => {
           const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
           return createAccountScopedProviderModelProjectionReader({
-            serverUrl: providerHomeServerUrl,
+            serverUrl: readProviderHomeServerUrl(),
             readCredentials: async () => storedCredentials,
             readAccountSettingsSnapshot: async () => getActiveAccountSettingsSnapshot(),
             isCurrent: () => !params.isShuttingDown()
@@ -1200,9 +1183,13 @@ export async function bootstrapMachineSyncRuntime(
         }
       : undefined;
     providerRuntimeServices = createRuntimeProviderModelManagementServices({
+      secretSources: params.secretSources,
       machineId: params.machineId,
       happyHomeDir: configuration.happyHomeDir,
       featureGate: providerFeatureGate,
+      ...(connectedApiMachine ? { invokeConnectedAccountNativeModels: (request, signal) =>
+        connectedApiMachine.getPeerMediationMachineRpcHandlerManager().invokeLocal(RPC_METHODS.CAPABILITIES_INVOKE, request,
+          { signal, verifiedPeerAuthority: 'account_automation' }) } : {}),
       resolveSharedGateway,
       ...(params.resolveManagedPurposeBindingIntentSelection
         ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
@@ -1226,7 +1213,6 @@ export async function bootstrapMachineSyncRuntime(
     });
     providerLocalInstallationReader = createProviderLocalInstallationReader({
       ...providerLocalToolContext,
-      runtimeStore: providerRuntimeServices.runtimeStore,
     });
     const agentCatalogObservation = params.createAgentCatalogObservation?.(
       providerRuntimeServices.probeInfrastructure,
@@ -1247,6 +1233,14 @@ export async function bootstrapMachineSyncRuntime(
     providerOperationsProducer = createRuntimeProviderOperationsProducer({
       machineId: params.machineId,
       featureGate: providerFeatureGate,
+      readForAccount: async (request, context) => {
+        if (request.actionId === 'providers.models.list') {
+          return await providerRuntimeServices.models(request.input, context.signal, createProviderAccountOperationScope(context));
+        }
+        const services = createConnectionRuntimeServices(context);
+        return services ? await services.describeConnections(request.input, context.signal)
+          : { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: params.machineId }) };
+      },
       machineServices: {
         ...providerRuntimeServices,
         probe: (input, waiterLifetime) => providerRuntimeServices.probe(
@@ -1464,7 +1458,7 @@ export async function bootstrapMachineSyncRuntime(
     // store. Narrow callers without that shared runtime do not collect into an unread fallback.
     const peerMediationObservabilityEmitter = params.peerMediationMachineRpc?.observability;
 
-    peerMediationLoopback = await maybeStartPeerMediationLoopback({
+    peerMediationLoopback = await timeWebLatencyPhase('machine.bootstrap.peerLoopback', () => maybeStartPeerMediationLoopback({
       config: params.peerMediationMachineRpc,
       observability: peerMediationObservabilityEmitter,
       connectedApiMachine,
@@ -1485,7 +1479,7 @@ export async function bootstrapMachineSyncRuntime(
         : {}),
       ...(voiceBinaryAppendConsumer ? { voiceBinaryAppendConsumer } : {}),
       ...(voiceBinaryTerminalConsumer ? { voiceBinaryTerminalConsumer } : {}),
-    }).catch((error) => {
+    })).catch((error) => {
       logger.warn('[DAEMON RUN] Failed to start peer mediation loopback route', error);
       return null;
     });
@@ -1509,13 +1503,11 @@ export async function bootstrapMachineSyncRuntime(
         try {
           await startedPeerMediationLoopback.stop();
         } finally {
-          // Settle any older write before the final withdrawal. Reconnect and
-          // endpoint handlers now see no listener, even while stop is pending.
-          await peerMediationPublicationInFlight?.catch(() => {});
+          // The Machine drain orders this withdrawal after any older write;
+          // pending live-owner reducers already see the retired listener.
           await connectedApiMachine.updateDaemonState(removePeerMediationLoopbackEndpoint, {
             allowWhileQuiescing: true,
           }).catch((error) => {
-            peerMediationPublicationRequested = true;
             logger.warn('[DAEMON RUN] Failed to withdraw peer mediation loopback endpoint', error);
           });
         }
@@ -1523,7 +1515,8 @@ export async function bootstrapMachineSyncRuntime(
       if (params.machineIrohRuntime) {
         const admissionPort = Number(new URL(peerMediationLoopback.endpoint.url).port);
         try {
-          await params.machineIrohRuntime.startAttemptAcceptor({ admissionPort });
+          await timeWebLatencyPhase('machine.bootstrap.irohAcceptor',
+            () => params.machineIrohRuntime!.startAttemptAcceptor({ admissionPort }));
           activeMachineIrohRuntime = params.machineIrohRuntime;
           let stopped = false;
           stopMachineIrohAcceptor = async () => {
@@ -1544,7 +1537,6 @@ export async function bootstrapMachineSyncRuntime(
             await connectedApiMachine.updateDaemonState(removeMachineIrohEndpoint, {
               allowWhileQuiescing: true,
             }).catch((error) => {
-              peerMediationPublicationRequested = true;
               logger.warn('[DAEMON RUN] Failed to remove retired Iroh machine endpoint publication', error);
             });
           };
@@ -1552,17 +1544,18 @@ export async function bootstrapMachineSyncRuntime(
           logger.warn('[DAEMON RUN] Failed to start Iroh machine acceptor', error);
         }
         if (activeMachineIrohRuntime && hasNativePreviewApplication) {
-          await connectedApiMachine.setLocalServicePreviewNativeAccessLive(true).catch((error) => {
+          await timeWebLatencyPhase('machine.bootstrap.nativePreview',
+            () => connectedApiMachine.setLocalServicePreviewNativeAccessLive(true)).catch((error) => {
             logger.warn('[DAEMON RUN] Failed to publish native preview capability', error);
           });
         }
       }
     }
 
-    const peerTcpTunnelRelayContext = await resolvePeerTcpTunnelRelayBootstrapContext({
+    const peerTcpTunnelRelayContext = await timeWebLatencyPhase('machine.bootstrap.peerRelay', () => resolvePeerTcpTunnelRelayBootstrapContext({
       config: params.peerMediationMachineRpc,
       credentials: params.credentials,
-    }).catch((error) => {
+    })).catch((error) => {
       logger.warn('[DAEMON RUN] Failed to resolve peer TCP tunnel relay context', error);
       return null;
     });
@@ -1572,6 +1565,7 @@ export async function bootstrapMachineSyncRuntime(
           accountId: peerTcpTunnelRelayContext.accountId,
           machineId: params.machineId,
           serverFeatures: peerTcpTunnelRelayContext.serverFeatures,
+          resolvePreviewApplication: params.resolveLocalServicePreviewApplication,
           nowMs,
           eventPort: {
             subscribe: (listener) => connectedApiMachine.onPeerTcpTunnelRelayEnvelope(listener),
@@ -1605,6 +1599,10 @@ export async function bootstrapMachineSyncRuntime(
     if (liveStreamCaptureAdapter) {
       const liveStreamRelayTerminator = createMachineLiveStreamRelayTerminator({
         machineId: params.machineId,
+        accountId: normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
+          ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
+        sourceMachineInstallationId: readInstallationIdentityIfExistsSync()?.installationId,
+        resolveRelayAuthorizationTrustRoots: params.resolvePeerMediationTrustRoots,
         captureAdapter: liveStreamCaptureAdapter,
         nowMs: params.peerMediationMachineRpc?.nowMs ?? (() => Date.now()),
         emitEnvelope: (payload) => connectedApiMachine.sendMachineLiveStreamRelayEnvelope(payload),
@@ -1652,8 +1650,8 @@ export async function bootstrapMachineSyncRuntime(
 
     if (storedCredentials) {
       const credentials = storedCredentials;
-      const stopProjectRowsRefresh = connectedApiMachine.onAccountProjectRowsChanged(async ({ signal }) => {
-        await readProjectAccountRows({ credentials, signal, publication: 'installed' });
+      const stopProjectRowsRefresh = connectedApiMachine.onAccountProjectRowsChanged(async ({ signal, keys }) => {
+        await readProjectAccountRows({ credentials, signal, publication: 'installed', changedKeys: keys });
       });
       const priorMachineConnectionStateCleanup = machineConnectionStateCleanup;
       machineConnectionStateCleanup = () => {
@@ -1682,7 +1680,9 @@ export async function bootstrapMachineSyncRuntime(
     if (storedCredentials) {
       const credentials = storedCredentials;
       const followMachine = connectedApiMachine;
-      const followHome = { serverId: params.requesterServerId ?? configuration.activeServerId, serverUrl: resolveServerHttpBaseUrl() };
+      const readFollowHomeServerUrl = captureServerHttpBaseUrl();
+      const followHome = { serverId: params.requesterServerId ?? configuration.activeServerId,
+        get serverUrl() { return readFollowHomeServerUrl(); } };
       const followLifetime = new AbortController();
       const reconcileFollowReceiverAtHome = async (sessionId: string, context?: RequesterSessionRuntimeContext, sourceSessionId?: string): Promise<void> => {
         // The Account daemon owns resource material even when a restricted
@@ -1702,6 +1702,14 @@ export async function bootstrapMachineSyncRuntime(
           if (!selected || !('receiverSessionIds' in selected) || !selected.receiverSessionIds.includes(sessionId)
             || !await isCurrent()) return;
         }
+        if (sourceSessionId) {
+          // Private-rule discovery already named this source and receiver.
+          // The range owner refreshes its rules and proves each original's
+          // admission; a receiver-wide observation cannot add source authority.
+          await params.dispatchSessionFollowOccurrence?.({ destinationSessionId: sessionId,
+            sourceSessionId, observations: [] });
+          return;
+        }
         const installation = readInstallationIdentityIfExistsSync();
         if (!installation) return;
         const credentials = context?.bootstrap.credentials ?? storedCredentials;
@@ -1717,7 +1725,7 @@ export async function bootstrapMachineSyncRuntime(
               const origin = await resolveOrigin?.(followLifetime.signal);
               if (!origin || origin.machineId !== params.machineId || !await isCurrent()) return null;
               const observed = await fetchInactiveSessionFollowObservations({ token: credentials.token, destinationSessionId: sessionId,
-                machineId: params.machineId, installationId: installation.installationId, signal: followLifetime.signal });
+                machineId: params.machineId, installationId: installation.installationId, reason: 'receiver-recovery', signal: followLifetime.signal });
               if (!observed?.ok || observed.target.homeId !== origin.serverIdentityId
                 || observed.target.accountId !== readAccountIdFromToken(credentials.token)
                 || observed.target.sessionId !== sessionId || observed.target.machineId !== params.machineId
@@ -1765,10 +1773,17 @@ export async function bootstrapMachineSyncRuntime(
       // The same exact-Session feed callback and reconnect visitor own absent
       // receiver discovery. Pending acceptance, not launch, ACKs Discussion C1.
       const stopFollowSessionChanges = connectedApiMachine.onSessionChanged(async change => {
+        if (!params.isShuttingDown() && !change.removed && change.followReceiverAvailabilityChanged === true) {
+          params.wakeRuntimeAuthRecoveryPresentation?.(change.sessionId);
+        }
+        if (change.removed || change.followSourceChanged === false && change.followReceiverAvailabilityChanged === false) return;
         // A new rule has no ordinary edge to invalidate its destination. Read
         // receiver identities from the installed Account's existing cache;
         // every destination still proves its exact Home/Machine admission.
-        const rules = await params.dispatchSessionFollowOccurrence?.({ sourceSessionIdChanged: change.sessionId });
+        const rules = await params.dispatchSessionFollowOccurrence?.({ sourceSessionIdChanged: change.sessionId,
+          ...(change.followSourceChanged === false ? { followSourceChanged: false } : {}),
+          ...(change.followReceiverAvailabilityChanged === undefined ? {} : {
+            followReceiverAvailabilityChanged: change.followReceiverAvailabilityChanged }) });
         const receivers = [...new Set(rules && 'receiverSessionIds' in rules ? rules.receiverSessionIds : [])];
         const results = await Promise.allSettled(receivers.map(sessionId => reconcileFollowReceiver(sessionId,
           sessionId === change.sessionId ? undefined : change.sessionId)));
@@ -1777,8 +1792,13 @@ export async function bootstrapMachineSyncRuntime(
       });
       const stopFollowAccountChanges = connectedApiMachine.onSessionFollowRulesChanged(async change => {
         if (!change || followLifetime.signal.aborted) return;
-        await params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: change.full ? {} : {
-          workflowRunIds: change.workflowRunIds, discussionIds: change.discussionIds } });
+        // Follow's producer publishes exact receiver demand independently of
+        // generic Session/Pending/metadata writes on the same Account feed.
+        for (const sessionId of change.receiverSessionIds ?? []) await reconcileFollowReceiver(sessionId);
+        if (change.full || change.workflowRunIds.length || change.discussionIds?.length) {
+          await params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: change.full ? { configurationChanged: true } : {
+            workflowRunIds: change.workflowRunIds, discussionIds: change.discussionIds } });
+        }
       });
       const priorFollowLifetimeCleanup = machineConnectionStateCleanup;
       machineConnectionStateCleanup = () => {
@@ -1861,7 +1881,7 @@ export async function bootstrapMachineSyncRuntime(
             return;
           }
           await Promise.all(discovery.bindings.map(async binding => {
-            await connectedApiMachine.requestSessionMessageReplyRecoveryForSession(binding.sessionId)
+            await connectedApiMachine.requestSessionMessageReplyRecoveryForSession(binding.sessionId, { retryFailedPublications: true })
               .catch(error => logger.warn('[DAEMON RUN] Requester reply recovery remains in original custody', error));
             await reconcileFollowReceiver(binding.sessionId).catch(error => logger.warn('[DAEMON RUN] Requester Follow read remains pending', error));
             await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(binding.sessionId)
@@ -1882,6 +1902,13 @@ export async function bootstrapMachineSyncRuntime(
     connectedApiMachine.onAutomationWorkInvalidated(async () => {
       if (!params.isShuttingDown()) await activeAutomationWorker?.catchUp();
     });
+    const cleanupHeartbeatReceipts = connectedApiMachine.onHealthCheckHeartbeatReceived(payload => {
+      publishDaemonHostEvent({
+        eventId: HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1,
+        scope: { kind: 'account' },
+        payload,
+      }, params.isShuttingDown);
+    });
     const priorHeartbeatLifetimeCleanup = machineConnectionStateCleanup;
     const mcpCatalogScopeKey = storedCredentials ? resolveAccountSettingsScopeKey(storedCredentials) : undefined;
     const cleanupMcpCatalog = subscribeActiveAccountSettingsKeys({ facets: ['mcpServerCatalog'] }, (previous, next) => {
@@ -1893,6 +1920,7 @@ export async function bootstrapMachineSyncRuntime(
       if (event) publishDaemonHostEvent(event, params.isShuttingDown);
     });
     machineConnectionStateCleanup = () => {
+      cleanupHeartbeatReceipts();
       cleanupMcpCatalog();
       priorHeartbeatLifetimeCleanup?.();
     };
@@ -1915,6 +1943,7 @@ export async function bootstrapMachineSyncRuntime(
     connectedApiMachine.onUpdate((update) => {
       const body = UpdateBodySchema.safeParse(update?.body);
       if (body.success && body.data.t === 'account-change' && !params.isShuttingDown()) {
+        for (const event of projectDeploymentReceiptInvalidationsForHost(body.data)) publishDaemonHostEvent(event, params.isShuttingDown);
         const entities = projectAccountEntitiesInvalidationForHost(body.data);
         if (entities) publishDaemonHostEvent(entities, params.isShuttingDown);
       }
@@ -1945,9 +1974,9 @@ export async function bootstrapMachineSyncRuntime(
     const connectedServiceQuotasLoopHandle = params.connectedServiceQuotasLoopHandle;
     const connectedServiceRefreshLoopHandle = params.connectedServiceRefreshLoopHandle;
     const publicProfileRefreshHandle = params.publicProfileRefreshHandle;
-    const unsubscribePendingResetQuotaTick = connectedServiceQuotasLoopHandle?.subscribeAfterTick(async () => {
+    const unsubscribePendingResetQuotaTick = connectedServiceQuotasLoopHandle?.subscribeAfterTick(async signal => {
       if (params.isShuttingDown()) return;
-      await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStartsForTrackedSessions()
+      await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStartsForTrackedSessions(signal)
         .catch(error => logger.warn('[DAEMON RUN] Pending reset quota demand remains held', error));
     });
 
@@ -2002,6 +2031,7 @@ export async function bootstrapMachineSyncRuntime(
       const online = state.phase === 'online';
       params.setDaemonServerWorkOnline?.(online);
       if (online) {
+        params.wakeRuntimeAuthRecoveryPresentation?.();
         void (async () => {
           try {
             await usageLimitRecoveryMutationCustody?.bindRecoveredJournals([]);
@@ -2051,43 +2081,41 @@ export async function bootstrapMachineSyncRuntime(
         return;
       }
 
-      const operation = (async () => {
-        try {
-          const cliUpdate = params.readCliUpdateFacts?.();
-          const cliSnapshot = await detectCliSnapshotOnDaemonPath({});
-          const agentInventoryCheckedAt = Date.now();
-          let devcontainerChild: MachineMetadata['devcontainerChild'] | null = undefined;
-          if (params.machine.metadata?.devcontainerChild && params.credentials) {
-            const origin = await params.resolveCurrentMachineExecutionOriginContext?.();
-            if (!origin || origin.machineId !== params.machineId) {
-              throw new Error('Current Home identity is unavailable for admitted child metadata.');
-            }
-            devcontainerChild = await readCurrentManagedChildMachineMetadata({ current: params.machine.metadata,
-              credentials: params.credentials, homeId: origin.serverIdentityId, machineId: origin.machineId,
-              serverHttpBaseUrl: resolveServerHttpBaseUrl() });
+      const operation = runMachineReconnectPhase('metadata-publication', async () => {
+        const cliUpdate = params.readCliUpdateFacts?.();
+        const cliSnapshot = await detectCliSnapshotOnDaemonPath({});
+        const agentInventoryCheckedAt = Date.now();
+        let devcontainerChild: MachineMetadata['devcontainerChild'] | null = undefined;
+        if (params.machine.metadata?.devcontainerChild && params.credentials) {
+          const origin = await params.resolveCurrentMachineExecutionOriginContext?.();
+          if (!origin || origin.machineId !== params.machineId) {
+            throw new Error('Current Home identity is unavailable for admitted child metadata.');
           }
-          const outcome = await connectedApiMachine.updateMachineMetadata((metadata) => {
-            const base = (metadata ?? params.machine.metadata ?? {}) as Partial<MachineMetadata>;
-            return refreshMachineMetadataForCurrentDaemon(base, {
-              host: params.preferredHost,
-              platform: readLocalHostIdentity().platform,
-              arch: os.arch(),
-              happyCliVersion: params.cliVersion,
-              homeDir: os.homedir(),
-              happyHomeDir: params.happyHomeDir,
-              happyLibDir: params.happyLibDir,
-              ...(cliUpdate ? { cliUpdate } : {}),
-              ...(devcontainerChild !== undefined ? { devcontainerChild } : {}),
-            });
-          }, { agentInventoryObservation: { snapshot: cliSnapshot, checkedAt: agentInventoryCheckedAt } });
-          if (outcome !== 'suppressed') {
-            didRefreshMachineMetadata = true;
-            publishedCliUpdateFacts = JSON.stringify(cliUpdate ?? null);
-          }
-        } catch (error) {
-          logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
+          devcontainerChild = await readCurrentManagedChildMachineMetadata({ current: params.machine.metadata,
+            credentials: params.credentials, homeId: origin.serverIdentityId, machineId: origin.machineId,
+            serverHttpBaseUrl: resolveServerHttpBaseUrl() });
         }
-      })();
+        const outcome = await connectedApiMachine.updateMachineMetadata((metadata) => {
+          const base = (metadata ?? params.machine.metadata ?? {}) as Partial<MachineMetadata>;
+          return refreshMachineMetadataForCurrentDaemon(base, {
+            host: params.preferredHost,
+            platform: readLocalHostIdentity().platform,
+            arch: os.arch(),
+            happyCliVersion: params.cliVersion,
+            homeDir: os.homedir(),
+            happyHomeDir: params.happyHomeDir,
+            happyLibDir: params.happyLibDir,
+            ...(cliUpdate ? { cliUpdate } : {}),
+            ...(devcontainerChild !== undefined ? { devcontainerChild } : {}),
+          });
+        }, { agentInventoryObservation: { snapshot: cliSnapshot, checkedAt: agentInventoryCheckedAt } });
+        if (outcome !== 'suppressed') {
+          didRefreshMachineMetadata = true;
+          publishedCliUpdateFacts = JSON.stringify(cliUpdate ?? null);
+        }
+      }).catch((error) => {
+        logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
+      });
       machineMetadataRefreshInFlight = operation;
       try {
         await operation;
@@ -2116,51 +2144,53 @@ export async function bootstrapMachineSyncRuntime(
       void republishCliUpdateFactsIfChanged();
     }) ?? null;
     let hasPendingMachineConnectionPublications = false;
-    let machineConnectionPublicationsInFlight: Promise<void> | null = null;
+    let machineConnectionPublicationsInFlight: Promise<MachinePublicationOutcome | null> | null = null;
     let pendingOrphanedSessions = params.orphanedDeadDaemonSessions ?? [];
-    const refreshMachineConnectionPublications = async (): Promise<void> => {
+    const refreshMachineConnectionPublications = async (): Promise<MachinePublicationOutcome | null> => {
       hasPendingMachineConnectionPublications = true;
-      if (params.isShuttingDown()) return;
+      if (params.isShuttingDown()) return null;
       if (machineConnectionPublicationsInFlight) {
-        await machineConnectionPublicationsInFlight;
+        const outcome = await machineConnectionPublicationsInFlight;
         if (hasPendingMachineConnectionPublications && !params.isShuttingDown()) {
-          await refreshMachineConnectionPublications();
+          return refreshMachineConnectionPublications();
         }
-        return;
+        return outcome;
       }
 
       const operation = (async () => {
         // Registration retains incumbent state. Publish this daemon's lazy
         // transfer declaration only once the Machine transport is connected.
-        await params.attachTransferRuntimeStatePublisher(connectedApiMachine);
-        if (params.isShuttingDown()) return;
-        // connect() starts the transport asynchronously. Settle dead markers only
-        // on this connected edge; retain failures for reconnect or handoff resume.
-        if (params.credentials) {
-          const discovered = await readOrphanedDeadPlainRunnerMarkers();
-          const knownPids = new Set(pendingOrphanedSessions.map(marker => marker.pid));
-          pendingOrphanedSessions = [...pendingOrphanedSessions, ...discovered.filter(marker => !knownPids.has(marker.pid))];
-        }
-        if (pendingOrphanedSessions.length > 0) {
-          pendingOrphanedSessions = await publishOrphanedStartupSessionEnds({
-            apiMachine: connectedApiMachine,
-            orphanedDeadDaemonSessions: pendingOrphanedSessions,
-            isSessionAlreadyRunning: params.isSessionAlreadyRunning,
-            isShuttingDown: params.isPublicationQuiescing ?? params.isShuttingDown,
-            ...(params.credentials ? { retireTerminalControlServiceability: async (marker: OrphanedDeadDaemonSession) => {
-              await retireOrphanedTerminalControlServiceability({ marker, credentials: params.credentials!,
-                serverId: params.requesterServerId ?? configuration.activeServerId,
-                serverHttpBaseUrl: resolveServerHttpBaseUrl(), machineId: params.machineId,
-                encryptionMode: params.machine.encryptionMode ?? 'e2ee',
-                custodianAccountId: normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
-                  ?? readAccountIdFromToken(params.credentials!.token),
-                isSessionAlreadyRunning: params.isSessionAlreadyRunning,
-                resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
-                releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext });
-            } } : {}),
-          });
-          if (params.isShuttingDown()) return;
-        }
+        await runMachineReconnectPhase('transfer-publication', () => params.attachTransferRuntimeStatePublisher(connectedApiMachine));
+        if (params.isShuttingDown()) return null;
+        await runMachineReconnectPhase('orphan-settlement', async () => {
+          // connect() starts the transport asynchronously. Settle dead markers only
+          // on this connected edge; retain failures for reconnect or handoff resume.
+          if (params.credentials) {
+            const discovered = await readOrphanedDeadPlainRunnerMarkers();
+            const knownPids = new Set(pendingOrphanedSessions.map(marker => marker.pid));
+            pendingOrphanedSessions = [...pendingOrphanedSessions, ...discovered.filter(marker => !knownPids.has(marker.pid))];
+          }
+          if (pendingOrphanedSessions.length > 0) {
+            pendingOrphanedSessions = await publishOrphanedStartupSessionEnds({
+              apiMachine: connectedApiMachine,
+              orphanedDeadDaemonSessions: pendingOrphanedSessions,
+              isSessionAlreadyRunning: params.isSessionAlreadyRunning,
+              isShuttingDown: params.isPublicationQuiescing ?? params.isShuttingDown,
+              ...(params.credentials ? { retireTerminalControlServiceability: async (marker: OrphanedDeadDaemonSession) => {
+                await retireOrphanedTerminalControlServiceability({ marker, credentials: params.credentials!,
+                  serverId: params.requesterServerId ?? configuration.activeServerId,
+                  serverHttpBaseUrl: resolveServerHttpBaseUrl(), machineId: params.machineId,
+                  encryptionMode: params.machine.encryptionMode ?? 'e2ee',
+                  custodianAccountId: normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
+                    ?? readAccountIdFromToken(params.credentials!.token),
+                  isSessionAlreadyRunning: params.isSessionAlreadyRunning,
+                  resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
+                  releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext });
+              } } : {}),
+            });
+          }
+        });
+        if (params.isShuttingDown()) return null;
         // Incident Jun-11 H-A / FIX-1a: best-effort snapshot warm on every machine (re)connect.
         // The changes catch-up only emits a hint when account changes exist past the persisted
         // cursor, so a freshly restarted daemon can connect and still hold a NULL snapshot.
@@ -2172,23 +2202,14 @@ export async function bootstrapMachineSyncRuntime(
         }
 
         const peerPublicationOutcome = await refreshPeerMediationEndpointPublication();
-        if (peerPublicationOutcome === 'suppressed' || params.isShuttingDown()) return;
+        if (peerPublicationOutcome === 'suppressed' || params.isShuttingDown()) return null;
 
-        if (activeAutomationWorker) {
-          const automationWorkerHandle = activeAutomationWorker;
-          await automationWorkerHandle.refreshAssignments().catch((error) => {
-            logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
-          });
-          if (params.isShuttingDown()) return;
-        }
-
-        await refreshMachineMetadataPublication();
-        if (params.isShuttingDown() || !didRefreshMachineMetadata) return;
         hasPendingMachineConnectionPublications = false;
+        return peerPublicationOutcome;
       })();
       machineConnectionPublicationsInFlight = operation;
       try {
-        await operation;
+        return await operation;
       } finally {
         if (machineConnectionPublicationsInFlight === operation) {
           machineConnectionPublicationsInFlight = null;
@@ -2197,26 +2218,40 @@ export async function bootstrapMachineSyncRuntime(
     };
     const catchUpAutomationWorkAfterConnect = async (): Promise<void> => {
       if (params.isShuttingDown()) return;
-      await activeAutomationWorker?.catchUp().catch((error) => {
+      await runMachineReconnectPhase('automation-catch-up', () => activeAutomationWorker?.catchUp()).catch((error) => {
         logger.warn('[DAEMON RUN] Failed to catch up automation work on machine reconnect', error);
       });
     };
     resumeMachineConnectionPublications = async () => {
       await catchUpAutomationWorkAfterConnect();
       await refreshMachineConnectionPublications();
+      await refreshMachineMetadataPublication();
       if (params.isShuttingDown()) return;
       await workflowRecoveryTriggers?.onResumed().catch((error) => {
         logger.warn('[DAEMON RUN] Workflow custody resume recovery failed; pending custody retained', error);
       });
     };
     const handleMachineConnected = async (): Promise<void> => {
-      await catchUpAutomationWorkAfterConnect();
-      await refreshMachineConnectionPublications();
       if (params.isShuttingDown()) return;
+      const recoverPending = () => runMachineReconnectPhase('pending-recovery', recoverPendingSessionActivationsAfterConnect).catch((error) => {
+        logger.warn('[DAEMON RUN] Pending session activation reconnect scan failed; waiting custody retained', error);
+      });
+      const pendingRecovery = recoverPending();
       await Promise.all([
-        recoverPendingSessionActivationsAfterConnect().catch((error) => {
-          logger.warn('[DAEMON RUN] Pending session activation reconnect scan failed; waiting custody retained', error);
-        }),
+        // Local Pending admission owns target and runner readiness. Unrelated
+        // Automation and Machine publications must not hold requester recovery.
+        (async () => {
+          await catchUpAutomationWorkAfterConnect();
+          const endpointOutcome = await refreshMachineConnectionPublications();
+          await Promise.all([
+            refreshMachineMetadataPublication(),
+            // Cold broker admission requires the published initiator endpoint.
+            // Revisit Pending after its ACK (including unchanged), independently
+            // of other recoveries. The spawn owner coalesces existing launches.
+            endpointOutcome && !params.isShuttingDown() ? recoverPending() : undefined,
+          ]);
+        })(),
+        pendingRecovery,
         params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: {} }).catch(error => {
           logger.warn('[DAEMON RUN] Personal Run Follow reconnect read remains pending', serializeAxiosErrorForLog(error));
         }),
@@ -2255,6 +2290,10 @@ export async function bootstrapMachineSyncRuntime(
   } else {
     logger.warn('[DAEMON RUN] Machine sync client unavailable; machine-bound workers were not started');
   }
+
+  // Machine registration is started after local daemon-state publication. Reconstruct early,
+  // then arm the existing durable timer owner only after its recovery runners are installed.
+  if (!params.isShuttingDown()) inactiveUsageLimitRecoveryScheduler.hydrate();
 
   return {
     ...(sessionSpawnDirectTargetTransport

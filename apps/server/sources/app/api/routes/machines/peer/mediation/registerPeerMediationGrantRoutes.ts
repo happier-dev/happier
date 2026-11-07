@@ -1,9 +1,10 @@
 import { z } from "zod/mini";
-import type { RouteShorthandOptions } from "fastify";
+import type { RouteShorthandOptions, FastifyRequest } from "fastify";
 import { DIRECT_ROUTE_GRANT_TTL_MS, clampDirectRouteGrantTtlMs } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DirectRouteGrantScopeV1Schema, VoiceMediaGrantScopeV1Schema, LiveStreamGrantScopeV1Schema, TcpTunnelGrantScopeV1Schema, type DirectRouteGrantScopeV1, type LiveStreamGrantScopeV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { DirectRouteGrantRequestV2Schema, type DirectRouteGrantScopeV2, type IrohPeerRouteBindingV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
-import { MachineLiveStreamCapsV1Schema, type MachineLiveStreamCapsV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamCapsV1Schema, MachineLiveStreamSourceAdmissionV1Schema, type MachineLiveStreamCapsV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { MachineLiveStreamCodecIdV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 import { PeerTcpTunnelDestinationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
@@ -17,8 +18,11 @@ import { type PeerFlowKindV1 } from '@happier-dev/protocol/machines/peer/mediati
 import { readMachineLiveStreamFeatureEnv, readMachineTunnelFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     readAvailableMachineIrohEndpointAuthority,
+    readAvailableMachineIrohTransportEndpointAuthority,
 } from "@/app/machines/machineStateGuards";
-import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { resolveMachineAdmission, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
+import { inTx } from '@/storage/inTx';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import {
     createServerFeatureGatePreHandler,
     isPeerMediationGrantSigningAdvertisedForRequest,
@@ -28,6 +32,7 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import {
     mintDirectRouteGrantV1,
     mintDirectRouteGrantV2,
+    isWorkspaceSyncMachineCarrierGrant,
     resolvePeerMediationGrantSigningConfig,
 } from "@/app/machines/peer/mediation/mintDirectRouteGrantV1";
 import { resolveMachineLiveStreamRelayCaps } from "@/app/machines/peer/mediation/stream/relayCaps";
@@ -40,7 +45,8 @@ type PeerMediationGrantRouteRequest = Readonly<{
     body?: unknown;
     userId?: unknown;
     authAuthority?: "present_user" | "account_automation";
-}>;
+}> & Partial<Pick<FastifyRequest, 'externalActionExecutionAuthorized' | 'externalActionExecutionAuthorizationBinding'
+    | 'externalActionDeploymentChildMachineRead' | 'externalActionDeploymentChildSigner' | 'authTokenAuthenticationEvidence'>>;
 
 type RoutePreHandlerArray = Extract<NonNullable<RouteShorthandOptions["preHandler"]>, readonly unknown[]>;
 type RoutePreHandler = RoutePreHandlerArray extends readonly (infer T)[] ? T : never;
@@ -64,6 +70,7 @@ export type RegisterPeerMediationGrantRoutesOptions = Readonly<{
     env?: NodeJS.ProcessEnv;
     nowMs?: () => number;
     readMachineIrohEndpointAuthority?: PeerMediationMachineIrohEndpointAuthorityReader;
+    readMachineIrohTransportEndpointAuthority?: (params: Readonly<{ machineId: string }>) => Promise<MachineIrohEndpointAuthorityV1 | null>;
     verifyViewerSocketOwnership?: PeerMediationViewerSocketOwnershipVerifier;
 }>;
 
@@ -95,6 +102,7 @@ const LiveStreamServerRelayAuthorizationRequestSchema = z.strictObject({
     // grant is minted bound to it so the relay delivers frames to exactly that tab. It is part of
     // the signed payload, so it must round-trip mint → start-request → handler-verify unchanged.
     viewerSocketId: z.optional(z.string().check(z.minLength(1))),
+    sourceAdmission: z.optional(MachineLiveStreamSourceAdmissionV1Schema),
     scope: LiveStreamGrantScopeV1Schema,
 });
 
@@ -221,6 +229,8 @@ export function registerPeerMediationGrantRoutes(
     const nowMs = options.nowMs ?? Date.now;
     const readMachineIrohEndpointAuthority =
         options.readMachineIrohEndpointAuthority ?? readAvailableMachineIrohEndpointAuthority;
+    const readMachineIrohTransportEndpointAuthority =
+        options.readMachineIrohTransportEndpointAuthority ?? readAvailableMachineIrohTransportEndpointAuthority;
     const verifyViewerSocketOwnership =
         options.verifyViewerSocketOwnership ?? app.verifyPeerMediationViewerSocketOwnership;
 
@@ -232,14 +242,15 @@ export function registerPeerMediationGrantRoutes(
     async function rejectUnlessMachinesOwned(
         accountId: string,
         machineIds: readonly string[],
-        sharedReasonCode: 'route_unavailable' | 'machine_rpc_method_server_required' = 'route_unavailable',
+        sharedReasonCode: 'route_unavailable' | 'machine_rpc_method_server_required' | null = 'route_unavailable',
     ): Promise<{ ok: false; reasonCode: string; receipt: string } | null> {
         for (const machineId of new Set(machineIds)) {
             const admission = await resolveMachineAdmission({ actorAccountId: accountId, machineId });
-            // Existing signed carriers have one Account identity, not separate
-            // actor/custodian currentness. A share cannot authorize such a ticket.
+            // Custodian carriers have one Account identity. Personal live viewing
+            // instead consumes the installed source admission at its mint boundary.
+            // A null shared code admits current shared access (transport-only grants).
             const reasonCode = admission.kind === 'denied' ? admission.code
-                : admission.custodianAccountId !== accountId ? sharedReasonCode : null;
+                : sharedReasonCode !== null && admission.custodianAccountId !== accountId ? sharedReasonCode : null;
             if (reasonCode) {
                 return {
                     ok: false,
@@ -269,6 +280,7 @@ export function registerPeerMediationGrantRoutes(
     async function rejectUnlessIrohMachineEndpointsCurrent(
         accountId: string,
         binding: IrohPeerRouteBindingV2,
+        transportOnly = false,
     ): Promise<{ ok: false; reasonCode: string; receipt: string } | null> {
         const machineEndpoints = [
             { machineId: binding.target.machineId, endpointId: binding.target.endpointId },
@@ -280,7 +292,7 @@ export function registerPeerMediationGrantRoutes(
                 : []),
         ];
         for (const expected of machineEndpoints) {
-            const authority = await readMachineIrohEndpointAuthority({
+            const authority = transportOnly ? await readMachineIrohTransportEndpointAuthority({ machineId: expected.machineId }) : await readMachineIrohEndpointAuthority({
                 accountId,
                 machineId: expected.machineId,
             });
@@ -418,11 +430,40 @@ export function registerPeerMediationGrantRoutes(
                 "viewer_socket_not_owned",
             );
             if (viewerSocketOwnershipRejection) return viewerSocketOwnershipRejection;
-            const ownershipRejection = await rejectUnlessMachinesOwned(accountId, [
-                parsed.data.machineId,
-                parsed.data.targetMachineId,
-            ]);
-            if (ownershipRejection) return ownershipRejection;
+            const sourceAdmission = parsed.data.sourceAdmission;
+            let personalSourceCustodianAccountId: string | undefined;
+            if (sourceAdmission) {
+                const binding = sourceAdmission.payload.liveStreamSourceAdmission;
+                const sourceDenied = { ok: false, reasonCode: 'capture_source_denied', receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected } as const;
+                if (request.authAuthority !== 'present_user' || !parsed.data.viewerSocketId
+                    || parsed.data.machineId !== parsed.data.targetMachineId
+                    || sourceAdmission.payload.machineId !== parsed.data.machineId
+                    || binding.actorAccountId !== accountId
+                    || binding.streamFamily !== parsed.data.scope.streamFamily
+                    || binding.sourceId !== parsed.data.scope.sourceId
+                    || binding.homeServerIdentityId !== await getOrCreateServerIdentityId()) return sourceDenied;
+                const admitted = await inTx(async tx => {
+                    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: accountId,
+                        machineId: sourceAdmission.payload.machineId, requireOnline: true,
+                        callerAuthority: 'present_user', rpcMethod: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT });
+                    if (admission.kind !== 'admitted') return null;
+                    if (admission.custodianAccountId !== sourceAdmission.payload.accountId
+                        || admission.installationId !== sourceAdmission.payload.installationId) return null;
+                    const machine = await tx.machine.findUnique({ where: { id: admission.machineId }, select: { installationPublicKey: true } });
+                    if (!machine?.installationPublicKey || !verifyMachineInstallationProof({
+                        payload: sourceAdmission.payload, proof: sourceAdmission.proof, publicKey: machine.installationPublicKey,
+                    })) return null;
+                    return admission;
+                });
+                if (!admitted) return sourceDenied;
+                personalSourceCustodianAccountId = admitted.custodianAccountId;
+            } else {
+                const ownershipRejection = await rejectUnlessMachinesOwned(accountId, [
+                    parsed.data.machineId,
+                    parsed.data.targetMachineId,
+                ]);
+                if (ownershipRejection) return ownershipRejection;
+            }
 
             const featureEnv = readMachineLiveStreamFeatureEnv(env);
             if (!featureEnv.serverRoutedEnabled || !featureEnv.serverRoutedCaps) {
@@ -450,13 +491,16 @@ export function registerPeerMediationGrantRoutes(
             }
 
             return mintMachineLiveStreamRelayAuthorizationV1({
-                accountId,
+                accountId: personalSourceCustodianAccountId ?? accountId,
                 sourceMachineId: parsed.data.machineId,
                 targetMachineId: parsed.data.targetMachineId,
                 streamId: parsed.data.scope.streamId,
                 streamFamily: parsed.data.scope.streamFamily,
                 ...(parsed.data.scope.sourceId ? { sourceId: parsed.data.scope.sourceId } : {}),
                 ...(parsed.data.viewerSocketId ? { viewerSocketId: parsed.data.viewerSocketId } : {}),
+                ...(sourceAdmission ? { personalViewer: { viewerAccountId: accountId,
+                    sourceMachineInstallationId: sourceAdmission.payload.installationId,
+                    personalSourceAdmission: sourceAdmission.payload.liveStreamSourceAdmission } } : {}),
                 ...(parsed.data.codecId ? { codecId: parsed.data.codecId } : {}),
                 ...(parsed.data.viewerCodecs ? { viewerCodecs: parsed.data.viewerCodecs } : {}),
                 caps: effectiveCaps,
@@ -473,23 +517,35 @@ export function registerPeerMediationGrantRoutes(
         const irohBinding: IrohPeerRouteBindingV2 | undefined = "iroh" in parsed.data
             ? parsed.data.iroh
             : undefined;
-        const directOwnershipRejection = await rejectUnlessMachinesOwned(accountId, [
+        const childAdmission = request.externalActionDeploymentChildMachineRead;
+        const childSigner = request.externalActionDeploymentChildSigner;
+        const workspaceCarrier = isWorkspaceSyncMachineCarrierGrant({
+            routeKind: parsed.data.routeKind, scope: parsed.data.scope, iroh: irohBinding,
+        });
+        // Authentication already admitted the exact child and codec holder.
+        // Consume its typed result rather than repeating job/receiver admission.
+        // The exact native Sync envelope grants transport only, so current
+        // shared Machine access suffices. Its receiving prepared target owns
+        // filesystem authority and binds the signed actor.
+        const directOwnershipRejection = childAdmission ? null : await rejectUnlessMachinesOwned(accountId, [
             parsed.data.machineId,
             ...(irohBinding?.initiator.kind === "machine"
                 ? [irohBinding.initiator.machineId]
                 : []),
-        ], parsed.data.flowKind === 'machine_rpc' ? 'machine_rpc_method_server_required' : 'route_unavailable');
+        ], workspaceCarrier ? null
+            : parsed.data.flowKind === 'machine_rpc' ? 'machine_rpc_method_server_required' : 'route_unavailable');
         if (directOwnershipRejection) return directOwnershipRejection;
         if (irohBinding) {
             const endpointAuthorityRejection = await rejectUnlessIrohMachineEndpointsCurrent(
-                accountId,
+                childAdmission?.codecAdmission.custodianAccountId ?? accountId,
                 irohBinding,
+                workspaceCarrier,
             );
             if (endpointAuthorityRejection) return endpointAuthorityRejection;
         }
 
         const directGrantInput = {
-            accountId,
+            accountId: childAdmission && childSigner ? childSigner.custodianAccountId : accountId,
             machineId: parsed.data.machineId,
             flowKind: parsed.data.flowKind,
             routeKind: parsed.data.routeKind,
@@ -514,7 +570,10 @@ export function registerPeerMediationGrantRoutes(
                 ...(parsed.data.scope.kind === 'machine_rpc'
                     && parsed.data.scope.allowedMethods.some(method => method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
                         || method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START
+                        || method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT
+                        || method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START
                         || method === RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE
+                        || method === RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
                         || method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST
                         || method === RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH)
                     ? { callerAuthority: request.authAuthority === 'present_user' ? 'present_user' as const : 'account_automation' as const }

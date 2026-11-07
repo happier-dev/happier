@@ -14,14 +14,14 @@ const input = {
 };
 
 describe('workspace.sync.conflict.resolve Action authority', () => {
-  it('forces canonical deferred approval and replays the approved artifact receipt', async () => {
+  it('honors Ask through canonical deferred approval and replays the approved artifact receipt', async () => {
     const approvals = new Map<string, Record<string, unknown>>();
     const workspaceSyncConflictResolve = vi.fn(async () => ({
       endpoints: [{ workspaceRefId: 'workspace-b', status: 'applied' as const }],
     }));
     const executor = createActionExecutor({
       workspaceSyncConflictResolve,
-      isActionApprovalRequired: () => false,
+      isActionApprovalRequired: () => true,
       approvalsCreate: async ({ request }) => {
         approvals.set('approval-1', request as unknown as Record<string, unknown>);
         return { artifactId: 'approval-1' };
@@ -71,7 +71,7 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     let originCurrent = true;
     const executor = createActionExecutor({
       workspaceSyncConflictResolve,
-      isActionApprovalRequired: () => false,
+      isActionApprovalRequired: () => true,
       approvalsCreate: async ({ request }) => {
         const artifactId = `approval-${++nextArtifact}`;
         approvals.set(artifactId, request as unknown as Record<string, unknown>);
@@ -82,7 +82,10 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
         approvals.set(artifactId, request as unknown as Record<string, unknown>);
         return { ok: true as const };
       },
-      isApprovalExecutionOriginCurrent: async () => originCurrent,
+      isApprovalExecutionOriginCurrent: async (args: Parameters<NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>>[0]) => {
+        if (!originCurrent) args.reportStale?.('credential_changed');
+        return originCurrent;
+      },
     } as unknown as ActionExecutorDeps);
     const origin = {
       surface: 'agent' as const, authority: 'account_automation' as const,
@@ -104,10 +107,7 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-2', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'server-1' }))
-      .resolves.toMatchObject({
-        ok: true,
-        result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
-      });
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
     expect(workspaceSyncConflictResolve).not.toHaveBeenCalled();
   });
 });

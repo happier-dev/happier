@@ -34,8 +34,23 @@ export async function readAvailableMachineIrohEndpointAuthority(params: Readonly
     machineId: string;
     requiredCapability?: MachineOperationProtocolCapabilityNameV1;
 }>): Promise<MachineIrohEndpointAuthorityV1 | null> {
+    return readCurrentMachineIrohEndpointAuthority(params);
+}
+
+/** Transport identity only: the receiving prepared job owns filesystem access. */
+export async function readAvailableMachineIrohTransportEndpointAuthority(params: Readonly<{
+    machineId: string;
+}>): Promise<MachineIrohEndpointAuthorityV1 | null> {
+    return readCurrentMachineIrohEndpointAuthority(params);
+}
+
+async function readCurrentMachineIrohEndpointAuthority(params: Readonly<{
+    accountId?: string;
+    machineId: string;
+    requiredCapability?: MachineOperationProtocolCapabilityNameV1;
+}>): Promise<MachineIrohEndpointAuthorityV1 | null> {
     const machine = await db.machine.findFirst({
-        where: { accountId: params.accountId, id: params.machineId },
+        where: { ...(params.accountId === undefined ? {} : { accountId: params.accountId }), id: params.machineId },
         select: {
             revokedAt: true,
             replacedByMachineId: true,

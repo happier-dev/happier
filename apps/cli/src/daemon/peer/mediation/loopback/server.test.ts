@@ -8,6 +8,7 @@ import {
   DIRECT_ROUTE_GRANT_AUDIENCE_V1,
   createDirectRouteGrantSigningInputV2,
   createEphemeralPeerRouteProofHandleV2,
+  IrohMachineHandshakeV1Schema,
   createPeerMachineRpcRequestHashV1,
   PEER_MEDIATION_RECEIPTS,
   PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
@@ -168,6 +169,8 @@ const IROH_OPERATION_ID = 'operation_iroh_1';
 
 function createIrohMachineHandshake(input: Readonly<{
   flow?: 'finite_transfer' | 'workspace_sync' | 'tcp_tunnel';
+  accountId?: string;
+  initiatorKind?: 'machine' | 'account_client';
   targetMachineId?: string;
   grantOverrides?: Partial<DirectRouteGrantPayloadV2>;
   breakProof?: boolean;
@@ -175,7 +178,9 @@ function createIrohMachineHandshake(input: Readonly<{
   const flow = input.flow ?? 'finite_transfer';
   const sourceMachineId = 'machine_source';
   const targetMachineId = input.targetMachineId ?? 'machine_1';
-  const initiator = {
+  const initiator = input.initiatorKind === 'account_client' ? {
+    kind: 'account_client' as const, endpointId: IROH_SOURCE_ENDPOINT_ID,
+  } : {
     kind: 'machine' as const,
     machineId: sourceMachineId,
     endpointId: IROH_SOURCE_ENDPOINT_ID,
@@ -187,7 +192,7 @@ function createIrohMachineHandshake(input: Readonly<{
   const payload: DirectRouteGrantPayloadV2 = {
     v: 2,
     grantId: 'grant_iroh_1',
-    accountId: 'account_1',
+    accountId: input.accountId ?? 'account_1',
     machineId: targetMachineId,
     flowKind: flow === 'tcp_tunnel' ? 'tcp_tunnel' : 'bounded_transfer',
     routeKind: 'iroh_peer',
@@ -225,15 +230,15 @@ function createIrohMachineHandshake(input: Readonly<{
   const proof = handle.sign(grant);
   const sharedHandshake = {
     v: 1 as const,
-    accountId: 'account_1',
+    accountId: input.accountId ?? 'account_1',
     initiator,
     target,
     grant,
     proof: input.breakProof ? { ...proof, nonceBase64Url: toBase64Url(new Uint8Array(16).fill(7)) } : proof,
   };
-  return flow === 'workspace_sync'
+  return IrohMachineHandshakeV1Schema.parse(flow === 'workspace_sync'
     ? { ...sharedHandshake, flow, operationId: IROH_OPERATION_ID }
-    : { ...sharedHandshake, flow };
+    : { ...sharedHandshake, flow });
 }
 
 /**
@@ -1147,7 +1152,56 @@ describe('machine/1 Iroh admission route', () => {
     await app.close();
   });
 
-  it('routes an admitted finite-transfer stream directly to the existing transfer listener without another capability proxy', async () => {
+  it('admits a signed foreign workspace Sync actor only with the authenticated source endpoint and proof', async () => {
+    const app = createPeerMediationLoopbackApp({
+      nowMs: () => 2_000,
+      expected: {
+        accountId: 'account_1', machineId: 'machine_1', flowKind: 'bounded_transfer',
+        routeKind: 'loopback_direct', endpointFingerprint: 'loopback_endpoint_1',
+      },
+      trustRoots: IROH_TRUST_ROOTS,
+      irohMachineAdmission: {
+        localEndpointId: IROH_TARGET_ENDPOINT_ID,
+        role: 'acceptor',
+        allowedFlows: ['workspace_sync'],
+        // The application port/capability is the native OS boundary. The real
+        // signed-handshake owner above it must preserve the admitted actor.
+        resolveApplicationTarget: ({ handshake }) => handshake.accountId === 'requester-a'
+          ? { port: 46001, localCapability: 'a'.repeat(64) } : null,
+      },
+    });
+    const payload = createIrohMachineHandshake({
+      flow: 'workspace_sync', accountId: 'requester-a',
+      grantOverrides: { flowKind: 'machine_rpc', scope: {
+        kind: 'machine_rpc', rpcScopeId: IROH_OPERATION_ID, allowedMethods: ['workspace.sync'],
+        maxCalls: 1, maxIdleMs: 60_000, highRiskSingleUseMethods: ['workspace.sync'],
+      } },
+    });
+    try {
+      const accepted = await app.inject({ method: 'POST', url: IROH_MACHINE_ADMISSION_PATH,
+        headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: IROH_SOURCE_ENDPOINT_ID }, payload });
+      expect(accepted.statusCode).toBe(204);
+      expect(Number(accepted.headers[IROH_MACHINE_APPLICATION_PORT_HEADER.toLowerCase()])).toBe(46001);
+      for (const request of [
+        { payload, endpoint: 'c'.repeat(64) },
+        { payload: { ...payload, accountId: 'substituted-actor' }, endpoint: IROH_SOURCE_ENDPOINT_ID },
+        { payload: { ...payload, proof: { ...payload.proof, nonceBase64Url: toBase64Url(new Uint8Array(16).fill(7)) } },
+          endpoint: IROH_SOURCE_ENDPOINT_ID },
+      ]) {
+        const refused = await app.inject({ method: 'POST', url: IROH_MACHINE_ADMISSION_PATH,
+          headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: request.endpoint }, payload: request.payload });
+        expect(refused.statusCode).toBe(403);
+        expect(refused.headers[IROH_MACHINE_APPLICATION_PORT_HEADER.toLowerCase()]).toBeUndefined();
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    { accountId: 'account_1', initiatorKind: 'machine' as const },
+    { accountId: 'receiver-ann', initiatorKind: 'account_client' as const },
+  ])('routes an admitted $initiatorKind finite-transfer stream directly to the existing transfer listener without another capability proxy', async actor => {
     const applicationBytes: Buffer[] = [];
     const applicationServer = createServer({ allowHalfOpen: true }, (socket) => {
       socket.on('data', (chunk: Buffer) => applicationBytes.push(chunk));
@@ -1178,11 +1232,23 @@ describe('machine/1 Iroh admission route', () => {
     });
 
     try {
+      if (actor.initiatorKind === 'account_client') {
+        const signed = createIrohMachineHandshake(actor);
+        for (const payload of [
+          { ...signed, accountId: 'substituted-actor' },
+          createIrohMachineHandshake({ ...actor, grantOverrides: { exp: 2_000 } }),
+        ]) {
+          const refused = await app.inject({ method: 'POST', url: IROH_MACHINE_ADMISSION_PATH,
+            headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: IROH_SOURCE_ENDPOINT_ID }, payload });
+          expect(refused.statusCode).toBe(403);
+          expect(refused.headers[IROH_MACHINE_APPLICATION_PORT_HEADER.toLowerCase()]).toBeUndefined();
+        }
+      }
       const admission = await app.inject({
         method: 'POST',
         url: IROH_MACHINE_ADMISSION_PATH,
         headers: { [IROH_MACHINE_REMOTE_ENDPOINT_HEADER]: IROH_SOURCE_ENDPOINT_ID },
-        payload: createIrohMachineHandshake(),
+        payload: createIrohMachineHandshake(actor),
       });
       expect(admission.statusCode).toBe(204);
       expect(admission.headers[IROH_MACHINE_APPLICATION_CAPABILITY_HEADER.toLowerCase()]).toBeUndefined();

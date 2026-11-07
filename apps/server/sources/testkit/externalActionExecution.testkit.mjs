@@ -106,12 +106,14 @@ export async function createExternalActionHomeProcessForTests(options) {
     const { dispatch: _dispatch, installationPublicKey, ...identity } = options;
     child.send({ kind: 'start', options: { ...identity, installationPublicKey: Array.from(installationPublicKey) } });
     try {
-        const { token, manageGrantee } = await ready;
+        const { token, manageGrantee, peerMediationGrantSigningKeys } = await ready;
         return {
             token,
+            ...(peerMediationGrantSigningKeys ? { peerMediationGrantSigningKeys } : {}),
             ...(manageGrantee ? { manageGrantee } : {}),
             readConnectorGrantCount: subject => control('connector-grant-count', subject),
             removeConnectorGrant: async subject => { await control('connector-grant-remove', subject); },
+            forwardMachineRpc: (machineId, payload) => control('machine-rpc', { machineId, payload }),
             request: async (method, path, body, headers = {}, signal) => {
                 const id = ++nextId;
                 const cancel = () => { if (child.connected) child.send({ kind: 'request-cancel', id }); };
@@ -176,6 +178,7 @@ if (process.argv[2] === '--external-action-home-child') {
                     },
                 }, observeSetup);
                 process.send?.({ kind: 'ready', token: home.token,
+                    ...(home.peerMediationGrantSigningKeys ? { peerMediationGrantSigningKeys: home.peerMediationGrantSigningKeys } : {}),
                     ...(home.manageGrantee ? { manageGrantee: home.manageGrantee } : {}) });
             } catch (error) {
                 process.send?.({ kind: 'failed', code: 'external_action_home_start_failed', phase, ...projectSetupFailure(error) },
@@ -195,6 +198,13 @@ if (process.argv[2] === '--external-action-home-child') {
                 let value = null;
                 if (message.kind === 'connector-grant-count') value = await home.readConnectorGrantCount(message.subject);
                 else await home.removeConnectorGrant(message.subject);
+                process.send?.({ kind: 'request-result', id: message.id, value });
+            } catch { process.send?.({ kind: 'request-error', id: message.id }); }
+            return;
+        }
+        if (message.kind === 'machine-rpc') {
+            try {
+                const value = await home.forwardMachineRpc(message.subject.machineId, message.subject.payload);
                 process.send?.({ kind: 'request-result', id: message.id, value });
             } catch { process.send?.({ kind: 'request-error', id: message.id }); }
             return;
