@@ -1,3 +1,4 @@
+import { createDeferred } from '@/testkit/async/deferred';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { prepareManagedRetentionPolicy } from './managedIntentReconciler';
 import { Server } from 'socket.io';
@@ -184,6 +185,190 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('unused Stop through guest drain and controller operation custody', () => {
+    it.each(['idle-lapse', 'delayed-native-lapse', 'work-during-native-lapse', 'work-resumes', 'activity-unavailable', 'until-delete', 'cancel', 'renewal-failure'] as const)(
+        'owns Boat mandatory TTL through the real policy lifecycle (%s)', async ending => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        vi.setSystemTime(1_790_000_000_000);
+        const sandboxId = 'bx_23456789';
+        let ttlSeconds = 7200;
+        let expiry = Date.now() + 7200_000;
+        let failRenewal = false;
+        let activityUnavailable = false;
+        const requests: Array<{ method: string; path: string; body?: unknown }> = [];
+        const http = createPluginHttpFixture({ request: request => {
+            const path = new URL(request.url).pathname;
+            const method = request.method ?? 'GET';
+            if (ending === 'activity-unavailable' && method === 'GET' && Date.now() >= expiry) activityUnavailable = true;
+            const body = request.body ? JSON.parse(new TextDecoder().decode(request.body)) : undefined;
+            requests.push({ path, method, body });
+            if (method === 'PATCH') {
+                if (failRenewal) return { status: 503, headers: {}, body: new TextEncoder().encode(JSON.stringify({ ok: false, code: 'unavailable' })) };
+                ttlSeconds = body.ttlSeconds;
+                expiry = Date.now() + ttlSeconds * 1000;
+            }
+            return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ ok: true, type: 'sandbox.info',
+                sandbox: { id: sandboxId, state: Date.now() >= expiry + (ending === 'delayed-native-lapse' || ending === 'work-during-native-lapse' || ending === 'activity-unavailable' ? 5_000 : 0) ? 'archived' : 'ready',
+                    ttlSeconds, archiveAfter: new Date(expiry).toISOString(), dataExpiredAt: null } })) };
+        } });
+        const plugin = await createPluginTestkit({ manifest: BOAT_PLUGIN.manifest, module: BOAT_PLUGIN });
+        const actionHandlers = new Map(BOAT_PLUGIN.manifest.contributes.actions!.map(action => {
+            const handler = plugin.registration('actions', action.id);
+            if (!handler) throw new Error(`Missing Boat Action ${action.id}`);
+            return [action.id, handler] as const;
+        }));
+        const credentialOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'owner',
+            store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unavailable, resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Captured' } : null,
+            materializeAccount: async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture' } }),
+            resolveCredentialConfigurationRevision: async () => 'fixture-configuration',
+            projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable });
+        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} }, connectedAccounts: credentialOwner,
+            http: createStablePluginHttpHost({ adapter: { openWebSocket: unavailable, request: http.request },
+                purposeHost: createConnectedAccountPluginHttpPurposeHost(credentialOwner, { registerRawForRedaction() {} }) }) });
+        const test = setup(undefined, undefined, 'stop', undefined, undefined, undefined, false, undefined, {
+            fixtureManifest: normalizePluginManifestV2(BOAT_PLUGIN.manifest), actionHandlers, credentialOwner,
+            executionRealm: 'account', credentialPurposes: [{ purpose: 'cloud-api', service: { pluginId: BOAT_PLUGIN.manifest.id, localId: 'boat-account' } }],
+            createServices: owners.createServices, resolveHostBinding: owners.resolveHostBinding,
+        });
+        const provider = { pluginId: BOAT_PLUGIN.manifest.id, localId: 'boat' };
+        test.setMachine({ desired: 'start', retention: ending === 'until-delete' ? { kind: 'until-delete' }
+            : { kind: 'unused', afterMs: 60_000, effect: 'stop' },
+            observation: { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained', nativeExpiry: expiry },
+            launch: { ...test.readMachine().launch, provider, choices: { size: 'small', source: { kind: 'blank' } }, credentials: [{
+                purpose: { consumer: provider, purpose: 'cloud-api' }, configurationRevision: 'fixture-configuration',
+                account: { service: { pluginId: provider.pluginId, localId: 'boat-account' }, accountId: 'captured-account' },
+            }] }, resource: { contributionRef: provider, schemaVersion: 1, value: { sandboxId } } });
+        test.setMachine(ManagedMachineV1Schema.parse(test.readMachine()));
+        let busy = true;
+        const producer = createLiveWorkProducerGroup(() => [{ read: () => ({ coverage: 'complete',
+            items: busy ? [{ category: 'finite', state: 'active', ownerRef: 'work', attribution: { kind: 'unknown' } }] : [] }),
+            subscribe: () => () => {} }]);
+        const inventory = createManagedActivityInventory({ producers: [producer] });
+        const read = async () => {
+            if (activityUnavailable) throw new RpcError('Guest activity transport is offline', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+            const decision = await inventory.readDecision();
+            return decision.kind === 'idle' ? { ...decision, evidence: signedIdle(test.readMachine(), decision.since, Date.now()) } : decision;
+        };
+        let waitingForActivity = false;
+        let enteredFirstWait: () => void = () => {};
+        const firstWait = new Promise<void>(resolve => { enteredFirstWait = resolve; });
+        const bridge = { read, confirmIdle: read, reopen: async () => undefined,
+            waitForChange: (signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+                if (ending === 'until-delete') throw new Error('Guest activity transport is offline');
+                if (activityUnavailable) throw new RpcError('Guest activity transport is offline', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+                waitingForActivity = true; enteredFirstWait();
+                const cleanup = () => { waitingForActivity = false; off(); signal?.removeEventListener('abort', abort); };
+                const abort = () => { cleanup(); reject(signal?.reason); };
+                const off = inventory.subscribe(() => { cleanup(); resolve(); });
+                signal?.addEventListener('abort', abort, { once: true });
+                if (signal?.aborted) abort();
+            }) };
+        const driver = createManagedMachineAcquisitionDriver({ ...test.driverInput, managedGuestActivity: bridge });
+        const lifetime = new AbortController();
+        let finished = false;
+        const run = (signal?: AbortSignal) => driver.executePolicy(test.readMachine(), { kind: 'retention' }, { ...test.options, signal })
+            .then(value => ({ value }), error => ({ error })).finally(() => { finished = true; });
+        let execution: ReturnType<typeof run> | undefined;
+        const runtime = ending === 'until-delete' ? createDaemonManagedMachinePolicyRuntime({
+            readCensus: async () => ({ machines: [test.readMachine()], targets: [] }),
+            supportsNativeLifetimeRenewal: async machine => driver.supportsNativeLifetimeRenewal(machine),
+            executePolicy: async request => {
+                execution = run(request.signal);
+                const result = await execution;
+                return 'value' in result ? { ok: true, result: result.value }
+                    : { ok: false, errorCode: 'fixture_policy_failed', error: 'fixture_policy_failed' };
+            },
+        }) : undefined;
+        const flush = async () => {
+            do { await new Promise<void>(resolve => setImmediate(resolve)); }
+            while (!finished && !waitingForActivity && vi.getTimerCount() === 0);
+        };
+        try {
+            if (runtime) await runtime.notifyChanged();
+            else execution = run(lifetime.signal);
+            if (ending !== 'until-delete') await Promise.race([firstWait, execution]);
+            await flush();
+            if (finished) {
+                const result = await execution;
+                if (result && 'error' in result) throw result.error;
+            }
+            expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1);
+            for (let hour = 0; hour < 3; hour++) {
+                await vi.advanceTimersByTimeAsync(3600_000);
+                await flush();
+            }
+            expect(expiry).toBeGreaterThan(Date.now());
+            expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(4);
+            expect(finished).toBe(false);
+            if (ending === 'activity-unavailable') {
+                busy = false; producer.notifyChanged();
+                await flush();
+                expect(expiry).toBe(Date.now() + 60_000);
+                await vi.advanceTimersByTimeAsync(60_000);
+                await flush();
+                expect(finished).toBe(false);
+                for (let hour = 0; hour < 3; hour++) {
+                    await vi.advanceTimersByTimeAsync(3600_000);
+                    await flush();
+                    expect(finished).toBe(false);
+                    expect(expiry).toBeGreaterThan(Date.now());
+                }
+            } else if (ending === 'renewal-failure') {
+                failRenewal = true;
+                await vi.advanceTimersByTimeAsync(3600_000);
+                await flush();
+                expect(await execution).toMatchObject({ error: { code: 'native_service_unavailable' } });
+            } else if (ending === 'idle-lapse' || ending === 'delayed-native-lapse' || ending === 'work-during-native-lapse' || ending === 'work-resumes') {
+                busy = false; producer.notifyChanged();
+                await flush();
+                expect(expiry).toBe(Date.now() + 60_000);
+                if (ending === 'work-resumes') {
+                    await vi.advanceTimersByTimeAsync(30_000);
+                    busy = true; producer.notifyChanged();
+                    await flush();
+                    expect(expiry).toBe(Date.now() + 7200_000);
+                    await vi.advanceTimersByTimeAsync(60_000);
+                    expect(finished).toBe(false);
+                } else {
+                    await vi.advanceTimersByTimeAsync(60_000);
+                    await flush();
+                    if (ending === 'work-during-native-lapse') {
+                        expect(finished).toBe(false);
+                        busy = true; producer.notifyChanged();
+                        await flush();
+                        expect(expiry).toBe(Date.now() + 7200_000);
+                        await vi.advanceTimersByTimeAsync(5_000);
+                        await flush();
+                        expect(finished).toBe(false);
+                        expect(requests.some(request => request.method === 'POST')).toBe(false);
+                        return;
+                    }
+                    if (ending === 'delayed-native-lapse') {
+                        expect(finished).toBe(false);
+                        await vi.advanceTimersByTimeAsync(5_000);
+                        await flush();
+                    }
+                    expect(await execution).toHaveProperty('value');
+                    expect(test.readMachine().observation).toMatchObject({ availability: 'present', power: 'stopped', storage: 'retained' });
+                }
+            } else if (ending === 'until-delete') {
+                busy = false; producer.notifyChanged();
+                for (let hour = 0; hour < 3; hour++) {
+                    await vi.advanceTimersByTimeAsync(3600_000);
+                    await flush();
+                }
+                expect(expiry).toBeGreaterThan(Date.now());
+                expect(finished).toBe(false);
+            }
+            expect(requests.some(request => request.method === 'POST')).toBe(false);
+        } finally {
+            lifetime.abort(); await runtime?.stop(); await execution;
+            const count = requests.length;
+            await vi.advanceTimersByTimeAsync(7200_000);
+            expect(requests).toHaveLength(count);
+            inventory.dispose(); producer.dispose(); await plugin.dispose(); test.retireNative();
+        }
+    });
     it.each(['native-currentness', 'private-currentness', 'private-admission'] as const)(
         'settles a definite pre-handler refusal at %s without a phantom native effect', async boundary => {
         const test = setup(undefined, undefined, 'start');
@@ -1366,17 +1551,48 @@ describe('managed native intent through the accepted Action', () => {
             operation: { state: 'succeeded', domainRef: { kind: 'managedMachine', id: machine.id } },
         });
     });
-    it.each(['running', 'stopped'] as const)('releases accepted input only for an actual running native observation, not %s command acceptance', async power => {
-        const test = setup({ kind: 'idle', since: 0 }, { kind: 'confirmed' }, 'start', { observedAt: 1, availability: 'present', power });
+    it.each(['running', 'stopped', 'startup-failed'] as const)('releases accepted input only after vendor wake observation and guest startup (%s)', async outcome => {
+        if (outcome === 'stopped') vi.useFakeTimers();
+        const observation: ProviderObservationV1 = { observedAt: 1, availability: 'present', power: 'stopped' };
+        const inspectedAfterPower = createDeferred();
+        let powerApplied = false;
+        const test = setup({ kind: 'idle', since: 0 }, { kind: 'confirmed' }, 'start', observation, () => {
+            if (!powerApplied) {
+                powerApplied = true;
+                observation.power = outcome === 'stopped' ? 'stopped' : 'running';
+            } else if (outcome === 'startup-failed') {
+                throw new Error('The vendor bootstrap transport is unavailable.');
+            }
+        }, undefined, false, undefined, { onInspect: () => {
+            if (powerApplied) inspectedAfterPower.resolve();
+        } });
+        test.setMachine({ enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
         const machine = test.readMachine();
         const target = { homeId: machine.homeId, managedId: machine.id, enrolledMachineId: 'guest',
             expectedIntentRevision: machine.intentRevision, controller: machine.controller,
             origin: { kind: 'session-input' as const, session: { homeId: machine.homeId, sessionId: 'session' },
                 pendingRequestId: 'pending', requestedAt: 1 }, reason: 'admitted-work' as const };
-        const work = test.driver.executePolicy(machine, { kind: 'accepted-input-start', target }, test.options);
-        if (power === 'running') await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
-        else await expect(work).rejects.toMatchObject({ code: 'native_intent_unconfirmed' });
-        expect(test.effects).toEqual(['power']);
+        const lifetime = new AbortController();
+        const work = test.driver.executePolicy(machine, { kind: 'accepted-input-start', target }, { ...test.options, signal: lifetime.signal });
+        let settled = false;
+        void work.then(() => { settled = true; }, () => { settled = true; });
+        try {
+            if (outcome === 'running') await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
+            else if (outcome === 'startup-failed') {
+                await expect(work).rejects.toMatchObject({ code: 'plugin_action_execution_failed' });
+                expect(test.readMachine().observation).toMatchObject({ availability: 'present', power: 'running' });
+            } else {
+                await inspectedAfterPower.promise;
+                await vi.advanceTimersByTimeAsync(0);
+                expect(settled).toBe(false);
+                lifetime.abort();
+                await expect(work).rejects.toMatchObject({ code: 'cancelled' });
+            }
+        } finally {
+            lifetime.abort();
+            await work.catch(() => undefined);
+        }
+        expect(test.effects.filter(role => role === 'power')).toEqual(['power']);
         const header = test.post.mock.calls.find(([url]) => String(url).endsWith('/admit-policy'))?.[2]?.headers?.[MANAGED_POLICY_PROOF_HEADER];
         const proof = decodeManagedPolicyProofV1(String(header));
         expect(proof?.purpose).toEqual({ kind: 'accepted-input-start', target });

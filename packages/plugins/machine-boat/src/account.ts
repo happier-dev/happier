@@ -1,38 +1,24 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createMachineProvisionerFetch } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import { createBoatNativeClient } from './machine/nativeClient.js';
 import { BoatNativeError } from './machine/schemas.js';
 
 export const ACCOUNT_ID = 'boat-account';
 export const ACCOUNT_PURPOSE = 'cloud-api';
 const ORIGIN = 'https://boat.dev';
+export const BOAT_NATIVE_HTTP_METHODS = ['GET', 'POST', 'PATCH', 'DELETE'] as const;
 const diagnostic = { code: 'credential_unavailable', severity: 'error' as const, message: 'Boat API access could not be confirmed.' };
 const validToken = (value: string | null | undefined) => typeof value === 'string' && value.trim() !== '' && !/[\r\n]/.test(value);
 
-export function nativeFetch(context: Pick<PluginInvocationContext, 'services' | 'signal'>, token?: string): typeof globalThis.fetch {
-  return async (input, init) => {
-    const url = String(input);
-    if (new URL(url).origin !== ORIGIN) throw new Error('provider_unavailable');
-    const method = init?.method ?? 'GET';
-    if (!['GET', 'POST', 'DELETE'].includes(method)) throw new Error('invalid_request');
-    const signal = init?.signal ?? context.signal;
-    const material = token === undefined
-      ? await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
-        { kind: 'httpHeaders', origin: ORIGIN, headerNames: ['authorization'] }, { signal })
-      : { kind: 'httpHeaders' as const, headers: { Authorization: `Bearer ${token}` } };
-    if (material.kind !== 'httpHeaders') throw new Error('credential_unavailable');
-    const authorization = new Headers(material.headers).get('authorization');
-    if (!authorization) throw new Error('credential_unavailable');
-    const headers = new Headers(init?.headers);
-    headers.set('Authorization', authorization);
-    const response = await context.services.http.request({
-      url, method: method as HttpMethod, headers: Object.fromEntries(headers.entries()), redirect: 'error',
-      ...(init?.body === undefined ? {} : { body: new TextEncoder().encode(String(init.body)) }),
-    }, { signal });
-    if (response.finalUrl !== url) throw new Error('provider_unavailable');
-    return new Response(response.status === 204 ? null : new Uint8Array(response.body), { status: response.status, headers: response.headers });
-  };
+type HttpContext = Readonly<{ signal: AbortSignal; services: Readonly<{ http: Pick<HttpService, 'request'> }> }>;
+
+export function nativeFetch(context: HttpContext, token?: string): typeof globalThis.fetch {
+  return createMachineProvisionerFetch(context, {
+    purpose: ACCOUNT_PURPOSE, origins: [ORIGIN], headerName: 'authorization',
+    credential: token === undefined ? undefined : { 'authorization': `Bearer ${token}` },
+    methods: BOAT_NATIVE_HTTP_METHODS,
+  });
 }
 
 async function confirm(token: string, context: ConnectedAccountAuthenticationContext | ConnectedAccountReadContext, options?: { signal?: AbortSignal }) {

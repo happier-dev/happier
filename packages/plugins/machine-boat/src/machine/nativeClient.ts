@@ -1,4 +1,5 @@
 import * as mini from 'zod/mini';
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   BoatAcquireOperationV1Schema,
   BoatDeleteOperationV1Schema,
@@ -6,6 +7,7 @@ import {
   BoatNativeError,
   BoatPublicKeySchema,
   BoatResourceV1Schema,
+  isBoatAdmissionRefusalCode,
   parseBoatValue,
   type BoatAcquireOperationV1,
   type BoatDeleteOperationV1,
@@ -14,19 +16,24 @@ import {
 } from './schemas.js';
 
 const API_ORIGIN = 'https://boat.dev/api/v1';
-const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
 const text = () => mini.string().check(mini.trim(), mini.minLength(1));
 const sandboxId = mini.string().check(mini.regex(/^bx_[23456789abcdefghjkmnpqrstuvwxyz]{8}$/));
 const base = { ok: mini.literal(true), type: text() } as const;
-const sandbox = mini.object({ id: sandboxId, name: mini.optional(text()), state: text() });
-const limitsResponse = mini.object({ ...base, sandboxPlanDollars: mini.optional(mini.number().check(mini.nonnegative())) });
+const nativeDate = () => mini.optional(mini.nullable(mini.iso.datetime({ offset: true })));
+const sandbox = mini.object({ id: sandboxId, name: mini.optional(text()), state: text(),
+  health: mini.optional(mini.enum(['ok', 'degraded'])),
+  ttlSeconds: mini.optional(mini.nullable(mini.number().check(mini.int(), mini.positive()))),
+  archiveAfter: nativeDate(), dataExpiredAt: nativeDate(), stoppedAt: nativeDate() });
+const limitsResponse = mini.object({ ...base, sandboxPlanKey: mini.optional(text()), sandboxPlanDollars: mini.optional(mini.number().check(mini.nonnegative())) });
 const snapshotsResponse = mini.object({ ...base, snapshots: mini.array(mini.object({
   name: mini.string().check(mini.regex(/^[a-z0-9][a-z0-9-]{0,62}$/)),
   status: mini.enum(['saving', 'ready', 'failed']), sourceSandboxId: sandboxId, createdAt: text(),
 })) });
 const sandboxesResponse = mini.object({ ...base, sandboxes: mini.array(sandbox) });
+const recoveryResponse = mini.object({ ...base, sandboxes: mini.array(mini.object({ id: sandboxId })),
+  pageInfo: mini.optional(mini.object({ hasMore: mini.boolean(), nextCursor: mini.nullable(text()) })) });
 const sandboxResponse = mini.object({ ...base, sandbox });
-const createResponse = mini.object({ ...base, sandbox });
+const createResponse = mini.object({ ok: mini.literal(true), sandbox: mini.object({ id: sandboxId }) });
 const sshResponse = mini.object({ ...base, success: mini.literal(true), machineIp: mini.nullable(text()),
   sshEndpoint: mini.optional(mini.nullable(text())), sshUser: mini.literal('user'), hostKey: text() });
 const deletionOperation = mini.object({
@@ -38,16 +45,21 @@ const errorResponse = mini.object({ ok: mini.literal(false), code: text() });
 
 export type BoatSize = Readonly<{ id: BoatLaunchV1['size']; multiplier: number; cpuCores: number; memoryGb: number; diskGb: number; hourlyUsd: string }>;
 export type BoatOptions = Readonly<{
+  sandboxPlanKey?: string;
   sizes: readonly BoatSize[];
   snapshots: readonly Readonly<{ name: string; status: 'ready' }>[];
   sandboxes: readonly Readonly<{ id: string; name?: string; state: string }>[];
 }>;
 export type BoatAcquireResult =
-  | Readonly<{ kind: 'bound'; resource: BoatResourceV1 }>
-  | Readonly<{ kind: 'pending'; operation: BoatAcquireOperationV1 }>
-  | Readonly<{ kind: 'unknown'; code: string }>
-  | Readonly<{ kind: 'refused'; code: string }>;
-export type BoatNativeClientOptions = Readonly<{ fetch?: typeof globalThis.fetch; signal?: AbortSignal; now?: () => number }>;
+  | Readonly<{ kind: 'bound'; resource: BoatResourceV1; ready: boolean }>
+  | Readonly<{ kind: 'pending'; operation: BoatAcquireOperationV1; nativeCause?: MachineProvisionerNativeCauseV1 }>
+  | Readonly<{ kind: 'unknown'; code: string; nativeCause?: MachineProvisionerNativeCauseV1 }>
+  | Readonly<{ kind: 'refused'; code: string; nativeCause?: MachineProvisionerNativeCauseV1 }>;
+export type BoatNativeClientOptions = Readonly<{ fetch?: typeof globalThis.fetch; signal?: AbortSignal }>;
+
+// Boat snapshots/stop.md: archived user disks are deleted 14 days after native Stop.
+export const BOAT_STOPPED_STORAGE_NOTICE = { kind: 'stopped-storage',
+  rule: { kind: 'after-stop', afterMs: 14 * 24 * 60 * 60 * 1000 }, consequence: 'disk-deleted' } as const;
 
 const BASE_SIZES: readonly BoatSize[] = [
   { id: 'small', multiplier: 0.5, cpuCores: 2, memoryGb: 4, diskGb: 12, hourlyUsd: '0.018' },
@@ -56,21 +68,12 @@ const BASE_SIZES: readonly BoatSize[] = [
 ];
 const XLARGE: BoatSize = { id: 'xlarge', multiplier: 5.56, cpuCores: 16, memoryGb: 32, diskGb: 251, hourlyUsd: '0.200' };
 
-function encodeRequest(path: string, body: Readonly<Record<string, unknown>>): string {
-  return JSON.stringify({ path, body });
-}
-
-function decodeRequest(value: string): { path: string; body: Readonly<Record<string, unknown>> } {
-  try {
-    const parsed = mini.strictObject({ path: text(), body: mini.record(mini.string(), mini.unknown()) }).parse(JSON.parse(value));
-    return parsed;
-  } catch {
-    throw new BoatNativeError('native_idempotency_invariant');
-  }
-}
-
-function endpoint(launch: BoatLaunchV1): { path: string; body: Readonly<Record<string, unknown>> } {
-  const common = { type: launch.size, snapshots: true, noEnv: true, ttlSeconds: null } as const;
+// Trial accounts require a numeric TTL of at most two hours. PATCH resets the
+// wall deadline; guest activity does not. https://docs.boat.dev/long-running-tasks/auto-stop.md
+const TRIAL_TTL_SECONDS = 2 * 60 * 60;
+function endpoint(launch: BoatLaunchV1, managedId: string, ttlSeconds: number | null): { path: string; body: Readonly<Record<string, unknown>> } {
+  // CreateSandboxRequest.labels and fork labels: https://docs.boat.dev/openapi/boat-v1.yaml
+  const common = { type: launch.size, snapshots: true, noEnv: true, ttlSeconds, labels: { 'happier-managed-id': managedId } } as const;
   if (launch.source.kind === 'blank') return { path: '/sandboxes', body: common };
   if (launch.source.kind === 'named-snapshot') return { path: '/sandboxes', body: { ...common, from: launch.source.name } };
   return { path: `/sandboxes/${encodeURIComponent(launch.source.sandboxId)}/fork`, body: common };
@@ -78,49 +81,44 @@ function endpoint(launch: BoatLaunchV1): { path: string; body: Readonly<Record<s
 
 export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
   const transport = options.fetch ?? globalThis.fetch;
-  const now = options.now ?? Date.now;
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     let response: Response;
     try {
       response = await transport(`${API_ORIGIN}${path}`, { ...init, redirect: 'error', signal: options.signal });
     } catch {
-      throw new BoatNativeError('native_transport_unavailable', true);
+      throw new BoatNativeError('native_transport_unavailable');
     }
+    // The response class is observed at the HTTP boundary. Vendor bodies and
+    // messages are never diagnostic carriers, including undecodable refusals.
+    const nativeCause: MachineProvisionerNativeCauseV1 | undefined = response.ok ? undefined : {
+      httpStatusClass: response.status >= 500 ? '5xx' : response.status >= 400 ? '4xx' : response.status >= 300 ? '3xx' : 'other',
+    };
     let value: unknown;
-    try { value = await response.json(); } catch { throw new BoatNativeError('native_response_invalid'); }
+    try { value = await response.json(); } catch { throw new BoatNativeError('native_response_invalid', nativeCause); }
     if (!response.ok) {
-      const error = parseBoatValue(errorResponse, value);
-      if (response.status === 401 || error.code === 'unauthorized') throw new BoatNativeError('native_authorization_failed');
-      if (error.code === 'idempotency_in_progress') throw new BoatNativeError('native_idempotency_in_progress', true);
-      if (error.code === 'idempotency_key_reused') throw new BoatNativeError('native_idempotency_mismatch');
-      if (['daily_limit_reached', 'limit_reached', 'member_limit_reached', 'machine_class_plan_required', 'trial_machine_class_not_allowed'].includes(error.code)) {
-        throw new BoatNativeError(`native_${error.code}`, false);
+      const parsed = errorResponse.safeParse(value);
+      if (!parsed.success) throw new BoatNativeError('native_response_invalid', nativeCause);
+      const error = parsed.data;
+      if (response.status === 401 || error.code === 'unauthorized') throw new BoatNativeError('native_authorization_failed', nativeCause);
+      if (error.code === 'idempotency_in_progress') throw new BoatNativeError('native_idempotency_in_progress', nativeCause);
+      if (error.code === 'idempotency_key_reused') throw new BoatNativeError('native_idempotency_mismatch', nativeCause);
+      const nativeCode = `native_${error.code}`;
+      if (isBoatAdmissionRefusalCode(nativeCode)) {
+        throw new BoatNativeError(nativeCode, nativeCause);
       }
-      if (response.status === 429 || error.code === 'rate_limited') throw new BoatNativeError('native_rate_limited', true);
-      if (response.status === 404 && error.code === 'not_found') throw new BoatNativeError('native_not_found');
-      throw new BoatNativeError(response.status >= 500 ? 'native_service_unavailable' : `native_${error.code}`, response.status >= 500);
+      if (response.status === 429 || error.code === 'rate_limited') throw new BoatNativeError('native_rate_limited', nativeCause);
+      if (response.status === 404 && error.code === 'not_found') throw new BoatNativeError('native_not_found', nativeCause);
+      throw new BoatNativeError(response.status >= 500 ? 'native_service_unavailable' : 'native_request_failed', nativeCause);
     }
     return value;
   }
 
-  async function submitAcquire(operation: BoatAcquireOperationV1): Promise<BoatAcquireResult> {
-    const retained = decodeRequest(operation.requestFingerprint);
-    try {
-      const value = await request(retained.path, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operation.idempotencyKey },
-        body: JSON.stringify(retained.body),
-      });
-      const accepted = parseBoatValue(createResponse, value);
-      return { kind: 'pending', operation: { ...operation, sandboxId: accepted.sandbox.id } };
-    } catch (error) {
-      if (error instanceof BoatNativeError && error.code === 'native_idempotency_mismatch') return { kind: 'refused', code: error.code };
-      if (error instanceof BoatNativeError && (error.retryable || error.code === 'native_idempotency_in_progress')) return { kind: 'pending', operation };
-      if (error instanceof BoatNativeError && error.code.startsWith('native_') && error.code.includes('limit')) return { kind: 'refused', code: error.code };
-      throw error;
-    }
+  async function accountTtlSeconds() {
+    const limits = parseBoatValue(limitsResponse, await request('/limits'));
+    if (limits.sandboxPlanKey === undefined) throw new BoatNativeError('native_response_invalid');
+    return limits.sandboxPlanKey === 'trial' ? TRIAL_TTL_SECONDS : null;
   }
-
   return {
     async check() {
       await request('/limits');
@@ -128,7 +126,7 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
     },
     async options(): Promise<BoatOptions> {
       const [limitsValue, snapshotsValue, sandboxesValue] = await Promise.all([
-        request('/limits'), request('/named-snapshots'), request('/sandboxes'),
+        request('/limits'), request('/saved-snapshots'), request('/sandboxes'),
       ]);
       const limits = parseBoatValue(limitsResponse, limitsValue);
       const snapshots = parseBoatValue(snapshotsResponse, snapshotsValue).snapshots
@@ -137,34 +135,70 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
       const sandboxes = parseBoatValue(sandboxesResponse, sandboxesValue).sandboxes
         .filter(value => ['ready', 'idle', 'running', 'archived'].includes(value.state))
         .map(value => ({ id: value.id, ...(value.name ? { name: value.name } : {}), state: value.state }));
-      return { sizes: limits.sandboxPlanDollars !== undefined && limits.sandboxPlanDollars >= 100 ? [...BASE_SIZES, XLARGE] : BASE_SIZES, snapshots, sandboxes };
+      return { ...(limits.sandboxPlanKey ? { sandboxPlanKey: limits.sandboxPlanKey } : {}),
+        sizes: limits.sandboxPlanDollars !== undefined && limits.sandboxPlanDollars >= 100 ? [...BASE_SIZES, XLARGE] : BASE_SIZES, snapshots, sandboxes };
     },
     async acquire(input: Readonly<{ launch: BoatLaunchV1; idempotencyKey: string }>): Promise<BoatAcquireResult> {
       const launch = BoatLaunchV1Schema.parse(input.launch);
       if (!input.idempotencyKey.trim() || input.idempotencyKey.length > 255) return { kind: 'refused', code: 'invalid_request' };
+      const ttlSeconds = await accountTtlSeconds();
       if (launch.source.kind === 'named-snapshot') {
         const source = launch.source;
-        const listed = parseBoatValue(snapshotsResponse, await request('/named-snapshots'));
+        // SavedSnapshotListResponse replaces the deprecated named-snapshot list.
+        // https://docs.boat.dev/openapi/boat-v1.yaml#/components/schemas/SavedSnapshotListResponse
+        const listed = parseBoatValue(snapshotsResponse, await request('/saved-snapshots'));
         if (!listed.snapshots.some(value => value.name === source.name && value.status === 'ready')) {
-          return { kind: 'refused', code: 'native_snapshot_not_ready' };
+          return { kind: 'refused', code: 'native_snapshot_not_ready', nativeCause: { localCause: 'native_options_changed' } };
         }
       }
-      const selected = endpoint(launch);
-      return submitAcquire(BoatAcquireOperationV1Schema.parse({
-        kind: 'acquire', idempotencyKey: input.idempotencyKey, requestFingerprint: encodeRequest(selected.path, selected.body),
-        sourceKind: launch.source.kind, requestedAtMs: now(),
-      }));
+      const selected = endpoint(launch, input.idempotencyKey, ttlSeconds);
+      const operation = BoatAcquireOperationV1Schema.parse({
+        kind: 'acquire', idempotencyKey: input.idempotencyKey,
+      });
+      try {
+        const value = await request(selected.path, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operation.idempotencyKey },
+          body: JSON.stringify(selected.body),
+        });
+        const accepted = parseBoatValue(createResponse, value);
+        // Creation custody survives malformed or absent readiness facts.
+        // Only exact-resource inspection can establish readiness afterwards.
+        return { kind: 'bound', resource: { sandboxId: accepted.sandbox.id }, ready: false };
+      } catch (error) {
+        const cause = error instanceof BoatNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
+        if (error instanceof BoatNativeError && isBoatAdmissionRefusalCode(error.code)) {
+          return { kind: 'refused', code: error.code, ...cause };
+        }
+        // A lost or undecodable reply cannot disprove the submitted effect.
+        return { kind: 'pending', operation, ...cause };
+      }
     },
     async reconcileAcquire(raw: BoatAcquireOperationV1): Promise<BoatAcquireResult> {
       const operation = BoatAcquireOperationV1Schema.parse(raw);
       if (operation.sandboxId) {
         const observed = await this.inspect({ sandboxId: operation.sandboxId });
-        if (observed.kind === 'present' && observed.power === 'running') return { kind: 'bound', resource: { sandboxId: operation.sandboxId } };
+        if (observed.kind === 'present' && observed.power === 'running') return { kind: 'bound', resource: { sandboxId: operation.sandboxId }, ready: true };
         if (observed.kind === 'failed') return { kind: 'refused', code: 'native_acquire_failed' };
-        return { kind: 'pending', operation };
+        return observed.kind === 'pending' ? { kind: 'pending', operation }
+          : { kind: 'unknown', code: 'native_resource_unavailable' };
       }
-      if (now() - operation.requestedAtMs >= IDEMPOTENCY_RETENTION_MS) return { kind: 'unknown', code: 'native_idempotency_expired' };
-      return submitAcquire(operation);
+      // List-sandboxes label/cursor, https://docs.boat.dev/openapi/boat-v1.yaml.
+      // This is read-only even after the idempotency window. No match cannot
+      // disprove a submitted create; several matches cannot establish identity.
+      const query = new URLSearchParams({ label: `happier-managed-id=${operation.idempotencyKey}` });
+      let found: string | undefined;
+      for (;;) {
+        const response = parseBoatValue(recoveryResponse, await request(`/sandboxes?${query}`));
+        for (const candidate of response.sandboxes) {
+          if (found !== undefined && found !== candidate.id) return { kind: 'unknown', code: 'native_identity_ambiguous' };
+          found = candidate.id;
+        }
+        if (!response.pageInfo?.hasMore) break;
+        if (!response.pageInfo.nextCursor) throw new BoatNativeError('native_response_invalid');
+        query.set('cursor', response.pageInfo.nextCursor);
+      }
+      return found ? { kind: 'bound', resource: { sandboxId: found }, ready: false }
+        : { kind: 'unknown', code: 'native_identity_unavailable' };
     },
     async inspect(raw: BoatResourceV1) {
       const resource = BoatResourceV1Schema.parse(raw);
@@ -172,19 +206,59 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
         const response = parseBoatValue(sandboxResponse, await request(`/sandboxes/${encodeURIComponent(resource.sandboxId)}`));
         if (response.sandbox.id !== resource.sandboxId) throw new BoatNativeError('native_identity_mismatch');
         const state = response.sandbox.state;
-        if (['ready', 'idle', 'running'].includes(state)) return { kind: 'present' as const, power: 'running' as const };
-        if (state === 'archived') return { kind: 'present' as const, power: 'stopped' as const };
-        if (['provisioning', 'provisioned', 'cloning', 'archiving'].includes(state)) return { kind: 'pending' as const, power: 'unknown' as const };
+        const facts = {
+          storage: response.sandbox.dataExpiredAt ? 'lost' as const
+            : state === 'archived' && response.sandbox.dataExpiredAt === undefined ? 'unknown' as const : 'retained' as const,
+          ...(response.sandbox.archiveAfter ? { nativeExpiry: Date.parse(response.sandbox.archiveAfter) } : {}),
+          deletionNotices: state === 'archived' || state === 'archiving' ? [{ ...BOAT_STOPPED_STORAGE_NOTICE,
+            ...(state === 'archived' && response.sandbox.stoppedAt
+              ? { at: Date.parse(response.sandbox.stoppedAt) + BOAT_STOPPED_STORAGE_NOTICE.rule.afterMs } : {}),
+          }] : [],
+        };
+        // Sandbox.health (same OpenAPI): a live but unreachable VM is not ready
+        // for bootstrap or confirmed resume. Keep the existing observation reason.
+        if (response.sandbox.health === 'degraded') return { kind: 'unknown' as const, power: 'unknown' as const,
+          reason: 'native_resource_degraded', ...facts };
+        if (['ready', 'idle', 'running'].includes(state)) return { kind: 'present' as const, power: 'running' as const, ...facts };
+        if (state === 'archived') return { kind: 'present' as const, power: 'stopped' as const, ...facts };
+        if (state === 'archiving') return { kind: 'present' as const, power: 'unknown' as const, ...facts };
+        if (['init', 'provisioning', 'provisioned', 'cloning'].includes(state)) return { kind: 'pending' as const, power: 'unknown' as const,
+          ...facts, storage: 'unknown' as const, reason: 'native_resource_creating' };
         if (['error', 'cancelled'].includes(state)) return { kind: 'failed' as const, power: 'unknown' as const };
-        return { kind: 'pending' as const, power: 'unknown' as const };
+        return { kind: 'unknown' as const, power: 'unknown' as const };
       } catch (error) {
         if (error instanceof BoatNativeError && error.code === 'native_not_found') return { kind: 'absent' as const, power: 'unknown' as const };
         throw error;
       }
     },
+    async renew(raw: BoatResourceV1, deadlineAt?: number) {
+      const resource = BoatResourceV1Schema.parse(raw);
+      const path = `/sandboxes/${encodeURIComponent(resource.sandboxId)}`;
+      const current = parseBoatValue(sandboxResponse, await request(path)).sandbox;
+      if (current.id !== resource.sandboxId) throw new BoatNativeError('native_identity_mismatch');
+      if (current.ttlSeconds === undefined) throw new BoatNativeError('native_response_invalid');
+      if (current.ttlSeconds === null || current.state === 'archived' || current.state === 'archiving') return { kind: 'unnecessary' as const };
+      if (!['ready', 'idle', 'running'].includes(current.state)) throw new BoatNativeError('native_not_ready');
+      // Boat's documented integer TTL minimum is one second. The host supplies
+      // its selected deadline; only the vendor's mandatory window is decided here.
+      const ttlSeconds = deadlineAt === undefined ? TRIAL_TTL_SECONDS
+        : Math.max(1, Math.min(TRIAL_TTL_SECONDS, Math.ceil((deadlineAt - Date.now()) / 1000)));
+      const updated = parseBoatValue(sandboxResponse, await request(path, { method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ttlSeconds }) })).sandbox;
+      if (updated.id !== resource.sandboxId) throw new BoatNativeError('native_identity_mismatch');
+      if (!updated.archiveAfter) throw new BoatNativeError('native_response_invalid');
+      const nativeExpiry = Date.parse(updated.archiveAfter);
+      const renewalLeadMs = ttlSeconds * 1000 / 2;
+      return { kind: 'renewed' as const, nativeExpiry,
+        ...(deadlineAt === undefined || nativeExpiry < deadlineAt
+          ? { renewAt: nativeExpiry - renewalLeadMs } : {}) };
+    },
     async bootstrap(raw: BoatResourceV1, publicKey: string) {
       const resource = BoatResourceV1Schema.parse(raw);
       const key = parseBoatValue(BoatPublicKeySchema, publicKey, 'native_ssh_key_invalid');
+      const observed = await this.inspect(resource);
+      if (observed.kind === 'pending') throw new BoatNativeError('native_not_ready');
+      if (observed.kind !== 'present' || observed.power !== 'running') throw new BoatNativeError('native_resource_unavailable');
       const response = parseBoatValue(sshResponse, await request(`/sandboxes/${encodeURIComponent(resource.sandboxId)}/sshkey`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }),
       }));
@@ -205,7 +279,7 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
       const nativeIntent = intent === 'start' ? 'resume' : intent;
       await request(`/sandboxes/${encodeURIComponent(resource.sandboxId)}/${nativeIntent}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        ...(nativeIntent === 'resume' ? { body: JSON.stringify({ ttlSeconds: null }) } : {}),
+        ...(nativeIntent === 'resume' ? { body: JSON.stringify({ ttlSeconds: await accountTtlSeconds() }) } : {}),
       });
       const observed = await this.inspect(resource);
       return observed.kind === 'present' && observed.power === (nativeIntent === 'stop' ? 'stopped' : 'running')

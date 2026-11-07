@@ -1,7 +1,7 @@
 import * as mini from 'zod/mini';
+import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   defineProtocolLiteral,
-  defineProtocolNumber,
   defineProtocolObject,
   defineProtocolString,
   defineProtocolUnion,
@@ -9,7 +9,6 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 const closed = { policy: 'closed' } as const;
-const text = defineProtocolString({ minLength: 1, pattern: '\\S' });
 const sandboxId = defineProtocolString({ pattern: '^bx_[23456789abcdefghjkmnpqrstuvwxyz]{8}$' });
 const snapshotName = defineProtocolString({ pattern: '^[a-z0-9][a-z0-9-]{0,62}$' });
 const size = defineProtocolUnion([
@@ -30,11 +29,6 @@ export const BoatResourceV1Schema = defineProtocolObject({ sandboxId }, closed);
 export const BoatAcquireOperationV1Schema = defineProtocolObject({
   kind: defineProtocolLiteral('acquire'),
   idempotencyKey: defineProtocolString({ minLength: 1, maxLength: 255 }),
-  requestFingerprint: text,
-  sourceKind: defineProtocolUnion([
-    defineProtocolLiteral('blank'), defineProtocolLiteral('named-snapshot'), defineProtocolLiteral('fork'),
-  ]),
-  requestedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
   sandboxId: sandboxId.optional(),
 }, closed);
 export const BoatDeleteOperationV1Schema = defineProtocolObject({
@@ -53,11 +47,33 @@ export type BoatAcquireOperationV1 = ProtocolSchemaOutput<typeof BoatAcquireOper
 export type BoatDeleteOperationV1 = ProtocolSchemaOutput<typeof BoatDeleteOperationV1Schema>;
 export type BoatNativeOperationV1 = ProtocolSchemaOutput<typeof BoatNativeOperationV1Schema>;
 
+// Safe, actionable copy for documented account/setup refusals; never reflect a vendor message.
+// https://docs.boat.dev/api-keys/scopes and https://docs.boat.dev/long-running-tasks/auto-stop
+const setupMessages: Readonly<Record<string, string>> = {
+  native_api_key_action_forbidden: 'This Boat API key is missing a required permission. Create a key with the permissions in the connect checklist.',
+  native_api_key_sandbox_forbidden: 'This Boat API key cannot access this sandbox or its environment. Update the key scope or choose an authorized sandbox.',
+  native_api_key_expired: 'This Boat API key has expired. Connect a new key.',
+  native_trial_auto_stop_required: 'Boat trial accounts require a native auto-stop timer of at most two hours. Reconnect or retry with a supported Boat configuration.',
+};
+export function boatSetupMessage(code: string): string | undefined {
+  return Object.hasOwn(setupMessages, code) ? setupMessages[code] : undefined;
+}
+
 export class BoatNativeError extends Error {
-  constructor(readonly code: string, readonly retryable = false) {
-    super(code);
+  constructor(readonly code: string, readonly nativeCause?: MachineProvisionerNativeCauseV1) {
+    super(boatSetupMessage(code) ?? code);
     this.name = 'BoatNativeError';
   }
+}
+
+const admissionRefusalCodes: readonly string[] = [
+  'native_idempotency_mismatch', 'native_daily_limit_reached', 'native_limit_reached',
+  'native_member_limit_reached', 'native_machine_class_plan_required',
+  'native_trial_machine_class_not_allowed', 'native_trial_auto_stop_required',
+];
+
+export function isBoatAdmissionRefusalCode(code: string): boolean {
+  return admissionRefusalCodes.includes(code) || boatSetupMessage(code) !== undefined;
 }
 
 export function parseBoatValue<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown, code = 'native_response_invalid'): T {

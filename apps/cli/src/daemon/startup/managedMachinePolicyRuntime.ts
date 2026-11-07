@@ -53,6 +53,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     readCensus(signal: AbortSignal): Promise<ManagedMachinePolicyCensus>;
     executePolicy: ReturnType<typeof createDaemonManagedMachineActionAdapter>['executePolicy'];
     reconcileNativeCredentials?: (machine: ManagedMachineV1, signal: AbortSignal) => Promise<void>;
+    supportsNativeLifetimeRenewal?: (machine: ManagedMachineV1, signal: AbortSignal) => Promise<boolean>;
     onSettled?: () => void;
     onUnavailable?: (error: unknown) => void;
 }>) {
@@ -94,7 +95,8 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                 ? census.targets.find(target => target.managedId === machine.id) : undefined;
             const purpose: ManagedPolicyPurposeV1 | null = canceledCleanup ? { kind: 'creation-cleanup' } : target
                 ? { kind: 'accepted-input-start', target }
-                : machine.retention.kind !== 'until-delete' ? { kind: 'retention' } : null;
+                : machine.retention.kind !== 'until-delete' || await params.supportsNativeLifetimeRenewal?.(machine, lifetime.signal)
+                    ? { kind: 'retention' } : null;
             if (!purpose) continue;
             const localGuestPolicy = !machine.controller && machine.enrolledMachineId === params.executorMachineId;
             // Account daemons may observe a resource for accepted input. Its

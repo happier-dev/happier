@@ -1,27 +1,37 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   defineMachineProvisionerReconciliationSchemas,
   defineMachineProvisionerSchemas,
+  computeSshHostKeyFingerprint,
   MachineProvisionerBootstrapCarrierV1Schema,
   MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema,
+  MachineProvisionerRenewResultV1Schema,
   prepareMachineProvisionerStoredSchemas,
+  observeMachineProvisionerNativeRead,
   type MachineProvisionerAuthorDefinitionV1,
   type MachineProvisionerOptionsResultV1,
+  type MachineProvisionerNativeCauseV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
-import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
-import { createBoatNativeClient, type BoatSize } from './machine/nativeClient.js';
+import type { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
+import { ACCOUNT_ID, ACCOUNT_PURPOSE, BOAT_NATIVE_HTTP_METHODS, connectedAccountRuntime, nativeFetch } from './account.js';
+import { BOAT_STOPPED_STORAGE_NOTICE, createBoatNativeClient, type BoatSize } from './machine/nativeClient.js';
 import {
   BoatLaunchV1Schema,
   BoatNativeOperationV1Schema,
   BoatResourceV1Schema,
+  BoatNativeError,
+  boatSetupMessage,
+  isBoatAdmissionRefusalCode,
   type BoatAcquireOperationV1,
+  type BoatLaunchV1,
 } from './machine/schemas.js';
-import { boatCheckPresentation, boatPresentationLabel, BOAT_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { boatCheckPresentation, boatPresentationLabel } from './ui/translations.js';
 
 export const PLUGIN_ID = 'happier.machine.boat';
 export const PROVISIONER_ID = 'boat';
@@ -31,13 +41,21 @@ export const ROLE_SCHEMAS = { ...defineMachineProvisionerSchemas(nativeSchemas),
 export const prepareStoredSchemas = () => prepareMachineProvisionerStoredSchemas(nativeSchemas);
 const contributionRef = { pluginId: PLUGIN_ID, localId: PROVISIONER_ID } as const;
 const resourceRef = <T>(value: T) => ({ contributionRef, schemaVersion: 1, value });
-const pending = (value: BoatAcquireOperationV1) => ({ kind: 'pending' as const, nativeOperationRef: resourceRef(value) });
+const pending = (value: BoatAcquireOperationV1, nativeCause?: MachineProvisionerNativeCauseV1) => ({ kind: 'pending' as const,
+  nativeOperationRef: resourceRef(value), ...(nativeCause ? { nativeCause } : {}) });
+const failureCause = (error: unknown) => error instanceof BoatNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
+function rethrowNativeFailure(error: unknown): never {
+  if (error instanceof BoatNativeError) throw new PluginError({ code: error.code, message: error.message,
+    ...(error.nativeCause ? { details: { nativeCause: error.nativeCause } } : {}) });
+  throw error;
+}
 const billing = { location: 'cloud', stoppedBilling: 'not-billed' } as const;
-const retention = { supportedIntents: ['stop', 'resume', 'delete'] } as const;
-const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
-const runtime = (context: PluginInvocationContext) => createBoatNativeClient({ fetch: nativeFetch(context), signal: context.signal });
+const retention = { supportedIntents: ['stop', 'resume', 'delete'], deletionNotices: [BOAT_STOPPED_STORAGE_NOTICE] } as const;
+const defaults = { placementBindings: [], surfaces: ['ui', 'cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+  execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+} as const;
+const runtime = (context: Parameters<typeof nativeFetch>[0]) => createBoatNativeClient({ fetch: nativeFetch(context), signal: context.signal });
 const PRICE_SOURCE = 'https://docs.boat.dev/pricing';
-
 function sizeTitle(size: BoatSize): string {
   return `${size.id} · ${size.multiplier}x · ${size.cpuCores} vCPU · ${size.memoryGb} GB RAM · ${size.diskGb} GB · $${size.hourlyUsd}/hour`;
 }
@@ -65,21 +83,20 @@ export const MACHINE_PROVISIONER = {
   launchSchema: BoatLaunchV1Schema.jsonSchema, resourceSchema: BoatResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
   billing, retention, bootstrapCredential: { kind: 'ssh' },
-  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+  actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', renew: 'renew' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: BoatNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
-export const PLUGIN = definePlugin({
+export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProvisionerSshBootstrap) {
+  return definePlugin({
   id: PLUGIN_ID,
   version: '0.0.0',
   displayName: 'Boat Machines',
   description: 'Create and manage Boat sandboxes as ordinary Happier Machines.',
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Operate the exact reviewed Boat sandbox.',
-      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://boat.dev' }], methods: ['GET', 'POST', 'DELETE'] } },
+      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://boat.dev' }], methods: BOAT_NATIVE_HTTP_METHODS } },
     { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use only the captured Boat account.',
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders'] } },
     { id: 'ssh-evidence', capability: 'process', reason: 'Observe and verify the managed sandbox host key.',
@@ -89,11 +106,17 @@ export const PLUGIN = definePlugin({
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Boat account', ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
       id: 'token', kind: 'manual', title: 'API key', outcomeReconciliation: 'none',
+      setup: { url: 'https://boat.dev/dashboard', createKeyTitle: 'Open Boat dashboard',
+        // https://docs.boat.dev/api-keys/scopes does not enumerate ci's
+        // account.read membership; old ci keys do not acquire newer permissions.
+        checklist: ['Select the account or organization that should own the sandboxes in the Boat dashboard.',
+          'Create an API key with sandbox.create, sandbox.read, sandbox.update, sandbox.stop, sandbox.resume, sandbox.fork, sandbox.delete (or sandbox.delete-own for sandboxes created by this key), ssh, snapshot.read, and account.read.',
+          'Ensure the key can access the selected source sandboxes and snapshots. Older ci keys may lack resume or ssh; verify account.read explicitly. Copy and paste the key here.'],
+        shapeHint: 'New Boat API keys start with boat_. Existing box_ keys are also supported.' },
+      credentialFieldKeys: { token: 'token' },
+      credentialOrigin: 'authentication',
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: 'API key', schema: { type: 'string', minLength: 1 }, secret: true }],
-      setup: { url: 'https://boat.dev/dashboard', createKeyTitle: 'Open Boat dashboard',
-        checklist: ['Select the account or organization that should own the sandboxes in the Boat dashboard.', 'Create an API key that can manage sandboxes, then copy and paste the key here.'],
-        shapeHint: 'New Boat API keys start with boat_. Existing box_ keys are also supported.' },
     }] } },
     runtime: connectedAccountRuntime,
   } },
@@ -102,31 +125,22 @@ export const PLUGIN = definePlugin({
     reconcile: { ...defaults, title: 'Recover exact Boat sandbox', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {
-        const native = runtime(context);
-        const operation = 'nativeOperation' in input ? input.nativeOperation : {
-          kind: 'acquire' as const,
-          idempotencyKey: input.correlation.managedId,
-          requestFingerprint: JSON.stringify((() => {
-            const launch = input.correlation.launch;
-            const common = { type: launch.size, snapshots: true, noEnv: true, ttlSeconds: null };
-            return launch.source.kind === 'blank' ? { path: '/sandboxes', body: common }
-              : launch.source.kind === 'named-snapshot' ? { path: '/sandboxes', body: { ...common, from: launch.source.name } }
-              : { path: `/sandboxes/${encodeURIComponent(launch.source.sandboxId)}/fork`, body: common };
-          })()),
-          sourceKind: input.correlation.launch.source.kind,
-          requestedAtMs: context.invokedAtMs,
-        };
+        const operation = 'correlation' in input
+          ? { kind: 'acquire' as const, idempotencyKey: input.correlation.managedId } : input.nativeOperation;
         if (operation.kind === 'delete') {
           return { kind: 'unknown' as const, recovery: { reference: operation.operationId, reason: 'native_destroy_custody_requires_shared_owner' } };
         }
         try {
-          const result = await native.reconcileAcquire(operation);
+          const result = await runtime(context).reconcileAcquire(operation);
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
-          if (result.kind === 'pending') return pending(result.operation);
-          if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: operation.idempotencyKey, reason: result.code } };
-          return { kind: 'rejected' as const, code: result.code === 'native_idempotency_mismatch' ? 'request_conflict' as const : 'provider_unavailable' as const };
-        } catch {
-          return pending(operation);
+          if (result.kind === 'pending') return pending(result.operation, result.nativeCause);
+          const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
+          if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: operation.idempotencyKey, reason: result.code }, ...cause };
+          return { kind: 'rejected' as const, code: result.code === 'native_idempotency_mismatch' ? 'request_conflict' as const : 'provider_unavailable' as const, ...cause };
+        } catch (error) {
+          if (error instanceof BoatNativeError && boatSetupMessage(error.code)) return { kind: 'unknown' as const,
+            recovery: { reference: operation.idempotencyKey, reason: error.code }, ...failureCause(error) };
+          return pending(operation, failureCause(error).nativeCause);
         }
       },
     },
@@ -134,20 +148,27 @@ export const PLUGIN = definePlugin({
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return boatCheckPresentation(await runtime(context).check()); }
-        catch { return boatCheckPresentation({ available: false, code: 'provider_unavailable' }); }
+        catch (error) {
+          const code = error instanceof BoatNativeError ? error.code : 'provider_unavailable';
+          const message = boatSetupMessage(code);
+          return { ...boatCheckPresentation({ available: false, code,
+            ...(message ? { status: { key: `machineBoat.errors.${code}`, fallback: message } } : {}) }), ...failureCause(error) };
+        }
       },
     },
     options: { ...defaults, title: 'Discover Boat sandbox options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
       async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const facts = await runtime(context).options();
-        return { base: { launch: {}, retention, nativeFacts: { monthlyCapStatus: 'none' } }, dimensions: {
+        const facts = await runtime(context).options().catch(rethrowNativeFailure);
+        return { base: { launch: {}, retention, nativeFacts: { monthlyCapStatus: 'none' },
+        }, dimensions: {
           size: facts.sizes.map(size => sizeOption(size, context.invokedAtMs)),
           image: [sourceOption({ kind: 'blank' }, 'Blank sandbox'),
             ...facts.snapshots.map(snapshot => sourceOption({ kind: 'named-snapshot', name: snapshot.name }, `Snapshot ${snapshot.name}`)),
             ...facts.sandboxes.map(sandbox => sourceOption({ kind: 'fork', sandboxId: sandbox.id }, `Fork ${sandbox.name ?? sandbox.id} (${sandbox.id})`))],
           location: [{ id: 'eu', title: 'EU only', assignments: [], nativeFacts: { location: { id: 'eu', title: 'EU only' } } }],
-          network: [], duration: [], } };
+          network: [], duration: [],
+        } };
       },
     },
     acquire: { ...defaults, title: 'Create Boat sandbox', dangerLevel: 'destructive',
@@ -158,29 +179,37 @@ export const PLUGIN = definePlugin({
         try {
           const result = await runtime(context).acquire({ launch: input.launch, idempotencyKey: input.managedId });
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
-          if (result.kind === 'pending') return pending(result.operation);
-          if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: input.managedId, reason: result.code } };
-          return { kind: 'rejected' as const, code: result.code === 'native_idempotency_mismatch' ? 'request_conflict' as const : 'provider_unavailable' as const };
-        } catch {
-          const common = { type: input.launch.size, snapshots: true, noEnv: true, ttlSeconds: null };
-          const selected = input.launch.source.kind === 'blank' ? { path: '/sandboxes', body: common }
-            : input.launch.source.kind === 'named-snapshot' ? { path: '/sandboxes', body: { ...common, from: input.launch.source.name } }
-            : { path: `/sandboxes/${encodeURIComponent(input.launch.source.sandboxId)}/fork`, body: common };
-          return pending({ kind: 'acquire', idempotencyKey: input.managedId, requestFingerprint: JSON.stringify(selected),
-            sourceKind: input.launch.source.kind, requestedAtMs: context.invokedAtMs });
+          if (result.kind === 'pending') return pending(result.operation, result.nativeCause);
+          const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
+          if (result.kind === 'unknown') return { kind: 'unknown' as const, recovery: { reference: input.managedId, reason: result.code }, ...cause };
+          return { kind: 'rejected' as const, code: result.code, ...cause };
+        } catch (error) {
+          // Submitted effects settle inside the native client; escaped native failures precede allocation.
+          if (error instanceof BoatNativeError) return { kind: 'rejected' as const, code: error.code, ...failureCause(error) };
+          return { kind: 'unknown' as const, recovery: { reference: input.managedId, reason: 'provider_unavailable' }, ...failureCause(error) };
         }
       },
     },
-    bootstrap: { ...defaults, hostAccess: [...defaults.hostAccess, 'ssh-evidence'], title: 'Prepare Boat sandbox for Happier', dangerLevel: 'writesLocal',
+    bootstrap: { ...defaults, title: 'Prepare Boat sandbox for Happier', dangerLevel: 'writesLocal',
       confirmation: { title: 'Prepare this Boat sandbox for Happier?', body: 'Happier will configure SSH, verify the host key, and install the ordinary daemon service.' },
       inputSchema: ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
-      async run(input, context) {
+      async run(input, context: PluginAccountActionContext | PluginInvocationContext) {
         if (!input.bootstrapPublicKey) throw new Error('credential_unavailable');
-        const connection = await runtime(context).bootstrap(input.resource, input.bootstrapPublicKey);
-        const carrier = await resolveMachineProvisionerSshBootstrap({ exec: context.services.exec, signal: context.signal,
+        const connection = await runtime(context).bootstrap(input.resource, input.bootstrapPublicKey).catch(rethrowNativeFailure);
+        const expected = connection.hostKey.trim().split(/\s+/u).slice(0, 2).join(' ');
+        if (!resolveSshBootstrap || !('exec' in context.services)) {
+          if (!input.credentialRef) throw new PluginError({ code: 'credential_unavailable' });
+          const key = expected.split(' ')[1];
+          if (!key) throw new PluginError({ code: 'native_ssh_evidence_invalid' });
+          const host = connection.port === 22 ? connection.address : `[${connection.address}]:${connection.port}`;
+          // Vendor evidence is TOFU input, never an app-generated trusted pin.
+          return { kind: 'ssh' as const, address: connection.address, user: connection.username, port: connection.port,
+            credentialRef: input.credentialRef,
+            hostKeyEvidence: { hostKey: `${host} ${expected}`, fingerprint: computeSshHostKeyFingerprint(key) } };
+        }
+        const carrier = await resolveSshBootstrap({ exec: context.services.exec, signal: context.signal,
           connection: { address: connection.address, user: connection.username, port: connection.port }, credentialRef: input.credentialRef });
         if (carrier.kind !== 'ssh') throw new Error('native_ssh_host_key_mismatch');
-        const expected = connection.hostKey.trim().split(/\s+/u).slice(0, 2).join(' ');
         const observed = carrier.hostKeyEvidence.hostKey.trim().split(/\s+/u).slice(-2).join(' ');
         if (expected !== observed) throw new Error('native_ssh_host_key_mismatch');
         return carrier;
@@ -191,10 +220,23 @@ export const PLUGIN = definePlugin({
       async run(input, context) {
         try {
           const result = await runtime(context).inspect(input.resource);
-          if (result.kind === 'absent') return { observedAt: context.invokedAtMs, availability: 'absent' as const, power: 'unknown' as const };
-          if (result.kind === 'failed') return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: 'native_resource_failed' };
-          return { observedAt: context.invokedAtMs, availability: 'present' as const, power: result.power, storage: 'retained' as const, billing };
-        } catch { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: 'provider_unavailable' }; }
+          if (result.kind === 'absent') return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'absent', power: 'unknown', deletionNotices: [] });
+          if (result.kind === 'failed') return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'native_resource_failed' });
+          if (result.kind === 'unknown') return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', power: 'unknown',
+            reason: 'reason' in result ? result.reason : 'native_resource_unavailable' });
+          return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'present', power: result.power,
+            ...('reason' in result ? { reason: result.reason } : {}),
+            storage: result.storage, ...(result.nativeExpiry === undefined ? {} : { nativeExpiry: result.nativeExpiry }),
+            deletionNotices: result.deletionNotices, billing });
+        } catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown',
+          reason: error instanceof BoatNativeError && boatSetupMessage(error.code) ? error.code : 'provider_unavailable', ...failureCause(error) }); }
+      },
+    },
+    renew: { ...defaults, title: 'Renew Boat sandbox lifetime', dangerLevel: 'destructive',
+      confirmation: { title: 'Update this Boat sandbox’s lifetime?', body: 'Happier will align its native auto-stop timer with the selected retention policy.' },
+      inputSchema: ROLE_SCHEMAS.renewInput, resultSchema: MachineProvisionerRenewResultV1Schema,
+      async run(input, context) {
+        return await runtime(context).renew(input.resource, input.deadlineAt).catch(rethrowNativeFailure);
       },
     },
     power: { ...defaults, title: 'Change Boat sandbox power', dangerLevel: 'destructive',
@@ -206,8 +248,11 @@ export const PLUGIN = definePlugin({
           const result = await runtime(context).power(input.resource, input.intent as 'start' | 'resume' | 'stop');
           return result.kind === 'confirmed' ? result : { kind: 'unknown' as const, code: 'native_power_pending' };
         } catch (error) {
+          if (error instanceof BoatNativeError && isBoatAdmissionRefusalCode(error.code)) {
+            return { kind: 'refused' as const, code: error.code, ...failureCause(error) };
+          }
           const code = error instanceof Error && error.message.startsWith('native_') ? error.message : 'provider_unavailable';
-          return { kind: 'unknown' as const, code };
+          return { kind: 'unknown' as const, code, ...failureCause(error) };
         }
       },
     },
@@ -222,18 +267,51 @@ export const PLUGIN = definePlugin({
             const result = await native.reconcileDestroy(input.nativeOperation);
             if (result.kind === 'confirmed') return result;
             if (result.kind === 'failed') return { kind: 'refused' as const, code: result.code };
-            return { kind: 'unknown' as const, code: 'native_destroy_pending' };
+            return { kind: 'pending' as const };
           }
           const result = await native.destroy({ resource: input.resource });
           return { kind: 'accepted' as const, nativeOperationRef: resourceRef(result.operation) };
         } catch (error) {
+          if (error instanceof BoatNativeError && boatSetupMessage(error.code)) {
+            return { kind: 'refused' as const, code: error.code, ...failureCause(error) };
+          }
           const code = error instanceof Error && error.message.startsWith('native_') ? error.message : 'provider_unavailable';
-          return { kind: 'unknown' as const, code };
+          return { kind: 'unknown' as const, code, ...failureCause(error) };
         }
       },
     },
   },
-  ui: { translations: BOAT_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
 });
+}
 
+export const PLUGIN = createBoatPlugin();
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
+export const activateAccount = PLUGIN.activateAccount;

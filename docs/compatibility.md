@@ -6990,6 +6990,14 @@ it does not author an Agent recipe or start a Session. Matching Protocol,
 SDK, Triage UI and host readers refresh together. Older strict readers reject
 the projection; no fallback parser, wire epoch or 0.2 adapter is added.
 
+Unreleased 0.3 machine provisioners may declare optional `actions.renew` for a
+renewable native wall deadline. The descriptor, resource input, optional selected
+deadline and renewal result remain closed. Protocol owns the role and result;
+the SDK, matching bundled producer and existing daemon retention consumer refresh
+together. Older strict development readers reject the new executable declaration.
+Omission preserves existing provisioners. This direct development cut adds no
+persisted field, wire epoch, runtime ABI or 0.2 rollback adapter.
+
 Unreleased 0.3 contributed Actions may declare `approvalScope: 'environment'`.
 This optional field is a closed executable-authority declaration, retained in
 the daemon and Account Action projections. Matching development Protocol, SDK
