@@ -2,7 +2,7 @@ import React from 'react';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -151,12 +151,12 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
             <ItemGroup
                 description={machine ? t('machineDetailPage.toolsPage.description', { machine: machineSentenceName }) : undefined}
                 action={isOnline ? (
-                    <RoundButton
+                    // The section's quiet text action, as Security's Updates "Check again".
+                    <TextLinkButton
                         testID="machine-tools-check-again"
-                        size="small"
-                        display="inverted"
-                        title={t('machineDetailPage.toolsPage.checkAgain')}
-                        loading={checking && capabilitiesSnapshot !== null}
+                        size="meta"
+                        label={t('machineDetailPage.toolsPage.checkAgain')}
+                        disabled={checking && capabilitiesSnapshot !== null}
                         onPress={refreshStatus}
                     />
                 ) : undefined}

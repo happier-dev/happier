@@ -154,7 +154,6 @@ export const MachineToolRow = React.memo(function MachineToolRow(
         />
       }
       title={entry.title}
-      titleStyle={status && !installed ? styles.dimTitle : undefined}
       titleAccessory={
         installed && status?.installedVersion ? (
           <Text style={styles.version}>{status.installedVersion}</Text>
@@ -292,5 +291,4 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.tertiary,
     marginLeft: theme.space.s6,
   },
-  dimTitle: { color: theme.colors.text.secondary },
 }));

@@ -244,7 +244,8 @@ function MachineServicePresent(props: Readonly<{
           </Text>
         ) : null}
         {since === null ? null : (
-          <Text variant="body" testID="machine-service-since" style={[styles.since, { color: theme.colors.text.secondary }]}>
+          // The page's state line (lab `services/detail`) reads in ink: it is what the service is doing now.
+          <Text variant="body" testID="machine-service-since" style={styles.since}>
             {since}
           </Text>
         )}
