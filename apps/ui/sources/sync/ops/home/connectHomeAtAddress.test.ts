@@ -10,6 +10,10 @@ const boundary = vi.hoisted(() => ({ fetch: vi.fn() }));
 installTokenStorageWebPlatformMocks();
 vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.fetch }));
 
+// Compile the real Action entry graph before per-test deadlines. Its first
+// dynamic import must not consume the behavior budget under shared-host load.
+await import('@/sync/ops/actions/machineConnectionActionDeps');
+
 const enteredUrl = 'https://home.example.test';
 const canonicalUrl = 'https://canonical.example.test';
 const homeIdentity = 'srv_home_connect_1';

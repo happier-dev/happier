@@ -406,7 +406,7 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
         )).resolves.toEqual({ token: 'loopback-home-token' });
     });
 
-    it('moves the canonical URL and credential slot of one established identity while preserving label, aliases, pointers and unrelated Homes', async () => {
+    it.each([false, true])('moves the canonical URL and credential slot while preserving unrelated Homes with retained alias=%s', async (retainedAlias) => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `canonical_url_migration_${Date.now()}_${Math.random()}`;
         const localStorageMock = installLocalStorageMock();
         restoreLocalStorage = localStorageMock.restore;
@@ -432,9 +432,13 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
         )).resolves.toBe(true);
 
         const moving = await profiles.adoptHomeProfile({
-            source: 'qr',
+            source: retainedAlias ? 'manual' : 'qr',
             suggestedName: 'Workshop Home',
-            descriptor: {
+            descriptor: retainedAlias ? {
+                serverUrl: 'https://moving-home-old.test',
+                canonicalServerUrl: 'https://moving-home-old.test',
+                homeServerIdentityId: 'srv_moving_home',
+            } : {
                 v: 1,
                 homeServerIdentityId: 'srv_moving_home',
                 canonicalServerUrl: 'https://moving-home-old.test',
@@ -447,6 +451,17 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
             { serverId: 'srv_moving_home' },
             { token: 'moving-home-token' },
         )).resolves.toBe(true);
+        const retainedUrl = 'https://moving-home-retained.test';
+        if (retainedAlias) {
+            await profiles.adoptHomeProfile({
+                source: 'manual',
+                descriptor: { serverUrl: retainedUrl, homeServerIdentityId: 'srv_moving_home' },
+            });
+            expect(profiles.getServerProfileById(moving.id)).toMatchObject({
+                serverUrl: retainedUrl,
+                canonicalServerUrl: 'https://moving-home-old.test',
+            });
+        }
         await profiles.setActiveServerId(other.id);
         await profiles.saveHomeViewState({
             version: 1,
@@ -485,6 +500,11 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
         )).resolves.toEqual({ token: 'moving-home-new-token' });
         await expect(TokenStorage.getCredentialsForServerUrl('https://moving-home-old.test'))
             .resolves.toBeNull();
+
+        if (retainedAlias) {
+            await expect(TokenStorage.getCredentialsForServerUrl(retainedUrl, { serverId: 'srv_moving_home' }))
+                .resolves.toBeNull();
+        }
 
         // Pointers, groups and the unrelated Home are untouched.
         expect(profiles.getActiveServerSnapshot()).toMatchObject({

@@ -110,9 +110,9 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
 ): Promise<ServerProfile | null> {
     const identity = target.serverIdentityId;
     const existing = identity ? getServerProfileById(identity) : null;
-    const fromCanonicalServerUrl = existing
-        ? existing.canonicalServerUrl ?? existing.serverUrl
-        : null;
+    // Credential admission follows the established serverUrl, including retained
+    // profiles whose canonical metadata still names a different address.
+    const fromCanonicalServerUrl = existing?.serverUrl ?? null;
     const toCanonicalServerUrl = target.canonicalServerUrl;
     if (
         !identity
@@ -124,7 +124,7 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
         return null;
     }
 
-    // Until the profile moves, the old canonical URL is the only URL that the
+    // Until the profile moves, the established URL is the only URL that the
     // identity owner accepts. Write the newly issued credential there; its
     // stable-identity primary key remains valid after the URL changes.
     const credentialWrite = await setHomeCredentialsWithRollbackUnderMutationAuthority(
