@@ -85,14 +85,16 @@ export function registerSessionTurnMutationRoute(app: Fastify) {
         },
         schema: {
             params: z.object({ sessionId: z.string() }),
-            querystring: z.strictObject({}),
+            querystring: z.strictObject({ recentCommittedTurns: z.optional(z.coerce.number().check(z.int(), z.minimum(1))) }),
             response: {
                 200: SessionTurnsProjectionV1Schema,
                 404: z.object({ error: z.literal("Session not found") }),
             },
         },
     }, async (request, reply) => {
-        const result = await readSessionTurns({ userId: request.userId, sessionId: request.params.sessionId, authentication: readSessionAccessAuthenticationFromRequest(request) });
+        const result = await readSessionTurns({ userId: request.userId, sessionId: request.params.sessionId,
+            authentication: readSessionAccessAuthenticationFromRequest(request),
+            recentCommittedTurns: request.query.recentCommittedTurns });
         return reply.code(result.status).send(result.body);
     });
 }

@@ -6,7 +6,7 @@ import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncr
 import { fetchTranscriptSemanticPage } from './transcript/fetchTranscriptSemanticPage';
 import { projectExternalShareableTranscriptPage } from './transcript/projectExternalShareableTranscriptPage';
 import type { TranscriptDirection, TranscriptScope } from './transcript/semanticTranscriptItem';
-import { resolveSessionTransportContext } from './resolveSessionTransportContext';
+import { resolveSessionTransportContext, type ResolveSessionTransportContextResult } from './resolveSessionTransportContext';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 type GetSessionTranscriptErrorResult = Extract<SessionTranscriptGetResult, Readonly<{ ok: false }>>;
@@ -122,6 +122,21 @@ export async function getSessionTranscript(
 
   if (params.projection === 'externalShareableV1') {
     try {
+      // A new binding needs the committed transcript boundary, not replay of
+      // already admitted history. Unsettled old turns must still hold ordinary
+      // projection reads, but cannot prevent establishing a no-history cursor.
+      // Session access and crypto material were admitted by the same owner above.
+      if (params.cursor === 'tail') {
+        return {
+          ok: true,
+          sessionId: sessionTarget.sessionId,
+          projection: 'externalShareableV1',
+          items: [],
+          nextCursor: String(sessionTarget.rawSession.seq),
+          scannedThroughSeq: sessionTarget.rawSession.seq,
+          hasMore: false,
+        };
+      }
       const cursorSeq = parseExternalCursor(params.cursor);
       const limit = clampInt(params.limit, { min: 1, max: SESSION_TRANSCRIPT_GET_MAX_LIMIT, fallback: 20 });
       const rawPage = await fetchEncryptedTranscriptMessagesPage({
@@ -182,6 +197,14 @@ export async function getSessionTranscript(
     }
   }
 
+  return getSessionTranscriptWithContext(params, sessionTarget);
+}
+
+/** One logical paged read retains its admitted Session and crypto context. */
+export async function getSessionTranscriptWithContext(
+  params: Omit<GetSessionTranscriptParams, 'idOrPrefix' | 'projection' | 'callerPluginId' | 'serverFeaturesSnapshot'>,
+  sessionTarget: Extract<ResolveSessionTransportContextResult, { ok: true }>,
+): Promise<GetSessionTranscriptResult> {
   const roles = normalizeTranscriptRoles(params.roles);
   if (roles.length === 0) {
     return {
@@ -203,8 +226,8 @@ export async function getSessionTranscript(
     : params.maxCharsPerMessage === undefined
       ? null
       : clampInt(params.maxCharsPerMessage, { min: 0, max: 50_000, fallback: 50_000 });
-  const maxRawPayloadChars = params.maxRawPayloadChars === null
-    ? 8192
+  const maxRawPayloadChars = params.maxRawPayloadChars == null
+    ? null
     : clampInt(params.maxRawPayloadChars, { min: 1, max: 32768, fallback: 8192 });
 
   try {

@@ -270,6 +270,46 @@ async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 're
 }
 
 describe('production workflow coordinator', () => {
+  it('projects progress from admitted slots without reading future authored slots on startup or facts', async () => {
+    const fixture = await commandOutputAdmissionFixture('plain');
+    let futureSlotVisits = 0;
+    const authored: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+      { ...onlyStep, id: 'command' }, ...Array.from({ length: 79 }, (_, i) => ({ ...onlyStep,
+        get id() { futureSlotVisits++; return `future-${i}`; } })),
+    ] };
+    const operations: WorkflowRunStorageOperation[] = [];
+    const load = () => DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+      rootRecordId: fixture.rootId, revision: fixture.boundary.run().revision, encryption: fixture.encryption,
+      authoredDefinition: authored, definition: authored,
+      destinations: deriveWorkflowDestinationsV1({ definition: authored }).leaves,
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: fixture.rootId, nextSequence: '2',
+        frontier: { nextBlockOrdinal: 0, paused: false } },
+      storage: { execute: async operation => { operations.push(operation); return fixture.boundary.execute(operation); } } });
+    const store = await load();
+    await store.refreshStepProgress();
+    expect(operations.filter(op => op.operation === 'invocations.current')).toHaveLength(0);
+    const command = await store.readByLogicalInvocation(fixture.intent.recordId);
+    if (!command) throw new Error('missing_command');
+    operations.length = 0;
+    futureSlotVisits = 0;
+    await store.commitFact({ key: command.key, lifecycle: 'completed', result: 'done' });
+    expect(operations.filter(op => op.operation === 'invocations.current' || op.operation === 'invocations.list'
+      || op.operation === 'invocations.get')).toHaveLength(0);
+    expect(futureSlotVisits).toBe(0);
+    const progress = () => {
+      const row = fixture.boundary.rowById(fixture.rootId)!;
+      return openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope),
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: fixture.rootId,
+          sequence: row.index.sequence, parentRecordId: null, memberOrdinal: '0', attempt: row.index.attempt } });
+    };
+    expect(progress()).toMatchObject({ kind: 'available', content: { stepProgress: { completed: 1, skipped: 0, total: 80 } } });
+    operations.length = 0;
+    const restored = await load();
+    await restored.refreshStepProgress();
+    expect(operations.filter(op => op.operation === 'invocations.current')).toHaveLength(0);
+    expect(progress()).toMatchObject({ kind: 'available', content: { stepProgress: { completed: 1, skipped: 0, total: 80 } } });
+  });
+
   it.each(['plain', 'e2ee'] as const)('retains the Action failure cause through persisted progress and store reload (%s)', async mode => {
     const fixture = await commandOutputAdmissionFixture(mode);
     const failureCause = { phase: 'machines.command.run', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
@@ -1706,7 +1746,10 @@ describe('production workflow coordinator', () => {
       expect(interval).not.toHaveBeenCalled();
       // The next intent carries its resolved input; no separate input fact and
       // corresponding root projection round trips precede Session admission.
-      expect(operationsBeforeNextInput).toHaveLength(11);
+      // Its slot is first read when demanded: progress no longer prefetches
+      // every future authored slot during startup.
+      expect(operationsBeforeNextInput.filter(operation => operation === 'invocations.current')).toHaveLength(1);
+      expect(operationsBeforeNextInput.filter(operation => operation !== 'invocations.current')).toHaveLength(11);
       console.info('FIN-HANDOFF-COST', JSON.stringify({ timerFires, intervalInstalls: interval.mock.calls.length, invocationsStarted: admitted.length,
         deadlineDelaysMs: timeout.mock.calls.map(([, delay]) => delay),
         storageOperations: boundary.calls.length, operationsFromFirstResultToNextInput: operationsBeforeNextInput }));

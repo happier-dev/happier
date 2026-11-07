@@ -1324,6 +1324,32 @@ Open reports that exact initial prerequisite refusal as not started; later,
 replayed or uncertain failures retain their existing effect/outcome classification.
 No background requester controller or custodian-credential fallback is implied.
 
+### Presented workspace observation (0.3 development)
+
+Presented Session composers, Git panes and Reviews, and Project Changes/Git
+retain the same workspace observation through `ScmStatusSync`'s existing
+`ScmAutoRefresh` demand owner. The authenticated Machine's
+`scm.workspace.watch.v1` request holds native observation until its last
+presented consumer releases it. Changes enter the existing
+`invalidateCoalesced` workspace queue; Session and Project refreshes consume
+that queue. File details consume the resulting snapshot revision, including
+edits whose Git status and line counts stay equal. Unchanged fallback reads
+retain snapshot identity.
+
+The selected SCM backend supplies ignored paths and observation inputs. Git
+owns its administrative/configuration paths and ignore rules. Linux enrolls
+one directory watch per visible directory, including new directories, and
+re-filters after ignore-rule changes. macOS and Windows use native recursive
+observation without a traversal filter. Named metadata inputs reuse the shared
+file-watcher owner. Hidden workspaces release this observation; existing
+agent-mutation refreshes keep their own lifecycle.
+
+An OS watch-limit failure (`ENOSPC` or `EMFILE`), unsupported backend or older
+Machine settles as typed unavailable with the existing SCM error presentation.
+The incumbent external-editor fallback remains available. Observation adds no
+retry timer, watch cap, setting or persistent state. These development-source
+contracts do not certify a loaded daemon or a platform not exercised by QA.
+
 ### Accepted Session checkouts and the private Project library (0.3 development)
 
 The daemon's `sessions/onHappySessionWebhook.ts` enrolls a checkout only after
@@ -1335,6 +1361,15 @@ its own credential. An unavailable requester channel is reported, not redirected
 SCM's inspected repository root is enrolled while the Session keeps its selected
 nested directory. Proven hosting facts come from the selected SCM contribution,
 not a second remote parser. Non-repositories are not enrolled automatically.
+
+For a new native linked checkout, Git's ordered worktree registration proves the
+main checkout (or bare repository) root. The shared WorkspaceRef materializer
+accepts that main root first and uses its existing parent inheritance for the
+linked checkout. Open applies the same proof before the first daemon report;
+creating a worktree from an accepted checkout inherits that exact source's
+Project. Explicit managed-child parents take precedence. Existing accepted refs
+keep their anchors without recreating an absent main ref. An administrative
+directory alone, including an unproven separate-git-dir main, supplies no parent.
 
 Protocol's `projects/projectListProjectionV1.ts` is the shared UI/CLI projection
 of accepted refs and Home-qualified organization rows. It groups by retained
@@ -1760,6 +1795,14 @@ that observed member readiness; an unavailable shared-user readiness projection
 does not prevent member preparation. This does not publish global effectiveness,
 infer member consent from legacy enablement, or admit a failed native probe.
 
+In current 0.3 development, a Session's native attachment channel retains its
+exact admitted requester alongside its workspace, upload state and issued
+handles. RPC authorization consumes that custody for upload continuations and
+issued-handle downloads after the Session runtime binding is released; another
+requester cannot consume it. A fresh native upload still requires a bound
+runtime. Ordinary owner uploads without a native channel retain their existing
+Home admission path. This describes source behavior, not loaded guest validation.
+
 The direct Machine Action transport retains the accepted Action context's
 authority when no separate authority argument is supplied, together with its
 Session/Workflow caller provenance and original Machine receipt/currentness.
@@ -1976,7 +2019,12 @@ Set and own-status qualify native readiness through the real noninteractive
 launch shim. Native operations consume the admitted member binding, and Agent
 CLI resolution consumes the selected managed runtime, without a readiness probe
 per operation or tool resolution. Missing member bindings retain the existing
-owner setup flow. An actual failed launch can invoke the same readiness/repair
+owner setup flow. A shared-agent successor whose only missing fact is its
+withdrawn runtime publication demands one observation from that same native
+readiness owner at explicit launch admission. The owner publishes the result;
+later launches consume the held fact. Classified native failures remain
+terminal, and background folder reads do not trigger this observation.
+An actual failed launch can invoke the same readiness/repair
 owner; Ask may prompt and None may refuse. A repaired launch remains a visible
 failure for retry, with no automatic payload replay. RunAs authorization is
 enforced by the actual shim launch, without a separate `sudo -l` query or
@@ -2206,6 +2254,13 @@ Before Send, the composer checks an explicit separated-user folder through the
 existing directory preflight RPC under that Agent identity. An inaccessible path
 returns `invalid_directory` and a visible blocked reason; missing accessible
 folders retain the existing creation-approval flow.
+
+Deliberate Session launch sets `prepareAgentIsolationMember: true` on that
+preflight request. The host validates the request before effects and lets the
+existing native preparation owner establish the requesting person's member
+binding, including the Machine owner, before the folder worker starts.
+Background folder and isolation-status reads omit this intent and consume only
+an existing binding; they never provision a member.
 
 ### Sessionless Project Services (0.3 development)
 
@@ -3103,10 +3158,14 @@ requester observation context refuses rather than bypassing consent.
 
 Dedicated server and deployment-Target creation also initializes desired Agent
 isolation through the guest's ordinary preview/set Actions, after administrator
-policy recording and before the first Agent. Dedicated enrollment requests
-`enabled: true`; it does not infer `memberProvisioning: linuxUsersV1` from the
-daemon identity. Member provisioning requires an explicitly declared isolation
-template. A preview matching the effective policy, with no administrator effects
+policy recording and before the first Agent. New dedicated managed Machines
+(cloud, Lima and Lume) request `{ enabled: true, memberProvisioning: 'linuxUsersV1' }`
+from the canonical enrollment policy producer, following the 2026-11-07 owner
+ruling. The creation children consume that same reviewed policy; existing Machines
+retain their saved policy without migration or a changed enrollment-record parser.
+The Machine's separate-users policy remains adjustable per Machine: omitting
+member provisioning while retaining `enabled: true` selects the shared Agent user
+through the existing placement owner. A preview matching the effective policy, with no administrator effects
 or Sessions to replace, completes this bootstrap step without set or approval.
 The isolation set Action refuses an outdated reviewed metadata version as a typed
 conflict at admission, before requesting approval. A daemon restart retains the
@@ -4459,6 +4518,19 @@ within settled authored stages, only observed completed leaves count as finished
 untaken alternatives and unexecuted empty-loop bodies count as skipped. Run detail
 and lean rows consume that projection without inferring skips from a count gap.
 Older retained projections without the field leave the skipped count unknown.
+The durable coordinator indexes authored stages once and applies invocation
+facts to their affected stage and destination entries. Recovery reconstructs
+from admitted top-level rows; progress never probes future authored slots.
+Workflow Session context requests the needed committed turns through
+`fetchSessionTurnsProjection({ recentCommittedTurns })`. The existing turns HTTP
+owner selects visible committed rows by `startedAt`, then returns them oldest
+first with their transcript anchors. Unselected history is not transferred to
+the daemon. Requests without the selector retain the complete projection.
+The reader admits Session transport and Account encryption currentness once per
+context read, then reuses that transport and crypto context for transcript pages.
+Each HTTP request retains its server authorization and cancellation signal.
+This selector is an unreleased 0.3 contract; an older Home that rejects the query
+leaves context preparation unavailable until Home is updated.
 Upcoming occurrences open the existing trigger or workflow detail; admitted
 occurrences open their Run. Transcript first display batches exact Run ids and
 invocation references through the same lean `workflow.run.list` owner, including

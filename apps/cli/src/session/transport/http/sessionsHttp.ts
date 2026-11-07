@@ -172,6 +172,7 @@ export async function fetchSessionTurnsProjection(params: Readonly<{
   token: string;
   sessionId: string;
   projection?: 'externalShareableV1';
+  recentCommittedTurns?: number;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: (request: Readonly<{ method: 'GET'; path: string }>) => Readonly<Record<string, string>> | null;
 }>): Promise<SessionTurnsProjectionV1 | null> {
@@ -185,7 +186,10 @@ export async function fetchSessionTurnsProjection(params: Readonly<{
       ...authorizationHeaders,
       'Content-Type': 'application/json',
     },
-    ...(params.projection ? { params: { projection: params.projection } } : {}),
+    ...((params.projection || params.recentCommittedTurns !== undefined) ? { params: {
+      ...(params.projection ? { projection: params.projection } : {}),
+      ...(params.recentCommittedTurns !== undefined ? { recentCommittedTurns: params.recentCommittedTurns } : {}),
+    } } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,

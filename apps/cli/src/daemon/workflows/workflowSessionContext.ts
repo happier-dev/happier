@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import * as z from 'zod/mini';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import { SessionTurnInitiatorV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
@@ -11,7 +11,7 @@ import { WorkflowSessionContextGoalV1Schema, WorkflowSessionContextV1Schema } fr
 import type { WorkflowSessionContextV1 } from '@happier-dev/protocol/workflows';
 import type { StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { getSessionTranscript } from '@/session/services/getSessionTranscript';
+import { getSessionTranscriptWithContext } from '@/session/services/getSessionTranscript';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionTurnsProjection } from '@/session/transport/http/sessionsHttp';
@@ -73,14 +73,14 @@ export function createProductionWorkflowSessionContextReader(params: ContextRead
       let truncated = false;
       if (recentTurns > 0) {
         const projection = await fetchSessionTurnsProjection({ token: params.credentials.token, sessionId: target.sessionId,
+          recentCommittedTurns: recentTurns,
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
         });
         if (!projection) throw new WorkflowInputResolutionError('workflow_session_context_unavailable');
         // A committed Turn may contain several user/assistant rows, or tools only.
         // Select Turn records first, then join the canonical transcript within their anchors.
-        const selected = projection.turns.filter((turn) => turn.status !== 'in_progress')
-          .sort((left, right) => left.startedAt - right.startedAt).slice(-recentTurns).map((turn) => {
+        const selected = projection.turns.map((turn) => {
             const initiator = SessionTurnInitiatorV1Schema.safeParse(turn.initiator);
             const anchors = turn.transcriptAnchors;
             const exactSeqs = [...(anchors?.userMessageSeqs ?? []),
@@ -98,12 +98,12 @@ export function createProductionWorkflowSessionContextReader(params: ContextRead
         let scannedBefore: number | null = null;
         let covered = selected.length === 0;
         while (!covered) {
-          const page: Awaited<ReturnType<typeof getSessionTranscript>> = await getSessionTranscript({ credentials: params.credentials, idOrPrefix: target.sessionId,
+          const page = await getSessionTranscriptWithContext({ credentials: params.credentials,
             limit: SESSION_TRANSCRIPT_GET_MAX_LIMIT, direction: 'before', cursor,
             roles: ['user', 'assistant'], maxCharsPerMessage: null,
             ...(params.signal ? { signal: params.signal } : {}),
             ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-          });
+          }, target);
           if (!page.ok) throw new WorkflowInputResolutionError('workflow_session_context_unavailable');
           for (const item of page.items) {
             if (item.role !== 'user' && item.role !== 'assistant') continue;

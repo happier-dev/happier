@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { WorkflowStepProgress } from './stepProgress';
 
 import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -14,7 +15,7 @@ import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema, type 
 import { materializeWorkflowAcceptedSnapshotV1, workflowRequiresMachineStartCapacityV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { readWorkflowInvocationMembersV1, readWorkflowInvocationRootV1 } from '@happier-dev/protocol/workflows';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
-import { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
+import { deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
@@ -220,8 +221,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   private readonly recordsById = new Map<string, WorkflowCoordinatorInvocation>();
   private readonly currentSlots = new Map<string, WorkflowCoordinatorInvocation>();
   private readonly persisted = new Map<string, PersistedInvocation>();
-  private readonly destinationObservations = new Map<string,
-    NonNullable<NonNullable<WorkflowRunStepProgressV1['destinations']>[number]['observation']>>();
+  private readonly stepProgress: WorkflowStepProgress;
+  private stepProgressReconstructed = false;
   private readonly materializedContainers = new Map<string, import('./input').WorkflowJsonValue>();
   private readonly loadedParentSlots = new Set<string>();
   private readonly progressMembers = new Map<string, {
@@ -247,7 +248,10 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       projectionExpectedRevision?: number;
       discussionRound?: WorkflowDiscussionRoundBindingV1;
     },
-  ) {}
+  ) {
+    this.stepProgress = new WorkflowStepProgress({ definition: params.authoredDefinition,
+      frozenChildren: params.frozenChildren, destinations: params.destinations });
+  }
 
   static async load(params: ConstructorParameters<typeof DurableWorkflowCoordinatorStore>[0]): Promise<DurableWorkflowCoordinatorStore> {
     const store = new DurableWorkflowCoordinatorStore(params);
@@ -391,39 +395,10 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         }
       }
     }
-    if (this.params.authoredDefinition || this.params.destinations) {
-      if (progress.blockKind === 'root') {
-        for (const leaf of progress.stepProgress?.destinations ?? []) if (leaf.observation) {
-          this.rememberDestinationObservation(leaf.sourceKey, leaf.blockId, leaf.observation);
-        }
-      } else {
-        let sourceKey = '$root';
-        let definition = this.params.authoredDefinition;
-        for (const scope of progress.invocationPath.scope) {
-          if (scope.kind !== 'workflow' || !definition) continue;
-          const block = collectWorkflowLeavesV1(definition).find(block => block.id === scope.blockId);
-          if (block?.kind !== 'workflow') { definition = undefined; break; }
-          sourceKey = block.workflowRef;
-          definition = this.params.frozenChildren?.[sourceKey];
-        }
-        if (definition) this.rememberDestinationObservation(sourceKey, progress.invocationPath.blockId, {
-          recordId: index.id, sequence: index.sequence, attempt: index.attempt, contentRevision: index.contentRevision,
-          lifecycle: index.lifecycle, blockKind: progress.blockKind,
-        });
-      }
-    }
+    const parent = index.parentRecordId ? this.recordsById.get(index.parentRecordId) : undefined;
+    this.stepProgress.remember(index, progress, record, parent?.blockKind === 'root'
+      && this.currentSlots.get(slot)?.recordId === record.recordId, !cached);
     return record;
-  }
-
-  private rememberDestinationObservation(sourceKey: string, blockId: string,
-    observation: NonNullable<NonNullable<WorkflowRunStepProgressV1['destinations']>[number]['observation']>): void {
-    const key = JSON.stringify([sourceKey, blockId]);
-    const previous = this.destinationObservations.get(key);
-    // Storage admits every physical row, including retries, at a new globally
-    // unique Run sequence. Revisions order observations of that same row only.
-    if (previous && (BigInt(observation.sequence) < BigInt(previous.sequence)
-      || (observation.recordId === previous.recordId && BigInt(observation.contentRevision) < BigInt(previous.contentRevision)))) return;
-    this.destinationObservations.set(key, observation);
   }
 
   read = (key: string) => this.records.get(key);
@@ -453,7 +428,9 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       }, indexOf: index => index });
     const index = members.get(parentRecordId)![0];
     const selected = index ? await this.readByLogicalInvocation(index.id) : undefined;
-    return selected?.runId === runId && selected.blockId === blockId ? selected : undefined;
+    const resolved = selected?.runId === runId && selected.blockId === blockId ? selected : undefined;
+    if (resolved && parent?.blockKind === 'root') this.stepProgress.rememberTopLevel(resolved);
+    return resolved;
   };
 
   listCurrentMembers = async (parentKey: string): Promise<readonly WorkflowRunInvocationIndexV1[]> => {
@@ -916,41 +893,30 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const definition = this.params.authoredDefinition;
     const root = this.recordsById.get(this.params.rootRecordId);
     if (!definition || !root) throw new Error('workflow_root_invocation_missing');
-    let completed = 0;
-    let skipped = 0;
-    let currentLoop: WorkflowRunStepProgressV1['currentLoop'];
-    for (const [ordinal, block] of definition.blocks.entries()) {
-      const invocation = await this.readCurrent({ runId: this.params.runId, blockId: block.id,
-        scope: [], parentKey: root.key, memberOrdinal: String(ordinal) });
-      if (invocation?.lifecycle === 'skipped') skipped += countWorkflowStepsV1([block]);
-      if (invocation?.lifecycle === 'completed') {
-        // A settled container proves its frontier is closed, not that both If
-        // alternatives (or an empty loop's body) ran. Reuse the exact leaf facts
-        // retained for destinations, including after reload; no history scan.
-        for (const leaf of collectWorkflowLeavesV1({ ...definition, blocks: [block] })) {
-          const observation = this.destinationObservations.get(JSON.stringify(['$root', leaf.id]));
-          if (observation?.lifecycle === 'completed') completed++;
-          else if (!observation || observation.lifecycle === 'skipped') skipped++;
-        }
+    if (!this.stepProgressReconstructed) {
+      // Recovery opens admitted rows, never future authored slots. Subsequent
+      // local admissions and facts update the aggregate in remember().
+      for (const index of await this.listCurrentMembers(root.key)) {
+        const invocation = await this.readByLogicalInvocation(index.id);
+        const current = this.currentSlots.get(`${root.recordId}:${index.memberOrdinal}`)
+          ?? this.currentSlots.get(`${index.parentRecordId}:${index.memberOrdinal}`) ?? invocation;
+        if (current) this.stepProgress.rememberTopLevel(current);
       }
-      if (block.kind !== 'loop' || !invocation || invocation.lifecycle === 'completed') continue;
+      this.stepProgressReconstructed = true;
+    }
+    let currentLoop: WorkflowRunStepProgressV1['currentLoop'];
+    for (const invocation of this.stepProgress.currentLoops()) {
+      const ordinal = Number(invocation.memberOrdinal);
       const loop = invocation.container;
       if (loop?.kind !== 'loop') continue;
-      const frozenBlock = this.params.definition?.blocks[ordinal] ?? block;
+      const frozenBlock = this.params.definition?.blocks[ordinal] ?? definition.blocks[ordinal];
       const total = loop.mode === 'items' ? Number(loop.itemCount) : loop.mode === 'count' ? Number(loop.count)
-        : frozenBlock.kind === 'loop' && frozenBlock.id === block.id && 'maxIterations' in frozenBlock.repetition
+        : frozenBlock?.kind === 'loop' && frozenBlock.id === invocation.blockId && 'maxIterations' in frozenBlock.repetition
           ? frozenBlock.repetition.maxIterations : undefined;
       if (typeof total !== 'number') continue;
       currentLoop = await this.projectLoopProgress(invocation, total);
     }
-    // Reload opens demanded rows only. Unopened writers retain their last exact
-    // observation; it never asserts completion of an entire loop or unseen work.
-    const destinations = this.params.destinations?.map(leaf => {
-      const observation = this.destinationObservations.get(JSON.stringify([leaf.sourceKey, leaf.blockId]));
-      return { ...leaf, ...(observation ? { observation } : {}) };
-    });
-    return { completed, skipped, total: countWorkflowStepsV1(definition.blocks), ...(currentLoop ? { currentLoop } : {}),
-      ...(destinations ? { destinations } : {}) };
+    return this.stepProgress.project(currentLoop);
   }
 
   /** Reuse the built-in's durable outcome aggregate and exact current slots, never scan private list rows. */

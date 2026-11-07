@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createProductionWorkflowSessionContextReader } from './workflowSessionContext';
-
-vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isAxiosError: () => false } }));
+import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
 
 const sessionId = 'c123456789012345678901234';
 const credentials = { token: 'token', encryption: null } as const;
@@ -11,9 +10,10 @@ const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
 let goal: Record<string, unknown>;
 
 describe('production workflow session context', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   beforeEach(() => {
-    vi.mocked(axios.get).mockReset();
-    vi.mocked(axios.post).mockReset();
+    vi.spyOn(axios, 'get');
+    vi.spyOn(axios, 'post');
     goal = { id: 'goal', kind: 'goal', origin: 'happier', status: 'active', title: 'Ship', updatedAt: 10,
       tokenBudget: 50, tokensUsed: 9999, startedAt: 5, createdAt: 1 };
     vi.mocked(axios.get).mockImplementation(async (url) => {
@@ -59,17 +59,41 @@ describe('production workflow session context', () => {
       .resolveSessionContext(1)).resolves.toMatchObject({ turns: [{ initiator: 'workflow', text: '' }], truncated: false });
   });
 
-  it('selects the most recent committed turns and returns them oldest first', async () => {
+  it('admits transport once for a context read spanning multiple transcript pages', async () => {
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    let pages = 0;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      if (String(url).includes('/messages')) {
+        pages++;
+        const query = new URL(String(url)).searchParams;
+        const before = Number(query.get('beforeSeq') ?? SESSION_TRANSCRIPT_GET_MAX_LIMIT + 2);
+        const limit = Number(query.get('limit') ?? SESSION_TRANSCRIPT_GET_MAX_LIMIT);
+        const seqs = Array.from({ length: Math.min(limit, before - 1) }, (_, i) => before - i - 1);
+        const hasMore = seqs[seqs.length - 1] > 1;
+        return { status: 200, data: { messages: seqs.map(seq => ({ id: `row-${seq}`, seq, createdAt: seq,
+          messageRole: 'agent', content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: `text-${seq}` } } } })),
+          hasMore, nextBeforeSeq: hasMore ? seqs[seqs.length - 1] : null } };
+      }
+      return get(url, config);
+    });
+    const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
+    const context = await reader.resolveSessionContext(1);
+    expect(pages).toBe(Math.ceil((SESSION_TRANSCRIPT_GET_MAX_LIMIT + 1) / 100));
+    expect(context.turns).toEqual([{ initiator: 'workflow', text: 'text-1\n\ntext-2\n\ntext-3' }]);
+    expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).endsWith('/v1/account/encryption/currentness'))).toHaveLength(1);
+    expect(vi.mocked(axios.get).mock.calls.filter(([url]) => !String(url).includes('/messages')
+      && !String(url).endsWith('/turns') && !String(url).endsWith('/currentness'))).toHaveLength(1);
+  });
+
+  it('joins the owner-selected recent committed turns in their published order', async () => {
     const get = vi.mocked(axios.get).getMockImplementation()!;
     vi.mocked(axios.get).mockImplementation(async (url, config) => {
       if (String(url).endsWith('/turns')) return { status: 200, data: { v: 1, sessionId, updatedAt: 6, turns: [
-        { turnId: 'active', initiator: 'user', status: 'in_progress', startedAt: 5, updatedAt: 6,
-          transcriptAnchors: { startSeqInclusive: 5, endSeqInclusive: null } },
-        { turnId: 'new', initiator: 'workflow', status: 'completed', startedAt: 3, updatedAt: 4,
-          transcriptAnchors: { startSeqInclusive: 3, endSeqInclusive: 3 } },
         { turnId: 'old', initiator: 'user', status: 'completed', startedAt: 1, updatedAt: 2,
           transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 1 } },
-      ] } };
+        { turnId: 'new', initiator: 'workflow', status: 'completed', startedAt: 3, updatedAt: 4,
+          transcriptAnchors: { startSeqInclusive: 3, endSeqInclusive: 3 } },
+      ].slice(-Number(config?.params?.recentCommittedTurns)) } };
       return get(url, config);
     });
     const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
@@ -77,6 +101,32 @@ describe('production workflow session context', () => {
     await expect(reader.resolveSessionContext(2)).resolves.toMatchObject({ turns: [
       { initiator: 'user', text: 'old' }, { initiator: 'workflow', text: 'new' },
     ] });
+  });
+
+  it.each([3, 300])('downloads only demanded recent committed turns from a %i-turn history', async historySize => {
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    let deliveredTurns = 0;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      if (String(url).endsWith('/turns')) {
+        const all = Array.from({ length: historySize }, (_, i) => ({ turnId: `turn-${i}`, initiator: 'workflow',
+          status: 'completed', startedAt: i, updatedAt: i,
+          transcriptAnchors: { startSeqInclusive: i + 1, endSeqInclusive: i + 1 } }));
+        const demanded = config?.params?.recentCommittedTurns;
+        const turns = typeof demanded === 'number' ? all.slice(-demanded) : all;
+        deliveredTurns += turns.length;
+        return { status: 200, data: { v: 1, sessionId, updatedAt: historySize, turns } };
+      }
+      if (String(url).includes('/messages')) return { status: 200, data: { messages: [historySize, historySize - 1].map(seq => ({
+        id: `row-${seq}`, seq, createdAt: seq, messageRole: 'agent',
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: `text-${seq}` } } },
+      })), hasMore: false } };
+      return get(url, config);
+    });
+    const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
+    const value = await reader.resolveSessionContext(2);
+    expect(value.turns).toEqual([historySize - 1, historySize].map(seq => ({ initiator: 'workflow', text: `text-${seq}` })));
+    expect(deliveredTurns).toBe(2);
+    expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).endsWith('/turns'))).toHaveLength(1);
   });
 
   it('fails preparation for unknown committed turn facts or an origin on a different Machine', async () => {
