@@ -138,10 +138,11 @@ export function buildGuidedAutomationRequest(
   if (trigger === null) return null;
   const subject = params.subjectName;
   const lookAt = lookAtList(draft.lookAt);
-  const first = t(
+  const task = t(
     `workflows.triggers.guided.prompt.${draft.mode === 'chain' ? 'investigate' : draft.mode}`,
     { subject, lookAt },
   );
+  const first = `${task}\n\n${t('workflows.triggers.guided.prompt.diagnosis')}`;
   const agentStep = buildTriggerTarget(
     {
       kind: 'sendPrompt',

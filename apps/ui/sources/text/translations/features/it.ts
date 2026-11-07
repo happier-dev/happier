@@ -15685,11 +15685,12 @@ const it: WorkflowTriggersCopy = {
             tellChannels: ({ channels }: { channels: string }) => `Riceverai un elemento nella posta in arrivo e un messaggio su ${channels}.`,
         },
         prompt: {
+            diagnosis: "Ancora la diagnosi all’ora dell’incidente (con fuso orario), al tentativo esatto di distribuzione o operazione e alla revisione del codice sorgente. Parti dalle prove conservate di distribuzioni, log e revisioni tramite i riferimenti forniti ai rispettivi responsabili. Confronta i log e le metriche pertinenti prima e dopo quel momento, se conservati, e il codice tra le revisioni pertinenti. Separa i fatti osservati dalle ipotesi, spiega cosa smentirebbe la causa principale, indica una spiegazione alternativa, i dati mancanti e l’azione successiva. Segnala esplicitamente la cronologia non disponibile e gli orari o le revisioni sconosciuti; lo stato attuale non permette di ricostruire il passato.",
             investigate: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Controlla ${subject}. Guarda: ${lookAt}. Se qualcosa non va, trova la causa. Riferisci cosa hai trovato e cosa faresti dopo. Non cambiare nulla.`,
             propose: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Controlla ${subject}. Guarda: ${lookAt}. Se qualcosa non va, trova la causa e proponi una correzione. Chiedimi prima di cambiare qualcosa.`,
             apply: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Controlla ${subject}. Guarda: ${lookAt}. Se qualcosa non va, trova la causa e correggila con le azioni che puoi eseguire. Riferisci cosa hai cambiato e come hai verificato che funziona.`,
-            chainFix: "Correggi il problema trovato sopra con le azioni che puoi eseguire. Riferisci cosa hai cambiato.",
-            chainReview: ({ subject }: { subject: string }) => `Rivedi la correzione sopra. Verifica che ${subject} sia di nuovo in salute e segnala ciò che richiede ancora attenzione.`,
+            chainFix: "Correggi il problema trovato sopra solo con azioni ammesse. Indica ed esegui i comandi di validazione pertinenti; riporta ogni comando, codice di uscita e risultato, oltre ai controlli saltati e ai motivi. Collega le PR create e i riferimenti ad azioni, operazioni o distribuzioni. Non unire né ridistribuire automaticamente.",
+            chainReview: ({ subject }: { subject: string }) => `Esamina in modo indipendente la correzione per ${subject}. Riporta i comandi di validazione effettivamente eseguiti, i codici di uscita e i risultati, e i controlli saltati con i motivi. Distingui tra PR creata, test superati, effetto distribuito e ripristino osservato dalla fonte di stato autorevole; le prove mancanti restano sconosciute. Non unire né ridistribuire automaticamente.`,
         },
         notifyMessage: ({ subject }: { subject: string }) => `Un’automazione su ${subject} è terminata. Il risultato è nella tua posta in arrivo.`,
         starter: {

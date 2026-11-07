@@ -155,11 +155,12 @@ export const en = {
             tellChannels: ({ channels }: { channels: string }) => `You’ll get an Inbox item and a message on ${channels}.`,
         },
         prompt: {
+            diagnosis: "Anchor the diagnosis to the occurrence time (with timezone), exact deployment or operation attempt, and source revision. Start with retained deployment, log and revision evidence through the supplied owner references. Compare relevant before/after logs and metrics around that time, where retained, and code between the relevant revisions. Separate observed facts from hypotheses, explain what would disprove the leading cause, give an alternative explanation, list missing inputs and the next action. Explicitly mark unavailable history, unknown times and unknown revisions; current health or vitals cannot reconstruct the past.",
             investigate: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Check on ${subject}. Look at: ${lookAt}. If something is wrong, find the cause. Report what you found and what you would do next. Do not change anything.`,
             propose: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Check on ${subject}. Look at: ${lookAt}. If something is wrong, find the cause and propose a fix. Ask me before you change anything.`,
             apply: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Check on ${subject}. Look at: ${lookAt}. If something is wrong, find the cause and fix it with the actions you are allowed to run. Report what you changed and how you checked that it worked.`,
-            chainFix: "Fix the problem found above with the actions you are allowed to run. Report what you changed.",
-            chainReview: ({ subject }: { subject: string }) => `Review the fix above. Check that ${subject} is healthy again and report anything that still needs attention.`,
+            chainFix: "Fix the problem found above using only admitted actions. Name and run relevant validation commands; report each command, exit code and result, plus skipped checks and reasons. Link produced PRs and Action, operation or receipt references. Do not merge or redeploy automatically.",
+            chainReview: ({ subject }: { subject: string }) => `Independently review the fix for ${subject}. Report actual validation commands, exit codes and results, and skipped checks with reasons. Distinguish a PR created, tests passed, a deployed effect and recovery observed by canonical health; missing evidence stays unknown. Do not merge or redeploy automatically.`,
         },
         notifyMessage: ({ subject }: { subject: string }) => `An automation on ${subject} finished. The result is in your Inbox.`,
         starter: {

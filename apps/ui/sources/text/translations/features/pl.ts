@@ -15704,11 +15704,12 @@ const pl: WorkflowTriggersCopy = {
             tellChannels: ({ channels }: { channels: string }) => `Dostaniesz element w skrzynce i wiadomość na ${channels}.`,
         },
         prompt: {
+            diagnosis: "Oprzyj diagnozę na czasie zdarzenia (ze strefą czasową), dokładnej próbie wdrożenia lub operacji oraz rewizji kodu źródłowego. Zacznij od zachowanych dowodów wdrożeń, logów i rewizji, korzystając z dostarczonych odnośników do ich właścicieli. Porównaj istotne logi i metryki sprzed i po tym czasie, o ile je zachowano, oraz kod między odpowiednimi rewizjami. Oddziel obserwowane fakty od hipotez, wyjaśnij, co obaliłoby główną przyczynę, podaj alternatywne wyjaśnienie, brakujące dane i następne działanie. Wyraźnie oznacz niedostępną historię oraz nieznane czasy i rewizje; obecny stan ani parametry systemu nie pozwalają odtworzyć przeszłości.",
             investigate: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Sprawdź ${subject}. Przejrzyj: ${lookAt}. Jeśli coś jest nie tak, znajdź przyczynę. Opisz, co znalazłeś i co zrobiłbyś dalej. Niczego nie zmieniaj.`,
             propose: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Sprawdź ${subject}. Przejrzyj: ${lookAt}. Jeśli coś jest nie tak, znajdź przyczynę i zaproponuj poprawkę. Zapytaj mnie przed jakąkolwiek zmianą.`,
             apply: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Sprawdź ${subject}. Przejrzyj: ${lookAt}. Jeśli coś jest nie tak, znajdź przyczynę i napraw ją akcjami, które możesz wykonać. Opisz, co zmieniłeś i jak sprawdziłeś, że działa.`,
-            chainFix: "Napraw znaleziony wyżej problem akcjami, które możesz wykonać. Opisz, co zmieniłeś.",
-            chainReview: ({ subject }: { subject: string }) => `Sprawdź poprawkę powyżej. Upewnij się, że ${subject} znów działa poprawnie, i zgłoś, co nadal wymaga uwagi.`,
+            chainFix: "Napraw problem znaleziony wyżej wyłącznie dopuszczonymi akcjami. Wskaż i uruchom odpowiednie polecenia weryfikacji; podaj każde polecenie, kod wyjścia i wynik oraz pominięte sprawdzenia i powody. Dodaj odnośniki do utworzonych PR oraz akcji, operacji lub wdrożeń. Nie scalaj ani nie wdrażaj ponownie automatycznie.",
+            chainReview: ({ subject }: { subject: string }) => `Niezależnie sprawdź poprawkę dla ${subject}. Podaj rzeczywiście wykonane polecenia weryfikacji, kody wyjścia i wyniki oraz pominięte sprawdzenia z powodami. Rozróżniaj utworzenie PR, zaliczenie testów, wdrożony efekt i odzyskanie sprawności zaobserwowane przez autorytatywne źródło stanu; brakujące dowody pozostają nieznane. Nie scalaj ani nie wdrażaj ponownie automatycznie.`,
         },
         notifyMessage: ({ subject }: { subject: string }) => `Automatyzacja na ${subject} zakończyła się. Wynik jest w twojej skrzynce.`,
         starter: {

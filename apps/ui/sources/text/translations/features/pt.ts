@@ -15685,11 +15685,12 @@ const pt: WorkflowTriggersCopy = {
             tellChannels: ({ channels }: { channels: string }) => `Você receberá um item na caixa de entrada e uma mensagem em ${channels}.`,
         },
         prompt: {
+            diagnosis: "Baseie o diagnóstico na hora da ocorrência (com fuso horário), na tentativa exata de implantação ou operação e na revisão do código-fonte. Comece pelas evidências retidas de implantações, logs e revisões usando as referências fornecidas aos responsáveis. Compare os logs e as métricas relevantes de antes e depois desse momento, quando retidos, e o código entre as revisões pertinentes. Separe fatos observados de hipóteses, explique o que refutaria a causa principal, apresente uma explicação alternativa, os dados ausentes e a próxima ação. Indique explicitamente o histórico indisponível e os horários ou revisões desconhecidos; o estado atual não permite reconstruir o passado.",
             investigate: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Verifique ${subject}. Olhe: ${lookAt}. Se algo estiver errado, encontre a causa. Relate o que encontrou e o que faria em seguida. Não mude nada.`,
             propose: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Verifique ${subject}. Olhe: ${lookAt}. Se algo estiver errado, encontre a causa e proponha uma correção. Pergunte antes de mudar qualquer coisa.`,
             apply: ({ subject, lookAt }: { subject: string; lookAt: string }) => `Verifique ${subject}. Olhe: ${lookAt}. Se algo estiver errado, encontre a causa e corrija com as ações que você pode executar. Relate o que mudou e como verificou que funciona.`,
-            chainFix: "Corrija o problema encontrado acima com as ações que você pode executar. Relate o que mudou.",
-            chainReview: ({ subject }: { subject: string }) => `Revise a correção acima. Verifique se ${subject} está saudável de novo e relate o que ainda precisa de atenção.`,
+            chainFix: "Corrija o problema encontrado acima apenas com ações admitidas. Nomeie e execute os comandos de validação pertinentes; relate cada comando, código de saída e resultado, além das verificações não executadas e seus motivos. Vincule as PRs criadas e as referências de ações, operações ou implantações. Não faça merge nem reimplante automaticamente.",
+            chainReview: ({ subject }: { subject: string }) => `Revise de forma independente a correção de ${subject}. Relate os comandos de validação realmente executados, códigos de saída e resultados, e as verificações não executadas com seus motivos. Diferencie PR criada, testes aprovados, efeito implantado e recuperação observada pela fonte de saúde autoritativa; evidências ausentes continuam desconhecidas. Não faça merge nem reimplante automaticamente.`,
         },
         notifyMessage: ({ subject }: { subject: string }) => `Uma automação em ${subject} terminou. O resultado está na sua caixa de entrada.`,
         starter: {

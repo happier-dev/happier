@@ -723,3 +723,13 @@ Publish keeps its Action operation nonterminal with `outcome_uncertain` (or
 `stop_unconfirmed` after an observation abort) when its Workflow Run's terminal
 outcome cannot be observed. Recovery retains the Run ID, Publish operation and
 observed child operations; cancelling or recovering work targets that existing Run.
+
+## Time-anchored investigation tasks (0.3 development)
+
+The default Investigate task and guided automation tasks ask for the occurrence
+time, exact attempt and source revision, retained before/after logs and metrics,
+a code comparison, an alternative explanation, missing inputs and the next action.
+The handoff carries owner-read addresses and retained time/attempt/revision references,
+including a predecessor receipt when recorded, rather than log or metric snapshots.
+Notice capture time remains distinct from occurrence time. Missing history must be
+reported as unavailable; current health and vitals cannot reconstruct the past.

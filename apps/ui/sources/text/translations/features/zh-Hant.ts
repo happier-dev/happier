@@ -15668,11 +15668,12 @@ const zhHant: WorkflowTriggersCopy = {
             tellChannels: ({ channels }: { channels: string }) => `你會收到一則收件匣項目，並在 ${channels} 收到通知。`,
         },
         prompt: {
+            diagnosis: "將診斷錨定至事件發生時間（含時區）、確切的部署或操作嘗試，以及原始碼修訂版本。透過提供的證據擁有者參照，先查看已保留的部署、日誌和修訂證據。比較該時間前後的相關日誌和指標（如有保留），以及相關修訂版本之間的程式碼。區分已觀察的事實與假設，說明什麼證據可以推翻首要原因，提出另一種解釋、缺少的輸入和下一步操作。明確標註無法取得的歷史記錄、未知時間和修訂版本；目前的健康狀態或系統指標無法重建過去。",
             investigate: ({ subject, lookAt }: { subject: string; lookAt: string }) => `檢查 ${subject}。查看：${lookAt}。如果有問題，找出原因。回報你的發現以及下一步打算。不要做任何變更。`,
             propose: ({ subject, lookAt }: { subject: string; lookAt: string }) => `檢查 ${subject}。查看：${lookAt}。如果有問題，找出原因並提出修復方案。在做任何變更前先問我。`,
             apply: ({ subject, lookAt }: { subject: string; lookAt: string }) => `檢查 ${subject}。查看：${lookAt}。如果有問題，找出原因並用你被允許執行的操作修復。回報你改了什麼以及如何確認它有效。`,
-            chainFix: "用你被允許執行的操作修復上面發現的問題。回報你改了什麼。",
-            chainReview: ({ subject }: { subject: string }) => `審查上面的修復。確認 ${subject} 已恢復正常，並回報仍需關注的問題。`,
+            chainFix: "僅使用已准入的操作修復上述問題。列出並執行相關驗證命令，回報每個命令、結束代碼和結果，以及未執行的檢查和原因。提供已建立的 PR 和操作、工作或部署收據參照。不要自動合併或重新部署。",
+            chainReview: ({ subject }: { subject: string }) => `獨立審查 ${subject} 的修復。回報實際執行的驗證命令、結束代碼、結果，以及未執行的檢查和原因。區分已建立 PR、測試通過、已部署的變更，以及權威健康狀態來源觀察到的復原；缺少證據時保持未知。不要自動合併或重新部署。`,
         },
         notifyMessage: ({ subject }: { subject: string }) => `${subject} 上的自動化已完成。結果在你的收件匣中。`,
         starter: {

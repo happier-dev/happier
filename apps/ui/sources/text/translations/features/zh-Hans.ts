@@ -15668,11 +15668,12 @@ const zhHans: WorkflowTriggersCopy = {
             tellChannels: ({ channels }: { channels: string }) => `你会收到一条收件箱消息，并在 ${channels} 收到通知。`,
         },
         prompt: {
+            diagnosis: "将诊断锚定到事件发生时间（含时区）、确切的部署或操作尝试，以及源代码修订版本。通过提供的证据归属方引用，先查看已保留的部署、日志和修订证据。比较该时间前后的相关日志和指标（如有保留），以及相关修订版本之间的代码。区分已观察的事实与假设，说明什么证据可以推翻首要原因，给出另一种解释、缺失的输入和下一步操作。明确标注不可用的历史记录、未知时间和修订版本；当前健康状态或系统指标无法重建过去。",
             investigate: ({ subject, lookAt }: { subject: string; lookAt: string }) => `检查 ${subject}。查看：${lookAt}。如果有问题，找出原因。报告你的发现以及下一步打算。不要做任何更改。`,
             propose: ({ subject, lookAt }: { subject: string; lookAt: string }) => `检查 ${subject}。查看：${lookAt}。如果有问题，找出原因并提出修复方案。在做任何更改前先问我。`,
             apply: ({ subject, lookAt }: { subject: string; lookAt: string }) => `检查 ${subject}。查看：${lookAt}。如果有问题，找出原因并用你被允许执行的操作修复。报告你改了什么以及如何确认它有效。`,
-            chainFix: "用你被允许执行的操作修复上面发现的问题。报告你改了什么。",
-            chainReview: ({ subject }: { subject: string }) => `审查上面的修复。确认 ${subject} 已恢复正常，并报告仍需关注的问题。`,
+            chainFix: "仅使用已准入的操作修复上述问题。列出并运行相关验证命令，报告每条命令、退出码和结果，以及未执行的检查和原因。提供已创建的 PR 和操作、任务或部署回执引用。不要自动合并或重新部署。",
+            chainReview: ({ subject }: { subject: string }) => `独立审查 ${subject} 的修复。报告实际执行的验证命令、退出码、结果，以及未执行的检查和原因。区分已创建 PR、测试通过、已部署的变更，以及权威健康状态来源观察到的恢复；缺少证据时保持未知。不要自动合并或重新部署。`,
         },
         notifyMessage: ({ subject }: { subject: string }) => `${subject} 上的自动化已完成。结果在你的收件箱中。`,
         starter: {
