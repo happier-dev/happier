@@ -54,7 +54,8 @@ export type StoragePileReceipt =
 
 export type StoragePileBar =
   | Readonly<{ kind: 'hidden' }>
-  | Readonly<{ kind: 'ready'; count: number; freesBytes: number }>
+  /** `freesBytes` is null while the machine has not yet measured the pile as it now stands. */
+  | Readonly<{ kind: 'ready'; count: number; freesBytes: number | null }>
   | Readonly<{ kind: 'checking'; count: number; freesBytes: number }>
   /** Moved to Happier's Trash: the space is not back yet (R25). */
   | Readonly<{
@@ -215,6 +216,8 @@ export function describeStoragePileBar(
     pile: PileSummaryV1 | null;
     receipt: StoragePileReceipt | null;
     checking: Readonly<{ count: number; freesBytes: number }> | null;
+    /** A collect or put-back is still on its way: the count is optimistic, the bytes are not yet the daemon's. */
+    measuring?: boolean;
   }>,
 ): StoragePileBar {
   if (input.checking) return { kind: 'checking', ...input.checking };
@@ -251,7 +254,7 @@ export function describeStoragePileBar(
   return {
     kind: 'ready',
     count: input.pile.count,
-    freesBytes: input.pile.freesBytes,
+    freesBytes: input.measuring ? null : input.pile.freesBytes,
   };
 }
 

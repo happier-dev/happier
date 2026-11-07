@@ -67,6 +67,7 @@ export const StoragePileDock = React.memo(function StoragePileDock(
     },
     receipt,
     checking,
+    measuring: pile.pending && previewFreesBytes === null,
   });
   const { items, set } = pile;
   const review = React.useCallback(() => {

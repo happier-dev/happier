@@ -109,7 +109,7 @@ export const PileBar = React.memo(function PileBar(
       : bar.kind === 'checking'
         ? amount(bar.freesBytes)
         : bar.kind === 'ready'
-          ? t('machineStorage.pile.frees', { amount: amount(bar.freesBytes) })
+          ? bar.freesBytes === null ? t('machineStorage.sizing') : t('machineStorage.pile.frees', { amount: amount(bar.freesBytes) })
           : bar.kind === 'freed'
             ? t('machineStorage.pile.goneForGood', { count: bar.count })
             : '';

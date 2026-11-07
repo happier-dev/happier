@@ -222,6 +222,16 @@ describe('the pile bar states (lab rs PM)', () => {
     ).toEqual({ kind: 'checking', count: 8, freesBytes: 7 });
   });
 
+  it('claims no bytes while the machine is still measuring a changed pile', () => {
+    // The tick is optimistic: the count moves at once, but what it frees is the daemon's measured fact.
+    expect(
+      describeStoragePileBar({ pile: pile(1, 0), receipt: null, checking: null, measuring: true }),
+    ).toEqual({ kind: 'ready', count: 1, freesBytes: null });
+    expect(
+      describeStoragePileBar({ pile: pile(1, 208), receipt: null, checking: null, measuring: false }),
+    ).toEqual({ kind: 'ready', count: 1, freesBytes: 208 });
+  });
+
   it('reads a Trash move as “in Trash” with how many were skipped, and only says freed when space returned', () => {
     const trash = applied([
       { itemId: 'a', status: 'moved' },

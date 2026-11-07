@@ -26,6 +26,9 @@ import {
 } from '@/sync/domains/machines/storage/machineRpc';
 import { t } from '@/text';
 
+import { StorageItemRow } from './StorageItemRow';
+import { describeStorageVerdict } from './storageReasonPresentation';
+
 type ReadyDocker = Extract<MachineStorageDockerSummaryV1, { kind: 'ready' }>;
 type Candidate = Extract<
   ReadyDocker['images']['custody'],
@@ -40,6 +43,8 @@ type Phase =
     }>;
 
 const FACTS: Phase = Object.freeze({ kind: 'facts' });
+/** Volumes are never cleaned here: the owner marks them always kept. */
+const ALWAYS_KEPT = describeStorageVerdict({ verdict: 'keep', reason: { code: 'always_kept' } });
 
 /** Bytes only when the owner measured every part; an absent size is unknown, never zero. */
 function knownSum(values: readonly (number | undefined)[]): number | null {
@@ -117,6 +122,8 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
     void props.onSizeAgain();
   };
   const reviewing = phase.kind === 'review' || phase.kind === 'removing';
+  // The rows share the Storage row shape (bar, size, chip columns), so their sizes line up with the rows below.
+  const largest = Math.max(0, docker.images.sizeBytes ?? 0, docker.volumes.sizeBytes ?? 0, docker.buildCache.sizeBytes ?? 0);
   return (
     <ItemGroup
       testID="machine-storage-docker"
@@ -175,76 +182,62 @@ export const StorageDockerCleanup = React.memo(function StorageDockerCleanup(
               onDone={() => setPhase(FACTS)}
             />
           ) : null}
-          <Item
+          <StorageItemRow
             testID="machine-storage-docker-images"
-            mode="info"
-            showChevron={false}
             title={t('machineStorage.docker.images')}
-            subtitle={[
+            evidence={[
               t('machineStorage.docker.count', { count: docker.images.count }),
               custody.kind === 'unavailable'
                 ? t('machineStorage.docker.custodyUnavailable')
                 : candidates.length > 0
-                  ? t('machineStorage.docker.canGo', {
-                      count: candidates.length,
-                    })
+                  ? t('machineStorage.docker.canGo', { count: candidates.length })
                   : t('machineStorage.docker.noneCanGo'),
             ].join(' · ')}
-            {...(docker.images.sizeBytes !== undefined
-              ? {
-                  detail: formatMachineBytes(
-                    docker.images.sizeBytes,
-                    'storage',
-                  ),
-                }
-              : {})}
+            bytes={docker.images.sizeBytes ?? null}
+            atLeast={false}
+            largest={largest}
+            chip={null}
+            compact={props.compact}
+            showDivider
           />
-          <Item
+          <StorageItemRow
             testID="machine-storage-docker-volumes"
-            mode="info"
-            showChevron={false}
             title={t('machineStorage.docker.volumes')}
-            subtitle={`${t('machineStorage.docker.count', { count: docker.volumes.count })} · ${t('machineStorage.docker.alwaysKept')}`}
-            {...(docker.volumes.sizeBytes !== undefined
-              ? {
-                  detail: formatMachineBytes(
-                    docker.volumes.sizeBytes,
-                    'storage',
-                  ),
-                }
-              : {})}
+            evidence={t('machineStorage.docker.count', { count: docker.volumes.count })}
+            bytes={docker.volumes.sizeBytes ?? null}
+            atLeast={false}
+            largest={largest}
+            chip={ALWAYS_KEPT}
+            compact={props.compact}
+            showDivider
           />
-          <Item
+          <StorageItemRow
             testID="machine-storage-docker-releases"
-            mode="info"
-            showChevron={false}
             title={t('machineStorage.docker.deployments')}
-            subtitle={
+            evidence={
               docker.releases.kind === 'ready'
                 ? t('machineStorage.docker.releasesKept', {
-                    count: docker.releases.environments.reduce(
-                      (sum, environment) => sum + environment.keptReleaseCount,
-                      0,
-                    ),
+                    count: docker.releases.environments.reduce((sum, environment) => sum + environment.keptReleaseCount, 0),
                   })
                 : t('machineStorage.docker.releasesUnknown')
             }
+            bytes={null}
+            atLeast={false}
+            largest={largest}
+            chip={null}
+            compact={props.compact}
+            showDivider
           />
-          <Item
+          <StorageItemRow
             testID="machine-storage-docker-build-cache"
-            mode="info"
-            showChevron={false}
-            showDivider={false}
             title={t('machineStorage.docker.buildCache')}
-            subtitle={t('machineStorage.docker.buildCacheKept')}
-            {...(docker.buildCache.sizeBytes !== undefined
-              ? {
-                  detail: formatMachineBytes(
-                    docker.buildCache.sizeBytes,
-                    'storage',
-                  ),
-                }
-              : {})}
+            evidence={t('machineStorage.docker.buildCacheKept')}
+            bytes={docker.buildCache.sizeBytes ?? null}
+            atLeast={false}
+            largest={largest}
+            chip={null}
+            compact={props.compact}
+            showDivider={false}
           />
         </>
       )}

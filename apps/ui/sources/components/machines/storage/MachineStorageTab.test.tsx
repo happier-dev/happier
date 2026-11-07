@@ -492,7 +492,7 @@ describe('MachineStorageTab', () => {
             });
             await vi.waitFor(async () => { await act(async () => {}); expect(screen.findByTestId('machine-storage-docker')).not.toBeNull(); });
             const facts = screen.getTextContent();
-            expect(facts).toContain(t('machineStorage.docker.alwaysKept'));
+            expect(facts).toContain(t('machineStorage.verdicts.alwaysKept'));
             expect(facts).toContain(t('machineStorage.docker.releasesKept', { count: 3 }));
             expect(facts).not.toContain(sha('a'));
             await act(async () => { screen.pressByTestId('machine-storage-docker-free-space'); });

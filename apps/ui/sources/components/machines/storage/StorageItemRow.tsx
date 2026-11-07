@@ -48,7 +48,8 @@ export const StorageItemRow = React.memo(function StorageItemRow(props: Readonly
     testID: string;
     title: string;
     evidence: string;
-    bytes: number;
+    /** Null when the owner did not measure it: the row draws no bar and no size, never a zero. */
+    bytes: number | null;
     /** Part of it could not be read: the size is a floor. */
     atLeast: boolean;
     largest: number;
@@ -64,13 +65,13 @@ export const StorageItemRow = React.memo(function StorageItemRow(props: Readonly
     trailing?: React.ReactNode;
     dim?: boolean;
 }>) {
-    const sizeText = formatStorageSize(props.bytes, props.atLeast);
-    const bar = (
+    const sizeText = props.bytes === null ? '' : formatStorageSize(props.bytes, props.atLeast);
+    const bar = props.bytes === null ? null : (
         <StorageSizeBar label={props.title} bytes={props.bytes} largest={props.largest} compact={props.compact}
             hatched={props.hatched === true || props.collect?.state === 'collected' || props.collect?.state === 'inside'} />
     );
     const chip = props.trailing ?? (props.chip ? <StorageVerdictPill chip={props.chip} /> : null);
-    const frees = props.freesBytes !== undefined && props.freesBytes < props.bytes
+    const frees = props.freesBytes !== undefined && props.bytes !== null && props.freesBytes < props.bytes
         ? t('machineStorage.page.frees', { amount: formatMachineBytes(props.freesBytes, 'storage') }) : null;
     const box = props.collect ? (
         <StorageCollectToggle state={props.collect.state} onPress={props.collect.onToggle} onKeyDown={props.collect.onKeyDown}
