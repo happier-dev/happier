@@ -97,6 +97,15 @@ export type ProjectSecretReferenceEnvironmentInput = Omit<SecretReferenceOverlay
   secretReferenceOverlay?: SecretReferenceOverlayV1;
 }>;
 
+/** Required project secret names, shared by launch materializers without exposing values. */
+export function listMissingProjectSecretRequirements(
+  requirements: ProjectSecretReferenceEnvironmentInput['requirements'],
+  availableSecretNames: ReadonlySet<string>,
+): string[] {
+  return [...new Set(requirements.filter(requirement => (requirement.kind ?? 'secret') === 'secret'
+    && requirement.required !== false && !availableSecretNames.has(requirement.name)).map(requirement => requirement.name))];
+}
+
 /** Project requirement policy over the same exact body used by Runs and Profiles. */
 export function resolveProjectSecretReferenceEnvironment(params: ProjectSecretReferenceEnvironmentInput): Readonly<Record<string, string>> {
   const requirements = params.requirements.filter(requirement => (requirement.kind ?? 'secret') === 'secret');
@@ -109,10 +118,7 @@ export function resolveProjectSecretReferenceEnvironment(params: ProjectSecretRe
   const environment = params.secretReferenceOverlay
     ? resolveSecretReferenceOverlayEnvironment({ ...params, secretReferenceOverlay: params.secretReferenceOverlay })
     : Object.freeze({});
-  for (const requirement of requirements) {
-    if (requirement.required !== false && !Object.prototype.hasOwnProperty.call(environment, requirement.name)) {
-      throw new LaunchSecretReferenceOverlayError('reference_missing', requirement.name);
-    }
-  }
+  const missing = listMissingProjectSecretRequirements(requirements, new Set(Object.keys(environment)));
+  if (missing.length > 0) throw new LaunchSecretReferenceOverlayError('reference_missing', missing[0]!);
   return environment;
 }

@@ -65,20 +65,21 @@ import { createOwnServerDeploymentReads } from './targets/ownServer/ownServerDep
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createDataTeardownForHost } from './actions/dataTeardown';
 import { createDeploymentRestoreActionForHost } from './actions/restore';
-import { createDeploymentTeardownExecutor, type DeploymentTeardownBoundary } from './actions/teardown';
+import { createDeploymentTeardownExecutor, resumeDeploymentTeardownReceiptForHost, type DeploymentTeardownBoundary } from './actions/teardown';
 import { createOwnServerTeardownForHost } from './targets/ownServer/teardown';
 import { readDeploymentUniformTargetLinkRevisionV1 } from './deploymentUniformProof';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
 import { preparePromotionForHost } from './preparePromotionForHost';
-import { isDeploymentPromoteActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentPromoteActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentRuntime,
     type OwnServerDeploymentTransition, type OwnServerDeploymentTargetHostInput,
     type OwnServerDeploymentReview, type OwnServerDeploymentReviewRequest } from './targets/ownServer/ownServerDeploymentTarget';
-import { prepareOwnServerDeploymentCandidate } from './targets/ownServer/prepareCandidate';
+import { DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, prepareOwnServerDeploymentCandidate } from './targets/ownServer/prepareCandidate';
+import { assertReviewedDeploymentSource } from './reviewedSource';
 import { createDaemonDeploymentChildExecutor, readDeploymentChildResult as readChildResult } from './deploymentChild';
 import { projectDeploymentTransitionOutcomeUnknownForHost, projectDeploymentTransitionResultForHost } from './deploymentTransitionResult';
 import { createDeploymentTemplateInstantiationForHost } from './templates/instantiate';
@@ -120,6 +121,7 @@ export type DaemonDeploymentCandidateRequest = Readonly<{
     environmentId: string; targetLinkId?: string; context: ActionExecutorContext;
     sourceIntent?: DeploymentSourceIntentV1; sha?: string; sourceMethod?: 'gitIntegration' | 'upload';
     requestKey?: string; whenBusy?: 'refuse' | 'supersede';
+    onFailure?: DeploymentDeployInputV1['onFailure'];
     admittedTemplateSource?: AdmittedTemplateSource;
 }>;
 export type DaemonDeploymentCandidateResult = Readonly<{ ok: true; input: DeploymentDeployInputV1; content: DeploymentContentV1 }> | ActionExecuteFailure;
@@ -321,7 +323,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return { targetLink, content: content.content };
             }));
             await assertCurrent(context);
-            return { environment: detail.environment, content: detail.content, targetLinks: links };
+            return { environment: detail.environment, content: detail.content, targetLinks: links,
+                ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }) };
         },
         async readAnyReceipt(request: Parameters<OwnServerDeploymentTargetHostInput['readReceipt']>[0]): Promise<DeploymentReceiptDetailV1> {
             const { environmentId, deploymentId, nativeIncumbentSource } = request;
@@ -719,7 +722,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         prepareEnvironment: createPrepareEnvironmentContentForHost({ ...host, accountArtifacts: artifacts, resolveRequestHeaders: headers }),
         prepareBindings: createPrepareDeploymentBindingsForHost({ ...host, resolveRequestHeaders: headers }),
         async admitTeardown(input: DeploymentTeardownInputV1, context: ActionExecutorContext) {
-            if (await dataTeardown.admit(input, context)) return null;
+            const dataAdmission = await dataTeardown.admit(input, context);
+            if (dataAdmission) return 'errorCode' in dataAdmission ? dataAdmission : null;
             await assertCurrent(context);
             const artifact = await open(input.contentArtifactId, context);
             if (!artifact) return failure('deployment_content_unavailable');
@@ -730,19 +734,20 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 contentBodyVersion: artifact.revision.bodyVersion }, artifact);
             if (!opened.ok) return failure(opened.error);
             const intent = opened.content.teardown;
+            const retained = await findTeardownReceipt(input, context);
+            const retainedIntent = retained?.deployment.operation === 'teardown'
+                && retained.deployment.contentArtifactId === input.contentArtifactId;
             // A newly prepared receipt contains intent only. Native completion
             // is admitted solely by the installation-signed transition owner.
             if (initial && intent?.proofs.length) {
-                const retained = await findTeardownReceipt(input, context);
-                if (!retained || retained.deployment.operation !== 'teardown'
-                    || retained.deployment.contentArtifactId !== input.contentArtifactId) return failure('deployment_invalid');
+                if (!retainedIntent) return failure('deployment_invalid');
             }
             // A changed head is only a retry candidate. Storage must resolve the
             // original requestKey and Artifact identity; new stale references
             // cannot pass storage admission. Execution then reads its pinned ref.
             const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId, context });
             if (!host.teardownBoundary) {
-                const denied = ownServerTeardown.admit(environment, input.targetLinkId, opened.content);
+                const denied = await ownServerTeardown.admit(environment, input.targetLinkId, opened.content, input, context, retainedIntent);
                 if (denied) return denied;
             }
             const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
@@ -754,8 +759,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         },
         async dispatchReceipt(request) {
             if (request.actionId === 'deployments.teardown') {
-                const receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
+                let receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
                     deploymentId: request.receipt.deploymentId, context: request.context });
+                const resumed = await resumeDeploymentTeardownReceiptForHost({ request, receipt, writeTransition: targetHost.writeTransition });
+                if (resumed) {
+                    if (!resumed.ok) return resumed;
+                    receipt = await targetHostReaders.readAnyReceipt({ environmentId: request.input.environmentId,
+                        deploymentId: receipt.deployment.id, context: request.context });
+                }
                 if (receipt.deployment.state !== 'succeeded' && receipt.deployment.state !== 'cancelled') {
                     request.context.signal?.throwIfAborted();
                     const retirement = await domainActions.retireEnvironment(request.input, request.context);
@@ -910,6 +921,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         targetLinkId: request.targetLinkId,
                         ...(sourceIntent ? { sourceIntent } : {}), ...(request.sha ? { sha: request.sha } : {}),
                         ...(request.requestKey ? { requestKey: request.requestKey } : {}),
+                        ...(request.onFailure ? { onFailure: request.onFailure } : {}),
                         ...(request.whenBusy ? { whenBusy: request.whenBusy } : {}) }, machineId: builder,
                     installationId: await readInstallation(builder, request.context), expectedRevision: environment.environment.revision,
                     expectedTargetLinkRevision: link.revision }), request.context);
@@ -925,6 +937,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (sourceIntent && !isDeepStrictEqual(candidate.content.sourceIntent, sourceIntent)
                     || request.sha && (candidate.content.sourceIntent?.kind !== 'repository' || candidate.content.sourceIntent.sha !== request.sha)
                     || request.requestKey && candidate.input.requestKey !== request.requestKey
+                    || (candidate.input.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE) !== (request.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE)
+                    || candidate.content.onFailure !== (request.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE)
                     || (candidate.input.whenBusy ?? 'refuse') !== (request.whenBusy ?? 'refuse')) return failure('target_mismatch');
                 const opened = readDeploymentReceiptArtifactV1(candidate.input, await open(candidate.input.contentArtifactId, request.context));
                 if (!opened.ok) return failure(opened.error);
@@ -937,7 +951,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 async stageContent(sourceIntent) {
                     const initial = DeploymentContentV1Schema.parse({ sourceIntent, machines: link.machines,
                         buildMachineId: builder, ...(environment.environment.ingress ? { ingress: environment.environment.ingress } : {}),
-                        onFailure: 'rollbackAll', images: [], machineResults, steps: [] });
+                        onFailure: request.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, images: [], machineResults, steps: [] });
                     const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,
                         owner: environment.environment.owner,
                         assertCurrent: assertCandidateCurrent, content: { prepareRecipients: true,
@@ -961,6 +975,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 environmentId: request.environmentId, targetLinkId: request.targetLinkId,
                 expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
                 requestKey: request.requestKey ?? randomUUID(), ...(request.whenBusy ? { whenBusy: request.whenBusy } : {}),
+                ...(request.onFailure ? { onFailure: request.onFailure } : {}),
                 contentArtifactId: staged.artifactId,
                 contentHeaderVersion: updated.revision.headerVersion, contentBodyVersion: updated.revision.bodyVersion }) };
         } catch (error) { return failure(errorCode(error), error); }
@@ -1092,14 +1107,18 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const result = await storage(actionId, address, context);
                     if ('errorCode' in result) return result;
                     const detail = DeploymentReceiptGetResultV1Schema.parse(result);
-                    if (!detail.ok || detail.deployment.state !== 'failed') return detail;
+                    if (!detail.ok || detail.deployment.state === 'queued' || detail.deployment.state === 'succeeded'
+                        || detail.deployment.state === 'running_unverified') return detail;
                     if (detail.deployment.id !== address.deploymentId || address.environmentId !== undefined
                         && detail.deployment.environmentId !== address.environmentId) return failure('target_mismatch');
                     const opened = await openReceipt(detail.deployment, context);
+                    const projected = { ...detail, ...(opened.cancellationConsequence
+                        ? { cancellationConsequence: opened.cancellationConsequence } : {}) };
+                    if (detail.deployment.state !== 'failed') return projected;
                     const recorded = opened.content.failure;
-                    if (!recorded) return { ...detail, failureSummary: null };
+                    if (!recorded) return { ...projected, failureSummary: null };
                     const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1(recorded);
-                    return { ...detail, failureSummary: { phase: recorded.phase, code: recorded.code, requiredFact, remedy } };
+                    return { ...projected, failureSummary: { phase: recorded.phase, code: recorded.code, requiredFact, remedy } };
                 } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (actionId === 'deployments.observation.get') {
@@ -1111,6 +1130,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         readEnvironment: (environmentId, context) => readEnvironmentMetadata({ environmentId, context }),
                         readReceipt: readReceiptMetadata });
                 } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+            }
+            if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && 'mode' in input && input.mode === 'preview') {
+                const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+                if (!selected.success || !('mode' in selected.data)) return failure('invalid_parameters');
+                return ownServerTeardown.preview(selected.data, context);
             }
             const recovery = actionId === 'deployments.teardown' && 'detachKeepRunning' in input
                 ? null : await recoverInterruptedReceipt(actionId, input, context);
@@ -1305,10 +1329,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         const fresh = await prepareAdmittedDeployCandidate({ environmentId: prepared.input.environmentId,
                             targetLinkId: prepared.input.targetLinkId, sourceIntent: prepared.intent.sourceIntent,
                             ...(prepared.intent.sourceMethod ? { sourceMethod: prepared.intent.sourceMethod } : {}),
+                            ...(prepared.intent.onFailure ? { onFailure: prepared.intent.onFailure } : {}),
                             requestKey: prepared.intent.requestKey, whenBusy: 'supersede', context });
                         if (!fresh.ok) return fresh;
                         if (!sameStrictJsonValue(fresh.content.sourceIntent, prepared.intent.sourceIntent)
-                            || fresh.content.sourceMethod !== prepared.intent.sourceMethod) return failure('target_mismatch');
+                            || fresh.content.sourceMethod !== prepared.intent.sourceMethod
+                            || (fresh.content.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE)
+                                !== (prepared.intent.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE)) return failure('target_mismatch');
                         const resumed = await host.executePreparedPendingDeploy({ ...fresh.input,
                             pendingDeploy: prepared.input.pendingDeploy }, context);
                         return resumed.ok ? DeploymentReceiptResultV1Schema.parse(resumed.result) : resumed;
@@ -1459,11 +1486,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         ...(!captured && originalInput.sha ? { sha: originalInput.sha } : {}),
                         ...(captured?.sourceMethod ? { sourceMethod: captured.sourceMethod }
                             : originalInput.sourceMethod ? { sourceMethod: originalInput.sourceMethod } : {}),
+                        ...(captured?.onFailure ? { onFailure: captured.onFailure }
+                            : originalInput.onFailure ? { onFailure: originalInput.onFailure } : {}),
                         ...(originalInput.requestKey ? { requestKey: originalInput.requestKey } : {}),
                         ...(originalInput.whenBusy ? { whenBusy: originalInput.whenBusy } : {}) }, preparationEnvironment);
                     if (!candidate.ok) return candidate;
                     if (captured && (!sameStrictJsonValue(candidate.content.sourceIntent, captured.sourceIntent)
-                        || candidate.content.sourceMethod !== captured.sourceMethod)) return failure('target_mismatch');
+                        || candidate.content.sourceMethod !== captured.sourceMethod
+                        || (candidate.content.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE)
+                            !== (captured.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE))) return failure('target_mismatch');
                     input = pending ? { ...candidate.input, pendingDeploy: pending.pendingDeploy } : candidate.input;
                 }
                 const request = { ...originalRequest, input };
@@ -1493,6 +1524,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     return await contributedTarget.prepareAction(request, platform.data, environment);
                 }
                 const nativeCandidate = DeploymentOwnServerContentV1Schema.parse(candidate.content);
+                if (request.actionId === 'deployments.deploy') {
+                    assertReviewedDeploymentSource({ intent: request.input, content: nativeCandidate });
+                }
                 if (replayingDeployment && !nativeCandidate.ownServer) return failure('invalid_parameters');
                 let effectInput = request.input;
                 let content = nativeCandidate;

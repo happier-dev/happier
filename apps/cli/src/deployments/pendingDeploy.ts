@@ -17,6 +17,7 @@ import { DeploymentPendingDeployIntentV1Schema, DeploymentPendingDeployStoredInt
 import { readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
 import type { AccountArtifact, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { ActionOperationCancellation, ActionOperationCancellationContext } from '@/daemon/actionOperations/actionOperationTypes';
+import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 type Resource = NonNullable<Awaited<ReturnType<ReturnType<typeof createCredentialedAccountArtifactStore>['readForUpdate']>>>;
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
@@ -79,6 +80,7 @@ export async function validatePendingDeploymentInputForHost(request: Readonly<{
         ? await readPendingDeploymentIntentForHost({ environment, pendingDeploy: input.pendingDeploy }, host)
         : DeploymentPendingDeployIntentV1Schema.parse({ sourceIntent: candidate.content.sourceIntent,
             ...(candidate.content.sourceMethod ? { sourceMethod: candidate.content.sourceMethod } : {}),
+            ...(candidate.content.onFailure ? { onFailure: candidate.content.onFailure } : {}),
             requestKey: input.requestKey, targetLinkId: input.targetLinkId, actionOperationId: operationId });
     // Automation owns authenticated occurrence admission. An opened caller
     // reference is not that proof, in either storage mode.
@@ -86,7 +88,9 @@ export async function validatePendingDeploymentInputForHost(request: Readonly<{
     if (intent.requestKey !== input.requestKey || intent.targetLinkId !== input.targetLinkId
         || intent.actionOperationId !== operationId
         || !isDeepStrictEqual(intent.sourceIntent, candidate.content.sourceIntent)
-        || intent.sourceMethod !== candidate.content.sourceMethod) return refuse('deployment_conflict');
+        || intent.sourceMethod !== candidate.content.sourceMethod
+        || (intent.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1) !== (candidate.content.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1)
+        || input.onFailure !== undefined && input.onFailure !== candidate.content.onFailure) return refuse('deployment_conflict');
     // Never reseal a retained envelope: exact ciphertext is the storage TAKE
     // operand even when normal preparation creates a fresh receipt Artifact.
     const pendingDeploy = input.pendingDeploy ?? DeploymentPendingDeployV1Schema.parse(

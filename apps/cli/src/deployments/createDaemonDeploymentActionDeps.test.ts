@@ -258,7 +258,7 @@ describe('installed deployment storage and target composition', () => {
         } });
     });
 
-    it.each(['plain', 'e2ee'] as const)('projects a structural failed receipt summary from %s content without reopening metadata', async mode => {
+    it.each(['plain', 'e2ee'] as const)('projects failure and cancellation facts from %s content without reopening metadata', async mode => {
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.failure = { phase: 'build', code: 'build_failed',
             sourceAdmission: { phase: 'deployment_source_admission', reason: 'requester_authority_unavailable',
@@ -285,7 +285,7 @@ describe('installed deployment storage and target composition', () => {
                 headerVersion: receipt.deployment.contentHeaderVersion, bodyVersion: receipt.deployment.contentBodyVersion,
                 seq: 1, createdAt: 1, updatedAt: 1 } };
         });
-        let deployment = { ...receipt.deployment, state: 'succeeded' as 'succeeded' | 'failed' };
+        let deployment = { ...receipt.deployment, state: 'succeeded' as 'succeeded' | 'failed' | 'running' };
         const metadata = vi.spyOn(axios, 'request').mockImplementation(async () => {
             return { status: 200, data: { ok: true, deployment, cancellable: false } };
         });
@@ -301,6 +301,18 @@ describe('installed deployment storage and target composition', () => {
                 requiredFact: 'verified_root_requester', remedy: 'retry_original_request' } });
         expect(contentReads).toBe(1);
         expect(metadata).toHaveBeenCalledTimes(2);
+        deployment = { ...deployment, state: 'running' };
+        content = { ...receipt.content, machineResults: receipt.content.machineResults.map(result => ({ ...result,
+            activation: 'pending', incumbentStopped: true })) };
+        const stopped = await deps.deploymentAction('deployments.receipts.get', input, {});
+        expect(DeploymentReceiptGetResultV1Schema.parse(stopped)).toMatchObject({ ok: true,
+            cancellationConsequence: { kind: 'service-down-until-rollback' } });
+        content = { ...receipt.content, machineResults: receipt.content.machineResults.map(result => ({ ...result,
+            activation: 'pending', incumbentStopped: false })) };
+        await expect(deps.deploymentAction('deployments.receipts.get', input, {})).resolves.not.toHaveProperty('cancellationConsequence');
+        expect(contentReads).toBe(3);
+        expect(metadata).toHaveBeenCalledTimes(4);
+        deployment = { ...deployment, state: 'failed' };
         content = { ...receipt.content, failure: { phase: 'send', code: 'plugin_action_execution_failed' } };
         await expect(deps.deploymentAction('deployments.receipts.get', input, {}))
             .resolves.toMatchObject({ ok: true, failureSummary: { phase: 'send', code: 'plugin_action_execution_failed',
@@ -317,7 +329,7 @@ describe('installed deployment storage and target composition', () => {
         deployment = { ...deployment, environmentId: 'another-environment' };
         await expect(deps.deploymentAction('deployments.receipts.get', input, {}))
             .resolves.toMatchObject({ ok: false, errorCode: 'target_mismatch' });
-        expect(contentReads).toBe(5);
+        expect(contentReads).toBe(7);
     });
     it('uses signed PAT HTTP authority for keyless health, logs and detach while retaining content custody', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-keyless-deployment-'));
@@ -966,7 +978,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const rootSource = scenario.startsWith('root source ');
@@ -1286,6 +1298,21 @@ describe('installed deployment storage and target composition', () => {
             const environmentBodies = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
                 new URL(url).pathname === `/v1/artifacts/${environment.environment.contentArtifactId}`).length;
             const bodiesBeforeCandidate = environmentBodies();
+            if (scenario === 'explicit failure policy') {
+                const candidate = await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
+                    sourceIntent, sourceMethod: 'upload', onFailure: 'keepPartial', context: ownerContext });
+                expect(candidate).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+                expect(candidatesCreated).toBe(0);
+                expect(nativeReads).toBe(0);
+                const defaultCandidate = await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
+                    sourceIntent, sourceMethod: 'upload', context: ownerContext });
+                if (!defaultCandidate.ok) throw new Error(defaultCandidate.errorCode);
+                const prepared = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy',
+                    input: { ...defaultCandidate.input, onFailure: 'keepPartial' }, context: ownerContext });
+                expect(prepared).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+                expect(nativeReads).toBe(0);
+                return;
+            }
             if (scenario === 'compact repository missing SCM provider') {
                 const candidate = await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
                     targetLinkId: row.targetLink.id, context: ownerContext });
@@ -3859,7 +3886,7 @@ describe('installed deployment storage and target composition', () => {
                 context: { ...ownerContext, approvedActionReplay: { artifactId: 'approved-action' } } }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
             const minimal = { serverId: 'home', environmentId: environment.environment.id,
-                targetLinkId: currentTargetLinkId };
+                targetLinkId: currentTargetLinkId, ...(selection === 'configured ref' ? { onFailure: 'keepPartial' as const } : {}) };
             await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: minimal,
                 context: { ...ownerContext, approvedActionReplay: { artifactId: 'approved-action' } } }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
@@ -3867,7 +3894,8 @@ describe('installed deployment storage and target composition', () => {
                 ...(selection === 'compact exact SHA' ? { sha: receipt.content.sourceIntent.sha } : { sourceIntent: receipt.content.sourceIntent }),
                 requestKey: 'approved-event', whenBusy: 'supersede' as const, context: ownerContext };
             const compactInput = { serverId: 'home', environmentId: environment.environment.id,
-                sha: receipt.content.sourceIntent.sha, requestKey: 'approved-event', whenBusy: 'supersede' as const };
+                sha: receipt.content.sourceIntent.sha, requestKey: 'approved-event', whenBusy: 'supersede' as const,
+                onFailure: 'keepPartial' as const };
             const compactRollbackInput = { serverId: 'home', environmentId: environment.environment.id,
                 deploymentId: historical.deployment.id };
             let preparationContext: Parameters<typeof deps.prepareDeploymentAction>[0]['context'] = ownerContext;
@@ -4033,6 +4061,11 @@ describe('installed deployment storage and target composition', () => {
             expect(reviewedContent).toMatchObject({ ok: true, content: { sourceIntent: receipt.content.sourceIntent,
                 ownServer: { approvedInputBasis: { sourceIntent: receipt.content.sourceIntent } } } });
             if (!reviewedContent.ok) throw new Error(reviewedContent.errorCode);
+            if (selection === 'configured ref' || selection === 'compact exact SHA' || selection === 'pending exact SHA') {
+                expect(prepared.input).toMatchObject({ onFailure: 'keepPartial' });
+                expect(prepared.preview).toMatchObject({ onFailure: 'keepPartial' });
+                expect(reviewedContent.content).toMatchObject({ onFailure: 'keepPartial' });
+            }
             if (mode === 'e2ee') {
                 expect(candidateDocument.dataEncryptionKey).not.toBe(ARTIFACT_PLAIN_DATA_KEY_MARKER);
                 expect(String(candidateDocument.body)).not.toContain('approvedInputBasis');

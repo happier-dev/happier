@@ -19,5 +19,7 @@ export async function readDeploymentEnvironmentForHost(
     const content = readDeploymentEnvironmentArtifactV1(detail.environment, opened);
     if (!content.ok) throw Object.assign(new Error(content.error), { code: content.error });
     await host.assertCurrent(request.context);
-    return { environment: detail.environment, content: content.content, targetLinks: detail.targetLinks };
+    return { environment: detail.environment, content: content.content, targetLinks: detail.targetLinks,
+        ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
+        ...(detail.controller ? { controller: detail.controller } : {}) };
 }

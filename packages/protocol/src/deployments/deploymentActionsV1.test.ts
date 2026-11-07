@@ -32,6 +32,34 @@ import { createDeploymentDomainContentArtifactIdV1, projectDeploymentNativeAdmis
   isDeploymentDomainNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 
 describe('existing deployment restart', () => {
+  it('binds remote native inventory to its Environment and prevents preview from executing native removal', () => {
+    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', reason: 'manual' };
+    const review = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.teardown',
+      input, machineId: 'machine', installationId: 'installation', expectedRevision: 1, expectedTargetLinkRevision: 1 });
+    const preview = { ...input, mode: 'preview' };
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.teardown', rootInput: preview, child: review })).toBe(true);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.teardown',
+      rootInput: { ...preview, environmentId: 'foreign' }, child: review })).toBe(false);
+    const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'teardown', actionId: 'deployments.teardown',
+      input: { ...input, requestKey: 'request', expectedRevision: 1, expectedTargetLinkRevision: 1,
+        contentArtifactId: 'artifact', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      machineId: 'machine', installationId: 'installation', deploymentId: 'receipt', actionOperationId: 'operation',
+      step: 'removeTarget', mode: 'execute' });
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.teardown', rootInput: preview, child })).toBe(false);
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: 'deployments.teardown', rootInput: input, child })).toBe(true);
+  });
+  it('binds exact volume deletion confirmation to the teardown operand while preserving keep by omission', () => {
+    const input = { serverId: 'home', environmentId: 'environment', reason: 'manual' };
+    const schema = DeploymentActionInputSchemasV1['deployments.teardown'];
+    expect(schema.safeParse({ ...input, volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
+      { name: 'app_logs', disposition: 'keep' }] }).success).toBe(true);
+    expect(schema.safeParse({ ...input, volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app' }] }).success).toBe(false);
+    expect(schema.safeParse({ ...input, volumes: [{ name: 'app_data', disposition: 'delete' }] }).success).toBe(false);
+    expect(schema.safeParse({ ...input, volumes: [{ name: 'app_data', disposition: 'keep' },
+      { name: 'app_data', disposition: 'delete', confirmation: 'app_data' }] }).success).toBe(false);
+    expect(schema.safeParse(input).success).toBe(true);
+    expect(schema.safeParse({ ...input, mode: 'preview' }).success).toBe(true);
+  });
   it('admits authored Domain routing through the same Action while refusing mixed private references', () => {
     const input = { serverId: 'home', environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
       targetLinkId: 'runtime', expectedTargetLinkRevision: 1, requestKey: 'domain-add',
@@ -380,6 +408,16 @@ describe('Domain admitted child transport', () => {
 });
 
 describe('exact preview list demand', () => {
+  it('preserves exact receipt filters in the existing list GET', () => {
+    const input = { serverId: 'home', environmentId: 'environment', state: 'failed', actorAccountId: 'account', operation: 'rollback' };
+    const request = bindHomeDomainHttpRequestV1({ transport: { method: 'GET', path: '/v1/deployments/environments/:environmentId/deployments' },
+      inputSchema: DeploymentActionInputSchemasV1['deployments.receipts.list'], input });
+    const url = new URL(request.path, 'https://home.test');
+    expect(url.pathname).toBe('/v1/deployments/environments/environment/deployments');
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ state: 'failed', actorAccountId: 'account', operation: 'rollback' });
+    expect(DeploymentActionInputSchemasV1['deployments.receipts.list'].safeParse({ ...input, operation: 'unknown' }).success).toBe(false);
+  });
+
   it('carries the exact template Environment selector through the existing list GET without PR ids', () => {
     const input = { serverId: 'home', previewTemplateEnvironmentId: 'template-environment' };
     const parsed = DeploymentEnvironmentListInputV1Schema.parse(input);
@@ -411,6 +449,15 @@ describe('exact preview list demand', () => {
     expect(DeploymentEnvironmentListInputV1Schema.safeParse({ ...input, previewPullRequestIds: [] }).success).toBe(false);
     expect(DeploymentEnvironmentListInputV1Schema.safeParse({ serverId: input.serverId,
       previewPullRequestIds: input.previewPullRequestIds }).success).toBe(false);
+  });
+  it('encodes the exact repository identity and PR selector through the public Home GET binder', () => {
+    const input = { serverId: 'home', previewRepository: { kind: 'github' as const,
+      deployment: 'https://github.com', repository: 'acme/preview' }, previewPullRequestIds: ['17'] };
+    const request = bindHomeDomainHttpRequestV1({ transport: { method: 'GET', path: '/v1/deployments/environments' },
+      inputSchema: DeploymentEnvironmentListInputV1Schema, input });
+    const query = new URL(request.path, 'https://home.test').searchParams;
+    expect(JSON.parse(query.get('previewRepository')!)).toEqual(input.previewRepository);
+    expect(query.getAll('previewPullRequestIds')).toEqual(['17']);
   });
 });
 

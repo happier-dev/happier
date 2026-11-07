@@ -6,8 +6,25 @@ import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
 import { readDeploymentOutputValidationFailure } from './outputValidation';
 import { MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
-import { DeploymentSourceAdmissionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Schema,
+    type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol';
+
+/** One receipt projection for provider failures, including their effect provenance. */
+export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
+    fallbackPhase: DeploymentReceiptFailureV1['phase']): DeploymentReceiptFailureV1 {
+    const authorDetails = result.details && typeof result.details === 'object' && 'details' in result.details
+        ? result.details.details : undefined;
+    const phase = DeploymentReceiptFailureV1Schema.shape.phase.safeParse(
+        authorDetails && typeof authorDetails === 'object' && 'phase' in authorDetails ? authorDetails.phase : undefined);
+    const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
+    return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
+        phase: phase.success ? phase.data : fallbackPhase,
+        ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
+        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+        ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) }));
+}
 
 /** Preserve typed owner diagnostics across deployment exceptions and child transport. */
 export function projectDeploymentFailure(errorCode: string, error?: unknown, phase = 'deployment.failure'): ActionExecuteFailure {
@@ -31,8 +48,11 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     const author = pluginError ? readPluginActionFailureAuthorPayload(pluginError.data) : undefined;
     const sourceAdmission = pluginError?.code === errorCode
         ? DeploymentSourceAdmissionFailureV1Schema.safeParse(author?.details) : undefined;
-    if (pluginError && sourceAdmission?.success) {
-        return { ok: false, errorCode, error: pluginError.message ?? errorCode, details: sourceAdmission.data,
+    const missingSecrets = pluginError?.code === errorCode && errorCode === 'secret_missing'
+        ? DeploymentMissingRequiredSecretsV1Schema.safeParse(author?.details) : undefined;
+    const details = sourceAdmission?.success ? sourceAdmission.data : missingSecrets?.success ? missingSecrets.data : undefined;
+    if (pluginError && details) {
+        return { ok: false, errorCode, error: pluginError.message ?? errorCode, details,
             ...(author?.failureCause ? { failureCause: author.failureCause } : {}) };
     }
     const carried = ActionExecuteFailureSchema.safeParse(error instanceof Error ? error.cause : error);

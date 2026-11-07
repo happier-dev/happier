@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -58,7 +58,7 @@ const serviceExport = z.strictObject({
     ? value.privateNetwork !== undefined : value.privateNetwork === undefined,
 { message: 'Only a private export names its exact observed private network.' }));
 export const OwnServerEnvironmentConfigurationV1Schema = z.strictObject({
-    rollout: z.enum(['recreate', 'startFirst']), autoRestorePreviousRelease: z.boolean(),
+    ...OwnServerEnvironmentReleasePolicyV1Schema.shape,
     migration: z.optional(z.strictObject({ service: text, argv: migrationArgv,
         pendingCheck: z.optional(z.strictObject({ argv: migrationArgv })) })),
     backupBeforeMigration: z.optional(z.boolean()),

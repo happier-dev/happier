@@ -8,6 +8,12 @@ export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
 
+/** Presentation of the executor's observed phase; cancellation itself never restores a workload. */
+export const DeploymentCancellationConsequenceV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.enum(['service-down-until-rollback', 'may-leave-service-down-until-rollback']),
+}));
+export type DeploymentCancellationConsequenceV1 = z.infer<typeof DeploymentCancellationConsequenceV1Schema>;
+
 /** P40-R13: only effecting receipts occupy the slot; unknown outcomes remain readable history. */
 export function deploymentInProgressStates(): string[] {
     return ['queued', 'running'];

@@ -7,14 +7,16 @@ import { createDeploymentSourceMaterializationPort } from './exactCommitRelease'
 import type { OwnServerDeploymentRuntime, OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { createOwnServerNativeImageAcquisition } from './nativeImageAcquisition';
 import { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
+import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
-export const DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE: DeploymentOwnServerContentV1['onFailure'] = 'rollbackAll';
+export const DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE = DEFAULT_DEPLOYMENT_ON_FAILURE_V1;
 
 /** Exact-source/image preparation uses the same installed acquisition and native codec as review. */
 export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
     environment: DeploymentEnvironmentDetailV1; targetLinkId: string; machineId: string;
     sourceIntent?: DeploymentSourceIntentV1;
     sha?: string;
+    onFailure?: DeploymentOwnServerContentV1['onFailure'];
     stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     runtime: OwnServerDeploymentRuntime; context: ActionExecutorContext;
     readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
@@ -58,7 +60,7 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
                 return DeploymentOwnServerContentV1Schema.parse({ sourceIntent: intent, machines: link.machines,
                     buildMachineId: environment.environment.buildMachineId,
                     ...(environment.content.ingress ? { ingress: environment.content.ingress } : {}),
-                    onFailure: DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, images, machineResults: input.machineResults ?? [], steps: [] });
+                    onFailure: input.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, images, machineResults: input.machineResults ?? [], steps: [] });
             } finally { await project.dispose(); }
         } finally { await source.abort(); }
     } finally { await runtime.release(); }

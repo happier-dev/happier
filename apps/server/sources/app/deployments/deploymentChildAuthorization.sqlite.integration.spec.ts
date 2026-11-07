@@ -1890,7 +1890,11 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it.each(['plain', 'e2ee'] as const)('publishes only the signed %s ingress candidate and retains the reviewed update CAS through real HTTP', async mode => {
+    it.each((['plain', 'e2ee'] as const).flatMap(mode => [
+        { mode, policy: 'ingress', patch: { ingress: { kind: 'cloudflareTunnel' as const } } },
+        { mode, policy: 'release', patch: { ownServer: { rollout: 'startFirst' as const,
+            autoRestorePreviousRelease: false }, retainPreviousDeployments: 0 } },
+    ]))('publishes only the signed $mode $policy candidate and retains the reviewed update CAS through real HTTP', async ({ mode, patch }) => {
         const f = await fixture('team', 'account', { contentMode: mode, readableEnvironment: true, separateControllerCustodian: true });
         // Environment content edits retain the definition writer's existing
         // Machine Manage requirement, including on a separate custodian host.
@@ -1900,7 +1904,7 @@ describe('deployment children retain their controller Action authority', () => {
         const actionId = 'deployments.environments.update';
         const input = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
             contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
-            contentBodyVersion: f.environment.contentBodyVersion, patch: { ingress: { kind: 'cloudflareTunnel' as const } } };
+            contentBodyVersion: f.environment.contentBodyVersion, patch };
         const requestId = crypto.randomUUID();
         const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
         const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: serverId,
@@ -1919,7 +1923,7 @@ describe('deployment children retain their controller Action authority', () => {
         const dataKey = nacl.randomBytes(32);
         const seal = async (value: unknown) => mode === 'plain' ? encodePlainArtifactStoredContent(value)
             : privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(value, dataKey)));
-        const content = { ...createDeploymentEnvironmentDetailV1().content, ingress: input.patch.ingress };
+        const content = { ...createDeploymentEnvironmentDetailV1().content, ...patch };
         const createBody = ArtifactJsonCreateHttpInputV1Schema.parse({ id: artifactId, kind: 'v1:other:deployment-environment.v1',
             header: await seal({ kind: 'deployment-environment.v1', title: content.name }), body: await seal({ body: JSON.stringify(content) }),
             dataEncryptionKey: mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER
@@ -1988,7 +1992,7 @@ describe('deployment children retain their controller Action authority', () => {
             const ordinaryAuthorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
                 accountId: f.account.id, authentication, actionId, machineId: f.controller.id, target, requestId: ordinaryRequestId,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(ordinaryEnvelope) }, { input: ordinaryInput });
-            const unreviewedIngress = { ...ordinaryInput, patch: { ingress: null } };
+            const unreviewedIngress = { ...ordinaryInput, patch };
             const unreviewed = await app.inject({ method: 'PATCH', url: path, payload: unreviewedIngress,
                 headers: headers('PATCH', path, unreviewedIngress, ordinaryAuthorization) });
             expect(unreviewed.statusCode, unreviewed.body).toBe(401);
@@ -3593,11 +3597,34 @@ describe('deployment children retain their controller Action authority', () => {
                 requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } }, privateKey: machine.keys.secretKey }) });
     }
 
-    it('limits a remote teardown child to native history reads without aggregate writes or new secret custody', async () => {
+    it('admits native volume inventory only on the selected target Machine', async () => {
         const f = await fixture();
-        const routing = projectDeploymentChildRoutingV1({ v: 1, kind: 'teardown', actionId: 'deployments.teardown',
+        const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, reason: 'manual', mode: 'preview' };
+        const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID(), input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.teardown', machineId: f.controller.id, target: envelope.target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.teardown',
+            input: { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, reason: 'manual' },
+            machineId: f.member.id, installationId: f.member.installationId,
+            expectedRevision: f.environmentRevision, expectedTargetLinkRevision: f.link.revision });
+        expect(await isCurrentDeploymentChildInTx(db, authorization.binding, projectDeploymentChildRoutingV1(job))).toBe(true);
+        expect(await isCurrentDeploymentChildInTx(db, authorization.binding, projectDeploymentChildRoutingV1({
+            ...job, machineId: f.outsider.id, installationId: f.outsider.installationId }))).toBe(false);
+        expect(await isCurrentDeploymentChildInTx(db, authorization.binding, projectDeploymentChildRoutingV1({
+            ...job, input: { ...job.input, environmentId: f.outsider.id } }))).toBe(false);
+    });
+
+    it.each(['teardown', 'prepare'] as const)('limits a remote teardown %s child to native history reads without aggregate writes or new secret custody', async kind => {
+        const f = await fixture();
+        const routing = projectDeploymentChildRoutingV1(DeploymentChildRpcV1Schema.parse(kind === 'prepare' ? {
+            v: 1, kind, actionId: 'deployments.teardown', input: { serverId, environmentId: f.environment.id,
+                targetLinkId: f.link.id, reason: 'manual' }, machineId: f.member.id, installationId: f.member.installationId,
+            expectedRevision: f.environmentRevision, expectedTargetLinkRevision: f.link.revision,
+        } : { v: 1, kind, actionId: 'deployments.teardown',
             input: { ...f.input, reason: 'manual' }, machineId: f.member.id, installationId: f.member.installationId,
-            deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId, step: 'removeTarget', mode: 'observe' });
+            deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId, step: 'removeTarget', mode: 'observe' }));
         const listInput = { serverId, environmentId: f.environment.id };
         const spec = getActionSpec('deployments.receipts.list');
         if (!spec.serverTransport) throw new Error('Receipt history transport required');

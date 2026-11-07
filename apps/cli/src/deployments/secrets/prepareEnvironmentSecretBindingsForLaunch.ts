@@ -7,6 +7,9 @@ import { openMachineSecretGrant, type MachineSecretGrantContentV1 } from './mach
 import { configuration } from '@/configuration';
 import { createEnvironmentRegistryConfigForHost } from './environmentRegistryConfig';
 import { createEnvironmentBackupDestinationConfigForHost } from './environmentBackupDestinationConfig';
+import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import { listMissingProjectSecretRequirements, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
+import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/deployment-protocol';
 
 function missing(): never {
     throw new PluginError({ code: 'secret_missing', message: 'An exact current Environment binding is unavailable' });
@@ -24,6 +27,7 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     installationId: string;
     installationPrivateSeed: Uint8Array;
     phase?: 'build' | 'runtime';
+    requirements?: ProjectSecretReferenceEnvironmentInput['requirements'];
     /** An exact host-admitted non-variable row; never an application variable alias. */
     use?: Exclude<EnvironmentSecretBindingV1, { purpose: 'variable' }>;
     /** Exact registry rows, alone or alongside build variables. Explicit []
@@ -91,10 +95,13 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     const grants = new Map(input.grants.map(grant => [machineSecretGrantSubjectKey(grant), grant]));
     const openedGrants = new Map<string, MachineSecretGrantContentV1>();
     const definitions = new Map<string, string>();
+    const referenceAddresses: DeploymentReferenceAddressV1[] = [];
     const refs: { resourceId: string; resourceRevision: number }[] = [];
     const env: Record<string, string> = Object.create(null);
     const operationalValues = new Map<string, string>();
     const secretValues: string[] = [];
+    const missingRequiredSecretNames = new Set<string>();
+    const availableSecretNames = new Set<string>();
     let registryConfig: ReturnType<typeof createEnvironmentRegistryConfigForHost> | undefined;
     let backupConfig: Awaited<ReturnType<typeof createEnvironmentBackupDestinationConfigForHost>> | undefined;
     let disposed = false;
@@ -121,7 +128,11 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
                 resourceRevision: binding.source.resourceRevision };
             const key = machineSecretGrantSubjectKey(subject);
             const grant = grants.get(key);
-            if (!grant) return missing();
+            if (!grant) {
+                if (binding.purpose !== 'variable') return missing();
+                missingRequiredSecretNames.add(binding.name);
+                continue;
+            }
             // Current binding admission already selected each use; shared
             // resource ciphertext is opened once per exact installed subject.
             let opened = openedGrants.get(key);
@@ -133,7 +144,10 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
                     refs.push({ resourceId: ref.resourceId, resourceRevision: binding.source.resourceRevision });
                 }
             }
-            if (!opened || opened.kind !== 'secret') return missing();
+            if (!opened || opened.kind !== 'secret' || binding.purpose === 'variable' && opened.value.length === 0) {
+                if (binding.purpose !== 'variable') return missing();
+                missingRequiredSecretNames.add(binding.name);
+            } else if (binding.purpose === 'variable') availableSecretNames.add(binding.name);
         } else {
             if (binding.purpose !== 'variable') return missing();
             const subject = { ...base, kind: 'environmentValues' as const,
@@ -146,7 +160,19 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             const value = opened.definition.kind === 'value' ? opened.definition.value
                 : input.resolveNonSecret ? await input.resolveNonSecret(opened.definition) : missing();
             definitions.set(binding.name, value);
+            if (opened.definition.kind === 'reference') referenceAddresses.push({
+                machineId: input.machineId, installationId: input.installationId, phase: binding.phase,
+                name: binding.name, source: opened.definition, address: value,
+            });
         }
+    }
+    for (const name of listMissingProjectSecretRequirements(input.requirements ?? [], availableSecretNames)) {
+        missingRequiredSecretNames.add(name);
+    }
+    if (missingRequiredSecretNames.size > 0) {
+        const details: DeploymentMissingRequiredSecretsV1 = { deployable: false,
+            missingRequiredSecretNames: [...missingRequiredSecretNames] };
+        throw new PluginError({ code: 'secret_missing', message: 'Required Environment secrets are unavailable', details });
     }
     for (const binding of selected) {
         if (binding.source.kind === 'secret') {
@@ -199,7 +225,7 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         } finally { operationalValues.clear(); }
     }
     return {
-        env, operationalValues, secretValues, refs,
+        env, operationalValues, secretValues, refs, referenceAddresses,
         backupDatabase: input.backupDatabaseBinding ? definitions.get(input.backupDatabaseBinding.name) ?? missing() : undefined,
         credentialFiles: backupConfig?.credentialFiles ?? [],
         async recheck() {

@@ -27,6 +27,73 @@ function networkBoundary() {
 }
 
 describe('deployment demand read controller', () => {
+    it('publishes Domain metadata before controller health and scopes observation lifetime to visible page demand', async () => {
+        const base = networkBoundary();
+        const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'domain', environmentId: base.environment.id,
+            targetLinkId: base.environmentDetail.targetLinks[0]!.targetLink.id, revision: 1, state: 'active',
+            contentArtifactId: 'domain-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
+            createdByAccountId: 'account', createdAtMs: 1000, updatedAtMs: 1000 });
+        const item = { domain, title: 'Application', content: DeploymentDomainContentV1Schema.parse({
+            hostname: 'app.test', target: { service: 'app', containerPort: 80 } }) };
+        let publish: Parameters<NonNullable<DeploymentReadTransportV1['observeDomainHealth']>>[3] | undefined;
+        const observations: AbortSignal[] = [];
+        const stop = vi.fn();
+        const observeDomainHealth: NonNullable<DeploymentReadTransportV1['observeDomainHealth']> = (_scope, environmentId, rows, next, options) => {
+            expect(environmentId).toBe(base.environment.id);
+            expect(rows.map(row => row.domain.id)).toEqual([domain.id]);
+            publish = next;
+            observations.push(options.signal);
+            return stop;
+        };
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport,
+            listDomains: async () => ({ ok: true, value: { items: [item], nextCursor: null } }), observeDomainHealth } });
+        const lease = controller.acquireDomains(base.environment.id, {}, active);
+        try {
+            await lease.refresh();
+            expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { items: [{ domain: { id: domain.id } }] } });
+            expect(observations).toHaveLength(1);
+            publish?.([{ ...item, healthUnavailableReason: 'machine_unavailable' }]);
+            expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { items: [{ domain: { id: domain.id },
+                healthUnavailableReason: 'machine_unavailable' }] } });
+            lease.setDemand(hidden);
+            expect(observations[0]?.aborted).toBe(true);
+            expect(stop).toHaveBeenCalledTimes(1);
+            publish?.([]);
+            expect(lease.getSnapshot().value?.items).toHaveLength(1);
+            lease.setDemand(active);
+            expect(observations).toHaveLength(2);
+        } finally { lease.release(); controller.retire(); }
+    });
+    it('keeps filtered history pages independent and carries filters through page navigation', async () => {
+        const base = networkBoundary();
+        const first = createDeploymentReceiptHeaderV1({ id: 'failed-newer', environmentId: base.environment.id, state: 'failed' });
+        const second = createDeploymentReceiptHeaderV1({ id: 'failed-older', environmentId: base.environment.id, state: 'failed' });
+        base.transport.listHistory.mockImplementation(async (_scope, _environmentId, query) => ({ ok: true,
+            value: { ok: true, items: [query.cursor ? second : first], nextCursor: query.cursor ? null : first.id } }));
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const filters = { state: 'failed' as const, actorAccountId: 'account', operation: 'rollback' as const };
+        const filtered = controller.acquireHistory(base.environment.id, filters, active);
+        const unfiltered = controller.acquireHistory(base.environment.id, {}, active);
+        const variants = [
+            controller.acquireHistory(base.environment.id, { ...filters, state: 'succeeded' }, active),
+            controller.acquireHistory(base.environment.id, { ...filters, actorAccountId: 'other-account' }, active),
+            controller.acquireHistory(base.environment.id, { ...filters, operation: 'deploy' }, active),
+        ];
+        try {
+            await Promise.all([filtered.refresh(), unfiltered.refresh(), ...variants.map(lease => lease.refresh())]);
+            expect(base.transport.listHistory, 'each filter dimension owns an independent page').toHaveBeenCalledTimes(5);
+            expect(base.transport.listHistory).toHaveBeenCalledWith(scope, base.environment.id, filters, expect.anything());
+            filtered.nextPage();
+            await vi.waitFor(() => expect(filtered.getSnapshot().value?.items[0]?.id).toBe(second.id));
+            expect(base.transport.listHistory).toHaveBeenLastCalledWith(scope, base.environment.id,
+                { ...filters, cursor: first.id }, expect.anything());
+            expect(unfiltered.getSnapshot().value?.items[0]?.id).toBe(first.id);
+            filtered.previousPage();
+            expect(filtered.getSnapshot().value?.items[0]?.id).toBe(first.id);
+            expect(base.transport.listHistory, 'previous matching page is retained').toHaveBeenCalledTimes(6);
+        } finally { filtered.release(); unfiltered.release(); variants.forEach(lease => lease.release()); controller.retire(); }
+    });
+
     it('retains current headers across released demand and reads only invalidated headers on return', async () => {
         const base = networkBoundary();
         const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });

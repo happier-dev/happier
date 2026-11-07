@@ -1,6 +1,7 @@
 import type { ActionExecutorContext, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
 import { readDeploymentReceiptArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentReceiptDetailV1,
-    type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1 } from '@happier-dev/deployment-protocol';
+    type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1,
+    projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 /** Incumbent history pager shared by member-version and finite health reads.
@@ -46,7 +47,9 @@ export async function openDeploymentReceiptForHost(deployment: DeploymentReceipt
     const content = readDeploymentReceiptArtifactV1(deployment, await host.open(deployment.contentArtifactId, context));
     if (!content.ok) throw Object.assign(new Error(content.error), { code: content.error });
     await host.assertCurrent(context);
-    return { deployment, content: content.content };
+    const receipt = { deployment, content: content.content };
+    const cancellationConsequence = projectDeploymentCancellationConsequenceV1(receipt);
+    return { ...receipt, ...(cancellationConsequence ? { cancellationConsequence } : {}) };
 }
 
 export async function readDeploymentReceiptForHost(

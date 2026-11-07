@@ -13,6 +13,7 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
     storage?: Readonly<{ warnings: readonly Readonly<NonNullable<DeploymentMachineReviewV1['storage']>['warnings'][number]>[] }>;
     target: DeploymentMachineReviewV1['target'];
     commitSubject?: string;
+    onFailure?: DeploymentMachineReviewV1['onFailure'];
 }>): DeploymentMachineReviewV1 {
     const { environment, inputBasis, servingReceipt } = input;
     const downtime = projectDeploymentDowntimeClassV1(environment.content.ownServer?.rollout, servingReceipt !== null);
@@ -27,6 +28,7 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
         replaces: servingReceipt ? { deploymentId: servingReceipt.deployment.id,
             revision: projectDeploymentReviewRevisionV1(servingReceipt.content.sourceIntent, servingReceipt.content.commitSubject) } : null,
         secretBindingNames,
+        ...(input.onFailure === undefined ? {} : { onFailure: input.onFailure }),
         ...(downtime ? { downtime } : {}),
         rollbackStorage: { keepPreviousDeployments: environment.content.retainPreviousDeployments },
         ...(input.storage ? { storage: { warnings: [...input.storage.warnings] } } : {}),

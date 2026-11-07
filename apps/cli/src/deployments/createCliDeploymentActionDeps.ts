@@ -11,8 +11,9 @@ import {
   DeploymentTargetLinkInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema, DeploymentPromoteInputV1Schema,
   DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
   createDeploymentApprovalScopeResolverV1,
+  hasDeploymentEnvironmentContentPatchV1,
   type ActionExecutorContext, type ActionExecutorDeps, type DeploymentTransportActionIdV1,
-  type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentBindingsSetInputV1, type DeploymentBindingsPreparedInputV1,
+  type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptHeaderV1, type DeploymentBindingsSetInputV1, type DeploymentBindingsPreparedInputV1,
   type DeploymentTeardownInputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1,
 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
@@ -219,7 +220,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           if ('errorCode' in current || !('ok' in current) || !current.ok) return current;
           if (!('environment' in current) || current.environment.id !== preparedInput.environmentId) return failure('invalid_action_output');
           if (current.environment.revision !== preparedInput.expectedRevision) return failure('deployment_conflict');
-          needsContentAdmission = preparedInput.patch.ingress !== undefined
+          needsContentAdmission = hasDeploymentEnvironmentContentPatchV1(preparedInput.patch)
             || current.environment.contentArtifactId !== preparedInput.contentArtifactId
             || current.environment.contentHeaderVersion !== preparedInput.contentHeaderVersion
             || current.environment.contentBodyVersion !== preparedInput.contentBodyVersion;
@@ -354,6 +355,14 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         ? args.actionId : actionId))(args),
     deploymentAction: async (actionId, input, context, creationReview) => {
     const result = await request(actionId, input, context, actionId, creationReview);
+    if (actionId === 'deployments.receipts.list' && 'ok' in result && result.ok && 'items' in result) {
+      // request already validated this Action's output; the aggregate return union loses the Action/row correlation.
+      const page = result as Extract<DeploymentActionOutputV1, { ok: true; items: DeploymentReceiptHeaderV1[] }>;
+      return { ...page, items: page.items.map(receipt => {
+        const code = readDeploymentReceiptFailureCodeV1(receipt.state);
+        return code ? { ...receipt, ...projectDeploymentFailureRecoveryV1(receipt, code) } : receipt;
+      }) };
+    }
     if ('errorCode' in result || !('ok' in result) || !result.ok
       || (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback' && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown')) return result;
     if (actionId === 'deployments.teardown' && 'detached' in result) return result;

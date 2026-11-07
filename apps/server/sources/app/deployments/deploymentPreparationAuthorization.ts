@@ -14,7 +14,7 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateI
     DeploymentTargetLinksListInputV1Schema,
     ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
-    DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
+    DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
@@ -30,7 +30,7 @@ import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentBindingsSetSto
 import { ProjectAccountRowReadRequestV1Schema, PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { readProjectDeploymentDefaultsInTx } from '@/app/projects/projectDeploymentDefaultsService';
+import { readProjectDeploymentDefaultsContentInTx } from '@/app/projects/projectDeploymentDefaultsService';
 import { readArtifactAccessGrantsForAdmittedCustodyInTx,
     type ArtifactMutationTransactionGuard } from '@/app/artifacts/artifactAccessService';
 import { ArtifactAccessGrantSetInputV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema,
@@ -357,7 +357,7 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
     return publication ?? admittedEnvironmentId === admission.environmentId;
 }
 
-/** Signed authoring publishes one private candidate; ingress also retains its original patch and CAS. */
+/** Signed authoring publishes one private candidate and retains its reviewed patch and CAS. */
 export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
@@ -373,7 +373,8 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
     const update = proof.method.toUpperCase() === 'PATCH' && /^\/v1\/deployments\/environments\/[^/?#]+$/u.test(proof.path)
         ? DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(proof.body) : null;
     if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(admission)) {
-        if (update?.success && (update.data.patch?.ingress !== undefined || update.data.authoredInputDigest !== undefined)) return false;
+        if (update?.success && (hasDeploymentEnvironmentContentPatchV1(update.data.patch)
+            || update.data.authoredInputDigest !== undefined)) return false;
         return null;
     }
     const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: admission.environmentId });
@@ -863,8 +864,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         try { artifactId = decodeURIComponent(match[1]); } catch { return false; }
         if (encodeURIComponent(artifactId) !== match[1] || !routeMatches({ id: artifactId })) return false;
         for (const sourceId of new Set(catalogSources.map(selected => selected.source.id))) {
-            const defaults = await readProjectDeploymentDefaultsInTx(tx, binding.accountId,
-                { serverId: binding.serverIdentityId, projectSourceId: sourceId }, authentication);
+            const defaults = await readProjectDeploymentDefaultsContentInTx(tx, binding.accountId, sourceId);
             if (defaults.ok && defaults.content?.contentArtifactId === artifactId) return true;
         }
         let selected = deployments.find(selected => selected.candidate.contentArtifactId === artifactId);
@@ -940,8 +940,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         if (proof.path === `/v1/projects/${encodeURIComponent(admission.source.id)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`
             && routeMatches({ serverId: binding.serverIdentityId, id: admission.source.id })) return true;
         if (!/^\/v1\/artifacts\/[^/?#]+$/u.test(proof.path)) return false;
-        const defaults = await readProjectDeploymentDefaultsInTx(tx, binding.accountId,
-            { serverId: binding.serverIdentityId, projectSourceId: admission.source.id }, authentication);
+        const defaults = await readProjectDeploymentDefaultsContentInTx(tx, binding.accountId, admission.source.id);
         return defaults.ok && defaults.content !== null
             && proof.path === `/v1/artifacts/${encodeURIComponent(defaults.content.contentArtifactId)}`
             && routeMatches({ id: defaults.content.contentArtifactId })

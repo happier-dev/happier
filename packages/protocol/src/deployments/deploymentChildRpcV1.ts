@@ -6,9 +6,10 @@ import { RPC_METHODS } from '../rpc/methods.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
+import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from './storedAppInputV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentActionsV1.js';
 import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionIdV1, isDeploymentDomainAddActionIdV1,
-    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
+    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
@@ -22,6 +23,11 @@ export { isDeploymentChildRootActionIdV1, isDeploymentChildEffectActionIdV1, dep
     type DeploymentRootOperationV1, type DeploymentDomainChildActionIdV1 } from './deploymentActionIdsV1.js';
 
 const placement = { v: z.literal(1), machineId: id, installationId: id };
+export const DeploymentTeardownReviewChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
+    ...placement, kind: z.literal('prepare'), actionId: z.literal('deployments.teardown'),
+    input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id, reason: DeploymentTeardownInputV1Schema.shape.reason }),
+    expectedRevision: revision, expectedTargetLinkRevision: revision,
+}));
 export const DeploymentDomainChildRoutingV1Schema = lazyZodSchema(() => z.strictObject({
     ...placement, kind: z.literal('domain'), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify']),
     input: z.strictObject({ serverId: id, environmentId: id, domainId: id }), expectedDomainRevision: revision,
@@ -65,6 +71,7 @@ const root = lazyZodSchema(() => z.discriminatedUnion('actionId', [
 
 /** Private finite child work. Content, authority and acceptance remain with their canonical owners. */
 export const DeploymentChildRpcV1Schema = lazyZodSchema(() => z.union([
+    DeploymentTeardownReviewChildRpcV1Schema,
     DeploymentDomainChildRpcV1Schema, DeploymentDomainDiscoverChildRpcV1Schema,
     z.strictObject({ ...placement, kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
         input: DeploymentTeardownInputV1Schema, deploymentId: id, actionOperationId: id,
@@ -83,6 +90,18 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): boolean {
     const child = input.child;
+    if (input.rootActionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && input.rootInput !== undefined) {
+        const rootTeardown = DeploymentTeardownActionInputV1Schema.safeParse(input.rootInput);
+        if (rootTeardown.success && 'mode' in rootTeardown.data && rootTeardown.data.mode === 'preview'
+            && !(child.kind === 'prepare' && child.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1)) return false;
+    }
+    if (child.kind === 'prepare' && child.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
+        const original = DeploymentTeardownActionInputV1Schema.safeParse(input.rootInput);
+        return input.rootActionId === child.actionId && original.success && !('detachKeepRunning' in original.data)
+            && original.data.serverId === child.input.serverId && original.data.environmentId === child.input.environmentId
+            && original.data.reason === child.input.reason
+            && (original.data.targetLinkId === undefined || original.data.targetLinkId === child.input.targetLinkId);
+    }
     if (child.kind === 'teardown') {
         if (input.rootActionId !== child.actionId) return false;
         const exact = DeploymentTeardownInputV1Schema.safeParse(input.rootInput);
@@ -91,6 +110,8 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         return intent.success && !('detachKeepRunning' in intent.data) && !('dataCreation' in intent.data)
             && intent.data.serverId === child.input.serverId
             && intent.data.environmentId === child.input.environmentId && intent.data.reason === child.input.reason
+            && sameStrictJsonValue('volumes' in intent.data ? intent.data.volumes : undefined, child.input.volumes)
+            && intent.data.removeEnvironment === child.input.removeEnvironment
             && (intent.data.targetLinkId === undefined || intent.data.targetLinkId === child.input.targetLinkId)
             && (intent.data.requestKey === undefined || intent.data.requestKey === child.input.requestKey)
             && (!('expectedRevision' in intent.data) || intent.data.expectedRevision === child.input.expectedRevision)
@@ -189,12 +210,14 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
                 && semantic.data.environmentId === child.input.environmentId
                 && (semantic.data.targetLinkId === undefined || semantic.data.targetLinkId === child.input.targetLinkId)
                 && (semantic.data.requestKey === undefined || semantic.data.requestKey === child.input.requestKey)
+                && (semantic.data.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1) === (child.input.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1)
                 && (semantic.data.whenBusy ?? 'refuse') === (child.input.whenBusy ?? 'refuse');
         }
         const original = DeploymentDeployInputV1Schema.safeParse(input.rootInput);
         if (!original.success) return false;
         return child.kind === 'prepare' ? sameStrictJsonValue(child.input, {
             serverId: original.data.serverId, environmentId: original.data.environmentId, targetLinkId: original.data.targetLinkId,
+            ...(original.data.onFailure ? { onFailure: original.data.onFailure } : {}),
         }) : sameStrictJsonValue(original.data, child.input);
     }
     if (child.actionId === 'deployments.rollback') {

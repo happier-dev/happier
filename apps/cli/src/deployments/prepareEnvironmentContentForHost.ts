@@ -1,10 +1,12 @@
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
+import { prepareDeploymentBackupRetentionV1 } from '@happier-dev/deployments';
 import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentEnvironmentArtifactV1, resolveDeploymentStoredDefinitionRevisionV1,
+    createOwnServerEnvironmentConfigurationV1,
     type DeploymentEnvironmentDefinitionV1 } from '@happier-dev/deployment-protocol';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -86,7 +88,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 });
             }
             let previousDefinition: DeploymentEnvironmentDefinitionV1 | undefined;
-            let preparedIngress: Readonly<{ input: DeploymentEnvironmentUpdateInputV1;
+            let preparedContent: Readonly<{ input: DeploymentEnvironmentUpdateInputV1;
                 owner: Awaited<ReturnType<typeof readMetadata>>['environment']['owner'] }> | undefined;
             if (request.actionId === 'deployments.environments.update' && 'environmentId' in request.input) {
                 const loaded = await readMetadata(request.input.environmentId);
@@ -106,13 +108,43 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                         error: 'deployment_invalid (deployment.environment.ingress_content_mismatch)',
                         details: { requiredFact: 'preparedEnvironmentIngress' } };
                     candidate = { ...candidate, content: { ...previous.content, ingress: desiredIngress } };
-                    preparedIngress = { input: request.input, owner: loaded.environment.owner };
+                    preparedContent = { input: request.input, owner: loaded.environment.owner };
+                }
+                const retention = request.input.patch?.backupRetention;
+                let desiredBackup = previous.content.backup;
+                if (retention) {
+                    const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: previous.content.backup, ...retention });
+                    if (!prepared.ok) return { ok: false, errorCode: prepared.code, error: prepared.code };
+                    desiredBackup = prepared.configuration;
+                    if (!isDeepStrictEqual(candidate.content.backup, desiredBackup)) {
+                        if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                        candidate = { ...candidate, content: { ...candidate.content, backup: desiredBackup } };
+                        preparedContent = { input: request.input, owner: loaded.environment.owner };
+                    }
+                }
+                const releasePolicy = request.input.patch?.ownServer;
+                if (releasePolicy) {
+                    const selectedPolicy = Object.fromEntries(Object.entries(releasePolicy).filter(([, value]) => value !== undefined));
+                    const desiredOwnServer = previous.content.ownServer
+                        ? { ...previous.content.ownServer, ...selectedPolicy }
+                        : Object.keys(selectedPolicy).length > 0 ? createOwnServerEnvironmentConfigurationV1(selectedPolicy) : undefined;
+                    if (!isDeepStrictEqual(candidate.content.ownServer, desiredOwnServer)) {
+                        if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                        candidate = { ...candidate, content: { ...candidate.content, ownServer: desiredOwnServer } };
+                        preparedContent = { input: request.input, owner: loaded.environment.owner };
+                    }
+                }
+                const retainedDeployments = request.input.patch?.retainPreviousDeployments;
+                if (retainedDeployments !== undefined && candidate.content.retainPreviousDeployments !== retainedDeployments) {
+                    if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                    candidate = { ...candidate, content: { ...candidate.content, retainPreviousDeployments: retainedDeployments } };
+                    preparedContent = { input: request.input, owner: loaded.environment.owner };
                 }
                 // This check owns opened content in both Account modes. An E2EE
                 // server cannot inspect this private leaf on the client's behalf.
                 if (!isDeepStrictEqual(previous.content.template, candidate.content.template)
                     || !isDeepStrictEqual(previous.content.previewProvenance, candidate.content.previewProvenance)
-                    || !isDeepStrictEqual(previous.content.backup, candidate.content.backup)
+                    || !isDeepStrictEqual(desiredBackup, candidate.content.backup)
                     || !isDeepStrictEqual(previous.content.bindings, candidate.content.bindings))
                     return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
             }
@@ -123,8 +155,8 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 await admitStoredComposeDefinition(candidate.content.definition);
             }
             request.context.signal?.throwIfAborted();
-            if (preparedIngress) {
-                const prepared = preparedIngress;
+            if (preparedContent) {
+                const prepared = preparedContent;
                 const content = candidate.content;
                 const binding = request.context.externalActionExecutionAuthorization?.binding;
                 const native = binding?.deploymentNativeAdmission;

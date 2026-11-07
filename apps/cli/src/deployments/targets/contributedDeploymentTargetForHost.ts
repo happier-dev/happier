@@ -4,11 +4,10 @@ import { DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, D
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentPlatformContentV1Schema, DeploymentReceiptFailureV1Schema, type DeploymentPlatformContentV1,
+import { DeploymentPlatformContentV1Schema, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
     type DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol';
-import { DeploymentSourceAdmissionFailureV1Schema, type DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentTargetRoleCommonInputV1Schema, DeploymentTargetRoleInputSchemasV1,
     DeploymentTargetRoleResultV1Schema, type DeploymentTargetRuntimeRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -28,7 +27,7 @@ import type { OwnServerDeploymentTransition, OwnServerDeploymentTargetHostInput 
 import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntentForHost';
 import { readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
-import { projectDeploymentFailure as failure } from '../deploymentFailure';
+import { projectDeploymentFailure as failure, projectDeploymentReceiptFailure } from '../deploymentFailure';
 import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -59,16 +58,7 @@ const deployRole = (method: 'gitIntegration' | 'upload'): Role => method === 'up
 
 function receiptFailureContent(content: DeploymentPlatformContentV1, result: ActionExecuteFailure,
     fallbackPhase: DeploymentReceiptFailureV1['phase']): DeploymentPlatformContentV1 & { failure: DeploymentReceiptFailureV1 } {
-    const authorDetails = result.details && typeof result.details === 'object' && 'details' in result.details
-        ? result.details.details : undefined;
-    const phase = DeploymentReceiptFailureV1Schema.shape.phase.safeParse(
-        authorDetails && typeof authorDetails === 'object' && 'phase' in authorDetails ? authorDetails.phase : undefined);
-    const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
-    return { ...content, failure: DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
-        phase: phase.success ? phase.data : fallbackPhase,
-        ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
-        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
-        ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) })) };
+    return { ...content, failure: projectDeploymentReceiptFailure(result, fallbackPhase) };
 }
 
 /** The deployment factory consumes declared Actions; their existing executor owns placement and policy. */
@@ -153,6 +143,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
 
     async function prepareCandidate(request: DaemonDeploymentCandidateRequest & { targetLinkId: string },
         environment: DeploymentEnvironmentDetailV1): Promise<DaemonDeploymentCandidateResult> {
+        if (request.onFailure !== undefined) return failure('unsupported_action');
         const sourceMethod = request.sourceMethod ?? 'gitIntegration';
         return withRole(request, environment, deployRole(sourceMethod), async scope => {
             await scope.admit(scope.common, 'preparation');
@@ -184,6 +175,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     async function prepareAction(request: Omit<DaemonDeploymentPreparationRequest, 'input'>
         & { input: Exclude<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>['input'] },
         candidate: DeploymentPlatformContentV1, environment: DeploymentEnvironmentDetailV1): Promise<DaemonDeploymentPreparationResult> {
+        if ('onFailure' in request.input && request.input.onFailure !== undefined) return failure('unsupported_action');
         const role = request.actionId === 'deployments.deploy' ? deployRole(candidate.sourceMethod)
             : request.actionId === 'deployments.rollback' ? 'rollback' : 'promote';
         return withRole({ ...request.input, context: request.context }, environment, role, async scope => {

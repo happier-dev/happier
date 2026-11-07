@@ -106,6 +106,7 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     executionDirectory?: string;
     exec: ExecService;
     envPort: DeploymentExecEnvPortV1;
+    onReferenceAddresses?(addresses: NonNullable<HostAuthorizedPluginExecLaunch['deploymentReferenceAddresses']>): void;
     source: DeploymentSourceMaterializationV1;
     files: readonly string[];
     sourceKind?: 'repository' | 'stored';
@@ -155,7 +156,7 @@ export type NativeComposeEnvironmentProject = Readonly<{
         status: 'matching' | 'different' | 'unknown'; health: 'healthy' | 'unhealthy' | 'unverified';
     }>>;
     activate(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext; signal?: AbortSignal;
-        cleanupOnFailure?: boolean }>): Promise<NativeComposeActivatedProject>;
+        cleanupOnFailure?: boolean; onIncumbentServicesChanged?(services: readonly string[]): Promise<void> }>): Promise<NativeComposeActivatedProject>;
     settleNative(): Promise<void>;
     dispose(): Promise<void>;
 }>;
@@ -880,7 +881,13 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
     const run = async (args: readonly string[], signal?: AbortSignal, registry?: NativeComposeRegistryAcquisition | null, checkExit = true,
         authority?: NativeComposeEffectAuthority) => {
         const launch = await authorize(args, signal, registry);
-        try { return await runAuthorized(launch, signal, checkExit, authority); }
+        try {
+            const output = await runAuthorized(launch, signal, checkExit, authority);
+            if (output.exitCode === 0 && args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
+                input.onReferenceAddresses?.(launch.deploymentReferenceAddresses ?? []);
+            }
+            return output;
+        }
         finally { await launch.release(); }
     };
     const base = ['compose', '--project-name', projectName, '--project-directory', input.source.rootPath,
@@ -1328,6 +1335,7 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                 return nativeRefusal('deployment_activation_requires_regular_render');
             }
             const { current, capture, identity, authority } = await prepareRuntimeRender(request);
+            let incumbentQuiesced = false;
             if (input.storage?.sharedData && current.sharedData?.seeds.length) {
                 const seedRoot = join(await realpath(input.storage.sharedData.environmentRoot), 'shared');
                 const nativeBinds = createNativeComposeIncumbentBindReader({ projectName, run: args => run(args, request.signal),
@@ -1340,14 +1348,21 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                     [join(seedRoot, seed.relativePath), ...(seed.sourcePath ? [seed.sourcePath] : [])]));
                 // Quiesce only native services overlapping a pending seed's
                 // source or destination, including an existing shared ancestor.
-                if (quiesce.length) await run(['stop', ...quiesce], request.signal, undefined, true, authority);
+                if (quiesce.length) {
+                    await run(['stop', ...quiesce], request.signal, undefined, true, authority);
+                    await request.onIncumbentServicesChanged?.(quiesce);
+                    incumbentQuiesced = true;
+                }
                 try {
                     await seedNativeComposeSharedData({ source: input.source, storage: input.storage.sharedData, plan: current.sharedData,
                         assertCurrent: () => assertCurrent(request.signal) });
                 } catch (error) {
                     // A known failed seed has not recreated the incumbent. Its
                     // original containers still hold their original mounts.
-                    if (quiesce.length && !request.signal?.aborted) await run(['start', ...quiesce], request.signal, undefined, true, authority);
+                    if (quiesce.length && !request.signal?.aborted) {
+                        await run(['start', ...quiesce], request.signal, undefined, true, authority);
+                        await request.onIncumbentServicesChanged?.([]);
+                    }
                     throw error;
                 }
             }
@@ -1375,7 +1390,11 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             try {
                 if (input.storage?.sharedData && current.sharedData) await assertNativeComposeSharedDataPaths({
                     storage: input.storage.sharedData, paths: current.sharedData.paths });
+                // Native up can start the candidate before its health wait settles.
+                // From this effect onward, the stopped incumbent no longer proves an outage.
+                if (incumbentQuiesced) await request.onIncumbentServicesChanged?.([]);
                 await runAuthorized(launch, request.signal, true, authority);
+                input.onReferenceAddresses?.(launch.deploymentReferenceAddresses ?? []);
                 if (selectiveHealth) {
                     // Compose 2.39.4 start.go:72-107 waits on every service in
                     // the selected project. up.go:60-67 makes --no-deps select

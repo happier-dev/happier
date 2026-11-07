@@ -2,9 +2,10 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import { hasDeploymentEnvironmentContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
 import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
-import { DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
+import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
   DeploymentDomainVerifyInputV1Schema } from './deploymentDomainV1.js';
@@ -36,6 +37,10 @@ export const DeploymentRestoreNativeAdmissionV1Schema = lazyZodSchema(() => z.di
 export type DeploymentRestoreNativeAdmissionV1 = z.infer<typeof DeploymentRestoreNativeAdmissionV1Schema>;
 const backupAdmission = () => ({ kind: z.literal('backup'), inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) });
 export const DeploymentBackupNativeAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  z.extend(z.omit(DeploymentBackupHistoryInputV1Schema, { serverId: true }),
+    { ...backupAdmission(), actionId: z.literal('deployments.backups.history') }),
+  z.extend(z.omit(DeploymentBackupTestInputV1Schema, { serverId: true }),
+    { ...backupAdmission(), actionId: z.literal('deployments.backups.test') }),
   z.extend(z.omit(DeploymentBackupInventoryInputV1Schema, { serverId: true }),
     { ...backupAdmission(), actionId: z.literal('deployments.backups.inventory') }),
   z.extend(z.omit(DeploymentBackupRunInputV1Schema, { serverId: true }),
@@ -70,7 +75,7 @@ export function isDeploymentBackupNativeAdmissionV1(value: DeploymentNativeAdmis
 export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown) {
   if (actionId === 'deployments.environments.update') {
     const value = readRecord(input);
-    if (readRecord(value.patch).ingress === undefined) return undefined;
+    if (!hasDeploymentEnvironmentContentPatchV1(value.patch)) return undefined;
     return DeploymentNativeAdmissionV1Schema.parse({ environmentId: value.environmentId,
       inputDigest: computeDeploymentEnvironmentUpdateInputDigestV1(value),
       authoredMetadataDigest: computeDeploymentEnvironmentUpdateMetadataDigestV1(value) });

@@ -1,7 +1,10 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
-import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1, deploymentOperationForRootActionV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
+import { DeploymentReceiptMetadataV1Schema } from '../deployments/deploymentActionsV1.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import {
   ApprovalDecisionV1Schema,
@@ -122,9 +125,40 @@ export type ApprovalQueueListResultV1 = Readonly<Omit<z.infer<typeof ApprovalQue
   items: readonly ApprovalQueueListItemV1[];
 }>;
 
+/** A pending receipt is the existing Ask, not an execution receipt reserved before approval. */
+export const DeploymentApprovalReceiptV1Schema = lazyZodSchema(() => {
+  const subject = { approvalId: DeploymentIdentifierV1Schema, environmentId: z.optional(DeploymentIdentifierV1Schema),
+    operation: DeploymentReceiptMetadataV1Schema.shape.operation };
+  return z.union([
+    z.strictObject({ ...subject, state: z.enum([...ApprovalRequestV2StatusSchema.options.filter(status => status !== 'open'),
+      'waiting-for-approval']) }),
+    z.strictObject({ ...subject, state: z.literal('admitted'), receipt: DeploymentReceiptAcceptedResultV1Schema }),
+  ]);
+});
+export type DeploymentApprovalReceiptV1 = z.infer<typeof DeploymentApprovalReceiptV1Schema>;
+
+/** Observation only: decide/replay and receipt admission remain with their existing owners. */
+export function projectDeploymentApprovalReceiptV1(approvalId: string,
+  request: Readonly<{ actionId?: string; status: string; actionArgs?: unknown;
+    execution?: Readonly<{ ok: boolean; result?: unknown }> }>): DeploymentApprovalReceiptV1 | null {
+  const operation = deploymentOperationForRootActionV1(request.actionId ?? '');
+  if (!operation) return null;
+  const args = request.actionArgs;
+  const environmentId = args && typeof args === 'object' && 'environmentId' in args
+    && typeof args.environmentId === 'string' ? args.environmentId : undefined;
+  const subject = { approvalId, operation, ...(environmentId ? { environmentId } : {}) };
+  if (request.status === 'executed' && request.execution?.ok) {
+    const receipt = DeploymentReceiptAcceptedResultV1Schema.safeParse(request.execution.result);
+    if (receipt.success) return { ...subject, state: 'admitted', receipt: receipt.data };
+  }
+  return DeploymentApprovalReceiptV1Schema.parse({ ...subject,
+    state: request.status === 'open' ? 'waiting-for-approval' : request.status });
+}
+
 export const ApprovalRequestGetResultV1Schema = lazyZodSchema(() => z.strictObject({
   artifactId: z.string(),
   request: ApprovalRequestPublicReadSchema,
+  deploymentReceipt: z.optional(DeploymentApprovalReceiptV1Schema),
   queryPlan: z.strictObject({
     kind: z.literal('approval_artifact_id_lookup'),
     backingStore: z.literal('ArtifactStore'),

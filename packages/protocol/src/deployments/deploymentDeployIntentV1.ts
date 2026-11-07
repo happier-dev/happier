@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
-import { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema } from './storedAppInputV1.js';
+import { DeploymentOnFailureV1Schema, DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema } from './storedAppInputV1.js';
 import { ScmCommitOidSchema } from '../scm/commitPublication.js';
 
 /** Authored deploy operands shared by deployment and token preparation. */
@@ -12,6 +12,7 @@ export const DeploymentDeploySemanticInputV1Schema = lazyZodSchema(() => z.stric
   sourceIntent: z.optional(DeploymentSourceIntentV1Schema),
   sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
   whenBusy: z.optional(z.enum(['refuse', 'supersede'])),
+  onFailure: z.optional(DeploymentOnFailureV1Schema),
 }));
 export type DeploymentDeploySemanticInputV1 = z.infer<typeof DeploymentDeploySemanticInputV1Schema>;
 

@@ -1,9 +1,11 @@
+import { isWorkspaceSyncRelationshipWriteActionId } from '../actionIds.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 import type { ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
-import { WorkspaceSyncRelationshipCreateActionInputV1Schema, WorkspaceSyncRelationshipCreationObservationV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
+import { projectDeploymentApprovalReceiptV1 } from '../../approvals/approvalRequestPublicRead.js';
+import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreationObservationV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { isApprovalArtifactObservationGrantedV1, readApprovalArtifactObservationRequestV1,
   readApprovalArtifactObservationSubjectV1 } from '../../approvals/approvalArtifactHeaderV1.js';
 
@@ -14,10 +16,10 @@ function readApprovalRequestStatus(raw: unknown): ApprovalRequest['status'] | nu
 
 async function reconcileWorkspaceLink(request: ApprovalRequest, artifactId: string, context: ActionExecutorContext,
   deps: Pick<ActionExecutorDeps, 'workspaceSyncRelationshipObserveCreation' | 'approvalsUpdate'>): Promise<ApprovalRequest> {
-  if (request.v !== 2 || request.actionId !== 'workspace.sync.relationship.create'
-    || request.status !== 'outcome_unknown' || request.execution?.effectAttempted !== true
+  if (request.v !== 2 || !isWorkspaceSyncRelationshipWriteActionId(request.actionId)
+    || request.status !== 'outcome_unknown' || !request.execution || request.execution.effectAttempted === false
     || !deps.workspaceSyncRelationshipObserveCreation || !deps.approvalsUpdate) return request;
-  const input = WorkspaceSyncRelationshipCreateActionInputV1Schema.safeParse(request.actionArgs);
+  const input = WorkspaceSyncRelationshipWriteActionInputV1Schema.safeParse(request.actionArgs);
   if (!input.success) return request;
   try {
     // The immutable origin may name another device's profile; read and settle on this reader's Home.
@@ -31,7 +33,8 @@ async function reconcileWorkspaceLink(request: ApprovalRequest, artifactId: stri
     if (observed.outcome === 'unknown') return request;
     const next = ApprovalRequestV2Schema.parse({ ...request, updatedAtMs: Math.max(Date.now(), request.updatedAtMs),
       status: observed.outcome === 'succeeded' ? 'executed' : 'failed',
-      execution: { executedAtMs: request.execution.executedAtMs, effectAttempted: true,
+      execution: { executedAtMs: request.execution.executedAtMs,
+        ...(request.execution.effectAttempted !== undefined ? { effectAttempted: request.execution.effectAttempted } : {}),
         ...(observed.outcome === 'succeeded' ? { ok: true, result: observed }
           : { ok: false, errorCode: observed.errorCode, error: observed.errorCode }) },
     });
@@ -80,7 +83,9 @@ export async function executeApprovalObservationAction(params: Readonly<{
     return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
   }
   const observed = parsed.family === 'built_in' ? await reconcileWorkspaceLink(parsed.request, artifactId, context, deps) : parsed.request;
+  const deploymentReceipt = parsed.family === 'built_in' ? projectDeploymentApprovalReceiptV1(artifactId, parsed.request) : null;
   return { ok: true, result: { artifactId, request: projectApprovalRequestForPublicRead(observed),
+    ...(deploymentReceipt ? { deploymentReceipt } : {}),
     queryPlan: { kind: 'approval_artifact_id_lookup', backingStore: 'ArtifactStore',
       boundedBy: 'approval artifact id', hydratedTranscripts: false } } };
 }

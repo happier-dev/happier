@@ -6,6 +6,9 @@ import { DeploymentContentV1Schema, DeploymentReceiptFailureV1Schema, Deployment
 import { DeploymentIdentifierV1Schema } from './ids.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from './health.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
+import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationConsequenceV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
+import { DeploymentControllerAvailabilityV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentBindingSavedSecretRevisionsV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 const collectionCoverage = z.optional(z.enum(['complete', 'partial']));
 
@@ -38,6 +41,8 @@ export type DeploymentReceiptHistoryV1 = z.infer<typeof DeploymentReceiptHistory
 /** Artifact bodies serialize ContentV1 directly. The Artifact owner opens its mode-aware envelope. */
 export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
     environment: DeploymentEnvironmentHeaderV1Schema,
+    savedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema),
+    controller: z.optional(DeploymentControllerAvailabilityV1Schema),
     content: DeploymentEnvironmentContentV1Schema,
     targetLinks: z.array(z.strictObject({
         targetLink: DeploymentTargetLinkHeaderV1Schema,
@@ -53,5 +58,21 @@ export const DeploymentReceiptDetailV1Schema = z.strictObject({
     content: DeploymentContentV1Schema,
     /** Supplied by the admitted receipt read, not private Artifact content or a client-side permission check. */
     cancellable: z.optional(z.boolean()),
+    cancellationConsequence: z.optional(DeploymentCancellationConsequenceV1Schema),
 });
 export type DeploymentReceiptDetailV1 = z.infer<typeof DeploymentReceiptDetailV1Schema>;
+
+/** One private-content projection for UI and agent reads; it grants no cancellation authority. */
+export function projectDeploymentCancellationConsequenceV1(receipt: Pick<DeploymentReceiptDetailV1, 'deployment' | 'content'>): DeploymentCancellationConsequenceV1 | undefined {
+    if (receipt.deployment.operation === 'teardown' || receipt.content.platform !== undefined) return undefined;
+    if (receipt.content.machineResults.some(result => result.incumbentStopped === true)) {
+        return { kind: 'service-down-until-rollback' };
+    }
+    if (!receipt.deployment.predecessorDeploymentId || receipt.deployment.state === 'queued'
+        || receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'running_unverified') return undefined;
+    const ownServer = 'ownServer' in receipt.content ? receipt.content.ownServer : undefined;
+    if (ownServer?.approvedInputBasis.ownServer?.rollout === 'startFirst') return undefined;
+    const activating = receipt.content.steps.some(step => step.id === 'activate' && step.state === 'running')
+        || ownServer?.stageLogs?.some(log => log.steps?.some(step => step.ref === 'activate' && step.range.end === null));
+    return activating ? { kind: 'may-leave-service-down-until-rollback' } : undefined;
+}

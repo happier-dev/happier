@@ -13,7 +13,7 @@ describe('protected pending transport', () => {
         if (receipt.content.t !== 'plain') throw new Error('Expected opened receipt fixture');
         const pendingDeploy = DeploymentPendingDeployV1Schema.parse({ t: 'plain', v: {
             sourceIntent: receipt.content.v.sourceIntent, requestKey: receipt.requestKey,
-            targetLinkId: receipt.targetLinkId, actionOperationId: receipt.actionOperationId,
+            targetLinkId: receipt.targetLinkId, actionOperationId: receipt.actionOperationId, onFailure: 'keepPartial',
         } });
         const input = { serverId: 'home', environmentId: receipt.environmentId, expectedRevision: 1,
             targetLinkId: receipt.targetLinkId, expectedTargetLinkRevision: 1, requestKey: receipt.requestKey,
@@ -42,6 +42,8 @@ describe('platform upload and PR-head provenance', () => {
         expect(DeploymentDeployIntentInputV1Schema.safeParse({ ...intent, sourceMethod: 'fallback' }).success).toBe(false);
         const { sourceMethod: _method, ...existingIntent } = intent;
         expect(DeploymentDeployIntentInputV1Schema.parse(existingIntent)).toEqual(existingIntent);
+        expect(DeploymentDeployIntentInputV1Schema.parse({ ...existingIntent, onFailure: 'keepPartial' }))
+            .toMatchObject({ onFailure: 'keepPartial' });
     });
     it('reads the normalized managed capability without runtime roles or a provider bag', () => {
         const runtime = createDeploymentTargetV1();

@@ -5,7 +5,7 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { DeploymentIngressV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { DeploymentStateV1Schema, deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
-import { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentOnFailureV1Schema, DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 import { DeploymentDigestV1Schema, DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTextV1Schema as text } from './ids.js';
 import { EnvironmentSecretBindingV1Schema, OwnServerEnvironmentConfigurationV1Schema } from './environment.js';
@@ -15,6 +15,7 @@ import { DeploymentCorrelationV1Schema } from './correlations.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { DeploymentPreMigrationBackupV1Schema } from './backup.js';
+import { DeploymentReferenceAddressV1Schema } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { WorkspaceManifestEntrySchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { DeploymentStepV1Schema,
     DeploymentTargetRoleResultV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -105,6 +106,7 @@ z.refine(basis => basis.runtimeProjections === undefined
 export type OwnServerDeploymentInputBasisV1 = z.infer<typeof OwnServerDeploymentInputBasisV1Schema>;
 export const OwnServerDeploymentDetailsV1Schema = z.strictObject({
     approvedInputBasis: OwnServerDeploymentInputBasisV1Schema,
+    referenceAddresses: z.optional(z.array(DeploymentReferenceAddressV1Schema)),
     preMigrationBackup: z.optional(DeploymentPreMigrationBackupV1Schema),
     sources: z.optional(z.array(OwnServerDeploymentSourceV1Schema)),
     imageArchives: z.optional(z.array(OwnServerDeploymentImageArchiveV1Schema)),
@@ -135,6 +137,8 @@ export const DeploymentMachineResultV1Schema = z.strictObject({
     actionOperationId: z.optional(id), previousDeploymentId: z.optional(id), currentDeploymentId: z.optional(id),
     activation: z.enum(['pending', 'succeeded', 'failed', 'cancelled', 'outcome_unknown']),
     health: z.enum(['unknown', 'healthy', 'unhealthy', 'unverified']),
+    /** Native stop/start observations for the serving generation, retained across cancellation. */
+    incumbentStopped: z.optional(z.boolean()),
     restoration: z.optional(z.enum(['succeeded', 'failed', 'unreachable', 'outcome_unknown'])),
 });
 export type DeploymentMachineResultV1 = z.infer<typeof DeploymentMachineResultV1Schema>;
@@ -147,7 +151,7 @@ export const DeploymentOwnServerContentV1Schema = z.strictObject({
     correlations: z.optional(z.array(DeploymentCorrelationV1Schema)),
     machines: z.array(id).check(z.minLength(1)), buildMachineId: id,
     ingress: z.optional(DeploymentIngressV1Schema),
-    onFailure: z.enum(['rollbackAll', 'keepPartial']), images,
+    onFailure: DeploymentOnFailureV1Schema, images,
     machineResults: z.array(DeploymentMachineResultV1Schema), steps: z.array(DeploymentStepV1Schema),
     ownServer: z.optional(OwnServerDeploymentDetailsV1Schema),
     teardown: z.optional(DeploymentTeardownContentV1Schema),

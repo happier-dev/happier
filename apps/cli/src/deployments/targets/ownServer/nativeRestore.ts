@@ -4,6 +4,7 @@ import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
 import type { DeploymentImageV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, runDeploymentBackupV1, resolveDeploymentRestoreCaptureV1,
+    deploymentRestoreStepProgressV1,
     type DeploymentRestorePrepareInputV1, type DeploymentRestoreConfirmInputV1,
     type DeploymentRestorePrepareReceiptV1, type DeploymentRestoreResultV1,
     type DeploymentRestoreNativeRequestV1, type DeploymentRestoreNativeResultV1,
@@ -28,6 +29,8 @@ export type OwnServerNativeRestoreInput = Readonly<{
     execEnv: DeploymentExecEnvPortV1;
     readAccess(): ResticAccessV1;
     onStopPending(status: 'stop_pending'): void;
+    onIncumbentServicesChanged?(services: readonly string[]): Promise<void>;
+    operationProgress?: ActionExecutorContext['operationProgress'];
 }>;
 
 type NativeRestore = Readonly<{
@@ -36,6 +39,7 @@ type NativeRestore = Readonly<{
     execute(request: DeploymentRestoreNativeRequestV1): Promise<DeploymentRestoreNativeResultV1>;
     executeBackup: DeploymentBackupRunInputV1['execute'];
     runProtectedStage<T>(effect: () => Promise<T>): Promise<T>;
+    onStep: NonNullable<DeploymentRestorePrepareInputV1['onStep']>;
 }>;
 const unsupported = (): never => { throw new PluginError({ code: 'unsupported_action',
     message: 'The admitted PostgreSQL restore tools are unavailable' }); };
@@ -119,12 +123,13 @@ export async function observeOwnServerNativeRestoreDestination(input: NativeRest
 }
 
 async function withNativeRestore<T>(input: OwnServerNativeRestoreInput,
-    destination: Pick<DeploymentRestorePrepareInputV1['destination'], 'service' | 'database'>, effect: (native: NativeRestore) => Promise<T>,
-    operation: 'restore' | 'restoreWithSafety' | 'backup' = 'restore'): Promise<T> {
+    destination: Pick<DeploymentRestorePrepareInputV1['destination'], 'service' | 'database'> | undefined, effect: (native: NativeRestore) => Promise<T>,
+    operation: 'restore' | 'restoreWithSafety' | 'backup' | 'repository' = 'restore'): Promise<T> {
     const signal = input.context.operation.signal;
     if (!signal) throw new PluginError({ code: 'unsupported_action', message: 'Restore requires its admitted job signal' });
     const attachment = await input.execEnv.prepare({ backupDestination: { configKey: 'destination' } }, { signal });
     const services = restoreServices(input);
+    const stoppedServices = new Set<string>();
     try {
         const access = input.readAccess();
         const nativeService = services.lifecycle;
@@ -149,11 +154,14 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput,
                             if (request.operation === 'stop') {
                                 const result = await lifecycle.stop({ signal: input.context.operation.signal });
                                 if (result.status !== 'stopped') return { kind: 'outcome_unknown' };
+                                stoppedServices.add(name);
                             } else {
                                 if (!lifecycle.start) return unsupported();
                                 const result = await lifecycle.start({ signal: input.context.operation.signal });
                                 if (result.phase !== 'running') return { kind: 'outcome_unknown' };
+                                stoppedServices.delete(name);
                             }
+                            await input.onIncumbentServicesChanged?.([...stoppedServices]);
                         }
                         return completedControl;
                     }
@@ -169,7 +177,7 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput,
                 if (!source) return executeAdmittedServiceCommand(await admitRestic(request));
                 // This restore adapter supports only its captured PostgreSQL DB.
                 // The backup parent owns source recipes, evidence and read-back.
-                if (source.kind !== 'dump' || source.service !== destination.service) return unsupported();
+                if (!destination || source.kind !== 'dump' || source.service !== destination.service) return unsupported();
                 return executeAdmittedServiceCommand(admitServiceCommandStreamForHost({
                     producer: await admitService(source.service,
                         ['pg_dump', '-Fc', '--no-owner', '--no-acl', databaseConninfo(destination.database)]),
@@ -178,14 +186,16 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput,
             });
         // Prove tools in the admitted service image, not on the host, before
         // mutations. pg_amcheck requires PostgreSQL 14+. No per-step probes.
-        const tools = operation === 'backup' ? ['pg_dump']
+        const tools = operation === 'repository' ? [] : operation === 'backup' ? ['pg_dump']
             : ['pg_amcheck', 'psql', 'createdb', 'pg_restore', ...(operation === 'restoreWithSafety' ? ['pg_dump'] : [])];
         for (const tool of tools) {
+            if (!destination) return unsupported();
             const preflight = await execute({ kind: 'service', mode: 'exec', service: destination.service, argv: [tool, '--version'] });
             if (preflight.kind !== 'completed') throw new PluginError({ code: 'outcome_unknown', message: 'Native restore tool preflight did not settle' });
             if (preflight.exitCode !== 0) return unsupported();
         }
         return await effect({ access, signal, execute, executeBackup,
+            onStep: step => input.operationProgress?.update(deploymentRestoreStepProgressV1(step)),
             runProtectedStage: effect => machineNativeEffectAdmission.runStage(input.context, effect,
                 { protected: true, onStopPending: input.onStopPending }) });
     } finally {
@@ -197,6 +207,14 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput,
             finally { attachment.dispose(); }
         }
     }
+}
+
+/** Repository reads and retention borrow the same attachment/native custody,
+ * without requiring a database source or invoking restore preparation. */
+export function withOwnServerNativeBackup<T>(input: OwnServerNativeRestoreInput,
+    destination: Pick<DeploymentRestorePrepareInputV1['destination'], 'service' | 'database'> | undefined,
+    effect: (native: Pick<NativeRestore, 'access' | 'signal' | 'executeBackup'>) => Promise<T>): Promise<T> {
+    return withNativeRestore(input, destination, effect, destination ? 'backup' : 'repository');
 }
 
 export type OwnServerNativeRestorePrepareCapture = Omit<DeploymentRestorePrepareInputV1,
@@ -325,7 +343,7 @@ export async function executeOwnServerNativeRestore(factory: OwnServerNativeRest
     }, operation);
     if (result.kind !== 'restored' || result.verified !== true) {
         throw new PluginError({ code: result.code ?? 'restore_failed', message: 'Native database recovery did not verify restoration',
-            details: { kind: result.kind, nextAction: result.nextAction } });
+            details: { kind: result.kind, nextAction: result.nextAction, steps: result.steps } });
     }
     return result;
 }

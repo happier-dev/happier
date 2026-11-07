@@ -11,7 +11,22 @@ placements; only verified native absence can tombstone the Domain.
 
 In 0.3 development, Cloudflare Domain preparation and retirement accept the API's optional pagination metadata and omitted or null tunnel configuration. Without pagination metadata, the route owner reads through an empty page before deciding ownership or absence. Malformed responses retain `providerOutput` in the existing Domain failure details: an endpoint template, issue path and expected type, without response values or credentials. The original provider cause, required fact and remedy remain attached, including when remote changes leave the outcome unknown. Preparation creates each target's sealed connector grant automatically; a failed grant write retains its typed cause and HTTP status without credentials or response values.
 
-In 0.3 development, the Cloudflare plugin's read-only `cloudflare-named/selections-read` Action lists complete named tunnel selections for an explicit Account and configured zone, using an explicitly supplied connector image and version. It reuses selected-zone validation without requiring Zone Read, and reports `connector_discovery_unavailable` rather than claiming the connector is running. Native execution verifies that connector; the route owner separately decides hostname-route and DNS ownership.
+In 0.3 development, the Cloudflare plugin's read-only `cloudflare-named/selections-read` Action lists complete named tunnel selections for a connected Account and selected zone. It derives the Cloudflare Account ID from that connection and supplies its canonical connector image and version pin; callers can explicitly override those defaults. It reuses selected-zone validation without requiring Zone Read, and reports `connector_discovery_unavailable` rather than claiming the connector is running. Native execution verifies that connector; the route owner separately decides hostname-route and DNS ownership.
+
+Cloudflare Pages Direct Upload accepts the provider's `success: true` asset-upload
+and hash-registration acknowledgements without a `result` field. Data-bearing
+responses still require `result`. An explicit provider rejection remains
+`provider_request_failed`; a lost or malformed mutation response remains
+`outcome_unknown`. Provider response text and authorization material are excluded
+from failure diagnostics. This decoder behavior follows the
+[Pages Assets API](https://developers.cloudflare.com/api/resources/pages/subresources/assets/).
+
+In 0.3 development, public terminal deployment settlements and failed, cancelled
+or unknown receipt-list rows use the shared failure-recovery projector. List
+recovery names the unavailable deployment result and a state-specific remedy
+from existing metadata; it does not open private receipt content or claim a
+provider prerequisite. Detailed private failures remain the existing receipt
+reader's responsibility.
 
 In development source, native teardown can prove an unused sole target link empty from its complete receipt
 lineage when it has no deployment receipt or active deployment. A missing Docker
@@ -23,6 +38,20 @@ native observation and removal to the sole target Machine through the existing
 admitted-child transport. Prepared references stay pinned through review. Only
 explicit `detachKeepRunning` uses Account storage. Native admission explains unsupported target shapes with a sanitized
 cause, a reason and a remedy.
+
+In 0.3 development, Stop and remove reviews native named volumes through the same
+`deployments.teardown` Action with `mode: 'preview'`. The controller observes
+Compose-labelled volume membership on the recorded target Machine, including a
+remote target through its existing read-only preparation child. Preview cannot
+dispatch removal. Each volume defaults to Keep; Delete carries its exact name and
+matching confirmation in the Action input. Native admission binds those choices
+to the owned volume inventory once, and the existing receipt executor removes only
+the selected names. Omitted choices preserve every volume. Complete History for a
+never-deployed target proves there is no data to keep; optional native inventory
+does not block its removal. Retry consumes the
+retained receipt inventory, including volumes already removed by that operation.
+Older strict-schema daemons reject the new preview or explicit volume operands;
+clients retain the review on that failure and never retry as an implicit deletion.
 
 Teardown mint and Domain Remove child admission keep the Environment's recorded
 controller Machine authoritative. A request on another Machine returns
@@ -50,6 +79,54 @@ from the selected row of the existing `machines.list` Action. This nullable publ
 identity is also visible to Machine Use recipients; it grants no authority. A
 missing identity cannot select an installed target. Template creation still
 requires Machine Manage and the existing Project and Environment permissions.
+
+## Domain and binding observations (0.3 development)
+
+Domain health reads reuse `deployments.health.current` and the existing saved
+Domain-bound HTTP and certificate checks. Reading a Domain starts no network
+probe. The shared projection combines retained check evidence with the Domain's
+DNS result and returns typed certificate and Needs-you facts for both people and
+agents. Outside evidence remains distinct from a check on the serving Machine;
+a local success cannot establish outside reachability. Missing checks and an
+unreachable controller remain explicit rather than implying a healthy Domain.
+
+Custom certificates become due for replacement at two thirds of their observed
+lifetime. Known validity dates can advance the projected state when read, without
+a new timer. Automatic certificates expose observed expiry without inventing a
+Caddy renewal window. The underlying observation time remains visible.
+
+Deploy review compares its already-resolved reference addresses with those recorded
+on the serving receipt it already reads. Reference addresses are captured privately
+when launch resolves them; a changed address is shown in the deploy review.
+There is no page-time cross-Environment binding read or separate read admission.
+Saved-secret revision comparison uses the receipt's existing approved binding revisions and
+current resource metadata, without revealing secret values or acquiring them
+again. Secret bindings retain their explicitly selected revisions: update the
+reference through the existing binding editor and `deployments.bindings.set`, then
+deploy. An ordinary redeploy does not silently select a newer saved revision.
+Unavailable evidence does not claim a change or unchanged material.
+Agents compose the existing independently authorized Environment, content Artifact,
+selected receipt and receipt Artifact reads, then use the same shared comparison.
+
+## Pull-request preview reads (0.3 development)
+
+The Environment query owner selects preview Environments by exact pull request
+and repository identity. The GitHub plugin's `github/pull-request/preview` read
+returns every matching template's preview, composing that selection with its
+receipt and Domain. A child with a validated receipt copies its canonical operation
+(deploy, rollback, promote or teardown); an unavailable child may have no receipt.
+An unavailable child remains visible beside successful siblings. The same private
+readiness projection serves preview-status publication. A ready URL requires a
+successful current preview deployment, matching repository and pull-request head
+provenance, and its active Domain; caller-supplied URL text is not authority.
+The typed preview state is the existing PR Overview's input through the shared
+executor; the page does not derive readiness or filter an Environment inventory.
+
+Preview templates are private Environment content. Save them through the ordinary
+mode-aware Artifact authoring path, then `deployments.environments.update` with
+the final content reference. A Team Environment additionally needs the existing
+Artifact admin grant to that Team. The template is not a Home metadata patch,
+and this flow adds no Action or content-update proof.
 
 ## Runtime overview
 - **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
@@ -331,7 +408,13 @@ The guided Agent automation separately projects its authored Event/filter,
 project and Environment, supplied controller availability, the effective profile
 from the approval-profile owner, and Inbox plus selected notification channels.
 Unread controller/profile facts remain null. Notification channels never select
-the Events that wake work. `workflow.trigger.list({ automationId, triggerId })`
+the Events that wake work. The setup review consumes this typed projection before
+Agent selection, using the Event catalogue's title and the page's private Source
+and Environment names. The shared guided starter carries the page's watched subject
+into the existing plugin setup; health setup still requires its native health form.
+For the automatic failed-deploy habit, the Environment reference and its controller
+prefill the same setup owner, without exposing raw payload or watcher controls.
+`workflow.trigger.list({ automationId, triggerId })`
 opens that exact Event's retained private definition through the Account-mode
 owner; ordinary list responses keep private configuration closed. Observation-only
 `workflow.trigger.add` can request `includeEventDefinition: true` to return the
@@ -713,6 +796,61 @@ ciphertext, and signed pending requester/Home/controller correspondence remains
 required. Cold recovery opens that same intent and candidate before restoring
 the captured operation. It forwards the original Environment and target-link
 revisions to server admission, whose CAS decides whether they are still current.
+
+In 0.3 development source, own-server Deploy accepts `onFailure: 'rollbackAll' |
+'keepPartial'` before candidate preparation. Omission retains `rollbackAll`.
+The prepared receipt and native approval review carry that selected policy;
+pending supersession captures it and resume uses the captured value. An approval
+does not edit the already prepared policy. Platform targets refuse an explicit
+`onFailure` with `unsupported_action`; omitting it preserves their provider-owned
+deployment behavior.
+
+The existing Environment update Action also accepts partial
+`patch.ownServer` operands for `rollout` (`recreate` or `startFirst`) and
+`autoRestorePreviousRelease`, plus `patch.retainPreviousDeployments` (a
+nonnegative safe integer). Preparation patches the existing private Environment
+content and preserves omitted settings. An unchanged patch does not write an
+Artifact; a changed patch uses the existing signed content-publication path.
+
+Deployment approval observation uses the existing `approval.request.get` result's
+optional `deploymentReceipt` projection. An open request reports
+`waiting-for-approval`; Approve and Deny use the existing approval decision
+Action. No Deployment row is reserved before approval. After admission the
+projection carries the existing accepted receipt result, which can be either
+pending Action-operation custody or an admitted Deployment identity.
+
+The 0.3 development receipt-list query accepts `state`, `actorAccountId` and
+`operation`. These selectors intersect at the server query before paging, and
+the read controller keeps different selections as separate demands. Actor means
+the receipt's requesting Account; it does not infer an agent or automation
+category. Empty matches remain an empty selected page.
+
+Environment reads expose an optional `controller: { machineId, state }` fact.
+Its states are `available`, `paused` (jobs and alerts pause), and `unknown` when
+presence is unavailable. The server reads only the Environment's recorded
+controller and uses the existing Machine presence decision. The exported
+projector also accepts existing pushed Machine presence; it adds no polling
+or new timer.
+
+Opened native receipts expose `cancellationConsequence` to person and agent
+readers. An observed stopped incumbent reports `service-down-until-rollback`;
+older activation-phase evidence reports the qualified
+`may-leave-service-down-until-rollback`. Native stop/start observations update
+the existing private receipt writer. This is consequence presentation, not
+another cancellation or authorization path.
+If cancellation wins before that observation is published, the last receipt can
+retain only the qualified activation warning, or no consequence during a backup
+restore phase. Existing native recovery and the person's rollback remain the
+recovery paths; this read projection does not make publication durable across
+cancellation.
+
+The host's existing secret acquisition refuses unavailable or empty bound
+application secrets and unsatisfied required secret declarations from the exact
+Source's `.happier/project.json`. It returns `secret_missing` with the strict
+value-free details `{ deployable: false, missingRequiredSecretNames: string[] }`.
+No native review is fabricated when missing secrets prevent Compose rendering;
+the existing refusal presenter consumes these names. Optional declarations and
+configuration requirements do not become required secret bindings.
 
 Aggregate success signs the current target-link revision; the native owner still
 requires final version evidence for every installation, without echoing that
@@ -1374,9 +1512,10 @@ admit the runtime target independently of executor placement. It retains the
 original template approval and operation, with no second root or controller-child
 handoff credential. It passes the exact
 definition it just committed; there is no result-binding port or provenance
-lookup between separate leaves. For a new Environment with required template
-Domains, this same owner adds the reviewed deployment intent when the caller
-omits it, using the Environment creation request key across preview and apply.
+lookup between separate leaves. For a new Environment with selected template
+Domains, including optional Domains with an address, this same owner adds the
+reviewed deployment intent when the caller omits it, using the Environment
+creation request key across preview and apply.
 The Store consumes that review for both first install and retained retry;
 explicit deployment intents stay unchanged. Other inputs without `deploy` only
 instantiate.
@@ -1765,6 +1904,9 @@ before paging, then applies current Source admission. The selected runtime-link
 header supplies actual runtime membership; a controller or retained reference
 alone does not establish that an app runs on that Machine. Environment headers
 retain their Source/Home identities and labels use the canonical Artifact header.
+Environment pages start with the newest generated IDs and continue toward older
+IDs, so creating an Environment makes it visible on the first finite inventory
+page without draining older pages.
 Unreadable Environment/Source identities stay out of rows and cursors;
 `coverage: 'partial'` records hidden matches. An empty partial page can continue
 through an opaque position bound to the reader, Home and selectors. Existing
@@ -1894,12 +2036,48 @@ fails visibly and the person prepares again. Deployment recovery references rema
 protected through their existing Environment receipt owner. No schedule, retention default or backup
 ledger is added. If capture or verification evidence expires with ordinary operation
 retention, a new run and verification are required before destructive maintenance.
+Development-source retention editing uses `deployments.environments.update` with
+`patch.backupRetention`, the selected `configRevision` and the person's retention
+counts. The existing private-content preparation and Environment revision CAS own
+the save. This changes only retention: destination, sources, bindings, ownership
+and capture `configRevision` stay unchanged, so existing snapshot verification
+remains valid. A missing configuration returns `backup_required`; a changed capture
+choice returns `stale_input` before publication.
 Environment copies do not inherit
 the source's backup configuration or ownership. The private destination
 materializer keeps the password file on the host but declares the read-only
 Linux container target `/run/happier/backup/repository-password`, independent of
 host path syntax. The native restore adapter consumes the same integrity read-back
 owner while retaining its separate effectful restore lifecycle.
+
+Restore preparation and settlement retain optional typed `steps` facts for safety
+backup, stopping writers, restoring, starting writers and health. The semantic
+restore owner emits each running/completed/failed/skipped fact at the native
+effect; the existing Action operation pushes its `restore.<step>.<status>` phase.
+`readDeploymentRestoreStepProgressV1` decodes that phase for presenters. Preparation
+failures retain safe step facts in the existing failure details; partial and final
+results retain the same facts alongside recovery evidence. Older retained receipts
+may omit steps. This unreleased 0.3 change needs matching Protocol, daemon and UI
+readers to reload together; no polling, second progress store or native call is added.
+
+The same `deployments.backups.restore` prepare/confirm Action restores a selected
+scheduled snapshot with `backupOperationId` plus the exact `restoreBackupId`
+snapshot ID from inventory or history. The host selects that scoped successful
+run receipt; callers never provide a manifest or native capture. Omitting
+`backupOperationId` retains pre-migration receipt selection. Confirm must repeat
+the preparation's exact operands.
+
+New backup runs retain optional `restoreCaptures` with their original PostgreSQL
+database, source, configuration and repository, without credential values. Older
+manifest-only runs remain readable. Their recovery deliberately targets the
+current configured native PostgreSQL database and keeps the original manifest's
+revision distinct from the current destination configuration. The canonical
+producer's exact service `.dump` path identifies its custom-archive format.
+Prepare verifies the repository ID, snapshot, tree and payload against that
+manifest before safety backup or restoration. An unavailable receipt reports
+`backup_required`; a different repository reports `backup_integrity_failed`.
+Select the original repository configuration and retry when its credentials and
+native source are available; the host never substitutes a different snapshot.
 
 The development-source `projects.readiness.read` Action composes selected Project
 and Environment facts on demand, without a stored score or background polling.
@@ -1923,7 +2101,16 @@ consumer-defined age threshold. Readiness does not mint another public admission
 acquire a separate credential. Backup starters use
 the same public Actions and input builder. The daily digest reads selected Automations
 through `workflow.trigger.list` and `workflow.run.summaries`, preserving native
-next-due and actual started-run facts without inventing missed occurrences or a local scheduler.
+next-due and actual started-run facts without a local scheduler.
+The development-source `workflow.trigger.list` Action also accepts a
+`deploymentBackup` target, derived from the public backup-run input without the
+Environment revision. Its existing owner resolves saved and inline Workflows,
+including nested definitions and targets from saved or literal loop items, and matches actual bound backup-run Actions rather
+than arbitrary input names. Returned sets include `missedSchedules` when enabled
+saved schedule cursors are overdue and no actual Run has started at or after that
+cursor. Disabled schedules and Automations are excluded. An unavailable private
+source returns `source_unavailable`. This is an on-demand projection of existing
+facts, with no grace period, timer, polling or new persistence.
 
 The same package now exports `prepareDeploymentRestoreV1` and
 `confirmDeploymentRestoreV1` as development-source semantic producers for an
@@ -2006,8 +2193,9 @@ journey. Other engines, uploaded dumps and volume restoration remain incomplete.
 
 The private `/v1/deployments/environments/:environmentId/backup` writer reuses
 Source manage admission and the existing Environment/Artifact compare-and-swap.
-For plain content it changes only the backup leaf; ordinary, binding and template
-writes preserve that leaf, and initial creation does not accept it. E2EE content
+For plain content it changes only the backup leaf; binding and template writes
+preserve that leaf, and initial creation does not accept it. Ordinary Environment
+updates preserve it except for the explicitly reviewed retention-only patch above. E2EE content
 remains opaque to the server: the admitted client owns its content semantics,
 while the server enforces the existing mode, envelope, authority and exact
 Artifact-reference revision contract. There is no second credential or backup
@@ -2448,9 +2636,10 @@ the UI Action executor. Omitted `zoneId` lists the configured account's zones;
 the same Action returns complete eligible tunnel selections. The form prefills
 only a unique zone or tunnel, requires a person's explicit choice when there are
 several, and writes the selected `content.ingress` without a second eligibility
-or authority decision. Account, connector image and connector version are
-explicit inputs; connector discovery remains unavailable. Reads happen on a
-person's press, with no polling. A form without recorded topology visibly offers
+or authority decision. The selected connection supplies the Account ID and the
+plugin supplies its connector pin through the same Action output. Explicit
+overrides appear under Advanced; connector discovery remains unavailable. Reads
+happen on a person's press, with no polling. A form without recorded topology visibly offers
 deployment topology or a named Cloudflare selection; native placement decides
 whether deployment topology alone is sufficient.
 

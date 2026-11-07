@@ -3,12 +3,20 @@ import { DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/dep
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
 import { DeploymentReviewServiceV1Schema } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
-import { type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentOnFailureV1Schema, EnvironmentVariableBindingV1Schema, type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
+import { EnvVarRequirementSchema } from '@happier-dev/protocol/profiles/environmentVariables';
 export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentDigestV1Schema as digest } from './ids.js';
 import { OwnServerEnvironmentConfigurationV1Schema } from './environment.js';
+
+/** Value-free refusal from the host secret owner when a native review cannot be rendered. */
+export const DeploymentMissingRequiredSecretsV1Schema = z.strictObject({
+  deployable: z.literal(false),
+  missingRequiredSecretNames: z.array(EnvVarRequirementSchema.shape.name),
+});
+export type DeploymentMissingRequiredSecretsV1 = z.infer<typeof DeploymentMissingRequiredSecretsV1Schema>;
 
 /** Display identity only; stored Compose documents and private binding sources never enter review. */
 export const DeploymentReviewRevisionV1Schema = z.discriminatedUnion('kind', [
@@ -60,6 +68,9 @@ const machineReview = {
   /** Null means the selected link has no serving receipt; absent means an older review did not report it. */
   replaces: z.optional(z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }))),
   secretBindingNames: z.optional(z.array(z.string())),
+  /** Resolved review inputs that differ from exact serving launch evidence. Values stay host-private. */
+  referenceChanges: z.optional(z.array(z.strictObject({ name: z.string(), phase: EnvironmentVariableBindingV1Schema.shape.phase }))),
+  onFailure: z.optional(DeploymentOnFailureV1Schema),
   /** A recreate replaces an existing serving generation; no estimated duration. */
   downtime: z.optional(z.literal('stopThenStart')),
   /** Configured retention policy, not an observed kept count or disk measurement. */

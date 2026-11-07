@@ -12,7 +12,10 @@ import { createDeploymentReadPageLease } from './deploymentReadPageLease.js';
 import { createDeploymentReadFactLeaseV1 } from './deploymentReadFactLease.js';
 import { projectDeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
 import { projectDeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
+import { readDeploymentSecretRevisionFacts } from '../secrets/readDeploymentSecretRevisionFacts.js';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { deploymentEnvironmentHealthBasisV1, reconcileDeploymentEnvironmentHealthObservationV1,
+    reconcileDeploymentDomainHealthObservationV1,
     stopDeploymentEnvironmentHealthObservationV1, type DeploymentEnvironmentHealthObservationV1 } from './deploymentEnvironmentHealthObservation.js';
 import type {
     DeploymentReadControllerV1, DeploymentReadDemandV1, DeploymentReadFailureV1,
@@ -66,6 +69,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     const syncHealthObservation = (entry: Entry) => {
         if (entry.resource.kind === 'environment') reconcileDeploymentEnvironmentHealthObservationV1(entry,
             !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport);
+        if (entry.resource.kind === 'domains') reconcileDeploymentDomainHealthObservationV1(entry, active(entry),
+            scope, entry.resource.environmentId!, transport);
     };
     const environmentMatches = (row: DeploymentEnvironmentHeaderV1) => row.serverId === scope.serverId
         && (scope.projectSourceId === undefined || row.projectSourceId === scope.projectSourceId);
@@ -111,8 +116,16 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const opened = entry.resource.environmentId === detail.environment.id ? receipt(entry) : null;
             return opened ? [opened] : [];
         });
-        return { ...detail, runtimeTargetLink: link, memberVersions: link ? deriveDeploymentMemberVersionsV1(link, retained,
-            detail.targetLinks.map(item => item.targetLink)) : {} };
+        const memberVersions = link ? deriveDeploymentMemberVersionsV1(link, retained,
+            detail.targetLinks.map(item => item.targetLink)) : {};
+        const secretRevisions = Object.values(memberVersions).map(member => {
+            const generation = member.uncertain ? undefined : retained.find(receipt => receipt.deployment.id === member.deploymentId);
+            return { machineId: member.machineId, installationId: member.installationId,
+                facts: readDeploymentSecretRevisionFacts({ bindings: detail.content.bindings,
+                    runningBindings: generation?.content.ownServer?.approvedInputBasis?.bindings,
+                    savedSecretRevisions: detail.savedSecretRevisions }) };
+        });
+        return { ...detail, runtimeTargetLink: link, memberVersions, secretRevisions };
     }
     function refreshMemberVersions(environmentId: string) {
         for (const entry of entries.values()) {
@@ -123,6 +136,17 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     }
     function publishValue(entry: Entry, value: unknown) {
         entry.dirty = false;
+        if (entry.resource.kind === 'domains') {
+            const page = value as DeploymentDomainReadPageV1;
+            const previous = entry.projection.getSnapshot().value as DeploymentDomainReadPageV1 | null;
+            const retained = new Map(previous?.items.map(item => [item.domain.id, item]));
+            value = { ...page, items: page.items.map(item => {
+                const prior = retained.get(item.domain.id);
+                return prior?.domain.revision === item.domain.revision ? { ...item,
+                    ...(prior.health ? { health: prior.health } : {}),
+                    ...(prior.healthUnavailableReason ? { healthUnavailableReason: prior.healthUnavailableReason } : {}) } : item;
+            }) };
+        }
         if (entry.resource.kind === 'receipt') {
             const detail = value as DeploymentReceiptDetailV1;
             value = { ...detail, chip: projectDeploymentChipV1(detail.deployment), facts: projectDeploymentReceiptFactsV1(detail) };
@@ -399,12 +423,13 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             }, demand);
         },
         acquireHistory(environmentId, query, demand) {
-            const key = (cursor: string | undefined) => JSON.stringify(['history', environmentId, cursor ?? null]);
+            const key = (cursor: string | undefined) => JSON.stringify(['history', environmentId,
+                query.state ?? null, query.actorAccountId ?? null, query.operation ?? null, cursor ?? null]);
             return createDeploymentReadPageLease<DeploymentHistoryPageV1>({ initialCursor: query.cursor, demand,
                 nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
                 acquire: (cursor, pageDemand) => acquire<DeploymentHistoryPageV1>({
                 key: key(cursor), kind: 'history', environmentId, previousPage: cursor !== undefined,
-                read: signal => transport.listHistory(scope, environmentId, cursor === undefined ? {} : { cursor }, { signal }),
+                read: signal => transport.listHistory(scope, environmentId, { ...query, cursor }, { signal }),
                 admit(value) {
                     const page = DeploymentReceiptHistoryV1Schema.parse(value);
                     if (!page.items.every(row => row.environmentId === environmentId)) throw new Error('Foreign receipt');
@@ -447,6 +472,23 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                         ? resource.kind === 'environment' || resource.kind === 'domains'
                         : resource.kind === 'history' || (resource.kind === 'receipt' && resource.deploymentId === hint.deploymentId)));
                 if (affected) { entry.dirty = true; stopObservation(entry); void revalidate(entry); }
+            }
+        },
+        invalidateSavedSecrets(resourceIds) {
+            if (retired) return;
+            const ids = resourceIds === undefined ? undefined : new Set(resourceIds);
+            for (const entry of entries.values()) {
+                if (entry.resource.kind !== 'environment') continue;
+                const detail = entry.projection.getSnapshot().value as DeploymentEnvironmentDetailV1 | null;
+                // An initial read has no binding evidence yet; its existing demand still owns reconciliation.
+                if (detail && !detail.content.bindings.some(binding => {
+                    if (binding.source.kind !== 'secret') return false;
+                    const reference = parseSavedSecretRefV1(binding.source.ref);
+                    return reference.kind === 'shared_resource' && (ids === undefined || ids.has(reference.resourceId));
+                })) continue;
+                entry.dirty = true;
+                stopObservation(entry);
+                void revalidate(entry);
             }
         },
         refreshDemanded: () => Promise.all([...entries.values()].map(entry => {

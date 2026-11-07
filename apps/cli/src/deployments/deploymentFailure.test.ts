@@ -30,6 +30,16 @@ describe('deployment failure diagnostics', () => {
         expect(JSON.stringify(opaque)).not.toContain('private-source-token');
     });
 
+    it('retains only the secret owner’s value-free missing-name refusal', () => {
+        const details = { deployable: false, missingRequiredSecretNames: ['STRIPE_SECRET_KEY'] };
+        expect(projectDeploymentFailure('secret_missing', new PluginError({ code: 'secret_missing', details })))
+            .toMatchObject({ ok: false, errorCode: 'secret_missing', details });
+        const opaque = projectDeploymentFailure('secret_missing', new PluginError({ code: 'secret_missing',
+            details: { ...details, value: 'private-secret-value' } }));
+        expect(opaque.details).not.toHaveProperty('missingRequiredSecretNames');
+        expect(JSON.stringify(opaque)).not.toContain('private-secret-value');
+    });
+
     it('retains the incumbent native operation through the published failure envelope', async () => {
         const admission = createMachineNativeEffectAdmission();
         const keys = [{ kind: 'dockerEngine' as const, dockerEndpoint: 'engine' }];

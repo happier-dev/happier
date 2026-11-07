@@ -7,6 +7,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readReviewedDeploymentDeployInput } from '@/api/externalActionExecutionAuthorization';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 type PendingRecoveryRequest = Readonly<{
     input: unknown; context: ActionExecutorContext;
@@ -77,6 +78,7 @@ export async function readCompactPendingDeploymentRecovery(request: Omit<Pending
         || captured.targetLinkId !== retained.current.environment.runtimeTargetLinkId
         || input.targetLinkId !== undefined && input.targetLinkId !== captured.targetLinkId
         || sourceMethod !== captured.sourceMethod
+        || (input.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1) !== (captured.onFailure ?? DEFAULT_DEPLOYMENT_ON_FAILURE_V1)
         || input.sourceIntent !== undefined && !isDeepStrictEqual(input.sourceIntent, captured.sourceIntent)
         || input.sha !== undefined && (captured.sourceIntent.kind !== 'repository' || input.sha !== captured.sourceIntent.sha)) {
         return refuse('deployment_conflict');

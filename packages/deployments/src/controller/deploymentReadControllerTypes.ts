@@ -3,12 +3,14 @@ import type {
     DeploymentEnvironmentCollectionV1,
     DeploymentReceiptHistoryV1,
     DeploymentReceiptDetailV1,
+    DeploymentReceiptHeaderV1,
     DeploymentTargetLinkHeaderV1,
     DeploymentHealthStatusV1,
     DeploymentDomainContentV1,
     DeploymentEnvironmentHealthAggregateV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProjection.js';
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
 import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
@@ -17,6 +19,7 @@ import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFa
 export type DeploymentEnvironmentReadDetailV1 = DeploymentEnvironmentDetailV1 & Readonly<{
     runtimeTargetLink: DeploymentTargetLinkHeaderV1 | null;
     memberVersions: Readonly<Record<string, DeploymentMemberVersionV1>>;
+    secretRevisions: readonly Readonly<{ machineId: string; installationId: string; facts: readonly DeploymentSecretRevisionFactV1[] }>[];
     healthFeed?: DeploymentEnvironmentHealthFeedV1;
 }>;
 
@@ -77,9 +80,16 @@ export type DeploymentCollectionQueryV1 = Readonly<{
     /** Exact children of P44's admitted template Environment relation. */
     previewTemplateEnvironmentId?: string;
 }>;
-export type DeploymentHistoryQueryV1 = Readonly<{ cursor?: string }>;
+export type DeploymentHistoryQueryV1 = Readonly<{
+    cursor?: string;
+    state?: DeploymentReceiptHeaderV1['state'];
+    actorAccountId?: DeploymentReceiptHeaderV1['requestedByAccountId'];
+    operation?: DeploymentReceiptHeaderV1['operation'];
+}>;
 export type DeploymentDomainReadItemV1 = Readonly<{
     domain: DeploymentDomainHeaderV1; title: string; content: DeploymentDomainContentV1;
+    health?: DeploymentDomainHealthFactsV1;
+    healthUnavailableReason?: string;
 }>;
 export type DeploymentDomainPageV1 = Readonly<{ items: readonly DeploymentDomainReadItemV1[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
@@ -113,6 +123,9 @@ export type DeploymentReadTransportV1 = Readonly<{
     /** One shared, demand-bound subscription to the existing Machine Services Resource. */
     observeEnvironmentHealth?(scope: DeploymentReadScopeV1, detail: DeploymentEnvironmentReadDetailV1,
         publish: (feed: DeploymentEnvironmentHealthFeedV1) => void, options: DeploymentReadOptionsV1): () => void;
+    /** Current saved-check facts for this visible page, independent of its Home metadata read. */
+    observeDomainHealth?(scope: DeploymentReadScopeV1, environmentId: string, items: readonly DeploymentDomainReadItemV1[],
+        publish: (items: readonly DeploymentDomainReadItemV1[]) => void, options: DeploymentReadOptionsV1): () => void;
 }>;
 
 export type DeploymentReadInvalidationV1 = Readonly<{
@@ -133,6 +146,8 @@ export type DeploymentReadControllerV1 = Readonly<{
     acquireReceipt(environmentId: string, deploymentId: string, demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentReceiptReadDetailV1>;
     acquireReceiptChip(environmentId: string, deploymentId: string, demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentChipV1>;
     invalidate(hint: DeploymentReadInvalidationV1 | readonly DeploymentReadInvalidationV1[]): void;
+    /** Existing saved-resource push, narrowed to bound Environments when resource ids are supplied. */
+    invalidateSavedSecrets(resourceIds?: readonly string[]): void;
     /** Connection repair or explicit refresh supersedes stale reads, only for active demand. */
     refreshDemanded(): Promise<void>;
     /** A new Home, Account, Source authority or target-currentness basis gets a new controller. */
