@@ -166,7 +166,8 @@ describe('remaining preference Action ingress', () => {
             })); });
             await act(async () => { await change(); });
             await vi.waitFor(() => expect(read()).toBe(after));
-            if (control === 'experiments') expect(account.persistedSettings.featureToggles['execution.runs']).toBe(false);
+            // Standard default-on Subagents has no Experiments-owned stored choice (1174c0aa03).
+            if (control === 'experiments') expect(account.persistedSettings.featureToggles).not.toHaveProperty('execution.runs');
         } finally { standardCleanup(); await account.dispose(); }
     });
 });
