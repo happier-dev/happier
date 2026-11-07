@@ -1,7 +1,6 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { createCliRegistryBotTemplateReaderV1 } from './botTemplates';
-import { createCliAvailableBotTemplateReaderV1 } from './availableBotTemplates';
 import { createRegistryHostV1,listRegistrySourcesV1,createPluginRegistrySourceDescriptorV1,RegistryFetchErrorV1,type RegistrySourceDescriptorV1, type RegistryHostDepsV1 } from '@happier-dev/protocol/registries';
+import { createCliRegistryBotTemplateReaderV1 } from './botTemplates';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { readPromptLibraryCatalogRecordV1,updatePromptLibraryRegistrySourcesV1,type PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { createCliPromptLibraryStore } from '@/settings/prompts/promptLibraryStore';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -20,26 +19,50 @@ import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createCliRegistryPackageContentV1 } from './packageContent';
+import { createAppCatalogReadsV1 } from './appCatalogReads';
 import { readRegistryConnectedAccountTokenV1 } from './connectedAccountToken';
 
 /** One Account snapshot source projection, shared by daemon fetch and later marketplace exact review. */
-export async function readCliRegistrySourcesV1(input:Readonly<{port?:PromptLibraryStackActionPortV1;signal?:AbortSignal}>={}):Promise<readonly RegistrySourceDescriptorV1[]> {
+export async function readCliRegistrySourcesV1(input:Readonly<{credentials?:StoredCredentials;serverHttpBaseUrl?:string;port?:PromptLibraryStackActionPortV1;signal?:AbortSignal;pluginRuntime?:PluginReloadController}>={}):Promise<readonly RegistrySourceDescriptorV1[]> {
   input.signal?.throwIfAborted();
   const snapshot=input.port?await input.port.readCatalog(input.signal,'registry-sources'):null;
   const active=input.port?null:getActiveAccountSettingsSnapshot();
   const read=readPromptLibraryCatalogRecordV1(snapshot?{...snapshot,key:'registry-sources'}:{catalog:active?.promptLibraryCatalog??{status:'loading'},rawSettings:active?.rawSettings,key:'registry-sources'});
   if(read.status!=='ready'||read.record.key!=='registry-sources')throw new RegistryFetchErrorV1({state:'unreachable'});
-  const registry=await resolveMergedContributionRegistry();
+  const registry=await resolveMergedContributionRegistry(input.credentials?{accountStorageDependencies:{
+    readCredentials:async()=>input.credentials??null,
+    resolveBaseUrl:()=>input.serverHttpBaseUrl??resolveServerHttpBaseUrl(),
+  }}:undefined);
   input.signal?.throwIfAborted();input.port?.assertCurrent();
-  return listRegistrySourcesV1({record:read.record.value,pluginSources:(registry.registrySources??[]).map(entry=>
-    createPluginRegistrySourceDescriptorV1({pluginId:entry.pluginId,definition:entry.definition,suppliers:[]}))});
+  const pluginSources=new Map<string,RegistrySourceDescriptorV1>();
+  for(const entry of registry.registrySources??[]) {
+    if('packageContent' in entry.definition)continue;
+    const source=createPluginRegistrySourceDescriptorV1({pluginId:entry.pluginId,definition:entry.definition,suppliers:[]});
+    pluginSources.set(source.id,source);
+  }
+  const controller=input.pluginRuntime??pluginReloadController;
+  const lease=controller.tryAcquireRuntimeRegistry();
+  try {
+    if(lease&&controller.isRuntimeRegistryCurrent(lease.registry)) {
+      for(const entry of lease.registry.contributes.registrySources??[]) {
+        const occurrenceId=lease.registry.contributes.occurrenceIdsByPluginId?.[entry.pluginId];
+        if(!entry.definition.kinds.some(kind=>kind==='app')||!entry.pluginVersion||!occurrenceId)continue;
+        const source=createPluginRegistrySourceDescriptorV1({pluginId:entry.pluginId,pluginVersion:entry.pluginVersion,occurrenceId,
+          definition:entry.definition,suppliers:[]});
+        pluginSources.set(source.id,source);
+      }
+    }
+    return listRegistrySourcesV1({record:read.record.value,pluginSources:[...pluginSources.values()]});
+  } finally { await lease?.release(); }
 }
 export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCredentials;port?:PromptLibraryStackActionPortV1;signal?:AbortSignal;
-  secretSources?:TargetSecretSourcesV1;
-  actionContext?:Pick<ActionExecutorContext,'externalActionExecutionAuthorization'|'externalActionCredential'>;
+  /** Runner commitments supply their admitted read-only source inventory. */
   readSources?:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
   pluginRuntime?:PluginReloadController;
+  secretSources?:TargetSecretSourcesV1;
   operationContext?:SavedSecretOperationContextV1;machineAdmission?:SocketRpcMachineAdmissionContextV1;
+  actionContext?:Pick<ActionExecutorContext,'externalActionExecutionAuthorization'|'externalActionCredential'>;
   updates?: RegistryHostDepsV1['updates']}>={}) {
   const operation=input.operationContext;
   const credentials=operation?.credentials??input.credentials;
@@ -56,7 +79,7 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
     port={serverId:'',assertCurrent:store.assertCurrent,readCatalog:store.readCatalog,writeRecord:store.writeRecord};
     return port;
   };
-  const readSources=input.readSources??(async()=>readCliRegistrySourcesV1({port:await resolvePort(),signal:input.signal}));
+  const readSources=input.readSources??(async()=>readCliRegistrySourcesV1({credentials,serverHttpBaseUrl:operation?.serverHttpBaseUrl??resolveServerHttpBaseUrl(),port:await resolvePort(),signal:input.signal,pluginRuntime:input.pluginRuntime}));
   const resolveToken=async(source:import('@happier-dev/protocol/registries').RegistrySourceV1)=>{
     const reference=source.token?.secretRef;
     if(!reference){
@@ -72,8 +95,8 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
       return readRegistryConnectedAccountTokenV1({source,operationContext:accountOperation,
         controller:input.pluginRuntime??pluginReloadController,signal:input.signal});
     }
-    // A shared Machine grant reaches public registries, not the custodian's
-    // private Account credential. Only authenticated ingress supplies this fact.
+    // A shared Machine grant does not lend the custodian's private Account
+    // credential. Only authenticated ingress supplies this fact.
     if(input.machineAdmission&&input.machineAdmission.actorAccountId!==input.machineAdmission.custodianAccountId)
       throw new RegistryFetchErrorV1({state:'auth_failed'});
     const snapshot=operation?operation.readSnapshot():getActiveAccountSettingsSnapshot();
@@ -89,7 +112,9 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
     } catch(error) { if(error instanceof SavedSecretOperationAdmissionError)return null;throw error; }
   };
   const createFetchContext = (resolve: typeof resolveToken) => ({ signal: input.signal,
+    withAppCatalog: createAppCatalogReadsV1(scopeKey),
     http: createRegistryHttpV1({signal:input.signal,resolveToken:resolve}),
+    packageContent:createCliRegistryPackageContentV1(input),
     git: createRegistryGitProtocolV1({signal:input.signal,resolveToken:async source=>{
       const credential=await resolve(source);return typeof credential==='string'?credential:credential?.value??null;
     }}) });
@@ -102,15 +127,8 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
       && selected.token?.secretRef === source.token?.secretRef ? value : null);
   };
   const fetchContext = { ...baseContext, admitSource };
-  const actionBinding = input.actionContext?.externalActionExecutionAuthorization?.binding;
-  const allowMachinePrivateContent = input.machineAdmission
-    ? input.machineAdmission.actorAccountId === input.machineAdmission.custodianAccountId
-    : actionBinding ? actionBinding.accountId === actionBinding.custodianAccountId
-      : !input.actionContext?.externalActionCredential;
-  const readAvailableBotTemplate = allowMachinePrivateContent ? createCliAvailableBotTemplateReaderV1() : undefined;
   const host=createRegistryHostV1({host:'node',...fetchContext,
-    readAvailableBotTemplate,
-    readPluginBotTemplates: createCliRegistryBotTemplateReaderV1({ allowMachineNpmProfiles: allowMachinePrivateContent, readAvailableBotTemplate }),
+    readPluginBotTemplates: createCliRegistryBotTemplateReaderV1({ actionContext: input.actionContext }),
     readSources, updates: input.updates,
     ...(input.port||credentials?{mutateSources:async(mutation:Parameters<typeof updatePromptLibraryRegistrySourcesV1>[1])=>{
       const current=await resolvePort();if(!current)return {status:'unavailable' as const,reason:'account_credentials_unavailable'};

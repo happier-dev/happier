@@ -1,12 +1,19 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { MachineNpmProfileAdmissionRefusalV1Schema } from '../machines/machineAccessV1.js';
 import { RegistryItemSummaryV1Schema } from './registryItemsV1.js';
 import { MarketplaceCatalogDiscoveryV1Schema } from '../marketplace/marketplaceIndexV1.js';
+import { PluginContributionFamilyV2Schema } from '../plugins/contributions/families.js';
+
+/** Selectors use the manifest owner's complete family vocabulary, including structured families. */
+export const RegistryContributionFamilyV1Schema = PluginContributionFamilyV2Schema;
+export type RegistryContributionFamilyV1 = z.infer<typeof RegistryContributionFamilyV1Schema>;
 
 export const RegistrySourceStatusV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.strictObject({ state: z.literal('ok'), fetchedAt: z.number().check(z.int(), z.nonnegative()) }),
   z.strictObject({ state: z.literal('rate_limited'), retryAt: z.optional(z.number().check(z.int(), z.nonnegative())) }),
-  ...(['unreachable', 'auth_failed', 'needs_machine', 'invalid_source'] as const).map(state => z.strictObject({ state: z.literal(state) })),
+  z.strictObject({ state: z.literal('auth_failed'), machineNpmProfileAdmission: z.optional(MachineNpmProfileAdmissionRefusalV1Schema) }),
+  ...(['unreachable', 'needs_machine', 'invalid_source'] as const).map(state => z.strictObject({ state: z.literal(state) })),
   z.strictObject({ state: z.literal('newer_format'), found: z.string() }),
 ]));
 export type RegistrySourceStatusV1 = z.infer<typeof RegistrySourceStatusV1Schema>;

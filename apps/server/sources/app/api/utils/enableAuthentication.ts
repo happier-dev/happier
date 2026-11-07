@@ -1,16 +1,15 @@
-import { decodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { ExternalActionExecutionAuthorizationVerifyRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { z } from "zod/mini";
 
 import type { Fastify } from "../types";
 import { log } from "@/utils/logging/log";
 import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
-import { readRequestHomeFlag } from '@/app/home/settings/requestHomeEnv';
+import { readAuthDiagnosticsLogsEnabled } from '@/app/home/settings/authDiagnosticsFlag';
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ACCOUNT_DIRECTORY_ERROR_CODES_V1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
-import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import {
@@ -30,13 +29,17 @@ import {
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+    EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER,
     EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
 } from "@happier-dev/protocol/actions/externalActionApi";
+import { decodeDeploymentChildExecutionV1, decodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { narrowCredentialAuthority } from "@/app/auth/effectiveCredentialAuthority";
+import { ExternalActionAuthorizationRefusalPhaseSchema, type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     verifyExternalActionDomainExecutionRequest,
     verifyExternalActionExecutionAuthorizationCurrentness,
-    verifyTemplateRequesterHttpExecutionRequest,
+    refuseExternalActionExecutionRequest,
 } from "@/app/auth/externalActionExecutionAuthorization";
 
 /** Account and declared Session-purpose routes without custom restricted-error configuration. */
@@ -45,7 +48,8 @@ export const AccountRouteAuthenticationForbiddenResponseSchema = z.union([
     z.strictObject({ error: z.literal("provider-required"), provider: z.string() }),
     z.strictObject({ error: z.literal("not-eligible") }),
     z.strictObject({ error: z.literal("credential_origin_denied") }),
-    z.strictObject({ error: z.literal("credential_scope_denied") }),
+    z.strictObject({ error: z.literal("credential_scope_denied"), authorizationRefusal: z.optional(ExternalActionAuthorizationRefusalPhaseSchema),
+        details: ActionExecuteFailureSchema.shape.details, failureCause: ActionExecuteFailureSchema.shape.failureCause }),
 ]);
 
 function readScalarHeader(value: unknown): string | null {
@@ -83,12 +87,15 @@ function stampSessionRuntimePrincipal(
     request.authTokenAuthenticationEvidence = authenticationEvidence;
     request.sessionRuntimePrincipal = principal;
 }
-function sendInvalidConnectionCredentialFailure(request: FastifyRequest, reply: FastifyReply) {
+function sendInvalidConnectionCredentialFailure(request: FastifyRequest, reply: FastifyReply,
+    authorizationRefusal?: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure) {
     const configuredError = request.routeOptions?.config?.connectionAuthFailureError;
     const error = configuredError === "authentication_failed" || configuredError === "invalid_token"
         ? configuredError
         : "invalid_token";
-    return reply.code(401).send({ error });
+    return reply.code(401).send({ error, ...(authorizationRefusal ? { authorizationRefusal } : {}),
+        ...(failure?.details === undefined ? {} : { details: failure.details }),
+        ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }) });
 }
 
 export function enableAuthentication(app: Fastify) {
@@ -124,13 +131,14 @@ export function enableAuthentication(app: Fastify) {
         );
         const effectActionId = readScalarHeader(request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]);
         const encodedTarget = readScalarHeader(request.headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]);
+        const encodedDeploymentChild = readScalarHeader(request.headers[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]);
         const encodedReviewedChild = readScalarHeader(request.headers[EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]);
         const hasExternalActionHeader = executionAuthorization !== null
             || machineSignature !== null
             || effectActionId !== null
-            || encodedTarget !== null || encodedReviewedChild !== null;
+            || encodedTarget !== null || encodedDeploymentChild !== null || encodedReviewedChild !== null;
         // Never log bearer tokens or header contents.
-        const logDiagnostics = await timeWebLatencyPhase('auth.home_env', () => readRequestHomeFlag(request, SERVER_CONFIG.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS));
+        const logDiagnostics = readAuthDiagnosticsLogsEnabled();
         if (logDiagnostics) {
             log(
                 { module: 'auth-decorator' },
@@ -138,42 +146,57 @@ export function enableAuthentication(app: Fastify) {
             );
         }
         if (hasExternalActionHeader) {
-            const templateRequester = authHeader !== undefined && machineSignature === null;
             const requesterVerification = authHeader !== undefined
                 ? earlyRequestPrincipals.get(request) ?? await verifyRequestPrincipal({ authorizationHeader: authHeader,
                     allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true
                         && request.routeOptions?.config?.allowLegacyHomeToken !== false, env: process.env }) : null;
             // A rejected execution carrier does not invalidate a verified
             // Account bearer. Clients retire Account credentials only on 401.
-            const refuseExecution = () => requesterVerification?.status === 'verified'
-                ? reply.code(403).send({ error: 'credential_scope_denied' })
-                : sendInvalidConnectionCredentialFailure(request, reply);
+            let authorizationRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
+            let authorizationFailure: ActionExecuteFailure | undefined;
+            const refuseExecution = (phase?: ExternalActionAuthorizationRefusalPhase) => {
+                if (phase) refuseExternalActionExecutionRequest(phase, { method: request.method, path: request.url,
+                    onRefusal: refusal => { authorizationRefusal = refusal; } });
+                return requesterVerification?.status === 'verified'
+                    ? reply.code(403).send({ error: 'credential_scope_denied', ...(authorizationRefusal ? { authorizationRefusal } : {}),
+                        ...(authorizationFailure?.details === undefined ? {} : { details: authorizationFailure.details }),
+                        ...(authorizationFailure?.failureCause === undefined ? {} : { failureCause: authorizationFailure.failureCause }) })
+                    : sendInvalidConnectionCredentialFailure(request, reply, authorizationRefusal, authorizationFailure);
+            };
             if (
-                authHeader !== undefined && !templateRequester
+                authHeader !== undefined
                 || !executionAuthorization
-                || !machineSignature && !templateRequester
+                || !machineSignature
                 || !effectActionId
                 || !encodedTarget
             ) {
-                return refuseExecution();
+                return refuseExecution('proof_shape');
             }
+            const deploymentChildExecution = encodedDeploymentChild === null ? undefined
+                : decodeDeploymentChildExecutionV1(encodedDeploymentChild, executionAuthorization);
+            if (encodedDeploymentChild !== null && !deploymentChildExecution) return refuseExecution('deployment_child_http');
             const reviewedChild = encodedReviewedChild === null ? undefined : decodeReviewedActionChildHttpProofV1(encodedReviewedChild);
-            if (encodedReviewedChild !== null && !reviewedChild) return refuseExecution();
+            if (encodedReviewedChild !== null && !reviewedChild) return refuseExecution('reviewed_child');
             const sessionBinding = request.routeOptions?.config?.restrictedCredentialBinding;
             const routeActionId = resolveApiTokenSessionActionForRoute(request);
             const routeSessionIds = sessionBinding?.scope === 'session'
                 && isExternalActionSessionRoutePurposeAllowed(request, effectActionId)
                 ? readRestrictedCredentialRouteSessionIds(request, sessionBinding) : [];
-            if (routeSessionIds === null) return refuseExecution();
+            if (routeSessionIds === null) return refuseExecution('verification_purpose');
             const [routeSessionId, ...additionalSessionIds] = routeSessionIds;
             const proof = {
+                onRefusal: (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure) => {
+                    authorizationRefusal = phase;
+                    if (failure) authorizationFailure = failure;
+                },
                 authorizationToken: executionAuthorization,
-                machineSignature: machineSignature ?? '',
+                machineSignature,
                 effectActionId,
                 encodedTarget,
                 method: request.method,
                 path: request.url,
                 body: request.body,
+                ...(deploymentChildExecution ? { deploymentChildExecution } : {}),
                 ...(reviewedChild ? { reviewedChild } : {}),
                 ...(readScalarHeader(request.headers['idempotency-key']) === null ? {}
                     : { idempotencyKey: readScalarHeader(request.headers['idempotency-key'])! }),
@@ -195,10 +218,7 @@ export function enableAuthentication(app: Fastify) {
                     === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1
                 ? externalActionRouteId
                 : null;
-            const verified = templateRequester
-                ? requesterVerification?.status === 'verified'
-                    ? await verifyTemplateRequesterHttpExecutionRequest(proof, requesterVerification.principal) : null
-                : authorizationCurrentnessActionId !== null
+            const verified = authorizationCurrentnessActionId !== null
                 ? await verifyExternalActionExecutionAuthorizationCurrentness({
                     ...proof,
                     outerActionId: authorizationCurrentnessActionId,
@@ -206,7 +226,16 @@ export function enableAuthentication(app: Fastify) {
                 })
                 : await verifyExternalActionDomainExecutionRequest({ ...proof, resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
             if (!verified) return refuseExecution();
-            if (!isExternalActionSessionRoutePurposeAllowed(request, verified.effectActionId)) {
+            const verificationPurpose = authorizationCurrentnessActionId !== null
+                ? ExternalActionExecutionAuthorizationVerifyRequestV1Schema.safeParse(request.body) : null;
+            if (verificationPurpose?.success && verificationPurpose.data.nativePurpose && !verified.machineNpmProfileAdmission) {
+                return refuseExecution();
+            }
+            if (verified.machineNpmProfileAdmission?.kind === 'denied') {
+                return reply.code(403).send({ ok: false, nativePurpose: 'machine_npm_profile_acquisition',
+                    code: verified.machineNpmProfileAdmission.code, requiredRole: 'manage' });
+            }
+            if (!isExternalActionSessionRoutePurposeAllowed(request, verified.effectActionId, verified.binding.approvalDecisionAdmission)) {
                 return reply.code(403).send({ error: 'credential_scope_denied' });
             }
             if ('authentication' in verified.principal) {
@@ -223,10 +252,19 @@ export function enableAuthentication(app: Fastify) {
                 return reply.code(403).send({ error: "credential_origin_denied" });
             }
             request.externalActionExecutionAuthorized = true;
-            if (proof.sessionRouteTarget) request.externalActionSessionAccessAdmitted = true;
+            if (proof.sessionRouteTarget || verified.sessionSnapshotBatchAdmitted) request.externalActionSessionAccessAdmitted = true;
             request.externalActionExecutionAuthorizationBinding = verified.binding;
             request.externalActionManagedGuestActivity = verified.managedGuestActivity;
-            request.externalActionReviewedChildAdmission = verified.reviewedChildAdmission;
+            request.externalActionDeploymentChildMachineRead = verified.deploymentChildMachineRead;
+            request.externalActionDeploymentChildSigner = verified.deploymentChildSigner;
+            request.externalActionDeploymentChildAdmission = verified.deploymentChildAdmission;
+            request.externalActionDeploymentChildArtifactRead = verified.deploymentChildArtifactRead;
+            request.externalActionAcceptedDeploymentRead = verified.acceptedDeploymentReceipt?.read;
+            request.externalActionDeploymentCreateSource = verified.createPreparationAdmission?.source;
+            const reviewedEnvironmentId = verified.createPreparationAdmission?.child?.environmentId
+                ?? verified.deploymentDomainPurpose?.input.environmentId;
+            request.externalActionReviewedChildAdmission = verified.reviewedChildAdmission
+                ? { ...verified.reviewedChildAdmission, ...(reviewedEnvironmentId ? { environmentId: reviewedEnvironmentId } : {}) } : undefined;
             // Ordinary authenticated callers have no PAT input ceiling.
             // Carry that explicit fact through the same signed-effect
             // projection rather than inventing a token grant.
@@ -237,7 +275,9 @@ export function enableAuthentication(app: Fastify) {
             request.externalActionEffectActionId = verified.effectActionId;
             request.externalActionRootActionId = verified.binding.actionId;
             request.externalActionExecutionTarget = verified.target;
-            request.externalActionExecutionRequestId = verified.binding.requestId;
+            // A reviewed managed child retains its own operation identity inside the signed parent.
+            request.externalActionExecutionRequestId = verified.deploymentTargetRetentionAdmission?.kind === 'reviewed-child'
+                ? verified.deploymentTargetRetentionAdmission.requestId : verified.binding.requestId;
             request.externalActionExecutionRequestEnvelopeDigest = verified.binding.requestEnvelopeDigest;
             request.externalActionExecutionMachineId = verified.binding.machineId;
             request.externalActionExecutionCustodianAccountId = verified.binding.custodianAccountId;

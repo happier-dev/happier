@@ -1,5 +1,3 @@
-import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import type { ActionExecutorContext, ActionMachineRuntimeDemandV1 } from '../executor/types.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../sessionTargetV1.js';
@@ -10,7 +8,8 @@ import type { ActionCompletionDeclaration } from '../actionCompletion.js';
 import { ActionOperationDeclarationV1Schema, ActionOperationReentryPolicyV1Schema } from '../operations/v1.js';
 import { ActionCliProjectionSchema, readActionSchemaTopLevelFieldNames } from '../actionCliProjection.js';
 import { ActionExecutionPlacementSchema, ActionInputHintsSchema, ActionRequiredAuthoritySchema, ActionPermissionChangingSchema, ActionSurfaceSchema, ActionToolExposureSchema, type ActionExecutionPlacement, type ActionRequiredAuthority, type ActionSurfaces } from '../metadata.js';
-import type { ActionCaller, HostReviewedChildrenPlanV1 } from '../executor/types.js';
+import type { ActionCaller, ActionExecutorContext, ActionMachineRuntimeDemandV1, HostReviewedChildrenPlanV1 } from '../executor/types.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { ExternalActionTargetV1 } from '../externalActionApi.js';
 import { ActionSafetySchema } from '../safety.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
@@ -64,7 +63,8 @@ export const ActionSurfaceBindingTransformSchema = lazyZodSchema(() => z.custom<
 ));
 
 export const ActionSpecSurfaceBindingsSchema = lazyZodSchema(() => z.strictObject({
-  mcp: z.optional(z.strictObject({ inputSchema: ZodSchemaLike })),
+  agent: z.optional(z.strictObject({ inputSchema: ZodSchemaLike, inputHints: z.optional(ActionInputHintsSchema) })),
+  mcp: z.optional(z.strictObject({ inputSchema: ZodSchemaLike, inputHints: z.optional(ActionInputHintsSchema) })),
   api: z.optional(z.strictObject({
     inputSchema: ZodSchemaLike,
     bindInput: z.optional(ActionSurfaceBindingTransformSchema),
@@ -147,9 +147,6 @@ export function actionInputServerId<TSchema extends z.ZodMiniType>(schema: TSche
 }
 
 export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
-machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: ActionExecutorContext) => ActionMachineRuntimeDemandV1 | null>(
-    (value) => typeof value === 'function')),
-
   id: ActionIdSchema,
   title: z.string().check(z.minLength(1)),
   /** Presentation only: a localized verb; omission uses the host's generic approval label. */
@@ -177,7 +174,6 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
     }))),
     z.custom<(input: unknown) => HostReviewedChildrenPlanV1['children']>((value) => typeof value === 'function'),
   ])),
-
   // UI placements where the action can appear when the relevant surface is enabled.
   placements: z._default(z.array(ActionUiPlacementSchema), []),
   // Optional stable slash command token for UI slash-command placement.
@@ -317,6 +313,12 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
   clientPresenter: z.optional(z.literal('session')),
   /** Host-only selector for an admitted input whose owner varies; never serialized as caller authority. */
   executionPlacementForInput: z.optional(z.custom<(input: unknown) => ActionExecutionPlacement>((value) => typeof value === 'function')),
+  /** Original explicit execution demand, read once by child preparation; absent on passive reads. Never serialized. */
+  machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: ActionExecutorContext) => ActionMachineRuntimeDemandV1 | null>(
+    (value) => typeof value === 'function')),
+  /** Requester content read by this input; transport and replay share this host-private declaration. Never serialized. */
+  requesterAccountContentDemandForInput: z.optional(z.custom<(input: unknown, context: ActionExecutorContext) => boolean>(
+    (value) => typeof value === 'function')),
   /** Host-private Home projection; domain schemas admit its operands before Account capture. Never serialized. */
   invocationServerIdForInput: z.optional(z.custom<(input: unknown) => string | undefined>((value) => typeof value === 'function')),
   /** Placements producible by this input selector; ingress cannot open encrypted operands. */
@@ -329,7 +331,7 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
     requesterCredentials: z.optional(z.literal('none')),
     /** The admitted requester transport needs its persisted Account encryption mode. Never serialized. */
     accountEncryptionCurrentness: z.optional(z.literal(true)),
-    nativePurpose: z.optional(z.enum(['quota_read', 'session_board_write', 'pending_reset_start'])),
+    nativePurpose: z.optional(z.enum(['quota_read', 'session_board_write', 'pending_reset_start', 'machine_npm_profile_acquisition'])),
     /** Origin hosts that delegate admission to the receiving daemon. Never serialized. */
     daemonIngressSurfaces: z.optional(z.readonly(z.array(z.enum(['cli', 'ui'])))),
   })),
@@ -543,12 +545,12 @@ export function isPluginActionCallerPolicySatisfied(
 
 export type ParsedActionSpec = z.infer<typeof ActionSpecSchema>;
 export type ActionSpecWithoutApproval = Readonly<{
-machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
-
   id: ParsedActionSpec['id'];
   approval: ParsedActionSpec['approval'];
   approvalPolicy?: ParsedActionSpec['approvalPolicy'];
   hostReviewedChildren?: ParsedActionSpec['hostReviewedChildren'];
+  machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
+  requesterAccountContentDemandForInput?: ParsedActionSpec['requesterAccountContentDemandForInput'];
   title: ParsedActionSpec['title'];
   confirmVerb?: ParsedActionSpec['confirmVerb'];
   irreversible?: ParsedActionSpec['irreversible'];
@@ -610,7 +612,10 @@ export type ActionSpecDefinition = Omit<ActionSpecWithoutApproval, 'surfaces'> &
   surfaces: PreNormalizedActionSurfaces;
 }>;
 export type PreNormalizedActionSpec = ActionSpecDefinition;
-export type NormalizedActionSpec = ActionSpecWithoutApproval;
+export type NormalizedActionSpec = ActionSpecWithoutApproval & Readonly<{
+  requiredAuthority: ActionRequiredAuthority;
+  executionPlacement: ActionExecutionPlacement;
+}>;
 
 export type ActionSpecProjectionKey = 'id' | 'approval' | 'inputSchema' | 'outputSchema' | 'surfaceBindings' | 'requiredAuthority';
 export type ActionSpecProjectionMetadata = Omit<PreNormalizedActionSpec, ActionSpecProjectionKey>;

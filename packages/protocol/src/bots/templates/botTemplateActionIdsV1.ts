@@ -26,4 +26,3 @@ export function isBotTemplateRestrictedPatHttpPurposeRootActionIdV1(actionId: st
 export function isBotTemplateCopyOrUpdateActionIdV1(actionId: string): actionId is 'template.instantiate' | 'template.updates.apply' {
   return actionId === 'template.instantiate' || actionId === 'template.updates.apply';
 }
-

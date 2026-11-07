@@ -1,13 +1,14 @@
 import semver from 'semver';
+import { RegistryFetchErrorV1 } from '../../registries/registryListV1.js';
+import { readActionFailureEnvelope } from '../../actions/executor/actionFailureEnvelope.js';
 import type { HomeHubArtifactTransportV1, HomeHubArtifactV1 } from '../../home/homeHubArtifactV1.js';
 import type { ArtifactAccessGrantSetInputV1 } from '../../artifacts/artifactAccessV1.js';
 export { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
 import type { ArtifactListSelectionOptionsV1 } from '../../artifacts/artifactListSelectionV1.js';
 import type { ArtifactKindCoverageV1 } from '../../artifacts/artifactKindV1.js';
 import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBinaryV1.js';
-import type { ActionExecutorContext, ActionExecuteFailure, HostReviewedChildrenPreparationV1 } from '../../actions/executor/types.js';
-import { prepareBotTemplateInstantiationV1, type BotTemplateRecipientPortV1, type BotTemplateLiveCopyReleaseV1 } from './templateInstantiationOperations.js';
-export type { BotTemplateLiveCopyReleaseV1 } from './templateInstantiationOperations.js';
+import type { ActionExecutorContext, ActionExecuteFailure, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
+import { prepareBotTemplateInstantiationV1, type BotTemplateRecipientPortV1 } from './templateInstantiationOperations.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { readBotTemplateArtifactV1, projectBotTemplateReleaseV1, projectBotTemplateArtifactHeaderV1, projectBotTemplateContentV1,
   BOT_TEMPLATE_ARTIFACT_KIND_V1, BotTemplateArtifactHeaderV1Schema,
@@ -21,8 +22,6 @@ type DraftRef = Readonly<{ serverId: string; artifactId: string }>;
 const signedInLinkInput = (artifactId: string) => ({ artifactId, audience: 'signed_in' as const, preserveExisting: true as const });
 export type BotTemplateOperationPortV1 = Readonly<{
   artifacts: HomeHubArtifactTransportV1;
-  /** Identity of the Account captured by this source transport. */
-  requesterAccountId?: string;
   /** The Session owner-private metadata transport also admits source ownership. */
   readSourceDraftRef(source: SourceRef, context: ActionExecutorContext): Promise<DraftRef | null>;
   writeSourceDraftRef(source: SourceRef, ref: DraftRef, context: ActionExecutorContext): Promise<void>;
@@ -33,8 +32,6 @@ export type BotTemplateOperationPortV1 = Readonly<{
   /** Plugin acquisition stays with its registry/package owner; returned provenance is transport-owned. */
   resolvePluginRelease?(source: Extract<BotTemplateReleaseSourceV1, { kind: 'plugin' }>, context: ActionExecutorContext,
     signal?: AbortSignal, purpose?: 'update'): Promise<ResolvedBotTemplateReleaseV1>;
-  /** The keyholding link host admits one mounted copy without inventing a grant or storing its key. */
-  resolveInstantiationRelease?(source: BotTemplateReleaseSourceV1, context: ActionExecutorContext): Promise<BotTemplateLiveCopyReleaseV1>;
   recipient?: BotTemplateRecipientPortV1;
   isSameServerId?(left: string, right: string): boolean;
   randomId(): string;
@@ -42,13 +39,15 @@ export type BotTemplateOperationPortV1 = Readonly<{
 }>;
 const failure = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 function readOperationFailure(error: unknown): ActionExecuteFailure | null {
+  const observed = readActionFailureEnvelope(error);
+  if (observed) return observed;
   const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
   return typeof code === 'string' ? { ok: false, errorCode: code, error: code } : null;
 }
-/** The authoring boundary consumes the Artifact owner's admitted access and exposure facts. */
+/** The authoring boundary consumes the Artifact owner's admitted access. */
 export function readBotTemplateAuthorDraftV1(resource: HomeHubArtifactV1 | null): BotTemplateDraftV1 {
   if (!resource) return failure('artifact_not_found');
-  if (resource.access !== 'owner' || resource.shared !== false) return failure('artifact_access_forbidden');
+  if (resource.access !== 'owner') return failure('artifact_access_forbidden');
   const draft = readBotTemplateArtifactV1(resource);
   if (!draft || draft.state !== 'draft') return failure('invalid_request');
   return draft;
@@ -101,7 +100,13 @@ export async function resolveBotTemplateReleaseV1(port: BotTemplateOperationPort
   signal?.throwIfAborted();
   if (source.kind === 'plugin') {
     if (!port.resolvePluginRelease) return failure('unsupported_action');
-    return port.resolvePluginRelease(source, context, signal, purpose);
+    try { return await port.resolvePluginRelease(source, context, signal, purpose); }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof RegistryFetchErrorV1) throw { ok: false, errorCode: error.code, error: error.code,
+        details: { registryStatus: error.status } } satisfies ActionExecuteFailure;
+      throw error;
+    }
   }
   if (context.serverId && context.serverId !== source.serverId && !port.isSameServerId?.(context.serverId, source.serverId)) return failure('server_scope_mismatch');
   const stored = await port.artifacts.read(source.artifactId, { signal });
@@ -110,7 +115,7 @@ export async function resolveBotTemplateReleaseV1(port: BotTemplateOperationPort
   const artifact = readBotTemplateArtifactV1(stored);
   if (!artifact || artifact.state !== 'released') return failure('invalid_request');
   return { source, release: artifact.release, revision: stored.revision,
-    requesterAuthorship: stored.ownerAccountId === (port.requesterAccountId ?? context.runtimeAccountId) ? 'requester' : 'other', presentation: {
+    presentation: {
     ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
     ...(stored.shared === undefined ? {} : { shared: stored.shared }),
   } };
@@ -137,10 +142,10 @@ export function createBotTemplateActionExecuteV1(port: BotTemplateOperationPortV
     const signal = args.signal ?? args.context.signal;
     signal?.throwIfAborted();
     try {
-      if (args.actionId === 'template.updates.diff') return readBotTemplateUpdateDiffV1(port, args.input, args.context,
+      if (args.actionId === 'template.updates.diff') return await readBotTemplateUpdateDiffV1(port, args.input, args.context,
         source => resolveBotTemplateReleaseV1(port, source, args.context, signal, 'update'));
       if (args.actionId === 'template.updates.skip' || args.actionId === 'template.follow.stop')
-        return mutateBotTemplateFollowV1(port, args.actionId, args.input, args.context);
+        return await mutateBotTemplateFollowV1(port, args.actionId, args.input, args.context);
       if (args.actionId === 'template.updates.apply') return failure('admission_unavailable');
       if (args.actionId === 'template.preview' || args.actionId === 'template.export_file') {
         const input = BotTemplateActionInputSchemasV1[args.actionId].parse(args.input);
@@ -256,13 +261,12 @@ export function createBotTemplateActionExecuteV1(port: BotTemplateOperationPortV
       throw error;
     }
   };
-  return Object.assign(execute, { prepareRelease, prepareUpdate: (request: Readonly<{ input: unknown; context: ActionExecutorContext }>) =>
+  return Object.assign(execute, { prepareRelease, prepareUpdate: (request: HostReviewedChildrenPreparationRequestV1) =>
     prepareBotTemplateUpdateV1(port, request, (source, context) => resolveBotTemplateReleaseV1(port, source, context, context.signal, 'update')),
-    prepareInstantiation: (request: Readonly<{ input: unknown; context: ActionExecutorContext }>) =>
+    prepareInstantiation: (request: HostReviewedChildrenPreparationRequestV1) =>
     prepareBotTemplateInstantiationV1(port, request, () => {
       const source = BotTemplateActionInputSchemasV1['template.instantiate'].parse(request.input).source;
-      return port.resolveInstantiationRelease ? port.resolveInstantiationRelease(source, request.context)
-        : resolveBotTemplateReleaseV1(port, source, request.context);
+      return resolveBotTemplateReleaseV1(port, source, request.context);
     }) });
 }
 

@@ -5,25 +5,19 @@ import { Readable } from 'node:stream';
 
 import { readBotTemplateReleaseV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
-import type { RegistryAvailableBotTemplateReaderV1, RegistryBotTemplateReaderV1 } from '@happier-dev/protocol/registries/registryHostV1';
+import type { RegistryBotTemplateReaderV1 } from '@happier-dev/protocol/registries/registryHostV1';
 import { resolveAndDownloadNpmArtifact } from '@/plugins/distribution/npm/adapter';
 import { cleanupStagedNpmArtifactCandidate, stageDownloadedNpmArtifactCandidate } from '@/plugins/distribution/npm/stage';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /** Acquires a selected package as data using the install owner's npm and archive readers. */
 export function createCliRegistryBotTemplateReaderV1(options: Readonly<{
   temporaryDirectory?: string;
-  /** The existing Machine ingress may not lend its custodian's private npm profile to another Account. */
-  allowMachineNpmProfiles?: boolean;
-  readAvailableBotTemplate?: RegistryAvailableBotTemplateReaderV1;
+  actionContext?: Pick<ActionExecutorContext, 'externalActionExecutionAuthorization'>;
 }> = {}): RegistryBotTemplateReaderV1 {
   return async ({ item, source, context, contributionId }) => {
     if (item.payload.kind !== 'plugin' || 'packageContent' in source) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     const listing = item.payload.listing;
-    if (source.format === 'happier-catalog') {
-      const available = await options.readAvailableBotTemplate?.({ source, item, contributionId, signal: context.signal,
-        pointer: { sourceId: item.summary.sourceId, itemId: item.summary.itemId, version: listing.distribution.version } });
-      if (available) return available;
-    }
     const root = await mkdtemp(join(options.temporaryDirectory ?? tmpdir(), 'happier-template-'));
     try {
       const request = {
@@ -46,7 +40,12 @@ export function createCliRegistryBotTemplateReaderV1(options: Readonly<{
       const acquire = async () => {
         const profileId = listing.distribution.registryProfileId ?? source.npmRegistryProfileId;
         if (!profileId) return resolveAndDownloadNpmArtifact({ ...request, client: registryClient });
-        if (options.allowMachineNpmProfiles === false) throw new RegistryFetchErrorV1({ state: 'auth_failed' });
+        const authorization = options.actionContext?.externalActionExecutionAuthorization;
+        if (authorization) {
+          const { admitExternalActionMachineNpmProfileAcquisition } = await import('@/api/externalActionExecutionAuthorization');
+          const admission = await admitExternalActionMachineNpmProfileAcquisition({ authorization, signal: context.signal });
+          if (!admission.ok) throw new RegistryFetchErrorV1({ state: 'auth_failed', machineNpmProfileAdmission: admission });
+        }
         const [{ createNpmRegistryProfileService }, { createNpmRegistryHttpsClient }] = await Promise.all([
           import('@/plugins/distribution/npm/profiles/service'), import('@/plugins/distribution/npm/httpsClient'),
         ]);

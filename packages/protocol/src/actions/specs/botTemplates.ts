@@ -1,11 +1,15 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { isBotTemplatePluginReadActionIdV1 } from '../../bots/templates/botTemplateActionIdsV1.js';
 import { BOT_TEMPLATE_ACTION_IDS_V1, BotTemplateActionInputSchemasV1, BotTemplateActionOutputSchemasV1,
+  BotTemplateInstantiateAgentAuthoringInputV1Schema,
   type BotTemplateActionIdV1 } from '../../bots/templates/botTemplateActionsV1.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BotTemplateSetupReviewSelectionsV1Schema, projectBotTemplateSetupSelectionsForReviewV1 } from '../../bots/templates/templateSetupSelectionsV1.js';
-import { projectSessionSpawnNewObservationInput } from './session/lifecycle.js';
+import { projectSessionSpawnNewObservationInput, SessionSpawnNewInputHints } from './session/lifecycle.js';
 import { withoutClientActionInput } from '../clientActionInput.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 
 function projectRecipientInput(id: 'template.instantiate' | 'template.updates.apply', value: unknown): unknown {
   const parsed = BotTemplateActionInputSchemasV1[id].safeParse(value);
@@ -22,9 +26,16 @@ const updateReviewSchema = lazyZodSchema(() => z.extend(BotTemplateActionInputSc
   setup: z.optional(BotTemplateSetupReviewSelectionsV1Schema),
 }));
 const agentDraftSchema = lazyZodSchema(() => z.omit(BotTemplateActionInputSchemasV1['template.draft'], { expectedRevision: true }));
+const instantiateInputHints = { fields: SessionSpawnNewInputHints.fields
+  .filter(field => ('required' in field && field.required) || field.path === 'creationKey')
+  .map(field => ({ ...field, path: `creation.${field.path}` })) };
+const agentInstantiateInputHints = {
+  description: 'Omit creation.executionTarget and creation.agentTarget to use the authenticated Session’s current Machine and Agent. Supply either choice explicitly to override it. Directory intent remains explicit.',
+  fields: instantiateInputHints.fields.map(field => ({ ...field, required: field.path === 'creation.directory' })),
+};
 
 export const BOT_TEMPLATE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & Readonly<{ requiredAuthority: 'account_automation' }>)[] =
-  BOT_TEMPLATE_ACTION_IDS_V1.map((id: BotTemplateActionIdV1) => ({
+  lazyActionSpecArray(() => BOT_TEMPLATE_ACTION_IDS_V1.map((id: BotTemplateActionIdV1) => ({
     id, title: id === 'template.draft' ? 'Draft Bot template' : id === 'template.release' ? 'Release Bot template'
       : id === 'template.preview' ? 'Preview Bot template' : id === 'template.export_file' ? 'Download template skill file'
         : id === 'template.instantiate' ? 'Make my own Bot' : id === 'template.updates.diff' ? 'Review Bot template update'
@@ -34,12 +45,18 @@ export const BOT_TEMPLATE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & R
       : id === 'template.release' ? 'Release the exact reviewed draft revision with an explicit version and notes. Optional named Can-copy grants are part of this single reviewed operation.'
         : id === 'template.preview' ? 'Read the complete released content without creating a Bot or acquiring credentials.'
           : id === 'template.export_file' ? 'Read one carried skill file for download before creating a Bot.'
-            : id === 'template.instantiate' ? 'Create an independent Bot with the reviewed instructions, skills and memory, then start its greeting on the selected Machine.'
+            : id === 'template.instantiate' ? 'Create an independent Bot with the reviewed instructions, skills and memory, then start its greeting on the selected Machine. Restricted tokens with this grant are class-scoped: they can write any editable Artifact. Software setup uses the token’s ordinary Machine setup grants and approval policy.'
               : id === 'template.updates.diff' ? 'Compare the retained accepted release, local instructions and skills with the addressed release. Learned memory stays unchanged.'
-                : id === 'template.updates.apply' ? 'Apply reviewed instruction hunks, skills and recipient setup, preserving learned memory. Advance the accepted version only after settlement.'
+                : id === 'template.updates.apply' ? 'Apply reviewed instruction hunks, skills and recipient setup, preserving learned memory. Advance the accepted version only after settlement. Restricted tokens with this grant are class-scoped: they can write any editable Artifact and delete any owned Artifact. Software setup uses the token’s ordinary Machine setup grants and approval policy.'
                   : id === 'template.updates.skip' ? 'Hide this offered version for this independent Bot. Later releases can still be offered.'
                     : id === 'template.follow.stop' ? 'Withdraw future update demand while retaining the independent Bot, source and accepted content.'
                       : 'Open the private Bot template editor on the answering client. A headless host returns surface_unavailable.',
+    ...(id === 'template.preview' || id === 'template.export_file' ? {
+      requesterAccountContentDemandForInput: (input: unknown) => readRecord(readRecord(input).source).kind === 'artifact',
+    } : id === 'template.draft' || id === 'template.release' || id === 'template.instantiate'
+      || id === 'template.updates.diff' || id === 'template.updates.apply' ? {
+        requesterAccountContentDemandForInput: () => true,
+      } : {}),
     approval: { result: 'required' }, safety: id === 'template.release' || id === 'template.instantiate' || id === 'template.updates.apply' ? 'danger' : 'safe',
     approvalPolicy: { uiConfirmation: 'direct' },
     ...(id === 'template.instantiate' || id === 'template.updates.apply' ? {
@@ -49,6 +66,7 @@ export const BOT_TEMPLATE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & R
     } : {}),
     sideEffectClass: id === 'template.open' || id === 'template.preview' || id === 'template.export_file' || id === 'template.updates.diff' ? 'read' : 'write',
     requiredAuthority: 'account_automation', executionPlacement: id === 'template.open' ? 'client' : 'account', placements: [],
+    ...(isBotTemplatePluginReadActionIdV1(id) ? { originalExecution: { nativePurpose: 'machine_npm_profile_acquisition' as const } } : {}),
     ...(id === 'template.release' ? {
       executionPlacements: ['account', 'client'] as const,
       executionPlacementForInput: (value: unknown) => {
@@ -73,6 +91,9 @@ export const BOT_TEMPLATE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & R
     inputSchema: BotTemplateActionInputSchemasV1[id], outputSchema: BotTemplateActionOutputSchemasV1[id],
     ...(id === 'template.draft' ? { surfaceBindings: {
       agent: { inputSchema: agentDraftSchema }, mcp: { inputSchema: agentDraftSchema },
+    } } : id === 'template.instantiate' ? { surfaceBindings: {
+      agent: { inputSchema: BotTemplateInstantiateAgentAuthoringInputV1Schema, inputHints: agentInstantiateInputHints },
+      mcp: { inputSchema: BotTemplateInstantiateAgentAuthoringInputV1Schema, inputHints: agentInstantiateInputHints },
     } } : {}),
     inputHints: { fields: [] }, cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
-  }));
+  })));

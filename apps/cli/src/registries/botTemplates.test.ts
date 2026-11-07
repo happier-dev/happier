@@ -66,13 +66,6 @@ it.each(['happier-npm', 'happier-catalog'] as const)('cold-reads only the select
   await expect(host.readBotTemplate(pointer, 'missing')).rejects.toMatchObject({ code: 'invalid_source' });
   await expect(host.readBotTemplate(pointer, 'future')).rejects.toMatchObject({ code: 'newer_format' });
   expect(await readdir(root)).toEqual([]);
-  const sharedMachineHost = createRegistryHostV1({ host: 'node', http,
-    readSources: async () => [{ ...source, npmRegistryProfileId: 'custodian-private' }],
-    readPluginBotTemplates: createCliRegistryBotTemplateReaderV1({ temporaryDirectory: root, allowMachineNpmProfiles: false }) });
-  const previousDownloads = downloads.length;
-  await expect(sharedMachineHost.readBotTemplate(pointer, 'garden')).rejects.toMatchObject({ code: 'auth_failed' });
-  expect(downloads).toHaveLength(previousDownloads);
-  expect(await readdir(root)).toEqual([]);
 });
 
 it('reports an unavailable registry transport before acquiring a selected template', async () => {

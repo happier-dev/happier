@@ -5,9 +5,135 @@ import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import tweetnacl from 'tweetnacl';
 import { signMachineInstallationProof } from '../machines/identity/installationIdentity.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
+import { projectActionExecuteFailure } from './actionExecutionResult.js';
+import { DeploymentTeardownInputV1Schema } from '../deployments/deploymentActionsV1.js';
+
+it('requires an explicit closed acknowledgement for private Machine npm acquisition', () => {
+  const nativePurpose = 'machine_npm_profile_acquisition';
+  const request = externalActionApi.ExternalActionExecutionAuthorizationVerifyRequestV1Schema;
+  expect(request.safeParse({ v: 1, nativePurpose, admittedMachineRole: 'use' }).success).toBe(true);
+  expect(request.safeParse({ v: 1, nativePurpose: 'unknown' }).success).toBe(false);
+  expect(request.safeParse({ v: 1, nativePurpose, extra: true }).success).toBe(false);
+  const response = externalActionApi.ExternalActionMachineNpmProfileAdmissionResponseV1Schema;
+  expect(response.safeParse({ ok: true }).success).toBe(false);
+  expect(response.safeParse({ ok: true, nativePurpose }).success).toBe(true);
+  expect(response.safeParse({ ok: false, nativePurpose, code: 'access_denied', requiredRole: 'manage' }).success).toBe(true);
+  expect(response.safeParse({ ok: false, nativePurpose, code: 'access_denied', requiredRole: 'use' }).success).toBe(false);
+});
+
+it('preserves the optional Home-admitted Machine role in the closed signed-root contract', () => {
+  const binding = { serverIdentityId: 'home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 },
+    machineId: 'controller', installationId: 'installed', custodianAccountId: 'owner', actionId: 'deployments.deploy',
+    requestId: 'stored-redeploy', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+      v: 1, requestId: 'stored-redeploy', target: { kind: 'machine', machineId: 'controller' },
+      input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime' },
+    }), target: { kind: 'machine', machineId: 'controller' } };
+  const schema = externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema;
+  expect(schema.parse(binding)).toEqual(binding);
+  for (const admittedMachineRole of ['use', 'manage'] as const) {
+    expect(schema.parse({ ...binding, admittedMachineRole })).toEqual({ ...binding, admittedMachineRole });
+  }
+  expect(schema.safeParse({ ...binding, admittedMachineRole: 'owner' }).success).toBe(false);
+});
+import { WorkflowApprovedOperationV1Schema } from './approvedOperationV1.js';
+import { getActionSpec } from './actionSpecs.js';
+import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 const invocationGrant = ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['session.title.set'] },
   targets: { sessions: [], machines: ['machine-1'] }, approve: false, origins: [], models: null, permissionModes: null, create: null });
+
+it('admits deployment receipt and preview-cleanup roots without admitting unrelated deployment roots', () => {
+  for (const actionId of ['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown']) {
+    expect(externalActionApi.isExternalActionWorkflowActionIdV1(actionId), actionId).toBe(true);
+  }
+  for (const actionId of ['deployments.environments.update', 'deployments.prepare',
+    'deployments.health.read', 'deployments.cancel', 'deployments.targets.unlink', 'deployments.environments.delete']) {
+    expect(externalActionApi.isExternalActionWorkflowActionIdV1(actionId), actionId).toBe(false);
+  }
+});
+
+it('admits an owned Workflow preview teardown through exact approval while retaining irreversible Ask', () => {
+  const actionId = 'deployments.teardown';
+  const input = DeploymentTeardownInputV1Schema.parse({ serverId: 'home', environmentId: 'owned-preview',
+    expectedRevision: 3, targetLinkId: 'preview-runtime', expectedTargetLinkRevision: 2, requestKey: 'preview-cleanup',
+    contentArtifactId: 'preview-content', contentHeaderVersion: 1, contentBodyVersion: 1, reason: 'previewClosed' });
+  const workflowActionOrigin = { runId: 'owned-preview-workflow', requestId: input.requestKey };
+  const envelope = externalActionApi.ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: input.requestKey,
+    target: { kind: 'machine', machineId: 'controller' }, input });
+  const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+  const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39));
+  const installationProof = signMachineInstallationProof({ privateKey: signing.secretKey,
+    payload: { version: 1, accountId: 'owner', machineId: 'controller', installationId: 'installed',
+      externalActionOrigin: { homeId: input.serverId, actionId, requestId: input.requestKey,
+        requestEnvelopeDigest, origin: workflowActionOrigin } } });
+  expect(externalActionApi.ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
+    machineId: 'controller', envelope, workflowActionOrigin, installationProof }).workflowActionOrigin)
+    .toEqual(workflowActionOrigin);
+  expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.parse({
+    accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: input.serverId,
+    machineId: 'controller', custodianAccountId: 'owner', installationId: 'installed', actionId,
+    requestId: input.requestKey, requestEnvelopeDigest, target: envelope.target,
+    environmentId: input.environmentId, workflowActionOrigin,
+  }).environmentId).toBe(input.environmentId);
+
+  const spec = getActionSpec(actionId);
+  const settings = normalizeActionsSettingsV1({ v: 1, actions: {} });
+  const context = { surface: 'agent', authority: 'account_automation' } as const;
+  expect(spec.irreversible).toBe(true);
+  expect(resolveActionApprovalRouting({ actionId, spec, input, settings, context }).required).toBe(true);
+  expect(resolveActionApprovalRouting({ actionId, spec, input, settings,
+    context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }).required).toBe(true);
+  const approvedOperation = WorkflowApprovedOperationV1Schema.parse({ parent: { actionId, input },
+    approvedBy: { accountId: 'owner' }, steps: [{ actionId, input }] });
+  expect(resolveActionApprovalRouting({ actionId, spec, input, settings, context, approvedOperation }).required).toBe(false);
+  expect(resolveActionApprovalRouting({ actionId, spec, input: { ...input, environmentId: 'unrelated-preview' },
+    settings, context, approvedOperation }).required).toBe(true);
+});
+
+it('binds own-server teardown preparation to its Home-issued receipt candidate', () => {
+  const binding = { accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'home',
+    machineId: 'controller', custodianAccountId: 'owner', installationId: 'installed', actionId: 'deployments.teardown',
+    requestId: 'cleanup', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'controller' },
+    environmentId: 'environment', deploymentCandidatePublication: { environmentId: 'environment',
+      source: { id: 'source', revision: 1 }, contentArtifactId: 'receipt-candidate' } };
+  expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.safeParse(binding).success).toBe(true);
+  expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({ ...binding,
+    deploymentCandidatePublication: { ...binding.deploymentCandidatePublication, environmentContentArtifactId: 'other' } }).success).toBe(false);
+});
+
+it('binds current edge read authority to its authenticated controller without inventing a deployment receipt', () => {
+  const admission = { actionId: 'deployments.health.current', environmentId: 'environment', targetLinkId: 'runtime', machineId: 'controller' };
+  const binding = { serverIdentityId: 'home', accountId: 'reader', authentication: { kind: 'account', tokenEpoch: 0 },
+    machineId: 'controller', installationId: 'installed', custodianAccountId: 'owner', actionId: admission.actionId,
+    requestId: 'current-edge', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+      v: 1, requestId: 'current-edge', target: { kind: 'machine', machineId: 'controller' },
+      input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime', machineId: 'controller' },
+    }),
+    target: { kind: 'machine', machineId: 'controller' }, deploymentReadAdmission: admission };
+  expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.safeParse(binding).success).toBe(true);
+  for (const deploymentReadAdmission of [undefined, { ...admission, machineId: 'another-controller' },
+    { ...admission, actionId: 'deployments.logs.read' }]) {
+    expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({ ...binding, deploymentReadAdmission }).success).toBe(false);
+  }
+});
+
+it('preserves producer effect evidence through the closed public refusal envelope', () => {
+  const failure = { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+  for (const execution of [failure, { ...failure, effectAttempted: false }, { ...failure, effectAttempted: true }]) {
+    const envelope = { v: 1, actionId: 'session.spawn_new', requestId: 'refused', execution };
+    const prepared = externalActionApi.prepareExternalActionResponseEnvelopeV1(envelope);
+    expect(JSON.parse(prepared.body)).toEqual(envelope);
+    expect(externalActionApi.parseExternalActionResponseEnvelopeV1(JSON.parse(prepared.body))).toEqual(envelope);
+    expect(projectActionExecuteFailure(execution)).toEqual(execution);
+    expect(externalActionApi.projectExternalActionExecutionResultV1({ ...execution, bridgePrivate: true })).toEqual(execution);
+  }
+  for (const execution of [{ ...failure, effectAttempted: 'false' }, { ...failure, undisclosedTransitFact: true }]) {
+    expect(() => externalActionApi.prepareExternalActionResponseEnvelopeV1({
+      v: 1, actionId: 'session.spawn_new', execution,
+    })).toThrow(TypeError);
+  }
+});
 
 it('binds a signed Workflow Role invocation to its genuine Run and exact Session without a source Session', () => {
   const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(38));
@@ -198,7 +324,8 @@ it.each(['present_user', 'account_automation'] as const)('keeps signed ordinary 
 });
 
 it('binds pre-forward managed admission without admitting prompt custody or duplicate request identity', () => {
-  const compute = { selection: { kind: 'one-off', homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
+  const compute = { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+    selection: { kind: 'one-off', homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
     launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: {} },
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
   const managedAdmission = { actionId: 'machines.managed.acquire', input: compute, continuationPresent: true };
@@ -401,6 +528,25 @@ it('admits opaque V2 framing and the complete protected pre-open RPC vocabulary 
 });
 
 describe('External Action API envelope v1', () => {
+  it('preserves a closed target refusal phase only for target_not_local on current carriers', () => {
+    const relay = { kind: 'invalid_request' as const, errorCode: 'target_not_local' as const,
+      requestId: 'target-refusal', phase: 'target_installation' };
+    const http = { error: 'invalid_request' as const, code: 'target_not_local' as const,
+      requestId: relay.requestId, phase: relay.phase };
+    expect(externalActionApi.parseExternalActionDaemonDispatchResult(relay)).toEqual(relay);
+    expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse(http).success).toBe(true);
+    expect(externalActionApi.projectExternalActionHttpError('target_not_local', relay.requestId,
+      undefined, undefined, 'target_installation').payload).toEqual(http);
+    for (const phase of ['private-input', 'ciphertext_open']) {
+      expect(externalActionApi.parseExternalActionDaemonDispatchResult({ ...relay, phase })).toBeNull();
+      expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...http, phase }).success).toBe(false);
+    }
+    expect(externalActionApi.parseExternalActionDaemonDispatchResult({ ...relay, errorCode: 'invalid_encrypted_envelope' })).toBeNull();
+    expect(externalActionApi.ExternalActionHttpErrorSchema.safeParse({ ...http, code: 'invalid_encrypted_envelope' }).success).toBe(false);
+    expect(externalActionApi.parseExternalActionDaemonDispatchResult({ ...relay, input: 'private-input' })).toBeNull();
+    expect(parseExternalActionDaemonDispatchResultV1(relay)).toBeNull();
+  });
+
   it('owns the opaque request-id grammar used by every external Action client', () => {
     expect(ExternalActionRequestIdV1Schema.safeParse('corrélation-☃').success).toBe(true);
     expect(ExternalActionRequestIdV1Schema.safeParse('x'.repeat(129)).success).toBe(false);
@@ -651,13 +797,19 @@ describe('External Action API envelope v1', () => {
     }).success).toBe(false);
   });
 
-  it('projects stable typed transport errors', () => {
-    const projected = projectExternalActionHttpErrorV1('request_too_large');
+  it.each([
+    { code: 'request_too_large', statusCode: 413 },
+    { code: 'project_requester_home_unavailable', statusCode: 503 },
+    { code: 'database_transaction_conflict_exhausted', statusCode: 503 },
+    { code: 'database_transaction_timeout', statusCode: 503 },
+    { code: 'database_connection_unavailable', statusCode: 503 },
+  ] as const)('projects stable typed transport errors ($code)', ({ code, statusCode }) => {
+    const projected = projectExternalActionHttpErrorV1(code);
 
-    expect(projected.statusCode).toBe(413);
+    expect(projected.statusCode).toBe(statusCode);
     expect(ExternalActionHttpErrorV1Schema.parse(projected.payload)).toEqual({
       error: 'invalid_request',
-      code: 'request_too_large',
+      code,
     });
   });
 
@@ -677,6 +829,10 @@ describe('External Action API envelope v1', () => {
     const authentication = projectExternalActionHttpError('invalid_token');
     expect(authentication).toEqual({ statusCode: 401, payload: { error: 'invalid_token' } });
     expect(ExternalActionHttpErrorSchema.parse(authentication.payload)).toEqual(authentication.payload);
+    const authority = projectExternalActionHttpError('present_user_required', 'request-not-disclosed');
+    expect(authority).toEqual({ statusCode: 403, payload: { error: 'present_user_required' } });
+    expect(ExternalActionHttpErrorSchema.parse(authority.payload)).toEqual(authority.payload);
+    expect(ExternalActionHttpErrorSchema.safeParse({ ...authority.payload, authority: 'present_user' }).success).toBe(false);
     const scope = projectExternalActionHttpError('credential_scope_denied', 'request-not-disclosed');
     expect(scope).toEqual({ statusCode: 403, payload: { error: 'credential_scope_denied' } });
     expect(ExternalActionHttpErrorSchema.parse(scope.payload)).toEqual(scope.payload);
@@ -688,10 +844,29 @@ describe('External Action API envelope v1', () => {
     for (const status of [200, 400, 401, 404, 500]) {
       expect(externalActionApi.readActionCredentialScopeDeniedHttpFailureV1(status, scope.payload)).toBeNull();
     }
+    expect(ExternalActionHttpErrorSchema.parse({
+      error: 'credential_scope_denied',
+      diagnostic: { admissionStage: 'execution_authorization', grantReason: 'create_not_granted' },
+    })).toEqual({
+      error: 'credential_scope_denied',
+      diagnostic: { admissionStage: 'execution_authorization', grantReason: 'create_not_granted' },
+    });
     expect(ExternalActionHttpErrorSchema.safeParse({
       ...placement.payload,
       details: { target: 'must-not-cross' },
     }).success).toBe(false);
+  });
+
+  it('carries a safe Home authorization cause through the protected Action outer refusal', () => {
+    const failureCause = { phase: 'execution_authorization', errorClass: 'Error' as const, errorCode: null, httpStatus: null };
+    const projected = projectExternalActionHttpError('action_not_admitted', 'mint-request', undefined,
+      undefined, undefined, undefined, failureCause);
+    expect(projected).toEqual({ statusCode: 500, payload: {
+      error: 'invalid_request', code: 'action_not_admitted', requestId: 'mint-request', failureCause,
+    } });
+    expect(ExternalActionHttpErrorSchema.parse(projected.payload)).toEqual(projected.payload);
+    expect(ExternalActionHttpErrorSchema.safeParse({ ...projected.payload,
+      failureCause: { ...failureCause, message: 'PRIVATE_MINT_CAUSE' } }).success).toBe(false);
   });
 
   it('owns separate request and response relay carrier byte ceilings', () => {
