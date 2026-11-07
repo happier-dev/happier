@@ -21,6 +21,7 @@ import type {
     ResolvedRoleContribution,
     ResolvedWorkflowContribution,
     ResolvedInputTypeContribution,
+    ResolvedBotTemplateContribution,
     ResolvedAtmospherePictureContribution,
     ResolvedRegistrySourceContribution,
     ResolvedLanguageServerContribution,
@@ -289,6 +290,7 @@ export function projectLoadedPluginRegistry(
     const voiceModelPackCandidates: ResolvedVoiceModelPackContribution[] = [];
     const roleCandidates: ResolvedRoleContribution[] = [];
     const workflowCandidates: ResolvedWorkflowContribution[] = [];
+    const botTemplateCandidates: ResolvedBotTemplateContribution[] = [];
     const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
     const atmospherePictureCandidates: ResolvedAtmospherePictureContribution[] = [];
     const registrySourceCandidates: ResolvedRegistrySourceContribution[] = [];
@@ -847,6 +849,11 @@ export function projectLoadedPluginRegistry(
         });
     }
 
+    for (const contribution of pluginRegistry.botTemplates) {
+        botTemplateCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
     for (const contribution of pluginRegistry.inputTypes) {
         inputTypeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
@@ -1006,6 +1013,7 @@ export function projectLoadedPluginRegistry(
         voiceModelPacks: Object.freeze(voiceModelPackCandidates),
         roles: Object.freeze(roleCandidates),
         workflows: Object.freeze(workflowCandidates),
+        botTemplates: Object.freeze(botTemplateCandidates),
         inputTypes: Object.freeze(inputTypeCandidates),
         atmospherePictures: Object.freeze(atmospherePictureCandidates),
         registrySources: Object.freeze(registrySourceCandidates),

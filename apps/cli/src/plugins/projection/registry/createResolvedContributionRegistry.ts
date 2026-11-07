@@ -245,6 +245,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
     const atmospherePictures = Object.freeze([...(inputs.atmospherePictures ?? [])].sort((left, right) =>
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
+    const botTemplates = freezeQualifiedContributions(inputs.botTemplates ?? []);
     const registrySources = freezeQualifiedContributions(inputs.registrySources ?? []);
     const storeKinds = freezeQualifiedContributions(inputs.storeKinds ?? []);
     const languageServers = freezeQualifiedContributions(inputs.languageServers ?? []);
@@ -530,6 +531,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         voiceModelPacks,
         roles,
         workflows,
+        botTemplates,
         inputTypes,
         atmospherePictures,
         registrySources,
@@ -1073,6 +1075,7 @@ export function createMergedContributionRegistry(
         voiceModelPacks: Object.freeze([...(builtIn.voiceModelPacks ?? []), ...(plugin.voiceModelPacks ?? [])]),
         roles: Object.freeze([...(builtIn.roles ?? []), ...(plugin.roles ?? [])]),
         workflows: Object.freeze([...(builtIn.workflows ?? []), ...(plugin.workflows ?? [])]),
+        botTemplates: Object.freeze([...(builtIn.botTemplates ?? []), ...(plugin.botTemplates ?? [])]),
         inputTypes: Object.freeze([...(builtIn.inputTypes ?? []), ...(plugin.inputTypes ?? [])]),
         atmospherePictures: Object.freeze([...(builtIn.atmospherePictures ?? []), ...(plugin.atmospherePictures ?? [])]),
         registrySources: Object.freeze([...(builtIn.registrySources ?? []), ...(plugin.registrySources ?? [])]),

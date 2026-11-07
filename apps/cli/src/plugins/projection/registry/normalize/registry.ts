@@ -1,4 +1,5 @@
 import { readDeploymentTargetReferenceRolesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { ResolvedActionAdmittedTarget } from '../types';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
@@ -187,6 +188,7 @@ export type PluginContributionRegistry = Readonly<{
   executionRunProfiles: readonly PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[];
   roles: readonly PluginOwnedRoleContribution[];
   workflows: readonly PluginOwnedContribution<PluginWorkflowContributionV1>[];
+  botTemplates: readonly PluginOwnedContribution<PluginBotTemplateContributionV1>[];
   inputTypes: readonly PluginOwnedContribution<PluginInputTypeContributionV1>[];
   atmospherePictures: readonly PluginOwnedContribution<PluginAtmospherePictureContributionV1>[];
   backupDestinations: readonly PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[];
@@ -424,6 +426,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const executionRunProfiles: PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[] = [];
   const roles: PluginOwnedRoleContribution[] = [];
   const workflows: PluginOwnedContribution<PluginWorkflowContributionV1>[] = [];
+  const botTemplates: PluginOwnedContribution<PluginBotTemplateContributionV1>[] = [];
   const inputTypes: PluginOwnedContribution<PluginInputTypeContributionV1>[] = [];
   const atmospherePictures: PluginOwnedContribution<PluginAtmospherePictureContributionV1>[] = [];
   const backupDestinations: PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[] = [];
@@ -1069,6 +1072,15 @@ export function projectPluginContributionRegistry(params: Readonly<{
       });
     }
 
+    for (const definition of readSemanticDefinitions<PluginBotTemplateContributionV1>('botTemplates')) {
+      botTemplates.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
     for (const definition of readSemanticDefinitions<PluginInputTypeContributionV1>('inputTypes')) {
       inputTypes.push({
         pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
@@ -1242,6 +1254,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     executionRunProfiles: Object.freeze(executionRunProfiles),
     roles: Object.freeze(roles),
     workflows: Object.freeze(workflows),
+    botTemplates: Object.freeze(botTemplates),
     inputTypes: Object.freeze(inputTypes),
     atmospherePictures: Object.freeze(atmospherePictures),
     backupDestinations: Object.freeze(backupDestinations),

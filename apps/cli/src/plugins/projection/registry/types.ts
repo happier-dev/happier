@@ -1,4 +1,5 @@
 import type { ResolvedPluginManifestHostAccessRequestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 import type { PluginActionConnectedAccountPurposeBindingV2 } from '@happier-dev/protocol';
 import type { PluginCollectionListExtensionV1 } from '@happier-dev/protocol';
 import type { AccessProviderContributionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -125,6 +126,7 @@ export type ResolvedComposerReferenceContribution = ResolvedTargetUiContribution
 >;
 export type ResolvedRoleContribution = ResolvedTargetUiContribution<PluginRoleDeclarationV1> & Readonly<{ displayName?: string }>;
 export type ResolvedWorkflowContribution = ResolvedTargetUiContribution<PluginWorkflowContributionV1>;
+export type ResolvedBotTemplateContribution = ResolvedTargetUiContribution<PluginBotTemplateContributionV1>;
 export type ResolvedInputTypeContribution = ResolvedTargetUiContribution<PluginInputTypeContributionV1>;
 export type ResolvedAtmospherePictureContribution = ResolvedTargetUiContribution<PluginAtmospherePictureContributionV1>;
 export type ResolvedRegistrySourceContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginRegistrySourceContributionV1>;
@@ -809,6 +811,7 @@ export type ResolvedContributionInputs = Readonly<{
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     roles?: readonly ResolvedRoleContribution[];
     workflows?: readonly ResolvedWorkflowContribution[];
+    botTemplates?: readonly ResolvedBotTemplateContribution[];
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
@@ -887,6 +890,7 @@ export type ResolvedContributionRegistry = Readonly<{
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     roles?: readonly ResolvedRoleContribution[];
     workflows?: readonly ResolvedWorkflowContribution[];
+    botTemplates?: readonly ResolvedBotTemplateContribution[];
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];

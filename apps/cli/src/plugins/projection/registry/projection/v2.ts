@@ -50,6 +50,7 @@ import { voiceModelPackProjectionFamily, voiceProviderProjectionFamily } from '.
 import { rolesProjectionFamily } from '../roles';
 import { workflowsProjectionFamily } from '../workflows';
 import { inputTypesProjectionFamily } from '../inputTypes';
+import { botTemplatesProjectionFamily } from '../botTemplates';
 import { atmospherePicturesProjectionFamily } from '../atmospherePictures';
 import { storeKindsProjectionFamily } from '../storeKinds';
 import { registrySourcesProjectionFamily } from '../registrySources';
@@ -1062,6 +1063,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         voiceModelPackProjectionFamily,
         rolesProjectionFamily,
         workflowsProjectionFamily,
+        botTemplatesProjectionFamily,
         inputTypesProjectionFamily,
         atmospherePicturesProjectionFamily,
         registrySourcesProjectionFamily,

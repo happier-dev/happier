@@ -98,6 +98,25 @@ async function loadCodeDefinedChannels(): Promise<LoadedPlugin> {
 }
 
 describe('plugin SDK public installable examples', () => {
+  it('projects every public-authored Bot template descriptor without a runtime entrypoint', async () => {
+    const exampleRoot = join(examplesRoot, 'public-authoring');
+    const entryPath = join(exampleRoot, 'botTemplates.ts');
+    const { botTemplateAuthoring } = await import(pathToFileURL(entryPath).href);
+    const plugin = loadedExamplePluginFromManifest(exampleRoot, entryPath, botTemplateAuthoring.manifest);
+    const registry = createResolvedContributionRegistry({ ...projectLoadedPluginContributes({
+      loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} }, provenance: 'external',
+    }) });
+    const entries = buildPluginProjectionV2({ registry, generation: 1 }).familiesById.botTemplates?.entriesById;
+    expect(Object.keys(entries ?? {}).sort()).toEqual(['com.example.bot-templates/researcher', 'com.example.bot-templates/reviewer']);
+    expect(entries?.['com.example.bot-templates/researcher']).toMatchObject({
+      pluginId: plugin.pluginId, pluginVersion: '1.0.0', definition: { id: 'researcher', path: 'templates/researcher.json' },
+    });
+    expect(entries?.['com.example.bot-templates/reviewer']).toMatchObject({
+      definition: { id: 'reviewer', path: './templates/reviewer.json' },
+    });
+    expect(plugin.daemonEntryPath).toBeNull();
+  });
+
   it('projects public-authored inline HTML identically for built-in and external provenance without an Artifact', async () => {
     const publicAuthoring = await loadCodeDefinedPublicAuthoring();
     const occurrenceId = createPluginRuntimeOccurrenceId(publicAuthoring.pluginId);
