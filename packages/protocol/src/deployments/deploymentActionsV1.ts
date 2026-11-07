@@ -329,6 +329,15 @@ export const DeploymentTeardownRefusalDetailsV1Schema = lazyZodSchema(() => z.st
   requiredFact: z.optional(z.string().check(z.minLength(1))),
 }));
 export type DeploymentTeardownRefusalDetailsV1 = z.infer<typeof DeploymentTeardownRefusalDetailsV1Schema>;
+/** Native retirement completed, but final Home removal failed or is unverified. */
+export const DeploymentTeardownEnvironmentPartialDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  environmentId: DeploymentIdentifierV1Schema,
+  step: z.literal('removeEnvironment'),
+  partial: z.literal(true),
+  requiredFact: z.literal('environmentRemoval'),
+  remedy: z.string().check(z.minLength(1)),
+}));
+export type DeploymentTeardownEnvironmentPartialDetailsV1 = z.infer<typeof DeploymentTeardownEnvironmentPartialDetailsV1Schema>;
 export const DeploymentTeardownReasonV1Schema = lazyZodSchema(() => z.enum(['manual', 'previewClosed', 'move', 'decommission']));
 /** Captured at teardown admission and retained alongside its final signed proof. */
 export const DeploymentTeardownDispositionV1Schema = lazyZodSchema(() => z.object({ removeEnvironment: z.literal(true) }));
