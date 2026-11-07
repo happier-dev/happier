@@ -5,6 +5,17 @@ import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connecte
 import { isActionEnabledByActionsSettings } from '../../actions/actionSettings.js';
 
 describe('accountSettings', () => {
+  it('leaves Claude retention unmanaged until selected and rejects invalid day counts without resetting provider settings', () => {
+    expect(accountSettingsParse({}).claudeSessionRetentionV1).toBeUndefined();
+    expect(accountSettingsParse({ claudeSessionRetentionV1: null }).claudeSessionRetentionV1).toBeNull();
+    expect(accountSettingsParse({ claudeSessionRetentionV1: { mode: 'providerDefault' } }).claudeSessionRetentionV1)
+      .toEqual({ mode: 'providerDefault' });
+    expect(accountSettingsParse({ claudeSessionRetentionV1: { mode: 'days', days: 36500 } }).claudeSessionRetentionV1)
+      .toEqual({ mode: 'days', days: 36500 });
+    for (const days of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.POSITIVE_INFINITY, '365']) {
+      expect(accountSettingsParse({ claudeSessionRetentionV1: { mode: 'days', days } }).claudeSessionRetentionV1).toBeNull();
+    }
+  });
   it('defaults execution-run parent completion notifications off and accepts an explicit value', () => {
     expect(accountSettingsParse({}).executionRunsNotifyParentOnCompletionDefault).toBe(false);
     expect(accountSettingsParse({ executionRunsNotifyParentOnCompletionDefault: true }).executionRunsNotifyParentOnCompletionDefault).toBe(true);

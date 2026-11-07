@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -6,10 +6,13 @@ import { PassThrough, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { accountSettingsParse, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { resolveOpenCodeConnectedConfigHomeDir } from '@/backends/opencode/brokerPlugin';
 import { buildPiBrokerMarker } from '@/backends/pi/brokerExtension';
 import { materializeConnectedServicesForSpawn } from './materializeConnectedServicesForSpawn';
+import { createProviderAccountSettingsController } from '@/daemon/lifecycle/providerAccountSettings';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { DaemonState } from '@/api/types';
 import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
 import { HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
@@ -64,6 +67,66 @@ describe('materializeConnectedServicesForSpawn', () => {
 
   afterEach(() => {
     spawnSpy.mockReset();
+  });
+
+  it('reapplies the latest Account intent after a profile completes with an earlier captured policy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-retention-completion-'));
+    const activeServerDir = join(root, 'server');
+    const nativeHome = join(root, 'native');
+    await mkdir(nativeHome, { recursive: true });
+    await writeFile(join(nativeHome, 'settings.json'), '{"cleanupPeriodDays":7}');
+    let state: DaemonState = { status: 'running', startedAt: 101 };
+    let publications = 0;
+    const errors: unknown[] = [];
+    const controller = createProviderAccountSettingsController({
+      scopeKey: 'completion-account', activeServerDir, processEnv: { CLAUDE_CONFIG_DIR: nativeHome },
+      apiMachine: { updateDaemonState: async updater => { const next = updater(state); if (next !== state) publications++; state = next; } },
+      onError: error => errors.push(error),
+    });
+    const select = (settingsVersion: number, days: number) => {
+      const settings = accountSettingsParse({ claudeSessionRetentionV1: { mode: 'days', days },
+        connectedServicesProviderStateSharingSettingsV1: { v: 1,
+          defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {} },
+      });
+      setActiveAccountSettingsSnapshot({ settings, settingsVersion, source: 'network', loadedAtMs: 0,
+        settingsSecretsReadKeys: [], scopeKey: 'completion-account' });
+      return settings;
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt: Date.now() + 3_600_000,
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null, scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE,
+        tokenType: 'Bearer', providerAccountId: null, providerEmail: null },
+    });
+    const materialize = (serverDir: string, accountSettings: ReturnType<typeof accountSettingsParse>, sourceHome = nativeHome) => materializeConnectedServicesForSpawn({
+      agentId: 'claude', materializationKey: 'delayed-profile', activeServerDir: serverDir, baseDir: join(serverDir, 'runs'),
+      recordsByServiceId: new Map([['claude-subscription', record]]), accountSettings,
+      processEnv: { HOME: root, CLAUDE_CONFIG_DIR: sourceHome },
+    });
+    try {
+      // An admitted materialization retains its earlier snapshot while the Account sweep advances.
+      const capturedSettings = select(1, 365);
+      await controller.refresh();
+      select(2, 36500);
+      await controller.refresh();
+      const result = await materialize(activeServerDir, capturedSettings);
+      expect(result).not.toBeNull();
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')).cleanupPeriodDays).toBe(36500);
+      });
+      expect(state.providerSettingsV1?.claude).toMatchObject({ policy: { mode: 'days', days: 36500 } });
+      const confirmedPublications = publications;
+      const requesterHome = join(root, 'requester-native');
+      await mkdir(requesterHome);
+      await writeFile(join(requesterHome, 'settings.json'), '{"cleanupPeriodDays":7}');
+      await materialize(join(root, 'requester-server'), capturedSettings, requesterHome);
+      expect(publications).toBe(confirmedPublications);
+      expect(JSON.parse(await readFile(join(nativeHome, 'settings.json'), 'utf8')).cleanupPeriodDays).toBe(36500);
+      expect(errors).toEqual([]);
+    } finally {
+      controller.stop();
+      resetActiveAccountSettingsSnapshotForTests();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it.each(['profile', 'group'] as const)('preserves existing Codex %s session state while publishing credentials in its stable home', async (selectionKind) => {
@@ -1022,7 +1085,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.CLAUDE_CONFIG_DIR).toBe(expectedClaudeConfigDir);
     expect(result!.env[HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]).toBe(expectedClaudeConfigDir);
     expect(JSON.parse(result!.env[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]!)).toEqual(
-      ['CLAUDE_CONFIG_DIR'],
+      ['CLAUDE_CONFIG_DIR', 'HAPPIER_CLAUDE_NATIVE_CONFIG_DIR'],
     );
     await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8'))
       .resolves.toBe('{"theme":"dark"}\n');
@@ -1105,7 +1168,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.CLAUDE_CONFIG_DIR).toBe(expectedClaudeConfigDir);
     expect(result!.env[HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]).toBe(expectedClaudeConfigDir);
     expect(JSON.parse(result!.env[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]!)).toEqual(
-      ['CLAUDE_CONFIG_DIR'],
+      ['CLAUDE_CONFIG_DIR', 'HAPPIER_CLAUDE_NATIVE_CONFIG_DIR'],
     );
     await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')).resolves.toBe('{"theme":"dark"}\n');
     await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.local.json'), 'utf8')).resolves.toContain('Bash(echo *)');
@@ -1221,7 +1284,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     );
     expect(result!.env[HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]).toBe(result!.env.CLAUDE_CONFIG_DIR);
     expect(JSON.parse(result!.env[HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]!)).toEqual(
-      ['ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR'],
+      ['ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR', 'HAPPIER_CLAUDE_NATIVE_CONFIG_DIR'],
     );
     await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')).resolves.toBe('{"theme":"dark"}\n');
     await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR!, '.claude.json'), 'utf8')).rejects.toThrow();

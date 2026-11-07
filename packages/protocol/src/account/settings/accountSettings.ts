@@ -25,6 +25,7 @@ import {
 import { SESSION_PERMISSION_MODES } from '../../sessionMetadata/sessionPermissionModes.js';
 import { ClientEncryptionRequirementSchema } from '../../encryption/clientEncryptionRequirement.js';
 import { lazySchema } from '../../lazySchema.js';
+import { ClaudeSessionRetentionPolicyV1Schema } from '../../providers/claude/sessionRetention.js';
 
 function rekeyLegacyBuiltInAgentMap<T>(raw: unknown): Record<string, T> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -371,6 +372,7 @@ export const AccountSettingsSchema = lazySchema(() => z.preprocess(
         .catch(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION)
         .default(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION),
       clientEncryptionRequirementV1: ClientEncryptionRequirementSchema,
+      claudeSessionRetentionV1: ClaudeSessionRetentionPolicyV1Schema.nullable().optional().catch(null),
       backendEnabledByTargetKey: BackendEnabledByTargetKeySchema.default({}),
       backendCliSourcePreferenceByTargetKey: BackendCliSourcePreferenceByTargetKeySchema,
       scmIncludeCoAuthoredBy: z.boolean().optional().catch(undefined),

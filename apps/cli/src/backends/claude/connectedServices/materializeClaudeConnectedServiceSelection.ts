@@ -12,7 +12,7 @@ import type { ConnectedServicesProviderMaterializerInput } from '@/daemon/connec
 import type { ConnectedServiceResolvedSelection } from '@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn';
 
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
-import { CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT_ENV_KEY } from '@/backends/claude/utils/resolveClaudeLaunchSettingsOverlay';
+import { CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT_ENV_KEY, CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY } from '@/backends/claude/utils/resolveClaudeLaunchSettingsOverlay';
 import { materializeClaudeAnthropicApiKeyAuth } from './materializeClaudeAnthropicApiKeyAuth';
 import {
   materializeClaudeSubscriptionNativeAuthHome,
@@ -57,6 +57,10 @@ function resolveClaudeConfigurationSourceEnv(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
   targetClaudeConfigDir: string;
 }>): NodeJS.ProcessEnv {
+  const nativeConfigDir = params.processEnv[CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY]?.trim();
+  if (nativeConfigDir) {
+    return { ...params.processEnv, CLAUDE_CONFIG_DIR: nativeConfigDir };
+  }
   // Credential provenance governs auth preservation, not configuration freshness. Always
   // reconcile from the configured native home, never an earlier materialized copy of it.
   const configuredClaudeConfigDir = resolveConfiguredClaudeConfigDir({ env: params.processEnv });
@@ -142,6 +146,14 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
     selection: params.selection ?? null,
   });
   if (!claudeConfigDir) return null;
+  const nativeSourceEnv = resolveClaudeConfigurationSourceEnv({
+    activeServerDir: params.activeServerDir,
+    processEnv: params.processEnv,
+    targetClaudeConfigDir: claudeConfigDir,
+  });
+  const nativeLaunchEnv = {
+    [CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY]: resolveConfiguredClaudeConfigDir({ env: nativeSourceEnv }),
+  };
   const poolPolicy = params.selection?.kind === 'group'
     ? ConnectedServiceAuthGroupPolicyV1Schema.parse(params.selection.policy ?? {})
     : null;
@@ -196,7 +208,7 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
           || hasBlockingDiagnostics(canonicalProfileMaterialized.diagnostics)
         ) {
           return {
-            env: { CLAUDE_CONFIG_DIR: claudeConfigDir },
+            env: { CLAUDE_CONFIG_DIR: claudeConfigDir, ...nativeLaunchEnv },
             targetMaterializedRoot: claudeConfigDir,
             diagnostics: canonicalProfileMaterialized.diagnostics,
             identityDiagnostic: canonicalProfileMaterialized.identityDiagnostic,
@@ -226,7 +238,7 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
       validateGroupMutationCurrentness: params.validateGroupMutationCurrentness,
     });
     return {
-      env: { ...materialized.env, ...poolLaunchEnv },
+      env: { ...materialized.env, ...poolLaunchEnv, ...nativeLaunchEnv },
       targetMaterializedRoot: claudeConfigDir,
       diagnostics: dedupeDiagnostics([...groupSourceDiagnostics, ...materialized.diagnostics]),
       identityDiagnostic: materialized.identityDiagnostic,
@@ -234,7 +246,7 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
   }
 
   const diagnostics = params.sessionStateMode === 'existing' ? [] : (await syncClaudeConnectedServiceHome({
-    sourceEnv: params.processEnv,
+    sourceEnv: nativeSourceEnv,
     targetDir: claudeConfigDir,
     accountSettings: params.accountSettings ?? null,
     sessionDirectory: params.sessionDirectory ?? null,
@@ -244,6 +256,7 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
     env: {
       ...materialized.env,
       ...poolLaunchEnv,
+      ...nativeLaunchEnv,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
     targetMaterializedRoot: claudeConfigDir,

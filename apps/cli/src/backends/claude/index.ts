@@ -129,6 +129,8 @@ export const agent = {
   resolveExistingSessionHandoffState: async (params) =>
     await (await import('./sessionHandoff/resolveExistingSessionHandoffState')).resolveExistingClaudeSessionHandoffState(params),
   needsAccountSettingsForProbes: true,
+  applyAccountSettings: async (params) =>
+    await (await import('./settings/applyClaudeSessionRetention')).applyClaudeAccountSettings(params),
   resolveModelsProbeVariant: ({ connectedServices }) => {
     const binding = connectedServices?.bindingsByServiceId?.['claude-subscription'];
     if (!binding || binding.source !== 'connected') return 'claude:native';

@@ -43,6 +43,17 @@ export function isMachineOnline(machine: Machine, nowMs: number = Date.now()): b
     return ageMs <= graceMs;
 }
 
+/** Next presence transition; consumers register this deadline with the shared runtime clock. */
+export function readMachineStatusNextRefreshAtMs(machine: Machine, nowMs: number = Date.now()): number | null {
+    if (!isMachineOnline(machine, nowMs)) return null;
+    const graceMs = readMachineOnlineGraceMsFromEnv();
+    const activeAt = typeof machine.activeAt === 'number' ? machine.activeAt : 0;
+    if (graceMs <= 0 || !activeAt || !Number.isFinite(activeAt)) return null;
+    // Online includes the grace boundary, so the first offline instant is one millisecond later.
+    const deadline = activeAt + graceMs + 1;
+    return Number.isFinite(deadline) && deadline > nowMs ? deadline : null;
+}
+
 export function getMachineDisplayName(
     machine:
         | Readonly<{ id?: string | null; metadata?: Readonly<{ displayName?: string | null; host?: string | null }> | null }>

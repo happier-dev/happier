@@ -66,6 +66,7 @@ describe('Claude selection configuration sharing', () => {
   it.each(['profile', 'group'] as const)('carries the per-pool Claude wait preference without changing shared %s settings', async (kind) => {
     const { source, materialize, makeRecord, getEnv } = await fixture(kind);
     await materialize();
+    expect(getEnv().HAPPIER_CLAUDE_NATIVE_CONFIG_DIR).toBe(source);
     expect(getEnv().HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT).toBe(kind === 'group' ? '0' : undefined);
     await materialize(undefined, makeRecord(), 'shared', { claudeCodeAutoContinueAtUsageLimit: true });
     expect(getEnv().HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT).toBe(kind === 'group' ? '1' : undefined);

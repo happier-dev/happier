@@ -337,6 +337,9 @@ export function query(config: {
 	    } = config
 
     const envOverlay = env ?? {}
+    const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
+    const baseEnv = isCommandOnly ? getCleanEnv() : process.env
+    const spawnEnv = prepareClaudeSubprocessEnv({ baseEnv, envOverlay })
 
     // Build command arguments
     const args = ['--output-format', 'stream-json', '--verbose']
@@ -361,12 +364,6 @@ export function query(config: {
 	    if (permissionMode && (forcePermissionMode || permissionMode !== 'default')) {
 	        args.push('--permission-mode', permissionMode)
 	    }
-        const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
-            settingsPath,
-            launchSettings: {},
-            env: { ...process.env, ...envOverlay },
-        })
-	    if (settingsOverlay) args.push('--settings', settingsOverlay)
 
 	    if (fallbackModel) {
         if (model && fallbackModel === model) {
@@ -380,6 +377,15 @@ export function query(config: {
 	        args.push(...extraArgs);
 	    }
 
+        const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+            args,
+            settingsPath,
+            launchSettings: {},
+            cwd: cwd,
+            env: { ...baseEnv, ...envOverlay, ...spawnEnv },
+        })
+	    if (settingsOverlay) args.push('--settings', settingsOverlay)
+
 	    // Handle prompt input
 	    if (typeof prompt === 'string') {
 	        args.push('--print', prompt.trim())
@@ -392,7 +398,6 @@ export function query(config: {
     // - If it's just 'claude' command → resolve + wrap on Windows (PATHEXT .cmd/.bat)
     // - If it's a full path to binary → spawn(path, args)
     const isJsFile = pathToClaudeCodeExecutable.endsWith('.js') || pathToClaudeCodeExecutable.endsWith('.cjs')
-    const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
     const isFirstPartyWrapper = pathToClaudeCodeExecutable === resolveCliRuntimeAssetPath('scripts', 'claude_remote_launcher.cjs')
     const isBunRuntime = typeof process.versions.bun === 'string'
     const resolvedExecutable =
@@ -419,8 +424,6 @@ export function query(config: {
 
     // Spawn Claude Code process
     // Use clean env for global claude to avoid local node_modules/.bin taking precedence
-    const baseEnv = isCommandOnly ? getCleanEnv() : process.env
-    const spawnEnv = prepareClaudeSubprocessEnv({ baseEnv, envOverlay })
     logClaudeRuntimeAuthEnvDiagnostic({
         logPrefix: 'claudeSdkQuery',
         sessionId: null,

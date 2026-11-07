@@ -2,6 +2,8 @@ export { createClaudeUnifiedTuiControlController } from './controller';
 export {
   createClaudeSettingsGuard,
   resolveClaudeConfigRootFromEnv,
+  resolveClaudeSettingsFilePath,
+  withClaudeSettingsWriteLock,
   type SettingsGuard,
   type SettingsGuardSession,
   type SettingsGuardRestoreResult,

@@ -277,6 +277,7 @@ export const materializeClaudeConnectedServiceRuntimeAuthSelection: ConnectedSer
     return {
       ...params.baseSelection,
       targetMaterializedEnv: {
+        ...materialized.env,
         CLAUDE_CONFIG_DIR: sharedGroupSurfaceMetadata.runtimeClaudeConfigDir,
       },
       targetMaterializedRoot: sharedGroupSurfaceMetadata.runtimeMaterializedRoot,

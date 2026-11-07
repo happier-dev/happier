@@ -1,3 +1,4 @@
+import { notifyProviderAccountSettingsMaterialized } from '@/daemon/lifecycle/providerAccountSettingsMaterializations';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
@@ -310,7 +311,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     materializationKey: params.materializationKey,
     materializationIdentity: params.connectedServiceMaterializationIdentityV1 ?? null,
   });
-  return await runSerializedMaterializationForRoot(rootDir, async () => {
+  const result = await runSerializedMaterializationForRoot(rootDir, async () => {
   params.signal?.throwIfAborted();
   const previousMaterializedRoot = await resolveConnectedServicePreviousStateRoot({
     previousRoot: params.previousMaterializedRoot ?? rootDir,
@@ -494,4 +495,9 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
   }
   });
+  // Refresh only after the materializer's home and settings locks have been released.
+  if (result && params.materializationPurpose !== 'probe') {
+    await notifyProviderAccountSettingsMaterialized({ activeServerDir: params.activeServerDir });
+  }
+  return result;
 }

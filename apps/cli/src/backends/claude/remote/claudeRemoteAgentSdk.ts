@@ -731,10 +731,11 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
             if (verboseEnabled) out.verbose = null;
             const settings = resolveClaudeLaunchSettingsOverlayArg({
                 settingsPath: undefined,
+                cwd: opts.path,
                 launchSettings: resolvedUltracode ? { ultracode: true } : {},
                 // The subprocess environment intentionally strips Happier's selection marker.
                 // Resolve launch policy from the runner before that boundary is sanitized.
-                env: { ...process.env, ...sessionEnvOverlay },
+                env: { ...process.env, ...sessionEnvOverlay, ...claudeSubprocessEnv },
             });
             if (settings) out.settings = settings;
             return Object.keys(out).length > 0 ? out : undefined;
