@@ -1,11 +1,25 @@
 import * as React from 'react';
-import { Status, TechnicalDetailsDisclosure, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, Status, TechnicalDetailsDisclosure, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import {
   readTriageListFailureLine,
   readTriageListFailureNotice,
   type TriageListShellFailureV1,
 } from './windowState.js';
+
+/** The press beside a failure line: it never outweighs the sentence it serves. */
+export function TriageFailureLineAction(props: Readonly<{
+  label: string;
+  busy?: boolean;
+  disabled?: boolean;
+  onPress: () => unknown;
+}>): React.ReactElement {
+  return <Button accessibilityLabel={props.label} variant="plain" size="small" onPress={props.onPress}
+    {...(props.busy === undefined ? {} : { busy: props.busy })}
+    {...(props.disabled === undefined ? {} : { disabled: props.disabled })}>
+    <Text variant="meta" tone="secondary" value={props.label} />
+  </Button>;
+}
 
 /** The failure beside retained rows: one line, with the one press that can help. */
 export function TriageListFailureStatus(props: Readonly<{

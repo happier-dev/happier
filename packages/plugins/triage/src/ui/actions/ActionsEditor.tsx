@@ -85,6 +85,8 @@ const TRIAGE_ACTIONS_EDITOR_SCROLL_STYLE_V1 = Object.freeze({ flexShrink: 1, min
 
 export type TriageActionsEditorPropsV1 = Readonly<{
   actions: TriageMountedActionsV1;
+  /** Opens straight on this action's form, as its row's Edit would, once the catalog has read it. */
+  initialActionId?: string;
   onClose?: () => void;
 }>;
 
@@ -161,6 +163,16 @@ export function TriageActionsEditor(props: TriageActionsEditorPropsV1): React.Re
     target: EditorTarget;
     draft: TriageActionEditorDraftV1;
   }> | null>(null);
+  // The requested action opens once, when the catalog first holds it; closing its form leaves the list.
+  const initialActionId = React.useRef(props.initialActionId);
+  React.useEffect(() => {
+    const actionId = initialActionId.current;
+    if (actionId === undefined || actions.revision === null) return;
+    const action = actions.actions.find((candidate) => candidate.actionId === actionId);
+    if (action === undefined) return;
+    initialActionId.current = undefined;
+    setEditor({ target: { kind: 'update', actionId, baseRevision: actions.revision }, draft: triageActionDraftV1(action) });
+  }, [actions.actions, actions.revision]);
   const target = editor?.target ?? null;
   const draft = editor?.draft ?? null;
   const setDraft = React.useCallback((next: TriageActionEditorDraftV1) => {

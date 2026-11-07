@@ -1,6 +1,7 @@
-import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageReadActionsResultV1Schema, TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 } from '../actions/actionsCatalogProtocol.js';
+import type { JsonValue, PluginCancellationOptions, PluginContributionRef } from '@happier-dev/plugin-sdk';
+import type { TriageSourceWorkflowSubjectV1, TriageSessionHandoffInputV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageReadActionsResultV1Schema } from '../actions/actionsCatalogProtocol.js';
+import { TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
 import { planTriageOfferableActionsV1, planTriageOfferedActionsV1, type TriageActionV1 } from '../settings/actions.js';
 
 import type {
@@ -8,6 +9,25 @@ import type {
     TriageProfileCheckoutPreferenceV1,
     TriageProfilePlacementPreferenceV1,
 } from './actionLaunch.js';
+import { resolveTriageActionPlacementV1 } from './actionLaunch.js';
+import { readTriageProjectRegistryV1 } from './projectCandidates.js';
+import type { TriageForgeIdentityV1 } from './launchPlacement.js';
+
+/** All configured starts consult the same current project/placement owner. */
+export async function readTriageActionPlacementV1(
+    host: TriageActionResolutionHostV1,
+    action: Pick<TriageActionV1, 'workspaceMode'>,
+    profile: TriageActionProfilePreferencesV1 | undefined,
+    repository: TriageForgeIdentityV1 | undefined,
+    options?: PluginCancellationOptions,
+) {
+    const registry = await readTriageProjectRegistryV1(host, options);
+    return { ...resolveTriageActionPlacementV1({
+        workspaceMode: action.workspaceMode, profile, forge: repository,
+        projects: registry.status === 'read' ? registry.projects : [],
+        registryComplete: registry.status === 'read' && registry.complete,
+    }), availableCandidates: registry.status === 'read' ? registry.projects : [] };
+}
 
 /**
  * The two references a configured Triage action carries, resolved through the
@@ -34,7 +54,7 @@ export const TRIAGE_PROMPT_INVOCATIONS_LIST_ACTION_ID_V1 = 'prompts.invocations.
 
 export type TriageActionResolutionHostV1 = Readonly<{
     executeAction(
-        action: string,
+        action: string | PluginContributionRef,
         input: JsonValue,
         options?: PluginCancellationOptions,
     ): Promise<unknown>;
@@ -52,7 +72,7 @@ export async function resolveTriageConfiguredActionForExecutionV1(
 > {
     try {
         const read = TriageReadActionsResultV1Schema.parse(await host.executeAction(
-            TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, { v: 1 }, options,
+            TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1, { v: 1 }, options,
         ));
         if (options?.signal?.aborted || read.availability === 'unavailable') {
             return { status: 'unavailable', reason: 'catalogUnavailable' };
@@ -302,8 +322,11 @@ export function resolveTriageActionInstructionV1(
             }>;
     }>,
     resolvedPromptText: string | null,
+    requestedWork?: Readonly<{ task: TriageSessionHandoffInputV1['task']; context: TriageSessionHandoffInputV1['context']['kind'] }>,
 ): string | null {
     if (resolvedPromptText !== null) return resolvedPromptText;
+    if (requestedWork?.task === 'draftReleaseNotes') return 'Draft release notes using the supplied evidence.';
+    if (requestedWork?.context === 'repository') return 'Fix the problem described in the supplied evidence.';
     const fallback = action.target.seededFallbackInstruction;
     return fallback !== undefined && fallback.trim().length > 0 ? fallback : null;
 }

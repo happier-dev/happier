@@ -66,9 +66,10 @@ const mounted: PluginUiTestkit[] = [];
 
 async function mountEditor(
   actions: TriageMountedActionsV1,
+  initialActionId?: string,
 ): Promise<PluginUiTestkit> {
   const surface = defineUiSurface(() => (
-    <TriageActionsEditor actions={actions} />
+    <TriageActionsEditor actions={actions} {...(initialActionId === undefined ? {} : { initialActionId })} />
   ));
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -203,5 +204,15 @@ describe('the configured-action list', () => {
           node.getAttribute('aria-disabled') !== 'true',
       ),
     ).toBe(false);
+  });
+
+  it('opens straight on the action it was asked to edit (Edit action… from an entry)', async () => {
+    const administered: TriageAdministerActionInputV1[] = [];
+    const action = TRIAGE_SEEDED_ACTIONS_V1.actions[1]!;
+    const editor = await mountEditor(mountedActions({ read: CONFIGURED }, administered), action.actionId);
+
+    await expect(editor.getByRole('button', { name: 'Save' })).resolves.toBeDefined();
+    const values = Array.from(document.querySelectorAll<HTMLInputElement>('input')).map((input) => input.value);
+    expect(values).toContain(action.label);
   });
 });

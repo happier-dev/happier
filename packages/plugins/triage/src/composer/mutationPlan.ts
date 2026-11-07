@@ -8,7 +8,7 @@ import type {
     ComposerSnapshotV1,
     ComposerTransactionV1,
 } from '@happier-dev/plugin-sdk/ui';
-import type { TriageEvidenceCandidateV1 } from '@happier-dev/triage-sources/ui';
+import type { TriageEvidenceCandidateV1 } from '@happier-dev/triage-sources/runtime';
 import type {
     TriageEntryLocatorV1,
     TriageEntryRefV1,
@@ -22,6 +22,23 @@ import {
     parseTriageComposerEntryAttachmentValue,
 } from './attachmentValue.js';
 import { boundTriageDisplayText } from '../ui/window/boundDisplayText.js';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
+import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+
+/** The existing attachment envelope carries selected data without an entry identity. */
+export function buildTriageForgeEvidenceAttachmentDraftV1(evidence: SessionInputForgeEvidenceV1): TriageEntryAttachmentDraftV1 {
+    const forgeEvidence = { v: 1 as const, items: evidence.items.map((item) => ({
+        source: { ...item.source }, author: { ...item.author }, text: item.text,
+    })) };
+    return {
+        attachmentLocalId: TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1,
+        value: {
+            key: computeCanonicalDomainSeparatedDigest('happier:triage:composer-forge-evidence-key:v1', [JSON.stringify(forgeEvidence)]),
+            value: { v: 1, forgeEvidence },
+            presentation: { label: 'Selected evidence' },
+        },
+    };
+}
 
 /**
  * The exact content of one Triage attach or remove (`core/COMPOSER.md` §3).
@@ -43,11 +60,11 @@ export type TriageEntryAttachmentPlanV1 =
 /**
  * The disclosure-approved candidate shape is declared once, by the shared
  * source bridge both halves of this seam consume
- * (`@happier-dev/triage-sources/ui`): a source discloses it and this planner
+ * (`@happier-dev/triage-sources/runtime`): a source discloses it and this planner
  * turns it into the one transaction. A Triage-local copy would be a second
  * declaration of one wire between two packages that already share it.
  */
-export type { TriageEvidenceCandidateV1 } from '@happier-dev/triage-sources/ui';
+export type { TriageEvidenceCandidateV1 } from '@happier-dev/triage-sources/runtime';
 
 export type TriageTierBEvidenceInsertionPlanV1 =
     | Readonly<{ status: 'transaction'; transaction: ComposerTransactionV1 }>

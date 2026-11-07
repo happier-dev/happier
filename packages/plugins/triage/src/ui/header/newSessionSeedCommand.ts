@@ -2,7 +2,7 @@ import type {
     OpenNewSessionRequest,
     OpenNewSessionOptions,
 } from '@happier-dev/plugin-sdk/ui';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 
 /**
  * The one path to "put this on the host's New Session screen and open it".
@@ -24,9 +24,19 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 
 export type TriageNewSessionSeedV1 = Readonly<OpenNewSessionRequest>;
 
+export type TriageNewSessionFailureV1 = Readonly<{ codes: readonly string[]; requestId?: string }>;
+
+/** Keep public diagnostic identifiers, never arbitrary error messages or details. */
+export function projectTriageNewSessionFailureV1(error: unknown): TriageNewSessionFailureV1 | undefined {
+    if (!isPluginError(error)) return undefined;
+    const requestId = readPluginErrorRequestIdV1(error);
+    return { codes: [error.code, ...(error.diagnostics ?? []).map(diagnostic => diagnostic.code)],
+        ...(requestId === undefined ? {} : { requestId }) };
+}
+
 export type TriageNewSessionSeedHostV1 = Readonly<{
     version(): Readonly<{ methods: readonly string[] }>;
-    openNewSession(
+    openNewSession?(
         request: TriageNewSessionSeedV1,
         options?: OpenNewSessionOptions,
     ): Promise<void>;
@@ -40,7 +50,7 @@ export type TriageNewSessionSeedResultV1 =
     /** The person declined or dismissed the host's preparation confirmation. */
     | Readonly<{ status: 'cancelled' }>
     /** The screen could not be opened, or the host refused the seed. */
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; failure?: TriageNewSessionFailureV1 }>;
 
 export async function requestTriageNewSessionSeed(
     host: TriageNewSessionSeedHostV1,
@@ -53,7 +63,7 @@ export async function requestTriageNewSessionSeed(
     } catch {
         return { status: 'unsupported' };
     }
-    if (!installed.includes('openNewSession')) return { status: 'unsupported' };
+    if (!installed.includes('openNewSession') || !host.openNewSession) return { status: 'unsupported' };
 
     try {
         await host.openNewSession(seed, options);
@@ -65,7 +75,7 @@ export async function requestTriageNewSessionSeed(
             || error.diagnostics?.some((diagnostic) => diagnostic.code === declined))) {
             return { status: 'cancelled' };
         }
-        return { status: 'unavailable' };
+        return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };
     }
     return { status: 'seeded' };
 }

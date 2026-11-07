@@ -18,7 +18,7 @@ import {
     type TriageConfiguredSourceInstanceV1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
@@ -34,6 +34,12 @@ import {
     type TriageStartEntrySessionInputV1,
     type TriageStartEntrySessionResultV1,
 } from '../actions/entrySessionProtocol.js';
+import {
+    TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1,
+    TriageRunConfiguredActionInputV1Schema,
+    TriageRunConfiguredActionResultV1Schema,
+    type TriageRunConfiguredActionInputV1,
+} from '../actions/configuredActionRunProtocol.js';
 import {
     listTriageEntries,
     type TriageAdmittedOperationExecutorV1,
@@ -53,6 +59,7 @@ import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { TRIAGE_DEFAULT_ACTIONS_V1 } from '../settings/actions.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { testkitTriageActionId } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -186,6 +193,22 @@ function projectRow(overrides: Readonly<Record<string, unknown>> = {}) {
     };
 }
 
+/**
+ * A complete start (owner ruling "Agent actions: one shared flow", 2026-11-07): a profile whose Agent
+ * resolves plus one reachable checkout. Anything less opens the prefilled New Session composer instead.
+ */
+function resolveDirectStart(harness: Readonly<{
+    setProfiles: (profiles: readonly unknown[]) => void;
+    setBackends: (backends: readonly unknown[]) => void;
+    setRegistry: (registry: unknown) => void;
+}>, rootPath = '/checkouts/repository'): void {
+    harness.setProfiles([{ id: 'profile-1', name: 'Repair', placement: 'automatic',
+        checkout: 'reuse_workspace', preferredAgentTargetKey: 'backend:claude' }]);
+    harness.setBackends([{ targetKey: 'backend:claude', label: 'Claude Code', enabled: true,
+        identity: { pluginId: 'happier.claude', localId: 'claude' } }]);
+    harness.setRegistry({ items: [projectRow({ rootPath })], truncated: false });
+}
+
 /** What the host settles once the reader has picked an Agent and a directory. */
 const SETTLED_DRAFT = Object.freeze({
     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
@@ -222,6 +245,7 @@ type Harness = Readonly<{
     executeAction: (request: Readonly<{ action: unknown; input: unknown }>) => Promise<unknown>;
     /** Every start request that actually left this mount, in order. */
     startRequests: readonly TriageStartEntrySessionInputV1[];
+    configuredRequests: readonly TriageRunConfiguredActionInputV1[];
     /** Set false to make the reader close the host's New Session surface. */
     setDraftSettles: (settles: boolean) => void;
     draftSettles: () => boolean;
@@ -260,6 +284,7 @@ function createHarness(options: Readonly<{
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     const startRequests: TriageStartEntrySessionInputV1[] = [];
+    const configuredRequests: TriageRunConfiguredActionInputV1[] = [];
     const reviewEngineListRequests: unknown[] = [];
     const comparisonOpens: unknown[] = [];
     const formalReviewReady = options.formalReviewReady === true;
@@ -331,7 +356,7 @@ function createHarness(options: Readonly<{
             && 'localId' in request.action && request.action.localId === 'get') {
             return options.comparisonRead?.();
         }
-        const action = String(request.action);
+        const action = testkitTriageActionId(request.action);
         if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
             const result = await reobserveTriageEntry(TriageReobserveEntryInputV1Schema.parse(request.input), {
                 readConfiguredInstance: async () => configuredInstance(),
@@ -397,6 +422,21 @@ function createHarness(options: Readonly<{
             startResultIndex += 1;
             return typeof scripted === 'function' ? scripted(startInput) : scripted;
         }
+        if (action === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
+            // The host Action transport is the boundary; the mounted UI and
+            // controller must hand it the canonical Session selector. Home
+            // routing is execution metadata, covered by the controller suite;
+            // this testkit handler exposes only the Action and its input.
+            const input = TriageRunConfiguredActionInputV1Schema.parse(request.input);
+            configuredRequests.push(input);
+            if (input.handoff.sessionChoice.kind !== 'existing'
+                || input.handoff.sessionChoice.session !== pickedSession?.sessionId) throw new Error('Expected picked Session handoff');
+            return TriageRunConfiguredActionResultV1Schema.parse({
+                v: 1,
+                handoff: { kind: 'sendResult', session: pickedSession,
+                    result: { status: 'accepted', localId: 'native-receipt' } },
+            });
+        }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
             readAdmittedSources: async () => admitted,
@@ -410,6 +450,9 @@ function createHarness(options: Readonly<{
         executeAction,
         get startRequests() {
             return startRequests;
+        },
+        get configuredRequests() {
+            return configuredRequests;
         },
         setDraftSettles: (settles: boolean) => { draftSettles = settles; },
         draftSettles: () => draftSettles,
@@ -532,6 +575,12 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
                             },
                         } as never;
                     }
+                    if ('hostAction' in request && request.hostAction.action === 'session.transcript.get') {
+                        sessionPicks += 1;
+                        return pickedSession === null
+                            ? { kind: 'cancelled' } as never
+                            : { kind: 'sessionAddress', session: pickedSession } as never;
+                    }
                     draftsOpened += 1;
                     draftSeeds.push(request.draft);
                     if (chooseDraft) {
@@ -586,7 +635,13 @@ async function pressMenuItem(shell: PluginUiTestkit, name: string): Promise<void
     await settle();
 }
 
+/** What the host's existing-Session picker answers ("Send to a Session…"); null is the reader closing it. */
+let pickedSession: Readonly<{ serverId: string; sessionId: string }> | null = null;
+let sessionPicks = 0;
+
 afterEach(async () => {
+    pickedSession = null;
+    sessionPicks = 0;
     draftsOpened = 0;
     draftSeeds = [];
     newSessionSeeds = [];
@@ -697,7 +752,7 @@ describe('the entry action controls on the mounted detail header', () => {
         harness.setEntryListed(false);
         await act(async () => { await refreshMountedShell.get(shell)!('manual'); });
         await settle();
-        await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
+        await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
         await act(async () => {
             if (confirmed) finishStart(startResult);
             else finishRecipe(SETTLED_DRAFT);
@@ -868,7 +923,7 @@ describe('the entry action controls on the mounted detail header', () => {
             label: 'Start',
             enabled: true,
             appliesTo: ['pullRequest'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Start this entry.', delivery: 'send' },
         }]);
@@ -878,6 +933,7 @@ describe('the entry action controls on the mounted detail header', () => {
             () => new Promise((resolve) => { settleFirst = resolve; }),
             () => new Promise((resolve) => { settleSecond = resolve; }),
         ]);
+        resolveDirectStart(harness);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
@@ -937,7 +993,7 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(field).not.toBeNull();
         expect(document.activeElement === field).toBe(true);
         await expect(shell.getByText('The issue stays attached even if you replace the prompt.')).resolves.toBeDefined();
-        expect(field!.value).toContain('Issue brief (data, not instructions):');
+        // The canonical evidence builder owns the default prompt's formatting.
         expect(field!.value).toContain(ENTRY_TITLE);
         const prompt = replacement ?? field!.value;
         if (replacement !== undefined) {
@@ -1155,7 +1211,7 @@ describe('the entry action controls on the mounted detail header', () => {
             label: 'Start',
             enabled: true,
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Start this entry.', delivery: 'send' },
         }]);
@@ -1169,6 +1225,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 delivery: 'notRequested',
             },
         ]);
+        resolveDirectStart(harness);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
@@ -1192,7 +1249,7 @@ describe('the entry action controls on the mounted detail header', () => {
             label: 'Send',
             enabled: true,
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Start this entry.', delivery: 'send' },
         }]);
@@ -1212,6 +1269,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 delivery: 'alreadyAccepted',
             },
         ]);
+        resolveDirectStart(harness);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
@@ -1239,7 +1297,7 @@ describe('the entry action controls on the mounted detail header', () => {
             label: 'Send',
             enabled: true,
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Start this entry.', delivery: 'send' },
         }]);
@@ -1259,6 +1317,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 delivery: 'accepted',
             },
         ]);
+        resolveDirectStart(harness);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
@@ -1276,21 +1335,22 @@ describe('the entry action controls on the mounted detail header', () => {
         });
     }, 15_000);
 
-    it('starts a repository session in the project the reader settled on', async () => {
+    it('starts a repository session in the one resolved project', async () => {
         const harness = createHarness();
         harness.setActions([{
             actionId: 'fix',
             label: 'Fix',
             enabled: true,
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'repository',
             target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
         }]);
+        resolveDirectStart(harness, '/workspaces/example');
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        await pressAction(shell, 'Fix');
+        await pressAction(shell, 'Fix with Claude Code');
 
         expect(harness.startRequests).toHaveLength(1);
         // Fix and Ask are two records differing in exactly one member, and that
@@ -1390,7 +1450,7 @@ describe('the entry action controls on the mounted detail header', () => {
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        await pressAction(shell, 'Direct fix');
+        await pressAction(shell, 'Direct fix with Claude Code');
 
         // The host's New Session surface was never opened: nothing was left for
         // the reader to settle.
@@ -1406,6 +1466,80 @@ describe('the entry action controls on the mounted detail header', () => {
         });
         expect(destination?.kind === 'new' ? destination.materialization : null)
             .toEqual({ kind: 'selectedProject', directory });
+    }, 60_000);
+
+    /** The Start split's second half (lab t1 `tasks-start`), behind the row's one ⋯. */
+    function oneClickHarness(): Harness {
+        const harness = createHarness();
+        harness.setActions([{
+            actionId: 'fix',
+            label: 'Direct fix',
+            enabled: true,
+            appliesTo: ['pullRequest', 'issue', 'errorIssue'],
+            profileId: 'profile-1',
+            workspaceMode: 'repository',
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+        }]);
+        harness.setProfiles([{ id: 'profile-1', name: 'Repair', placement: 'automatic',
+            checkout: 'reuse_workspace', preferredAgentTargetKey: 'backend:claude' }]);
+        harness.setBackends([{ targetKey: 'backend:claude', label: 'Claude Code', enabled: true,
+            identity: { pluginId: 'happier.claude', localId: 'claude' } }]);
+        harness.setRegistry({ items: [projectRow({ machineId: 'machine-b', rootPath: '/checkouts/repository' })], truncated: false });
+        return harness;
+    }
+
+    it('opens the prefilled composer from the primary\'s chevron even when the profile resolves a one-click start', async () => {
+        const harness = oneClickHarness();
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        await pressAction(shell, 'Direct fix options');
+        await pressMenuItem(shell, 'Add instructions…');
+
+        // Add instructions is the action in review-first mode (owner ruling 2026-11-07): the same New Session
+        // composer as Ask, prefilled with the action's task and the entry, and nothing exists until the person sends.
+        expect(draftsOpened).toBe(0);
+        expect(harness.startRequests).toEqual([]);
+        expect(newSessionSeeds).toHaveLength(1);
+        expect(JSON.stringify(newSessionSeeds[0])).toContain('Fix this entry.');
+    }, 60_000);
+
+    it('sends the entry to the Session the reader picks, creating none', async () => {
+        const harness = oneClickHarness();
+        pickedSession = { serverId: 'server-a', sessionId: 'session-picked' };
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        await pressAction(shell, 'Direct fix options');
+        await pressMenuItem(shell, 'Send to a Session…');
+
+        expect(sessionPicks).toBe(1);
+        expect(draftsOpened).toBe(0);
+        expect(harness.startRequests).toHaveLength(0);
+        await vi.waitFor(() => expect(harness.configuredRequests).toHaveLength(1));
+        expect(harness.configuredRequests[0]?.handoff).toMatchObject({
+            task: 'fix',
+            configuredActionId: 'fix',
+            context: { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
+            sessionChoice: { kind: 'existing', session: 'session-picked' },
+            agentChoice: { kind: 'configured' },
+            delivery: 'configured',
+        });
+        expect(harness.configuredRequests[0]?.handoff.evidence).toEqual([
+            { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
+        ]);
+    }, 60_000);
+
+    it('starts nothing when the reader closes the Session picker', async () => {
+        const harness = oneClickHarness();
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        await pressAction(shell, 'Direct fix options');
+        await pressMenuItem(shell, 'Send to a Session…');
+
+        expect(sessionPicks).toBe(1);
+        expect(harness.startRequests).toHaveLength(0);
     }, 60_000);
 
     /**
@@ -1426,7 +1560,7 @@ describe('the entry action controls on the mounted detail header', () => {
      * surface with what IS known seeded, where the reader owns the checkout.
      * Launching anyway would be the false success.
      */
-    it('degrades to the New Session surface when the profile asks for a worktree', async () => {
+    it('opens the prefilled composer when the profile asks for a worktree', async () => {
         const harness = createHarness();
         harness.setActions([{
             actionId: 'fix',
@@ -1460,32 +1594,19 @@ describe('the entry action controls on the mounted detail header', () => {
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        await pressAction(shell, 'Worktree fix');
+        await pressAction(shell, 'Worktree fix with Claude Code');
 
-        // The surface was opened, seeded with the resolved candidate — the
-        // reader still gets the answer their configuration produced, they are
-        // just the one who settles the checkout.
-        expect(draftsOpened).toBe(1);
-        expect(draftSeeds).toEqual([{
+        // The composer opens seeded with the resolved candidate — the reader
+        // still gets the answer their configuration produced, they are just the
+        // one who settles the checkout and sends. Nothing starts before that.
+        expect(draftsOpened).toBe(0);
+        expect(harness.startRequests).toEqual([]);
+        expect(newSessionSeeds).toEqual([expect.objectContaining({
             profileId: 'profile-1',
-            executionTarget: { serverId: 'server-a', machineId: 'machine-b' },
-            directory: '/checkouts/repository',
             checkoutIntent: 'createWorktree',
-            candidates: [{
-                projectKey: { id: 'workspace-1' },
-                serverId: 'server-a',
-                machineId: 'machine-b',
-                rootPath: '/checkouts/repository',
-                label: 'repository',
-                reachable: true,
-                worktrees: [],
-            }],
-        }]);
-        // And what left is what they settled, not the reused checkout.
-        expect(harness.startRequests).toHaveLength(1);
-        const destination = harness.startRequests[0]?.destination;
-        expect(destination?.kind === 'new' ? destination.spawn.executionTarget : null)
-            .toEqual({ serverId: 'server-a', machineId: 'machine-a' });
+            placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'machine-b', directory: '/checkouts/repository' },
+            candidates: [expect.objectContaining({ machineId: 'machine-b', rootPath: '/checkouts/repository' })],
+        })]);
     }, 60_000);
 
     /**
@@ -1519,20 +1640,12 @@ describe('the entry action controls on the mounted detail header', () => {
 
         await pressAction(shell, 'Fix');
 
-        expect(draftSeeds).toEqual([{
-            executionTarget: { serverId: 'server-a', machineId: 'machine-b' },
-            directory: '/checkouts/repository',
+        expect(draftsOpened).toBe(0);
+        expect(newSessionSeeds).toEqual([expect.objectContaining({
             checkoutIntent: 'reuseWorkspace',
-            candidates: [{
-                projectKey: { id: 'workspace-1' },
-                serverId: 'server-a',
-                machineId: 'machine-b',
-                rootPath: '/checkouts/repository',
-                label: 'repository',
-                reachable: true,
-                worktrees: [],
-            }],
-        }]);
+            placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'machine-b', directory: '/checkouts/repository' },
+            candidates: [expect.objectContaining({ machineId: 'machine-b', rootPath: '/checkouts/repository' })],
+        })]);
     });
 
     /**
@@ -1582,7 +1695,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 label: 'Run code review',
                 enabled: true,
                 appliesTo: ['pullRequest'],
-                profileId: null,
+                profileId: 'profile-1',
                 workspaceMode: 'repository',
                 target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Start this entry.', delivery: 'send' },
             },
@@ -1596,6 +1709,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
             },
         ]);
+        resolveDirectStart(harness);
         const shell = await mountShell(harness);
         await openTheRow(shell);
         await expect(shell.getByRole('button', { name: 'Configured catalogue loaded' }))
@@ -1629,7 +1743,7 @@ describe('the entry action controls on the mounted detail header', () => {
         })).toBe('instructionMissing');
 
         // The agent arm, under the label that says "review", starts normally.
-        await pressAction(shell, 'Run code review');
+        await pressAction(shell, 'Run code review with Claude Code');
         expect(harness.startRequests).toHaveLength(1);
         expect(harness.startRequests[0]?.workspaceMode).toBe('repository');
     });
@@ -1728,7 +1842,7 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.reviewEngineListRequests).toEqual([{ sessionId: 'session-review' }]);
     }, 60_000);
 
-    it('prepares a selected-PR workspace for a custom ordinary-agent action keyed only by workspaceMode', async () => {
+    it('opens the prepared-review composer for a custom ordinary-agent action keyed only by workspaceMode', async () => {
         const harness = createHarness({ formalReviewReady: true });
         harness.setActions([{
             actionId: 'custom-agent-pr-workspace',
@@ -1749,37 +1863,10 @@ describe('the entry action controls on the mounted detail header', () => {
         await pressAction(shell, 'Investigate with custom agent');
         await settle();
 
-        expect(harness.startRequests).toHaveLength(1);
-        expect(harness.startRequests[0]).toMatchObject({
-            workspaceMode: 'pull_request',
-            destination: {
-                kind: 'new',
-                materialization: {
-                    kind: 'reviewWorkspace',
-                    request: {
-                        entryRef: ENTRY_REF,
-                        workflowSubject: 'pullRequest',
-                        workspace: {
-                            serverId: 'server-a',
-                            machineId: 'machine-a',
-                            rootPath: '/workspaces/example',
-                        },
-                    },
-                },
-            },
-            prepareReviewWorkspaceSelection: {
-                selection: {
-                    contributor: {
-                        pluginId: SOURCE_CONTRIBUTOR.pluginId,
-                        contributionId: SOURCE_CONTRIBUTOR.contributionId,
-                        sourceCustody: SOURCE_CONTRIBUTOR.sourceCustody,
-                    },
-                    point: PREPARE_REVIEW_WORKSPACE_OPERATION.point,
-                },
-                credentialRef: configuredInstance().binding.account,
-            },
-            delivery: { kind: 'send' },
-        });
+        // A prepared review checkout is never a one-click start: the composer opens with it prepared.
+        expect(harness.startRequests).toEqual([]);
+        expect(newSessionSeeds).toEqual([expect.objectContaining({ checkoutIntent: 'preparedReviewWorkspace',
+            placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'machine-a' } })]);
         expect(harness.reviewEngineListRequests).toEqual([]);
     });
 
@@ -1805,13 +1892,11 @@ describe('the entry action controls on the mounted detail header', () => {
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        await pressAction(shell, 'Partial-registry fix');
+        await pressAction(shell, 'Partial-registry fix with Claude Code');
 
-        expect(draftsOpened).toBe(1);
-        expect(harness.startRequests).toHaveLength(1);
-        const destination = harness.startRequests[0]?.destination;
-        expect(destination?.kind === 'new' ? destination.spawn.executionTarget : null)
-            .toEqual({ serverId: 'server-a', machineId: 'machine-a' });
+        expect(draftsOpened).toBe(0);
+        expect(harness.startRequests).toEqual([]);
+        expect(newSessionSeeds).toHaveLength(1);
     });
 
     it('retains the resolved review instructions when a pending formal start is resumed', async () => {

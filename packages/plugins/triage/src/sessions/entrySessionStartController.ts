@@ -1,6 +1,9 @@
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
+import type { PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import type { ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
+import type { ActionSessionAddressV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { AgentExecutionTargetV1 } from '@happier-dev/plugin-sdk/agents';
 import type {
     PluginUiActionExecutionOptions,
     SelectActionInputRequest,
@@ -8,13 +11,16 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
 import {
+    TRIAGE_DEFAULT_FIX_ACTION_ID_V1,
     projectTriagePrepareReviewWorkspaceInputV1,
     type TriageEntryLocatorV1,
     type TriageEntryRefV1,
     type TriageSourceInstanceRefV1,
+    type TriageSessionHandoffInputV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
+import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
 import { openLinkedSession } from '../sessions/entrySessionOpen.js';
 import { resolvesTriageUnknownSessionStartV1 } from '../ui/header/sessionStartOutcome.js';
 import type {
@@ -26,11 +32,11 @@ import {
     readTriageActionExecutionPlacementV1,
     resolveTriageActionCheckoutV1,
     resolveTriageActionPlacementV1,
-    type TriageActionPlacementV1,
 } from '../sessions/actionLaunch.js';
 import {
     resolveTriageActionInstructionV1,
     resolveTriageActionReferencesV1,
+    readTriageActionPlacementV1,
     type TriageActionReferencesV1,
     type TriageActionResolutionHostV1,
 } from '../sessions/actionResolution.js';
@@ -62,13 +68,17 @@ import {
 } from '../ui/header/newSessionDraftCommand.js';
 import {
     type TriageNewSessionSeedHostV1,
+    type TriageNewSessionFailureV1,
 } from '../ui/header/newSessionSeedCommand.js';
 import { requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
+import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import {
     submitTriageEntrySessionStart,
     type TriageSessionStartHostV1,
 } from '../ui/header/startEntrySessionCommand.js';
-import type { TriageConfiguredStartRecoveryV1 } from '../actions/configuredActionRunProtocol.js';
+import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionResultV1Schema,
+    type TriageConfiguredStartRecoveryV1, type TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 
 type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['state'], { kind: 'single' }>;
 
@@ -105,10 +115,21 @@ type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['stat
 export type TriageEntrySessionStartRequestV1 = Readonly<{
     /** Explicit host-shaped destinations use the incumbent draft projection. */
     settlement?: unknown;
+    /**
+     * Where the reader asked this press to go, when not the action's own resolution (the split's Send to a
+     * Session): `existingSession` hands the configured action to a Session selected by the host's picker. Choosing
+     * the agent and machine is the prefilled composer's job (Add instructions…), not a destination.
+     */
+    destinationChoice?: 'existingSession';
     /** The pressed action, whole. Every member of it decides something below. */
     action: TriageActionV1;
     /** Final human-edited ORC prompt, not a configured Prompt Library or shipped fallback. */
     orchestrationPrompt?: string;
+    requestedTask?: TriageSessionHandoffInputV1['task'];
+    forgeEvidence?: SessionInputForgeEvidenceV1;
+    preferredAgentTargetKey?: string;
+    resolvedAgentTarget?: AgentExecutionTargetV1;
+    resolvedReferences?: Extract<TriageActionReferencesV1, { status: 'resolved' }>;
     /** Read-only navigation shares placement/creation, with no prompt or checkout preparation. */
     comparisonDestination?: PluginActionInputById['session.open']['destination'];
     linkedSessionIds?: readonly string[];
@@ -142,6 +163,8 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
      * pull-request review. The mounted host selects its raw input once the
      * reader has settled the matching project/machine/root workspace.
      */
+    /** The admitted source snapshot lets a sparse list observation acquire its missing exact revision on press. */
+    sourceContributions?: TriageEntrySessionSourceFactsV1;
     reviewWorkspace?: Readonly<{
         operation: Extract<SelectActionInputRequest, Readonly<{ operation: unknown }>>['operation'];
         preparation: TriageReviewWorkspacePreparationV1;
@@ -164,6 +187,7 @@ const mintRandomCreationKey: TriageSessionCreationKeyMintV1 = mintTriageOpaqueId
  * phase of the orchestrator's own verdict.
  */
 export type TriageEntrySessionStartUnavailableReasonV1 =
+    | 'handoffOutcomeUnknown'
     /** This mount cannot open the host's New Session surface at all. */
     | 'newSessionUnsupported'
     /** It could not be opened, or settled something no start can be built from. */
@@ -241,6 +265,8 @@ export type TriageEntrySessionStartPhaseV1 =
     /** The host's New Session surface is open and the reader is choosing. */
     | Readonly<{ kind: 'choosing' }>
     | Readonly<{ kind: 'starting' }>
+    /** The configured Action retains its native receipt, refusal and recovery unchanged. */
+    | Readonly<{ kind: 'handoffSettled'; result: TriageRunConfiguredActionResultV1 }>
     /** The orchestrator answered. Every arm — including its refusals — is here. */
     | Readonly<{
         kind: 'settled';
@@ -253,16 +279,18 @@ export type TriageEntrySessionStartPhaseV1 =
      * because "nothing was started" and "the start failed at a named phase" are
      * different things to tell a reader.
      */
-    | Readonly<{ kind: 'unavailable'; reason: TriageEntrySessionStartUnavailableReasonV1 }>;
+    | Readonly<{ kind: 'unavailable'; reason: TriageEntrySessionStartUnavailableReasonV1; failure?: TriageNewSessionFailureV1 }>;
 
 export type TriageEntrySessionStartControllerV1 = Readonly<{
     phase: TriageEntrySessionStartPhaseV1;
+    authoringResult?: 'seeded' | 'cancelled';
     /** The canonical custody's prompt, immutable while this orchestration can only resume. */
     pendingOrchestrationPrompt: string | null;
     /** A linked selected-PR Session awaiting the reader's explicit engine choice. */
     review: TriagePendingPullRequestReviewV1 | null;
     /** Ignored while a press is in flight; otherwise starts exactly one. */
     start: (request: TriageEntrySessionStartRequestV1) => void;
+    startInSession: (request: TriageEntrySessionStartRequestV1, session: ActionSessionAddressV1) => Promise<TriageRunConfiguredActionResultV1 | null>;
     /** Returns to `idle` — for dismissing a settled outcome, never for retrying one. */
     reset: () => void;
 }>;
@@ -285,8 +313,9 @@ const STARTING: TriageEntrySessionStartPhaseV1 = Object.freeze({ kind: 'starting
 
 function unavailable(
     reason: TriageEntrySessionStartUnavailableReasonV1,
+    failure?: TriageNewSessionFailureV1,
 ): TriageEntrySessionStartPhaseV1 {
-    return Object.freeze({ kind: 'unavailable', reason });
+    return Object.freeze({ kind: 'unavailable', reason, ...(failure === undefined ? {} : { failure }) });
 }
 
 /** Refuse incoherent configuration or a missing task before any effect. */
@@ -329,7 +358,7 @@ export type TriageStartHostV1 = TriageSessionStartHostV1
     & TriageAgentInventoryHostV1
     & TriageActionResolutionHostV1
     & Readonly<{
-        readSession?(sessionId: string): Promise<SessionStateV1 | null>;
+        readSession?: PluginClientActionUi['readSession'];
         selectActionInput(
             request: SelectActionInputRequest,
             options?: PluginUiActionExecutionOptions,
@@ -488,6 +517,7 @@ export function createTriageEntrySessionStartController(
     options?: TriageEntrySessionStartOptionsV1,
 ): Readonly<{ getSnapshot: () => TriageEntrySessionStartControllerV1; getRecovery: () => TriageSingleStartRecoveryV1 | null; restore: (recovery: TriageSingleStartRecoveryV1) => void; subscribe: (listener: () => void) => () => void; activate: () => void; dispose: () => void; waitForSettled: () => Promise<TriageEntrySessionStartControllerV1> }> {
     let phase: TriageEntrySessionStartPhaseV1 = IDLE;
+    let authoringResult: 'seeded' | 'cancelled' | undefined;
     const listeners = new Set<() => void>();
     let snapshot: TriageEntrySessionStartControllerV1;
     const notify = () => { snapshot = readSnapshot(); for (const listener of listeners) listener(); };
@@ -527,15 +557,8 @@ export function createTriageEntrySessionStartController(
     const resolvePlacement = async (
         request: TriageEntrySessionStartRequestV1,
         preferences: Parameters<typeof resolveTriageActionPlacementV1>[0]['profile'],
-    ): Promise<TriageActionPlacementV1> => {
-        const registry = await readTriageProjectRegistryV1(host);
-        return resolveTriageActionPlacementV1({
-            workspaceMode: request.action.workspaceMode,
-            ...(preferences === undefined ? {} : { profile: preferences }),
-            ...(request.repository === undefined ? {} : { forge: request.repository }),
-            projects: registry.status === 'read' ? registry.projects : [],
-            registryComplete: registry.status === 'read' && registry.complete,
-        });
+    ) => {
+        return readTriageActionPlacementV1(host, request.action, preferences, request.repository);
     };
 
     /**
@@ -697,8 +720,10 @@ export function createTriageEntrySessionStartController(
         }
     };
 
-    const start = (request: TriageEntrySessionStartRequestV1) => {
-        if (inFlight.current) return;
+    const start = (initialRequest: TriageEntrySessionStartRequestV1, existingSession?: ActionSessionAddressV1) => {
+        let request = initialRequest;
+        if (inFlight.current || retired.current) return;
+        authoringResult = undefined;
         // A Walk requests placement for reading. The reference-only mode is the incumbent
         // no-materialization path; its normal New Session picker still owns machine/Agent choices.
         const action: TriageActionV1 = request.comparisonDestination === undefined ? request.action : {
@@ -722,6 +747,53 @@ export function createTriageEntrySessionStartController(
             return;
         }
         inFlight.current = true;
+
+        if (existingSession !== undefined || request.destinationChoice === 'existingSession') {
+            const previous = phase.kind === 'handoffSettled' ? phase.result.recovery : undefined;
+            setReview(null);
+            setPhase(RESOLVING);
+            void (async () => {
+                let submitted = false;
+                try {
+                    let session = existingSession;
+                    if (session === undefined) {
+                        setPhase(CHOOSING);
+                        const choice = await host.selectActionInput(
+                            { hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } },
+                            { signal: selectionLifetime.signal },
+                        );
+                        if (retired.current) return;
+                        if (choice.kind === 'cancelled') { setPhase(IDLE); return; }
+                        if (choice.kind !== 'sessionAddress') { setPhase(unavailable('dispatch')); return; }
+                        session = choice.session;
+                    }
+                    const selected = { entryRef: request.entryRef, sourceInstanceId: request.sourceInstance.sourceInstanceId };
+                    const handoff: TriageSessionHandoffInputV1 = {
+                        task: request.requestedTask ?? (action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1 ? 'fix' : 'investigate'),
+                        configuredActionId: action.actionId,
+                        context: { kind: 'entry', entry: selected }, evidence: [{ kind: 'entry', entry: selected }],
+                        sessionChoice: { kind: 'existing', session: session.sessionId }, agentChoice: { kind: 'configured' }, delivery: 'configured',
+                    };
+                    const resumeStart = previous?.state.kind === 'handoff'
+                        && previous.state.serverId === session.serverId
+                        && JSON.stringify(previous.state.handoff) === JSON.stringify(handoff) ? previous : undefined;
+                    setPhase(STARTING);
+                    submitted = true;
+                    const result = TriageRunConfiguredActionResultV1Schema.parse(await host.executeAction(
+                        { pluginId: 'happier.triage', localId: TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 },
+                        { v: 1, handoff, ...(resumeStart === undefined ? {} : { resumeStart }) },
+                        { signal: selectionLifetime.signal, sessionAddress: session },
+                    ));
+                    if (!retired.current) setPhase(Object.freeze({ kind: 'handoffSettled', result }));
+                } catch {
+                    if (!retired.current) setPhase(unavailable(submitted ? 'handoffOutcomeUnknown' : 'dispatch'));
+                } finally {
+                    inFlight.current = false;
+                    notify();
+                }
+            })();
+            return;
+        }
 
         // A retry of the SAME press on the SAME entry. Everything the first
         // press resolved — its references, its placement, the destination the
@@ -838,16 +910,33 @@ export function createTriageEntrySessionStartController(
                 //    press here — never after a Session exists, and never by
                 //    quietly degrading to the default the person configured
                 //    away from.
-                const references = await resolveTriageActionReferencesV1(host, action);
+                const references = request.resolvedReferences ?? await resolveTriageActionReferencesV1(host, action);
                 if (retired.current) return;
                 if (references.status !== 'resolved') {
                     setPhase(unavailable(referenceRefusal(references)));
                     return;
                 }
+                if (action.workspaceMode === 'pull_request' && request.reviewWorkspace === undefined
+                    && request.sourceContributions !== undefined) {
+                    // A list row can omit exact revisions. Acquire them through the same source
+                    // get/detail owner as bulk and configured starts, only when this press needs them.
+                    const facts = await readTriageEntrySessionFactsV1(host, {
+                        entryRef: request.entryRef, sourceInstanceId: request.sourceInstance.sourceInstanceId,
+                        ...(request.lastKnownLocator === undefined ? {} : { lastKnownLocator: request.lastKnownLocator }),
+                    }, request.sourceContributions, selectionLifetime.signal);
+                    if (retired.current) return;
+                    if (selectionLifetime.signal.aborted) { setPhase(IDLE); return; }
+                    if (facts?.reviewWorkspace === undefined) {
+                        setPhase(unavailable('preparedWorkspaceUnsupported', { codes: ['preparedWorkspaceUnsupported'] }));
+                        return;
+                    }
+                    request = { ...request, ...facts };
+                }
                 const preferences = references.profile?.preferences;
                 const promptText = request.orchestrationPrompt ?? resolveTriageActionInstructionV1(
                     action,
                     references.prompt?.text ?? null,
+                    request.requestedTask === undefined ? undefined : { task: request.requestedTask, context: 'entry' },
                 );
                 if (action.target.kind === 'reviewStart') {
                     if (action.workspaceMode !== 'pull_request' || request.reviewWorkspace === undefined) {
@@ -889,53 +978,73 @@ export function createTriageEntrySessionStartController(
                 const executionPlacement = placement === null
                     ? null
                     : readTriageActionExecutionPlacementV1(placement);
+                const explicitAgent = request.resolvedAgentTarget === undefined
+                    ? request.preferredAgentTargetKey === undefined ? null
+                        : await readTriageAgentExecutionTargetV1(host, request.preferredAgentTargetKey)
+                    : { status: 'resolved' as const, agentTarget: request.resolvedAgentTarget };
+                if (request.preferredAgentTargetKey !== undefined && explicitAgent?.status !== 'resolved') {
+                    setPhase(unavailable('newSessionUnavailable'));
+                    return;
+                }
 
-                // Compose is authoring, not Session creation. Hand the resolved
-                // profile, prompt, placement and entry attachment to the host's
-                // incumbent New Session composer and stop. That screen owns all
-                // subsequent edits and the eventual send; closing it therefore
-                // creates no Session, link or Message and spends no creation key.
-                if (request.comparisonDestination === undefined
-                    && action.target.kind === 'agent' && action.target.delivery === 'compose') {
+                // A complete start: an explicit settlement, or the profile's Agent
+                // plus a resolved directory with a checkout this wire can launch.
+                const authoring = request.comparisonDestination === undefined && action.target.kind === 'agent';
+                const checkoutIsDirectlyLaunchable = checkout === 'none' || checkout === 'reuseWorkspace';
+                const preferredAgentTargetKey = references.profile?.preferredAgentTargetKey;
+                const agent = authoring && action.target.delivery === 'compose' ? explicitAgent
+                    : explicitAgent ?? (checkoutIsDirectlyLaunchable
+                        && executionPlacement?.directory !== undefined
+                        && preferredAgentTargetKey !== undefined
+                        ? await readTriageAgentExecutionTargetV1(host, preferredAgentTargetKey)
+                        : null);
+                if (retired.current) return;
+                const directSettlement: unknown = request.settlement
+                    ?? (agent?.status === 'resolved' && executionPlacement?.directory !== undefined ? {
+                        executionTarget: executionPlacement.executionTarget,
+                        agentTarget: agent.agentTarget,
+                        directory: { kind: 'path', path: executionPlacement.directory },
+                    } : undefined);
+
+                // Compose is authoring, not Session creation, and so is a send
+                // whose start is not complete (owner ruling "Agent actions: one
+                // shared flow", 2026-11-07): hand the resolved profile, prompt,
+                // placement and entry attachment to the host's incumbent New
+                // Session composer and stop. That screen owns all subsequent
+                // edits and the eventual send; closing it therefore creates no
+                // Session, link or Message and spends no creation key.
+                // An orchestration start stays a Triage start: its spawn carries the
+                // orchestrator role and workflow trigger the composer cannot.
+                if (authoring && (action.target.delivery === 'compose'
+                    || (directSettlement === undefined && request.orchestrationPrompt === undefined))) {
                     const placementCandidates = placement === null ? [] : projectTriageActionPlacementCandidatesV1(placement);
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
                         entries: [request], promptText, profileId: action.profileId,
+                        attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
+                        ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
                         checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates,
                         signal: selectionLifetime.signal,
                         isCurrent: () => !retired.current,
                     });
                     if (retired.current) return;
+                    if (seeded.status === 'seeded' || seeded.status === 'cancelled') authoringResult = seeded.status;
                     setPhase(seeded.status === 'seeded' || seeded.status === 'cancelled'
                         ? IDLE
                         : unavailable(seeded.status === 'refused' ? 'preparedWorkspaceUnsupported' : seeded.status === 'unsupported'
                             ? 'newSessionUnsupported'
-                            : 'newSessionUnavailable'));
+                            : 'newSessionUnavailable', seeded.status === 'unavailable' ? seeded.failure : undefined));
                     return;
                 }
 
-                const checkoutIsDirectlyLaunchable = checkout === 'none' || checkout === 'reuseWorkspace';
-                const preferredAgentTargetKey = references.profile?.preferredAgentTargetKey;
-                const agent = checkoutIsDirectlyLaunchable
-                    && executionPlacement?.directory !== undefined
-                    && preferredAgentTargetKey !== undefined
-                    ? await readTriageAgentExecutionTargetV1(host, preferredAgentTargetKey)
-                    : null;
-                if (retired.current) return;
-
                 // Both routes settle the SAME three facts and are admitted by
                 // the same grammar below, so a direct launch cannot carry a
-                // start shape the host's own settlement could not.
-                let settlement: unknown;
-                if (request.settlement !== undefined) {
-                    settlement = request.settlement;
-                } else if (agent?.status === 'resolved' && executionPlacement?.directory !== undefined) {
-                    settlement = {
-                        executionTarget: executionPlacement.executionTarget,
-                        agentTarget: agent.agentTarget,
-                        directory: { kind: 'path', path: executionPlacement.directory },
-                    };
-                } else {
+                // start shape the host's own settlement could not. Only a
+                // review-engine start, an orchestration or a read-only Walk
+                // reaches the host's no-invoke settlement: the composer cannot
+                // carry any of them.
+                let settlement: unknown = directSettlement;
+                if (settlement === undefined) {
                     const seed = triageNewSessionDraftSeedV1(
                         preference,
                         ...(placement === null ? [] : [{
@@ -1042,6 +1151,8 @@ export function createTriageEntrySessionStartController(
                                     title: request.presentation.label,
                                 }],
                                 idempotencyKey: mintCreationKey(),
+                                ...(request.requestedTask === undefined ? {} : { returnResult: true as const }),
+                                ...(request.forgeEvidence === undefined ? {} : { forgeEvidence: request.forgeEvidence }),
                             },
                         }
                         : {}),
@@ -1062,9 +1173,9 @@ export function createTriageEntrySessionStartController(
                 submitted = true;
                 const result = await submitTriageEntrySessionStart(host, input, startOptions);
                 await settle(request, input, result, reviewInstructions);
-            } catch {
+            } catch (error) {
                 if (!retired.current) {
-                    setPhase(unavailable(submitted ? 'startOutcomeUnknown' : 'dispatch'));
+                    setPhase(unavailable(submitted ? 'startOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
                 }
             } finally {
                 inFlight.current = false;
@@ -1074,12 +1185,25 @@ export function createTriageEntrySessionStartController(
     };
 
     const reset = () => {
+        authoringResult = undefined;
         setReview(null);
         setPhase(IDLE);
     };
 
+    const waitForSettled = () => inFlight.current ? new Promise<TriageEntrySessionStartControllerV1>((resolve) => {
+        const listener = () => { if (!inFlight.current) { listeners.delete(listener); resolve(snapshot); } };
+        listeners.add(listener);
+    }) : Promise.resolve(snapshot);
+
+    const startInSession: TriageEntrySessionStartControllerV1['startInSession'] = async (request, session) => {
+        if (inFlight.current || retired.current) return null;
+        start(request, session);
+        const settled = await waitForSettled();
+        return settled.phase.kind === 'handoffSettled' ? settled.phase.result : null;
+    };
+
     const readSnapshot = (): TriageEntrySessionStartControllerV1 => Object.freeze({
-        phase, review, start, reset,
+        phase, review, start, startInSession, reset, ...(authoringResult === undefined ? {} : { authoringResult }),
         pendingOrchestrationPrompt: custody.current?.input.orchestrate === true
             ? custody.current.input.delivery?.text ?? null : null,
     });
@@ -1106,9 +1230,6 @@ export function createTriageEntrySessionStartController(
         },
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         dispose: () => { retired.current = true; selectionLifetime.abort(); listeners.clear(); },
-        waitForSettled: () => inFlight.current ? new Promise<TriageEntrySessionStartControllerV1>((resolve) => {
-            const listener = () => { if (!inFlight.current) { listeners.delete(listener); resolve(snapshot); } };
-            listeners.add(listener);
-        }) : Promise.resolve(snapshot),
+        waitForSettled,
     });
 }

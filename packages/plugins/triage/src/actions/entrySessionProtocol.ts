@@ -1,8 +1,10 @@
-import { ActionSessionAddressV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/plugin-sdk/ui';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/plugin-sdk/contributions';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
+import { SessionTargetV1Schema } from '@happier-dev/plugin-sdk/sessions';
+import { SessionInputForgeEvidenceV1Schema, SessionMessageSendResultV1ProtocolSchema, ActionSessionAddressV1Schema } from '@happier-dev/plugin-sdk/sessions';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/plugin-sdk/agents';
 import {
     defineProtocolArray,
     defineProtocolJsonValue,
@@ -12,6 +14,9 @@ import {
     defineProtocolUnion,
     ProtocolLaunchProfileIdV2Schema,
     ProtocolWorkspaceAddressV1Schema,
+    type ProtocolComposableSchema,
+    type ProtocolSchemaInput,
+    type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -27,6 +32,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
+import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
 
 export const TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 = 'entries/verify-existing-review-workspace-v1';
 /** Read-only proof, not another Session selection or creation entry point. */
@@ -90,7 +96,7 @@ const reviewEngineId = defineProtocolString({
 });
 
 /** How the canonical creator settled one start: created, rejoined, or already there. */
-const triageDisposition = defineProtocolUnion([
+export const TriageEntrySessionDispositionV1Schema = defineProtocolUnion([
     defineProtocolLiteral('created'),
     defineProtocolLiteral('rejoined'),
     defineProtocolLiteral('existing'),
@@ -122,13 +128,7 @@ const TriageSessionExecutionTargetV1Schema = defineProtocolObject({
     machineId: triageIdentifier,
 }, { policy: 'closed' });
 
-const TriageAgentExecutionTargetV1Schema = defineProtocolObject({
-    kind: defineProtocolLiteral('agent'),
-    identity: defineProtocolObject({
-        pluginId: triageIdentifier,
-        localId: triageIdentifier,
-    }, { policy: 'closed' }),
-}, { policy: 'closed' });
+const TriageAgentExecutionTargetV1Schema = AgentExecutionTargetV1Schema;
 
 /**
  * Choices already authored by the host's recipe controls, carried unchanged to
@@ -151,11 +151,16 @@ const settledSessionChoices = {
     organizationPlacement: defineProtocolJsonValue().optional(),
 };
 
-const TriageNewSessionSpawnV1Schema = defineProtocolObject({
+const newSessionSpawnMembers = {
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
     ...settledSessionChoices,
-}, { policy: 'closed' });
+};
+type NewSessionSpawnSchema = ReturnType<typeof defineProtocolObject<typeof newSessionSpawnMembers, { readonly policy: 'closed' }>>;
+export interface TriageNewSessionSpawnAuthoredV1 extends ProtocolSchemaInput<NewSessionSpawnSchema> {}
+export interface TriageNewSessionSpawnV1 extends ProtocolSchemaOutput<NewSessionSpawnSchema> {}
+const TriageNewSessionSpawnV1Schema: ProtocolComposableSchema<Readonly<TriageNewSessionSpawnAuthoredV1>, Readonly<TriageNewSessionSpawnV1>> =
+    defineProtocolObject(newSessionSpawnMembers, { policy: 'closed' });
 
 /**
  * The narrow materialization projection of an admitted host new-Session draft.
@@ -182,12 +187,11 @@ const TriageNewSessionSpawnV1Schema = defineProtocolObject({
 export const TriageStartEntrySessionSettledDraftV1Schema = defineProtocolObject({
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
-    // Consumer admission for materializations that require a concrete path.
     // Managed-directory resolution remains exclusively with the Session owner.
-    directory: defineProtocolObject({
-        kind: defineProtocolLiteral('path'),
-        path: triageText,
-    }, { policy: 'closed' }),
+    directory: defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('path'), path: triageText }, { policy: 'closed' }),
+        defineProtocolObject({ kind: defineProtocolLiteral('managed') }, { policy: 'closed' }),
+    ]),
     ...settledSessionChoices,
 }, { policy: 'additive-open/drop' });
 export type TriageStartEntrySessionSettledDraftV1 =
@@ -230,7 +234,8 @@ const TriageStartEntrySessionPrepareReviewWorkspaceSelectionV1Schema = definePro
 const TriageStartEntrySessionMaterializationV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('referenceOnly'),
-        directory: triageText,
+        directory: defineProtocolUnion([triageText,
+            defineProtocolObject({ kind: defineProtocolLiteral('managed') }, { policy: 'closed' })]),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('selectedProject'),
@@ -249,7 +254,7 @@ const TriageStartEntrySessionMaterializationV1Schema = defineProtocolUnion([
  * `SessionCreationKeyV1`, the only identity for one logical new-Session request,
  * and this Action mints none of its own.
  */
-const TriageStartEntrySessionDestinationV1Schema = defineProtocolUnion([
+const startEntrySessionDestination = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('existing'),
         sessionId: triageSessionId,
@@ -261,6 +266,11 @@ const TriageStartEntrySessionDestinationV1Schema = defineProtocolUnion([
         materialization: TriageStartEntrySessionMaterializationV1Schema,
     }, { policy: 'closed' }),
 ]);
+export type TriageStartEntrySessionDestinationAuthoredV1 = ProtocolSchemaInput<typeof startEntrySessionDestination>;
+export type TriageStartEntrySessionDestinationV1 = ProtocolSchemaOutput<typeof startEntrySessionDestination>;
+export const TriageStartEntrySessionDestinationV1Schema: ProtocolComposableSchema<
+    TriageStartEntrySessionDestinationAuthoredV1, TriageStartEntrySessionDestinationV1
+> = startEntrySessionDestination;
 
 /**
  * What the pressed action declared it needs on disk (`PLAN.md` §0a A3).
@@ -275,11 +285,7 @@ const TriageStartEntrySessionDestinationV1Schema = defineProtocolUnion([
  * surviving reader is the source-owned preparation request, which carries its
  * own.
  */
-const TriageStartEntrySessionWorkspaceModeV1Schema = defineProtocolUnion([
-    defineProtocolLiteral('reference_only'),
-    defineProtocolLiteral('repository'),
-    defineProtocolLiteral('pull_request'),
-]);
+const TriageStartEntrySessionWorkspaceModeV1Schema = TriageWorkspaceModeV1Schema;
 
 /**
  * The resolved prompt body has no Triage-owned size quota. The canonical
@@ -324,7 +330,7 @@ const TriageStartEntrySessionDeliveryAttachmentV1Schema = defineProtocolObject({
     title: triageAttachmentFallbackTitle,
 }, { policy: 'closed' });
 
-const TriageStartEntrySessionDeliveryV1Schema = defineProtocolObject({
+export const TriageStartEntrySessionDeliveryV1Schema = defineProtocolObject({
     kind: defineProtocolLiteral('send'),
     /** Absent when the action names no prompt; the entry attachment still goes. */
     text: triagePromptBody.optional(),
@@ -346,6 +352,8 @@ const TriageStartEntrySessionDeliveryV1Schema = defineProtocolObject({
      * dedupe it away.
      */
     idempotencyKey: triageIdentifier,
+    forgeEvidence: SessionInputForgeEvidenceV1Schema.optional(),
+    returnResult: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 
 const triageSettledDeliveryOutcomeMembers = [
@@ -399,7 +407,7 @@ const TriageStartEntrySessionPreparedReviewWorkspaceV1Schema = defineProtocolObj
  * caller's retained keys, and the canonical creator and the idempotent link
  * already make repeating a phase safe.
  */
-const TriageStartEntrySessionResumeV1Schema = defineProtocolUnion([
+export const TriageStartEntrySessionResumeV1Schema = defineProtocolUnion([
     defineProtocolObject({
         phase: defineProtocolLiteral('creationPending'),
         preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
@@ -410,7 +418,7 @@ const TriageStartEntrySessionResumeV1Schema = defineProtocolUnion([
             defineProtocolLiteral('openPending'),
         ]),
         sessionId: triageSessionId,
-        disposition: triageDisposition,
+        disposition: TriageEntrySessionDispositionV1Schema,
         /** A genuinely unknown admission must resume through its identity owner. */
         delivery: triageSettledDeliveryOutcome.optional(),
         preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
@@ -429,7 +437,7 @@ const TriageStartEntrySessionFinalOpenV1Schema = defineProtocolUnion([
     defineProtocolLiteral('suppressed'),
 ]);
 
-export const TriageStartEntrySessionInputV1Schema = defineProtocolObject({
+const startEntrySessionInputMembers = {
     v: defineProtocolLiteral(1),
     workspaceMode: TriageStartEntrySessionWorkspaceModeV1Schema,
     entryRef: TriageEntryRefV1Schema,
@@ -452,9 +460,13 @@ export const TriageStartEntrySessionInputV1Schema = defineProtocolObject({
      */
     prepareReviewWorkspaceSelection: TriageStartEntrySessionPrepareReviewWorkspaceSelectionV1Schema.optional(),
     resume: TriageStartEntrySessionResumeV1Schema.optional(),
-}, { policy: 'closed' });
-export type TriageStartEntrySessionInputV1 =
-    ReturnType<typeof TriageStartEntrySessionInputV1Schema.parse>;
+};
+type StartEntrySessionInputSchema = ReturnType<typeof defineProtocolObject<typeof startEntrySessionInputMembers, { readonly policy: 'closed' }>>;
+export interface TriageStartEntrySessionAuthoredInputV1 extends ProtocolSchemaInput<StartEntrySessionInputSchema> {}
+export interface TriageStartEntrySessionInputV1 extends ProtocolSchemaOutput<StartEntrySessionInputSchema> {}
+export const TriageStartEntrySessionInputV1Schema: ProtocolComposableSchema<
+    Readonly<TriageStartEntrySessionAuthoredInputV1>, Readonly<TriageStartEntrySessionInputV1>
+> = defineProtocolObject(startEntrySessionInputMembers, { policy: 'closed' });
 
 /**
  * The bounded live review continuation a newly opened selected-PR Session can
@@ -558,12 +570,14 @@ export type TriageStartPullRequestReviewResultV1 = ReturnType<
  * a refusal and an unknown outcome are the two the previous surface reported as
  * success, having awaited the send and discarded its value.
  */
-export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
+const startEntrySessionResult = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         type: defineProtocolLiteral('opened'),
+        sessionAddress: ActionSessionAddressV1Schema.optional(),
+        deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
-        disposition: triageDisposition,
+        disposition: TriageEntrySessionDispositionV1Schema,
         delivery: triageDeliveryOutcome,
         review: TriageStartEntrySessionReviewContextV1Schema.optional(),
         preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
@@ -572,8 +586,10 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** Linked and delivered; the batch owner retained final navigation. */
         type: defineProtocolLiteral('linked'),
+        sessionAddress: ActionSessionAddressV1Schema.optional(),
+        deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
-        disposition: triageDisposition,
+        disposition: TriageEntrySessionDispositionV1Schema,
         delivery: triageDeliveryOutcome,
         finalOpen: TriageStartEntrySessionFinalOpenV1Schema,
         review: TriageStartEntrySessionReviewContextV1Schema.optional(),
@@ -583,8 +599,10 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** The Session exists; the link did not commit. Retry links, then opens. */
         type: defineProtocolLiteral('linkPending'),
+        sessionAddress: ActionSessionAddressV1Schema.optional(),
+        deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
-        disposition: triageDisposition,
+        disposition: TriageEntrySessionDispositionV1Schema,
         delivery: triageDeliveryOutcome.optional(),
         preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
@@ -592,8 +610,10 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** Linked and delivered, but navigation failed. Retry re-opens. */
         type: defineProtocolLiteral('openPending'),
+        sessionAddress: ActionSessionAddressV1Schema.optional(),
+        deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
-        disposition: triageDisposition,
+        disposition: TriageEntrySessionDispositionV1Schema,
         delivery: triageDeliveryOutcome,
         preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
@@ -641,8 +661,11 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         ]),
     }, { policy: 'closed' }),
 ]);
-export type TriageStartEntrySessionResultV1 =
-    ReturnType<typeof TriageStartEntrySessionResultV1Schema.parse>;
+export type TriageStartEntrySessionAuthoredResultV1 = ProtocolSchemaInput<typeof startEntrySessionResult>;
+export type TriageStartEntrySessionResultV1 = ProtocolSchemaOutput<typeof startEntrySessionResult>;
+export const TriageStartEntrySessionResultV1Schema: ProtocolComposableSchema<
+    TriageStartEntrySessionAuthoredResultV1, TriageStartEntrySessionResultV1
+> = startEntrySessionResult;
 
 /**
  * The explicit undo.
@@ -655,7 +678,7 @@ export type TriageStartEntrySessionResultV1 =
  */
 export const TriageUnlinkEntryFromSessionActionInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    sessionId: triageSessionId,
+    sessionId: SessionTargetV1Schema,
     entryRef: TriageEntryRefV1Schema,
     sourceInstanceId: TriageSourceInstanceIdV1Schema.optional(),
 }, { policy: 'closed' });

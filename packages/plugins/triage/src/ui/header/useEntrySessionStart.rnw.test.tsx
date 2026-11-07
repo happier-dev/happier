@@ -24,8 +24,9 @@ import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationP
 import {
     TESTKIT_OBSERVED_REVISION,
     testkitConfiguredInstance,
+    testkitTriageActionId,
 } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
-import { testkitLocator } from '../../corpus/testkit/observations.test-support.js';
+import { testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import { describeTriageEntrySessionPhaseV1 } from './sessionStartOutcome.js';
 import { useTriageEntrySessionStart, type TriageEntrySessionStartRequestV1 } from './useEntrySessionStart.js';
 import type { TriageActionProfilePreferencesV1 } from '../../sessions/actionLaunch.js';
@@ -139,6 +140,15 @@ const PREPARED_REVIEW_SEND_REQUEST = Object.freeze({
     },
 });
 
+/** What a caller that already settled the New Session facts passes; it starts directly. */
+const SETTLED_DESTINATION = Object.freeze({
+    executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+    agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
+    directory: { kind: 'path' as const, path: '/workspaces/example' },
+});
+const SETTLED_SEND_START_REQUEST = Object.freeze({ ...SEND_START_REQUEST, settlement: SETTLED_DESTINATION });
+const SETTLED_PREPARED_REVIEW_SEND_REQUEST = Object.freeze({ ...PREPARED_REVIEW_SEND_REQUEST, settlement: SETTLED_DESTINATION });
+
 /**
  * What the canonical creator answers a REPEATED creation key: the same Session,
  * rejoined, with its one already-admitted Message
@@ -156,6 +166,7 @@ const REJOINED_RESULT = {
 let activeStartRequest: TriageEntrySessionStartRequestV1 = START_REQUEST;
 let mintedKeys: string[] = [];
 let notice: string | null = null;
+let phase: ReturnType<typeof useTriageEntrySessionStart>['phase'];
 let effectSetups = 0;
 let probeKey = 0;
 const mintCreationKey = () => {
@@ -170,6 +181,7 @@ function StartProbe(_context: RenderContext): React.ReactElement {
         mintCreationKey,
     });
     notice = describeTriageEntrySessionPhaseV1(controller.phase)?.labelKey ?? null;
+    phase = controller.phase;
     return (
         <Button
             title="Compose in worktree"
@@ -227,6 +239,8 @@ async function mountProbe(input: Readonly<{
     beforePreparedSelection?: (signal: AbortSignal) => Promise<void>;
     linkedSession?: Readonly<{ sessionId: string; serverId?: string; machineId: string; path: string }>;
     projects?: readonly unknown[];
+    cancelPlacement?: boolean;
+    missingRevisionRead?: 'ready' | 'refused';
     profilePlacement?: TriageActionProfilePreferencesV1['placement'];
 }> = {}): Promise<Readonly<{
     fixture: PluginUiTestkit;
@@ -244,7 +258,7 @@ async function mountProbe(input: Readonly<{
         adapter: createPluginUiRnwSemanticSurfaceAdapter({ strictMode: input.strictMode }),
         handlers: {
             executeAction: async ({ action, input: actionInput, selectedActionInput }) => {
-                const actionId = String(action);
+                const actionId = testkitTriageActionId(action);
                 actionCalls.push(actionId);
                 if (actionId === TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1) {
                     startInputs.push(actionInput as unknown as TriageStartEntrySessionInputV1);
@@ -269,7 +283,25 @@ async function mountProbe(input: Readonly<{
                         }],
                     };
                 }
-                if (actionId === 'projects.list') return { items: input.projects ?? [], truncated: false };
+                if (actionId === 'entries/reobserve-v1' && input.missingRevisionRead) {
+                    if (input.missingRevisionRead === 'refused') throw new PluginError({ code: 'unavailable',
+                        diagnostics: [{ code: 'source_not_ready', severity: 'error' }],
+                        details: { requestId: 'read-revision-19' },
+                    });
+                    return { kind: 'observed', entryRef: ENTRY_REF, observation: {
+                        sourceInstanceId: testkitConfiguredInstance().instance.sourceInstanceId, observedAtMs: 4_000,
+                        outcome: { kind: 'present', locator: testkitLocator(), snapshot: testkitSnapshot({
+                            reviewRevision: { baseSha: 'base', headSha: 'head', nativeRevision: 'rev' },
+                        }), viewer: testkitViewer() },
+                    } };
+                }
+                if (actionId === 'entries/read-detail-v1' && input.missingRevisionRead) {
+                    return { kind: 'read', instance: testkitConfiguredInstance(), linkedSessions: [] };
+                }
+                if (actionId === 'projects.list') return { items: input.projects ?? (activeStartRequest.reviewWorkspace === undefined ? [] : [{
+                    projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+                    rootPath: '/workspaces/example', forge: START_REQUEST.repository, worktrees: [], reachable: true,
+                }]), truncated: false };
                 if (actionId === 'session.open') {
                     comparisonOpens.push(actionInput);
                     return null;
@@ -292,6 +324,12 @@ async function mountProbe(input: Readonly<{
             selectActionInput: async ({ request, signal }) => {
                 if (!('operation' in request)) {
                     draftRequests.push(request);
+                    if (request.hostAction.projection === 'sessionPlacement' && input.cancelPlacement) return { kind: 'cancelled' as const };
+                    if (request.hostAction.projection === 'sessionPlacement') return {
+                        kind: 'sessionPlacement' as const,
+                        candidate: { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+                            rootPath: '/workspaces/example', worktrees: [], reachable: true },
+                    };
                     return {
                         kind: 'serverStartDraft' as const,
                         draft: {
@@ -533,6 +571,8 @@ describe('single-entry compose checkout handoff', () => {
     it('carries the exact selected preparation into the prepared-review compose request', async () => {
         const { fixture, actionCalls } = await mountProbe({
             request: PREPARED_REVIEW_START_REQUEST,
+            projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+                rootPath: '/workspaces/example', forge: START_REQUEST.repository, worktrees: [], reachable: true }],
         });
 
         await act(async () => {
@@ -545,11 +585,84 @@ describe('single-entry compose checkout handoff', () => {
         })]);
         expect((seeds[0] as { placement?: { directory?: string } }).placement?.directory).toBeUndefined();
         expect(preparedSelections).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
+        expect(preparedSelections[0]).toMatchObject({ input: { workspace: {
+            serverId: 'server-a', machineId: 'machine-a', rootPath: '/workspaces/example',
+        } } });
         expect(openedPreparations).toEqual([{
             operation: PREPARED_OPERATION,
             result: preparedSelections[0],
         }]);
         expect(actionCalls).toEqual(['sessions.spawn.profiles.list', 'projects.list']);
+    });
+
+    it.each([0, 2])('asks the incumbent chooser for %i matching projects and admits a saved-project override', async (matches) => {
+        const project = { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+            rootPath: '/workspaces/example', worktrees: [], reachable: true,
+            forge: matches === 0 ? { ...START_REQUEST.repository, repository: 'acme/other' } : START_REQUEST.repository };
+        const projects = matches === 2 ? [project, { ...project, projectKey: { id: 'workspace-b' }, rootPath: '/workspaces/second' }] : [project];
+        const { fixture, actionCalls } = await mountProbe({ request: PREPARED_REVIEW_START_REQUEST, projects });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests, JSON.stringify(phase)).toHaveLength(1);
+        expect(draftRequests[0]).toMatchObject({
+            hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' },
+            candidates: projects.map(({ forge: _forge, ...candidate }) => candidate),
+        });
+        expect(preparedSelections).toHaveLength(1);
+        expect(preparedSelections[0]).toMatchObject({ input: { workspace: {
+            serverId: 'server-a', machineId: 'machine-a', rootPath: '/workspaces/example',
+        } } });
+        expect(startInputs).toEqual([]);
+        expect(actionCalls).toEqual(['sessions.spawn.profiles.list', 'projects.list']);
+    });
+
+    it('does not prepare or seed after cancelling unresolved project placement', async () => {
+        const { fixture } = await mountProbe({ request: PREPARED_REVIEW_START_REQUEST, projects: [], cancelPlacement: true });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests).toHaveLength(1);
+        expect(preparedSelections).toEqual([]);
+        expect(seeds).toEqual([]);
+        expect(startInputs).toEqual([]);
+        expect(phase).toEqual({ kind: 'idle' });
+    });
+
+    it('keeps preparation diagnostic identifiers in the mounted unavailable phase', async () => {
+        const { fixture } = await mountProbe({ request: PREPARED_REVIEW_START_REQUEST,
+            seedError: new PluginError({ code: 'unavailable', diagnostics: [{ code: 'workspaceMismatch', severity: 'error' }],
+                details: { requestId: 'prepare-18' } }),
+        });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(phase).toEqual({ kind: 'unavailable', reason: 'newSessionUnavailable',
+            failure: { codes: ['unavailable', 'workspaceMismatch'], requestId: 'prepare-18' } });
+        expect(notice).toBe('plugins.triage.surface.session.workspaceMismatch');
+    });
+});
+
+/**
+ * Owner ruling "Agent actions: one shared flow" (2026-11-07): an unresolved
+ * placement always opens the prefilled New Session composer — the same opener
+ * compose uses — never a separate folder settlement.
+ */
+describe('an unresolved Start now', () => {
+    it.each([
+        ['repository', SEND_START_REQUEST, 'Repair the failing parser test.', 'createWorktree'],
+        ['prepared review', PREPARED_REVIEW_SEND_REQUEST, 'Review the selected pull request.', 'preparedReviewWorkspace'],
+    ] as const)('opens the prefilled composer for a %s send instead of a folder settlement', async (_kind, request, prompt, checkoutIntent) => {
+        const { fixture } = await mountProbe({ request });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests.filter((asked) => (asked as { hostAction?: { projection?: string } })
+            .hostAction?.projection === 'serverStartDraft')).toEqual([]);
+        expect(startInputs).toEqual([]);
+        expect(seeds).toEqual([expect.objectContaining({
+            prompt, profileId: 'profile-worktree', checkoutIntent,
+            attachments: [expect.objectContaining({ attachmentLocalId: 'entry' })],
+        })]);
+        expect(openedPreparations).toHaveLength(checkoutIntent === 'preparedReviewWorkspace' ? 1 : 0);
+        expect(phase).toEqual({ kind: 'idle' });
     });
 });
 
@@ -564,7 +677,7 @@ describe('single-entry compose checkout handoff', () => {
 describe('a start whose own response never arrived', () => {
     it.each(['automatic', 'ask', { fixed: { serverId: 'server-a', machineId: 'machine-a' }, directory: '/workspaces/example' }] as const)(
         'retains saved workspace evidence for prepared start with placement %j', async (profilePlacement) => {
-            const { fixture } = await mountProbe({ request: PREPARED_REVIEW_SEND_REQUEST, profilePlacement,
+            const { fixture } = await mountProbe({ request: SETTLED_PREPARED_REVIEW_SEND_REQUEST, profilePlacement,
                 projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
                     rootPath: '/workspaces/example', forge: START_REQUEST.repository, worktrees: [], reachable: true }],
                 startResults: [REJOINED_RESULT] });
@@ -580,7 +693,7 @@ describe('a start whose own response never arrived', () => {
         const instance = testkitConfiguredInstance();
         if (!('account' in instance.binding)) throw new Error('Expected account fixture');
         const { fixture } = await mountProbe({
-            request: { ...PREPARED_REVIEW_SEND_REQUEST, reviewWorkspace: {
+            request: { ...SETTLED_PREPARED_REVIEW_SEND_REQUEST, reviewWorkspace: {
                 ...PREPARED_REVIEW_SEND_REQUEST.reviewWorkspace,
                 preparation: { ...PREPARED_REVIEW_SEND_REQUEST.reviewWorkspace.preparation,
                     instance: { ...instance, binding: { purpose: instance.binding.purpose,
@@ -600,7 +713,7 @@ describe('a start whose own response never arrived', () => {
     });
     it('retries the identical creation and delivery identity rather than starting a second session', async () => {
         const { fixture } = await mountProbe({
-            request: SEND_START_REQUEST,
+            request: SETTLED_SEND_START_REQUEST,
             startResults: ['lost', {
                 v: 1,
                 type: 'opened',
@@ -642,7 +755,7 @@ describe('a start whose own response never arrived', () => {
     it.each([false, true])('authorizes the retained prepared request again rather than replaying the spent carrier (StrictMode: %s)', async (strictMode) => {
         const { fixture } = await mountProbe({
             strictMode,
-            request: PREPARED_REVIEW_SEND_REQUEST,
+            request: SETTLED_PREPARED_REVIEW_SEND_REQUEST,
             startResults: ['lost', REJOINED_RESULT],
         });
         const press = await fixture.getByRole('button', { name: 'Compose in worktree' });
@@ -662,7 +775,7 @@ describe('a start whose own response never arrived', () => {
         expect(startInputs[1]?.destination).toEqual(startInputs[0]?.destination);
         expect(startInputs[1]?.delivery?.idempotencyKey).toBe(startInputs[0]?.delivery?.idempotencyKey);
         expect(mintedKeys).toHaveLength(2);
-        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
         // A fresh settlement of the same question, and the dispatch travelled
         // with THAT one. The fixture host retains exactly one active settlement
         // per operation, so a replayed carrier would have been refused outright.
@@ -680,7 +793,7 @@ describe('a start whose own response never arrived', () => {
 
     it('keeps the unresolved identity when a recovery attempt is refused, and rejoins on the next press', async () => {
         const { fixture } = await mountProbe({
-            request: PREPARED_REVIEW_SEND_REQUEST,
+            request: SETTLED_PREPARED_REVIEW_SEND_REQUEST,
             startResults: [
                 'lost',
                 // A later preparation refusal describes THAT attempt. It cannot
@@ -715,7 +828,7 @@ describe('a start whose own response never arrived', () => {
         // Three presses, one creation key and one delivery key: the third press
         // is still the first logical request rather than a second Session.
         expect(mintedKeys).toHaveLength(2);
-        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
         expect(preparedSelections).toHaveLength(3);
         expect(startCarriers[2]).toEqual({
             operation: PREPARED_OPERATION,
@@ -733,7 +846,7 @@ describe('a start whose own response never arrived', () => {
      */
     it('never reports a recovery creation failure as the logical request failing', async () => {
         const { fixture } = await mountProbe({
-            request: PREPARED_REVIEW_SEND_REQUEST,
+            request: SETTLED_PREPARED_REVIEW_SEND_REQUEST,
             startResults: ['lost', { v: 1, type: 'creationFailed' }, REJOINED_RESULT],
         });
         const press = await fixture.getByRole('button', { name: 'Compose in worktree' });
@@ -761,7 +874,7 @@ describe('a start whose own response never arrived', () => {
      */
     it('still reports a first dispatch’s own refusal as the terminal verdict it is', async () => {
         const { fixture } = await mountProbe({
-            request: PREPARED_REVIEW_SEND_REQUEST,
+            request: SETTLED_PREPARED_REVIEW_SEND_REQUEST,
             startResults: [
                 { v: 1, type: 'workspacePreparationFailed', reason: 'refused', retryable: false },
                 REJOINED_RESULT,
@@ -780,13 +893,13 @@ describe('a start whose own response never arrived', () => {
         // own — one refused start is not custody of a Session that never existed.
         expect(startInputs).toHaveLength(2);
         expect(startInputs[1]?.destination).not.toEqual(startInputs[0]?.destination);
-        expect(draftRequests).toHaveLength(2);
+        expect(draftRequests).toEqual([]);
         expect(mintedKeys).toHaveLength(4);
     });
 
     it('reports a cancelled or refused recovery authorization as still unknown', async () => {
         const { fixture } = await mountProbe({
-            request: PREPARED_REVIEW_SEND_REQUEST,
+            request: SETTLED_PREPARED_REVIEW_SEND_REQUEST,
             selectionResults: ['submitted', 'cancelled', 'refused', 'submitted'],
             startResults: ['lost', REJOINED_RESULT],
         });
@@ -816,13 +929,13 @@ describe('a start whose own response never arrived', () => {
         expect(startInputs[1]?.destination).toEqual(startInputs[0]?.destination);
         expect(startInputs[1]?.delivery?.idempotencyKey).toBe(startInputs[0]?.delivery?.idempotencyKey);
         expect(mintedKeys).toHaveLength(2);
-        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
         expect(notice).toBeNull();
     });
 
     it('spends nothing when the reader cancels the first prepared authorization', async () => {
         const { fixture } = await mountProbe({
-            request: PREPARED_REVIEW_SEND_REQUEST,
+            request: SETTLED_PREPARED_REVIEW_SEND_REQUEST,
             selectionResults: ['cancelled', 'submitted'],
             startResults: [{ ...REJOINED_RESULT, disposition: 'created', delivery: 'accepted' }],
         });
@@ -840,9 +953,42 @@ describe('a start whose own response never arrived', () => {
         await settle();
 
         expect(startInputs).toHaveLength(1);
-        expect(draftRequests).toHaveLength(2);
+        expect(draftRequests).toEqual([]);
         const destination = startInputs[0]?.destination;
         if (destination?.kind !== 'new') throw new Error('expected a new-Session destination');
         expect(destination.creationKey).not.toBe(mintedKeys[0]);
+    });
+});
+
+
+describe('sparse review observation readiness', () => {
+    const contributions = {
+        target: { pluginId: 'happier.triage', occurrenceId: 'triage-generation', sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-root' } },
+        points: [{ pointId: PREPARED_OPERATION.point.pointId, protocols: [{ protocol: PREPARED_OPERATION.point.protocol, contributions: [{
+            contributor: PREPARED_OPERATION.contributor, protocol: PREPARED_OPERATION.point.protocol,
+            descriptor: { v: 1, purpose: 'triage-source', displayName: 'External forge', kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
+            operations: [PREPARED_OPERATION], surfaces: [],
+        }] }] }],
+    };
+    it.each(['ready', 'refused'] as const)('settles the missing revision source read as %s before preparation', async (read) => {
+        const { reviewWorkspace: _missing, ...sparse } = PREPARED_REVIEW_START_REQUEST;
+        const { fixture, actionCalls } = await mountProbe({
+            request: { ...sparse, sourceContributions: contributions },
+            missingRevisionRead: read,
+            projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+                rootPath: '/workspaces/example', forge: START_REQUEST.repository, worktrees: [], reachable: true }],
+        });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await act(async () => { await Promise.resolve(); });
+        expect(actionCalls.filter(id => id === 'entries/reobserve-v1')).toHaveLength(1);
+        if (read === 'ready') {
+            expect(preparedSelections).toHaveLength(1);
+            expect(seeds).toHaveLength(1);
+        } else {
+            expect(phase).toMatchObject({ kind: 'unavailable', failure: { codes: ['unavailable', 'source_not_ready'], requestId: 'read-revision-19' } });
+            expect(preparedSelections).toEqual([]);
+            expect(seeds).toEqual([]);
+        }
+        expect(startInputs).toEqual([]);
     });
 });
