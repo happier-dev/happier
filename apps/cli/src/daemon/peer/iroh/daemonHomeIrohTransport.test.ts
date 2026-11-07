@@ -4,9 +4,9 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { addServerProfile, adoptServerProfileHomeConnectionDescriptor, getServerProfile, isServerProfileHomeIdentity, removeServerProfile, useServerProfile } from '@/server/serverProfiles';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor, getServerProfile, isServerProfileHomeIdentity, removeServerProfile, setServerProfileEndpointsById, useServerProfile } from '@/server/serverProfiles';
 import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { publishServerHttpRuntimeOrigin, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import {
   applyDaemonHomeDescriptorRefresh,
@@ -23,6 +23,56 @@ const descriptor = {
 };
 
 describe('prepareDaemonHomeIrohTransport', () => {
+  it('verifies the current saved route after its captured standard transport becomes stale', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+      'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+    const cancellation = new AbortController();
+    try {
+      await withTempDir('happier-daemon-stale-standard-', async homeDir => {
+        envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: undefined,
+          HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        const staleRoute = 'http://127.0.0.1:46821';
+        const currentRoute = 'http://127.0.0.1:48540';
+        const saved = await addServerProfile({ name: 'stale-standard', serverUrl: descriptor.canonicalServerUrl,
+          localServerUrl: staleRoute, webappUrl: descriptor.canonicalServerUrl, use: true });
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: saved.id, observation: 'exact',
+          descriptor: { ...descriptor, endpoints: [{ kind: 'https', url: saved.serverUrl }] } });
+        let stale = false;
+        // Substitute only HTTP readiness; saved-profile reads and carrier acquisition remain real.
+        const transport = await prepareDaemonHomeIrohTransport({ runtime: null,
+          profile: await getServerProfile(saved.id), applicationCarrierEligibility: 'standard_only',
+          signal: cancellation.signal, probe: async ({ serverUrl }) => {
+            if (stale && serverUrl === staleRoute) return { status: 'server_unreachable' };
+            return { status: 'ready' };
+          } });
+        try {
+          expect(transport.carrier).toBe('standard');
+          stale = true;
+          await setServerProfileEndpointsById({ id: saved.id, serverUrl: saved.serverUrl,
+            localServerUrl: currentRoute, webappUrl: saved.webappUrl });
+          vi.useFakeTimers();
+          let readiness: unknown;
+          const verification = transport.verifyAuthenticated(crypto.randomUUID()).then(result => { readiness = result; });
+          try {
+            await vi.waitFor(() => expect(readiness).toEqual({ status: 'ready' }));
+            expect(resolveServerHttpBaseUrl()).toBe(currentRoute);
+          } finally {
+            cancellation.abort();
+            await verification;
+          }
+        } finally {
+          vi.useRealTimers();
+          await transport.release();
+        }
+      });
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+    }
+  });
+
   it('uses invocation endpoint overrides for the same saved Home through reconnect without persisting them', async () => {
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
       'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
@@ -76,6 +126,8 @@ describe('prepareDaemonHomeIrohTransport', () => {
           HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
         reloadConfiguration();
         const id = configuration.activeServerId;
+        await setServerProfileEndpointsById({ id: 'focused-home', serverUrl: 'https://focused.example.test',
+          webappUrl: 'https://focused.example.test', use: true });
         const exact = { ...descriptor, endpoints: [{ kind: 'https' as const, url: descriptor.canonicalServerUrl }] };
         let available = false;
         vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({ features: {},
@@ -166,13 +218,15 @@ describe('prepareDaemonHomeIrohTransport', () => {
           HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
         reloadConfiguration();
         const reconnect = vi.fn();
+        await setServerProfileEndpointsById({ id: 'focused-home', serverUrl: 'https://focused.example.test',
+          webappUrl: 'https://focused.example.test', use: true });
         await expect(applyDaemonHomeDescriptorRefresh({
           features: FeaturesResponseSchema.parse({ features: {},
             capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
             homeConnectionDescriptor: descriptor }),
           requestReconnect: reconnect,
         })).resolves.toBe('ignored');
-        expect((await getServerProfile('cloud')).homeConnectionDescriptor).toBeUndefined();
+        expect((await getServerProfile('focused-home')).homeConnectionDescriptor).toBeUndefined();
         await expect(getServerProfile('manual-daemon')).rejects.toThrow('not found');
         expect(reconnect).not.toHaveBeenCalled();
       });
@@ -280,7 +334,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       serverUrl: 'https://ingress-home.example.test',
       expectedServerIdentityId: descriptor.homeServerIdentityId,
     }));
-    expect(publish).toHaveBeenCalledWith('https://ingress-home.example.test', 'https');
+    expect(publish).toHaveBeenCalledWith('https://ingress-home.example.test', 'https', undefined, expect.any(String));
     expect(result.carrier).toBe('standard');
   });
 
@@ -309,7 +363,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       serverUrl: 'http://127.0.0.1:48123',
       expectedServerIdentityId: descriptor.homeServerIdentityId,
     });
-    expect(publish).toHaveBeenCalledWith('http://127.0.0.1:48123', 'iroh', expect.objectContaining({ descriptor }));
+    expect(publish).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), 'iroh', expect.objectContaining({ descriptor }), expect.any(String));
     expect(probe).not.toHaveBeenCalled();
 
     await expect(result.verifyAuthenticated('fresh-token')).resolves.toEqual({ status: 'ready' });
@@ -319,6 +373,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       expectedServerIdentityId: descriptor.homeServerIdentityId,
     });
     expect(runtime.ensureHomeTunnel).toHaveBeenCalledOnce();
+    await result.release();
   });
 
   it('publishes only an authenticated and identity-matched Iroh runtime origin', async () => {
@@ -352,13 +407,13 @@ describe('prepareDaemonHomeIrohTransport', () => {
       serverUrl: 'http://127.0.0.1:48123', token: 'account-token',
       expectedServerIdentityId: 'srv_home_daemon',
     });
-    expect(publish).toHaveBeenCalledWith('http://127.0.0.1:48123', 'iroh', expect.objectContaining({ descriptor }));
+    expect(publish).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), 'iroh', expect.objectContaining({ descriptor }), expect.any(String));
     expect(result).toMatchObject({ carrier: 'iroh', observedPath: 'direct' });
     await expect(result.reacquire()).resolves.toEqual({ status: 'ready' });
-    expect(runtime.ensureHomeTunnel).toHaveBeenCalledTimes(2);
-    expect(releaseNative).toHaveBeenCalledTimes(1);
+    expect(runtime.ensureHomeTunnel).toHaveBeenCalledTimes(1);
+    expect(releaseNative).not.toHaveBeenCalled();
     await result.release();
-    expect(releaseNative).toHaveBeenCalledTimes(2);
+    expect(releaseNative).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed when authenticated verification rejects the Home identity', async () => {
@@ -370,24 +425,64 @@ describe('prepareDaemonHomeIrohTransport', () => {
       })),
     };
 
+    const probedOrigins: string[] = [];
     await expect(prepareDaemonHomeIrohTransport({
       runtime: runtime as never,
-      profile: { serverUrl: descriptor.canonicalServerUrl, homeConnectionDescriptor: descriptor } as never,
+      profile: { serverUrl: descriptor.canonicalServerUrl, homeConnectionDescriptor: {
+        ...descriptor, endpoints: [...descriptor.endpoints, { kind: 'https', url: 'https://public-home.example.test' }],
+      } } as never,
       token: 'account-token',
-      probe: async () => ({ status: 'auth_failed', statusCode: 401, errorMessage: 'denied' }),
+      probe: async ({ serverUrl }) => {
+        probedOrigins.push(serverUrl);
+        return { status: 'auth_failed', statusCode: 401, errorMessage: 'denied' };
+      },
       publishRuntimeOrigin: vi.fn(),
     })).rejects.toThrow(/verification failed/i);
     expect(release).toHaveBeenCalledTimes(1);
+    expect(probedOrigins).toEqual(['http://127.0.0.1:48123']);
   });
 
-  it('waits on the selected Iroh lease when readiness is unavailable instead of publishing HTTPS', async () => {
+  it('keeps an Iroh-only Home waiting through a restart during daemon startup', async () => {
+    vi.useFakeTimers();
+    const publish = vi.fn(() => vi.fn());
+    const ensureHomeTunnel = vi.fn(async () => ({
+      runtimeOrigin: 'http://127.0.0.1:48123', observedPath: 'relay' as const, release: vi.fn(async () => undefined),
+    }));
+    let homeReady = false;
+    const preparation = prepareDaemonHomeIrohTransport({
+      runtime: { available: true, ensureHomeTunnel } as never,
+      profile: { serverUrl: descriptor.canonicalServerUrl, homeConnectionDescriptor: descriptor } as never,
+      token: 'account-token',
+      probe: async () => homeReady ? { status: 'ready' } : { status: 'server_unreachable', errorMessage: 'Home restarting' },
+      publishRuntimeOrigin: publish,
+    });
+    let settled = false;
+    void preparation.finally(() => { settled = true; }).catch(() => undefined);
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      homeReady = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      const transport = await preparation;
+      expect(transport.carrier).toBe('iroh');
+      expect(ensureHomeTunnel).toHaveBeenCalledOnce();
+      expect(publish).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), 'iroh', expect.anything(), expect.any(String));
+      await transport.release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tries Iroh readiness once then publishes identity-verified declared HTTPS', async () => {
     vi.useFakeTimers();
     const release = vi.fn(async () => undefined);
     const httpsUrl = 'https://public-home.example.test';
     const publish = vi.fn(() => vi.fn());
 
-    let reachable = false;
+    const probedOrigins: string[] = [];
+    const cancellation = new AbortController();
     const preparation = prepareDaemonHomeIrohTransport({
+      signal: cancellation.signal,
       runtime: {
         available: true,
         ensureHomeTunnel: vi.fn(async () => ({
@@ -404,30 +499,33 @@ describe('prepareDaemonHomeIrohTransport', () => {
         },
       } as never,
       token: 'account-token',
-      probe: async ({ serverUrl }) => serverUrl === httpsUrl || reachable
-        ? { status: 'ready' }
-        : { status: 'server_unreachable', errorMessage: 'Iroh readiness failed' },
+      probe: async ({ serverUrl }) => {
+        probedOrigins.push(serverUrl);
+        return serverUrl === httpsUrl
+          ? { status: 'ready' }
+          : { status: 'server_unreachable', errorMessage: 'Iroh readiness failed' };
+      },
       publishRuntimeOrigin: publish,
     });
+    void preparation.catch(() => undefined);
     try {
       await vi.advanceTimersByTimeAsync(0);
-      expect(release).not.toHaveBeenCalled();
-      expect(publish).not.toHaveBeenCalled();
-      reachable = true;
-      await vi.advanceTimersByTimeAsync(250);
+      expect(probedOrigins).toEqual(['http://127.0.0.1:48123', httpsUrl]);
       const transport = await preparation;
-      expect(transport.carrier).toBe('iroh');
-      expect(publish).toHaveBeenCalledWith('http://127.0.0.1:48123', 'iroh', expect.objectContaining({
-        descriptor: expect.objectContaining({ homeServerIdentityId: descriptor.homeServerIdentityId }),
-      }));
+      expect(transport.carrier).toBe('standard');
+      expect(publish).toHaveBeenCalledWith(httpsUrl, 'https', undefined, expect.any(String));
       await transport.release();
       expect(release).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(probedOrigins).toEqual(['http://127.0.0.1:48123', httpsUrl]);
     } finally {
+      cancellation.abort();
+      await preparation.catch(() => undefined);
       vi.useRealTimers();
     }
   });
 
-  it('fails closed after selecting Iroh when transport acquisition times out instead of falling back to HTTPS', async () => {
+  it('uses declared HTTPS after an initial dial timeout but preserves auth refusals and Iroh-only failures', async () => {
     const descriptorWithHttpsFallback = {
       ...descriptor,
       endpoints: [
@@ -448,25 +546,26 @@ describe('prepareDaemonHomeIrohTransport', () => {
     ));
     const publish = vi.fn(() => vi.fn());
 
-    await expect(prepareDaemonHomeIrohTransport({
+    const transport = await prepareDaemonHomeIrohTransport({
       runtime: runtime as never,
       profile: {
         serverUrl: descriptor.canonicalServerUrl,
-        localServerUrl: 'http://127.0.0.1:3005',
         homeConnectionDescriptor: descriptorWithHttpsFallback,
       } as never,
       token: 'account-token',
       probe: probe as never,
       publishRuntimeOrigin: publish,
-    })).rejects.toMatchObject({ code: 'transport_timeout' });
+    });
 
-    expect(publish).not.toHaveBeenCalled();
-    expect(probe).not.toHaveBeenCalled();
+    expect(transport.carrier).toBe('standard');
+    expect(publish).toHaveBeenCalledWith('https://public-home.example.test', 'https', undefined, expect.any(String));
+    expect(probe).toHaveBeenCalledOnce();
+    await transport.release();
 
     runtime.ensureHomeTunnel.mockRejectedValueOnce(new IrohError('relay_auth_failed', 'relay denied'));
     await expect(prepareDaemonHomeIrohTransport({
       runtime: runtime as never,
-      profile: { serverUrl: descriptor.canonicalServerUrl, homeConnectionDescriptor: descriptor } as never,
+      profile: { serverUrl: descriptor.canonicalServerUrl, homeConnectionDescriptor: descriptorWithHttpsFallback } as never,
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,
@@ -538,7 +637,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
     expect(probe).toHaveBeenCalledWith(expect.objectContaining({
       serverUrl: expectedOrigin, expectedServerIdentityId: descriptor.homeServerIdentityId,
     }));
-    expect(publish).toHaveBeenCalledWith(expectedOrigin, 'https');
+    expect(publish).toHaveBeenCalledWith(expectedOrigin, 'https', undefined, expect.any(String));
     expect(transport).toMatchObject({ carrier: 'standard', observedPath: 'unknown' });
     await transport.release();
   });
@@ -565,7 +664,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,
-        homeConnectionDescriptor: descriptor,
+        homeConnectionDescriptor: { ...descriptor, revision: descriptor.revision + 1 },
       }) as never,
       probe: probe as never,
       publishRuntimeOrigin: vi.fn(() => vi.fn()),
@@ -577,7 +676,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
     });
   });
 
-  it('keeps daemon recovery pinned to a selected Iroh carrier when reacquisition is unavailable', async () => {
+  it.each(['unavailable', 'home_unreachable', 'transport_timeout', 'transport_closed', 'transport', 'unknown', 'retry_later'] as const)('recovers the same Home over declared HTTPS after %s', async code => {
     const httpsUrl = 'https://public-home.example.test';
     const descriptorWithHttps = {
       ...descriptor,
@@ -591,12 +690,13 @@ describe('prepareDaemonHomeIrohTransport', () => {
           observedPath: 'direct' as const,
           release: vi.fn(async () => undefined),
         })
-        .mockRejectedValueOnce(new IrohError('unavailable', 'Iroh suspended')),
+        .mockRejectedValueOnce(new IrohError(code === 'retry_later' ? 'transport_timeout' : code, 'Iroh suspended')),
     };
+    let outage = false;
     const probe = vi.fn(async ({ serverUrl }: { serverUrl: string }) => (
-      serverUrl === httpsUrl
+      serverUrl === httpsUrl || !outage
         ? { status: 'ready' as const }
-        : { status: 'ready' as const }
+        : { status: 'retry_later' as const }
     ));
     const transport = await prepareDaemonHomeIrohTransport({
       runtime: runtime as never,
@@ -604,19 +704,20 @@ describe('prepareDaemonHomeIrohTransport', () => {
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,
-        homeConnectionDescriptor: descriptorWithHttps,
+        homeConnectionDescriptor: { ...descriptorWithHttps,
+          revision: descriptorWithHttps.revision + (code === 'retry_later' ? 0 : 1) },
       }) as never,
       probe: probe as never,
       publishRuntimeOrigin: vi.fn(() => vi.fn()),
     });
+    outage = true;
     probe.mockClear();
 
-    await expect(transport.reacquire()).resolves.toMatchObject({
-      status: 'server_unreachable',
-      errorMessage: 'Iroh suspended',
-    });
-    expect(probe).not.toHaveBeenCalled();
-    expect(transport.carrier).toBe('iroh');
+    await expect(transport.reacquire()).resolves.toEqual({ status: 'ready' });
+    expect(probe).toHaveBeenCalledWith({ serverUrl: httpsUrl, token: 'account-token',
+      expectedServerIdentityId: descriptor.homeServerIdentityId });
+    expect(transport.carrier).toBe('standard');
+    await transport.release();
   });
 
   it('keeps the selected Iroh lease published until a verified replacement is installed', async () => {
@@ -640,7 +741,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
     };
     const unpublishInitial = vi.fn();
     const unpublishReplacement = vi.fn();
-    const publish = vi.fn()
+    const publish = vi.fn<typeof publishServerHttpRuntimeOrigin>()
       .mockReturnValueOnce(unpublishInitial)
       .mockReturnValueOnce(unpublishReplacement);
     const transport = await prepareDaemonHomeIrohTransport({
@@ -649,7 +750,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,
-        homeConnectionDescriptor: descriptor,
+        homeConnectionDescriptor: { ...descriptor, revision: descriptor.revision + 1 },
       }) as never,
       probe: async () => ({ status: 'ready' }),
       publishRuntimeOrigin: publish,
@@ -663,7 +764,9 @@ describe('prepareDaemonHomeIrohTransport', () => {
     expect(releaseInitialNative).not.toHaveBeenCalled();
 
     await expect(transport.reacquire()).resolves.toEqual({ status: 'ready' });
-    expect(publish).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:48124', 'iroh', expect.objectContaining({ descriptor }));
+    expect(publish).toHaveBeenNthCalledWith(2, publish.mock.calls[0]![0], 'iroh', expect.objectContaining({
+      descriptor: { ...descriptor, revision: descriptor.revision + 1 },
+    }), expect.any(String));
     expect(unpublishInitial).toHaveBeenCalledOnce();
     expect(releaseInitialNative).toHaveBeenCalledOnce();
     expect(publish.mock.invocationCallOrder[1]!).toBeLessThan(unpublishInitial.mock.invocationCallOrder[0]!);
@@ -737,6 +840,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       descriptor,
       replacementDescriptor,
     ]);
+    await transport.release();
   });
 
   it('recovers a Home restart through stable relay hints without parking on stale direct hints', async () => {
@@ -969,7 +1073,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,
-        homeConnectionDescriptor: descriptor,
+        homeConnectionDescriptor: { ...descriptor, revision: descriptor.revision + 1 },
       }) as never,
       probe: async () => ({ status: 'ready' }),
       publishRuntimeOrigin: vi.fn(() => vi.fn()),
@@ -1005,7 +1109,7 @@ describe('prepareDaemonHomeIrohTransport', () => {
       token: 'account-token',
       readProfile: async () => ({
         serverUrl: descriptor.canonicalServerUrl,
-        homeConnectionDescriptor: descriptor,
+        homeConnectionDescriptor: { ...descriptor, revision: descriptor.revision + 1 },
       }) as never,
       probe: async () => ({ status: 'ready' }),
       publishRuntimeOrigin: publish,

@@ -46,7 +46,6 @@ describe('acquireHomeCarrierByPolicy', () => {
     const acquireIroh = vi.fn();
 
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       applicationCarrierEligibility: 'standard_only',
       descriptor,
       preferredTransport: 'iroh',
@@ -56,7 +55,6 @@ describe('acquireHomeCarrierByPolicy', () => {
     expect(acquireIroh).not.toHaveBeenCalled();
 
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       applicationCarrierEligibility: 'standard_only',
       descriptor: { ...descriptor, endpoints: [descriptor.endpoints[1]!] },
       preferredTransport: 'iroh',
@@ -76,7 +74,6 @@ describe('acquireHomeCarrierByPolicy', () => {
     const acquireIroh = vi.fn();
 
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor: {
         v: 1 as const,
         homeServerIdentityId: 'srv_home_local',
@@ -94,18 +91,17 @@ describe('acquireHomeCarrierByPolicy', () => {
     expect(acquireIroh).not.toHaveBeenCalled();
   });
 
-  it('prefers a public HTTPS ingress over a loopback entry declared before it', async () => {
+  it.each(['http://localhost:3010', 'https://localhost:3010'])('prefers a public HTTPS ingress over a loopback entry declared before it (%s)', async loopbackUrl => {
     // Loopback reaches only this machine, so it is the last resort and never preempts an
     // independent ingress, whatever order the descriptor lists them in.
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor: {
         v: 1 as const,
         homeServerIdentityId: 'srv_home_both',
         canonicalServerUrl: 'http://localhost:3010',
         revision: 1,
         endpoints: [
-          { kind: 'https' as const, url: 'http://localhost:3010' },
+          { kind: 'https' as const, url: loopbackUrl },
           { kind: 'https' as const, url: 'https://home-b.example.test' },
         ],
       },
@@ -117,7 +113,6 @@ describe('acquireHomeCarrierByPolicy', () => {
 
   it('still refuses a non-loopback plaintext application endpoint', async () => {
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor: {
         v: 1 as const,
         homeServerIdentityId: 'srv_home_remote',
@@ -142,7 +137,6 @@ describe('acquireHomeCarrierByPolicy', () => {
     }));
 
     const result = await acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor,
       preferredTransport: 'iroh',
       acquireIroh,
@@ -160,7 +154,6 @@ describe('acquireHomeCarrierByPolicy', () => {
   it('rejects a target preference that contradicts descriptor-owned Iroh-first policy', async () => {
     const acquireIroh = vi.fn();
     const result = await acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor,
       preferredTransport: 'https',
       acquireIroh,
@@ -178,11 +171,9 @@ describe('acquireHomeCarrierByPolicy', () => {
   it.each([
     ['identity', { homeServerIdentityId: 'srv_home_b', endpointId, status: 'ready' as const }],
     ['endpoint', { homeServerIdentityId: 'srv_home_a', endpointId: 'b'.repeat(64), status: 'ready' as const }],
-    ['readiness', { homeServerIdentityId: 'srv_home_a', endpointId, status: 'degraded' as const }],
   ])('fails closed and releases an acquired carrier with mismatched %s', async (_label, returned) => {
     const release = vi.fn(async () => undefined);
     const result = await acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor,
       preferredTransport: 'iroh',
       acquireIroh: async () => ({ ...returned, release, value: null }),
@@ -193,10 +184,24 @@ describe('acquireHomeCarrierByPolicy', () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
+  it.each([true, false])('releases a degraded same-Home carrier and settles availability (HTTPS: %s)', async hasHttps => {
+    const release = vi.fn(async () => undefined);
+    const result = await acquireHomeCarrierByPolicy({
+      descriptor: hasHttps ? descriptor : { ...descriptor, endpoints: [descriptor.endpoints[1]!] },
+      preferredTransport: 'iroh',
+      acquireIroh: async () => ({ homeServerIdentityId: descriptor.homeServerIdentityId,
+        endpointId, status: 'degraded', release, value: null }),
+      classifyFailure: () => ({ fallbackAllowed: true }),
+    });
+    expect(result).toMatchObject(hasHttps
+      ? { kind: 'https', runtimeOrigin: 'https://ingress.example.test/path' }
+      : { kind: 'unavailable', error: { code: 'unavailable' } });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('falls back only for classified availability and only to descriptor-declared HTTPS', async () => {
     const unavailable = new Error('Iroh unavailable');
     const result = await acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor,
       preferredTransport: 'iroh',
       acquireIroh: async () => { throw unavailable; },
@@ -209,7 +214,6 @@ describe('acquireHomeCarrierByPolicy', () => {
   it.each(['identity', 'config', 'protocol'])('does not fall back for %s failures', async () => {
     const error = new Error('fail closed');
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor,
       preferredTransport: 'iroh',
       acquireIroh: async () => { throw error; },
@@ -217,35 +221,82 @@ describe('acquireHomeCarrierByPolicy', () => {
     })).resolves.toEqual({ kind: 'fail_closed', error, fallbackAllowed: false });
   });
 
-  it('keeps pinned recovery on Iroh when acquisition is safely unavailable', async () => {
+  it('recovers over declared HTTPS when Iroh acquisition is safely unavailable', async () => {
     const unavailable = new Error('Iroh suspended');
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'pinned_recovery',
       descriptor,
       preferredTransport: 'iroh',
       acquireIroh: async () => { throw unavailable; },
       classifyFailure: () => ({ fallbackAllowed: true }),
-    })).resolves.toEqual({
-      kind: 'fail_closed',
-      error: unavailable,
-      fallbackAllowed: true,
-    });
+    })).resolves.toEqual({ kind: 'https', runtimeOrigin: 'https://ingress.example.test/path' });
   });
 
-  it('does not publish HTTPS during pinned recovery when the refreshed descriptor no longer declares Iroh', async () => {
+  it('recovers over declared HTTPS when the refreshed descriptor no longer declares Iroh', async () => {
     const acquireIroh = vi.fn();
     await expect(acquireHomeCarrierByPolicy({
-      mode: 'pinned_recovery',
       descriptor: { ...descriptor, endpoints: [descriptor.endpoints[0]!] },
       preferredTransport: 'https',
       acquireIroh,
       classifyFailure: () => ({ fallbackAllowed: true }),
-    })).resolves.toMatchObject({
-      kind: 'fail_closed',
-      error: { code: 'unavailable' },
-      fallbackAllowed: false,
-    });
+    })).resolves.toEqual({ kind: 'https', runtimeOrigin: 'https://ingress.example.test/path' });
     expect(acquireIroh).not.toHaveBeenCalled();
+  });
+
+  it('settles non-security Iroh-only failure as unavailable', async () => {
+    const unavailable = new Error('Iroh unavailable');
+    await expect(acquireHomeCarrierByPolicy({
+      descriptor: { ...descriptor, endpoints: [descriptor.endpoints[1]!] },
+      preferredTransport: 'iroh', acquireIroh: async () => { throw unavailable; },
+      classifyFailure: () => ({ fallbackAllowed: true }),
+    })).resolves.toEqual({ kind: 'unavailable', error: unavailable });
+  });
+
+  it('prefers verified application HTTPS without acquiring Iroh', async () => {
+    const acquireIroh = vi.fn(async () => ({
+      homeServerIdentityId: descriptor.homeServerIdentityId, endpointId, status: 'ready' as const,
+      value: null, release: async () => undefined,
+    }));
+    const probed: string[] = [];
+    await expect(acquireHomeCarrierByPolicy({
+      descriptor, preferredTransport: 'iroh', acquireIroh,
+      classifyFailure: () => ({ fallbackAllowed: false }),
+      probeApplicationOrigin: async origin => { probed.push(origin); },
+    })).resolves.toEqual({ kind: 'https', runtimeOrigin: 'https://ingress.example.test/path' });
+    expect(probed).toEqual(['https://ingress.example.test/path']);
+    expect(acquireIroh).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('tries Iroh after an application probe only when fallback is permitted (%s)', async fallbackAllowed => {
+    const failure = new Error('Application probe failed');
+    const probed: string[] = [];
+    const acquireIroh = vi.fn(async () => ({
+      homeServerIdentityId: descriptor.homeServerIdentityId, endpointId, status: 'ready' as const,
+      value: null, release: async () => undefined,
+    }));
+    const result = await acquireHomeCarrierByPolicy({
+      descriptor, preferredTransport: 'iroh', acquireIroh,
+      classifyFailure: () => ({ fallbackAllowed }),
+      probeApplicationOrigin: async origin => { probed.push(origin); throw failure; },
+    });
+    expect(probed).toEqual(['https://ingress.example.test/path']);
+    if (fallbackAllowed) {
+      expect(result.kind).toBe('iroh');
+      expect(acquireIroh).toHaveBeenCalledOnce();
+      if (result.kind === 'iroh') await result.release();
+    } else {
+      expect(result).toEqual({ kind: 'fail_closed', error: failure, fallbackAllowed: false });
+      expect(acquireIroh).not.toHaveBeenCalled();
+    }
+  });
+
+  it('settles unavailable after both declared carriers fail instead of selecting the failed HTTPS origin again', async () => {
+    const irohFailure = new Error('Iroh unavailable');
+    await expect(acquireHomeCarrierByPolicy({
+      descriptor, preferredTransport: 'iroh',
+      acquireIroh: async () => { throw irohFailure; },
+      classifyFailure: () => ({ fallbackAllowed: true }),
+      probeApplicationOrigin: async () => { throw new Error('HTTPS unavailable'); },
+    })).resolves.toEqual({ kind: 'unavailable', error: irohFailure });
   });
 
   it('keeps failed release custody retryable at the explicit drain boundary', async () => {
@@ -253,7 +304,6 @@ describe('acquireHomeCarrierByPolicy', () => {
       .mockRejectedValueOnce(new Error('release failed'))
       .mockResolvedValueOnce(undefined);
     const result = await acquireHomeCarrierByPolicy({
-      mode: 'initial_selection',
       descriptor,
       preferredTransport: 'iroh',
       acquireIroh: async () => ({

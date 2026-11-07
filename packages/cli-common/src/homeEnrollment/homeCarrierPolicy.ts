@@ -8,7 +8,6 @@ type HomeIrohEndpointDescriptorV1 = Extract<
 
 export type HomeCarrierPolicyFailureClassification = Readonly<{ fallbackAllowed: boolean }>;
 export type HomeCarrierPreferredTransport = 'iroh' | 'https';
-export type HomeCarrierAcquisitionMode = 'initial_selection' | 'pinned_recovery';
 export type HomeApplicationCarrierEligibility = 'automatic' | 'standard_only';
 
 export const HOME_CARRIER_POLICY_ENV_KEY = 'HAPPIER_HOME_CARRIER_POLICY';
@@ -49,11 +48,12 @@ export type HomeCarrierPolicyResult<Value> =
   | Readonly<{ kind: 'fail_closed'; error: unknown; fallbackAllowed: boolean }>;
 
 export type HomeCarrierPolicyInput<Value> = Readonly<{
-  mode: HomeCarrierAcquisitionMode;
   /** Missing legacy inputs retain the established automatic behavior. */
   applicationCarrierEligibility?: HomeApplicationCarrierEligibility;
   descriptor: HomeConnectionDescriptorV1;
   preferredTransport: HomeCarrierPreferredTransport;
+  /** A browser may prefer a declared application origin after verifying it. */
+  probeApplicationOrigin?: (runtimeOrigin: string) => Promise<void>;
   acquireIroh(input: Readonly<{
     descriptor: HomeConnectionDescriptorV1;
     endpoint: IrohEndpointDescriptorV1;
@@ -117,7 +117,7 @@ export async function drainRetainedHomeCarrierReleases(): Promise<void> {
  * for a Home that publishes no independent ingress. Loopback membership is the shared
  * predicate's call, so a plaintext origin on any other host stays refused outright.
  */
-function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDescriptorV1): string | null {
+export function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDescriptorV1): string | null {
   let loopbackOrigin: string | null = null;
   for (const endpoint of descriptor.endpoints) {
     if (endpoint.kind !== 'https') continue;
@@ -130,8 +130,8 @@ function resolveDescriptorApplicationOrigin(descriptor: HomeConnectionDescriptor
       continue;
     }
     if (parsed.username || parsed.password) continue;
-    const loopback = parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname);
-    if (parsed.protocol !== 'https:' && !loopback) continue;
+    const loopback = isLoopbackHostname(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) continue;
     parsed.search = '';
     parsed.hash = '';
     const origin = parsed.toString().replace(/\/+$/u, '');
@@ -154,10 +154,10 @@ export function hasRemoteHomeApplicationCarrier(
 /**
  * Platform-neutral carrier decision. Standard-only eligibility bypasses Iroh
  * and uses descriptor-declared HTTPS. Automatic eligibility attempts Iroh
- * first; during initial selection only, the injected classifier may authorize
- * independently trusted HTTPS. Recovery of a selected Iroh carrier stays
- * pinned to Iroh. Identity/readiness mismatch after acquisition is always
- * fail-closed and the physical lease remains in retryable cleanup custody.
+ * first unless a caller verifies the declared application origin first. The
+ * classifier may authorize independently trusted HTTPS during selection or
+ * recovery. Identity mismatch remains fail-closed and released physical leases
+ * remain in retryable cleanup custody.
  */
 export async function acquireHomeCarrierByPolicy<Value>(
   input: HomeCarrierPolicyInput<Value>,
@@ -176,20 +176,7 @@ export async function acquireHomeCarrierByPolicy<Value>(
   const endpoint = input.descriptor.endpoints.find(
     (candidate): candidate is HomeIrohEndpointDescriptorV1 => candidate.kind === 'iroh',
   );
-  const applicationOrigin = resolveDescriptorApplicationOrigin(input.descriptor);
-  if (
-    input.mode === 'pinned_recovery'
-    && (input.applicationCarrierEligibility === 'standard_only' || !endpoint)
-  ) {
-    return {
-      kind: 'fail_closed',
-      error: new HomeCarrierPolicyError(
-        'unavailable',
-        'Pinned Iroh recovery cannot select an HTTPS carrier',
-      ),
-      fallbackAllowed: false,
-    };
-  }
+  let applicationOrigin = resolveDescriptorApplicationOrigin(input.descriptor);
   if (input.applicationCarrierEligibility === 'standard_only') {
     return applicationOrigin
       ? { kind: 'https', runtimeOrigin: applicationOrigin }
@@ -210,12 +197,24 @@ export async function acquireHomeCarrierByPolicy<Value>(
         };
   }
 
+  if (applicationOrigin && input.probeApplicationOrigin) {
+    try {
+      await input.probeApplicationOrigin(applicationOrigin);
+      return { kind: 'https', runtimeOrigin: applicationOrigin };
+    } catch (error) {
+      const classification = input.classifyFailure(error);
+      if (!classification.fallbackAllowed) {
+        return { kind: 'fail_closed', error, fallbackAllowed: false };
+      }
+      applicationOrigin = null;
+    }
+  }
+
   try {
     const acquired = await input.acquireIroh({ descriptor: input.descriptor, endpoint });
     const release = createOwnedHomeCarrierRelease(acquired.release);
     if (
-      acquired.status !== 'ready'
-      || acquired.homeServerIdentityId !== input.descriptor.homeServerIdentityId
+      acquired.homeServerIdentityId !== input.descriptor.homeServerIdentityId
       || acquired.endpointId !== endpoint.endpointId
     ) {
       await release().catch(() => undefined);
@@ -228,12 +227,20 @@ export async function acquireHomeCarrierByPolicy<Value>(
         fallbackAllowed: false,
       };
     }
+    if (acquired.status !== 'ready') {
+      await release().catch(() => undefined);
+      return applicationOrigin
+        ? { kind: 'https', runtimeOrigin: applicationOrigin }
+        : { kind: 'unavailable', error: new HomeCarrierPolicyError('unavailable', 'Iroh carrier is not ready') };
+    }
     const carrier = { ...acquired, release };
     return { kind: 'iroh', carrier, release };
   } catch (error) {
     const classification = input.classifyFailure(error);
-    if (input.mode === 'initial_selection' && classification.fallbackAllowed && applicationOrigin) {
-      return { kind: 'https', runtimeOrigin: applicationOrigin };
+    if (classification.fallbackAllowed) {
+      return applicationOrigin
+        ? { kind: 'https', runtimeOrigin: applicationOrigin }
+        : { kind: 'unavailable', error };
     }
     return { kind: 'fail_closed', error, fallbackAllowed: classification.fallbackAllowed };
   }
