@@ -43,7 +43,7 @@ import type {
 import type { WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowCondition } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { SESSION_AUTHORING_CONTROL_FIELD_IDS } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
-import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { SessionAuthoringControls, useSessionAuthoringEngineSummary } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 
 import type { WorkflowRunAsTargetKind } from '../run/workflowRunAsTargets';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
@@ -86,7 +86,7 @@ import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '
  * copy of the draft.
  */
 
-type OptionsPage = 'main' | 'result' | 'condition';
+type OptionsPage = 'main' | 'result' | 'condition' | 'agent';
 type RunsInChoice = 'default' | WorkflowLeafExecutionTargetV1['kind'];
 
 const styles = StyleSheet.create((theme) => ({
@@ -157,6 +157,7 @@ function blockTitle(block: WorkflowBlock): string {
 function subPageTitle(page: OptionsPage, block: WorkflowBlock): string | null {
     if (page === 'result') return t('workflows.page.inspector.resultTitle');
     if (page === 'condition') return t('workflows.condition.whenTitle');
+    if (page === 'agent') return t('workflows.page.sections.agentTitle');
     return null;
 }
 
@@ -238,6 +239,8 @@ export function WorkflowBlockOptions(props: WorkflowInspectorProps & Readonly<{ 
                 </ItemGroup>
             ) : page === 'result' ? (
                 <ResultPage {...props} />
+            ) : page === 'agent' && block.kind === 'step' ? (
+                <StepAgentPage {...props} step={block} />
             ) : (
                 <MainPage {...props} onOpenPage={setPage} />
             )}
@@ -503,11 +506,6 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     onOpenPage: (page: OptionsPage) => void;
 }>): React.ReactElement {
     const { draft, onChange, step, testIDPrefix } = props;
-    const renderStepFieldControl = useWorkflowStepFieldControlRenderer({
-        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
-        engineFieldTitle: null,
-        testIDPrefix: `${testIDPrefix}-control`,
-    });
     const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
     const continuedSessionLabel = useWorkflowContinuedSessionLabel(effectiveExecution.conversation);
     if (props.documentEditable === false) return <>
@@ -516,13 +514,6 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                 conversation: effectiveExecution.conversation, workspace: effectiveExecution.workspace, existingSessions: props.existingSessions,
                 sessionLabel: continuedSessionLabel })}</Text>
         </SectionContentRow></ItemGroup>
-        <ItemGroup title={t('workflows.page.sections.agentTitle')}>
-            <SessionAuthoringControls presentation="fields" disabled fields={SESSION_AUTHORING_CONTROL_FIELD_IDS}
-                engineFieldTitle={null}
-                values={effectiveExecution} engine={step.execution?.engine ?? draft.defaults.engine} workflowRoles={draft.roles}
-                onChangeField={() => {}} onChangeFields={() => {}} onChangeEngine={() => {}}
-                facts={props.authoringFacts} testIDPrefix={`${testIDPrefix}-control`} />
-        </ItemGroup>
         <ItemGroup>
             <Item title={t('workflows.page.inspector.runsIn')} subtitle={runsInLabel(step.execution?.executionTarget?.kind ?? props.executionTarget ?? 'session')} mode="info" />
             <Item title={t('workflows.page.inspector.reviewTitle')} subtitle={t(step.pauseForReview ? 'common.yes' : 'common.no')} mode="info" />
@@ -531,6 +522,13 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                 condition={step.onlyWhen} draft={draft} consumerBlockId={step.id} onChange={() => {}} testIDPrefix={`${testIDPrefix}-condition`} /></SectionContentRow>
             <Item title={t('workflows.editor.timeoutTitle')} subtitle={step.timeoutMs === undefined ? t('workflows.editor.noDeadline')
                 : t('workflows.page.inspector.deadline', { ms: step.timeoutMs })} mode="info" />
+        </ItemGroup>
+        <ItemGroup title={t('workflows.page.sections.agentTitle')}>
+            <SessionAuthoringControls presentation="fields" disabled fields={SESSION_AUTHORING_CONTROL_FIELD_IDS}
+                engineFieldTitle={null}
+                values={effectiveExecution} engine={step.execution?.engine ?? draft.defaults.engine} workflowRoles={draft.roles}
+                onChangeField={() => {}} onChangeFields={() => {}} onChangeEngine={() => {}}
+                facts={props.authoringFacts} testIDPrefix={`${testIDPrefix}-control`} />
         </ItemGroup>
     </>;
 
@@ -546,6 +544,9 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     // The fields this group shows, none of them changed for the step (the same test as each row's state).
     const agentInherited = step.execution?.engine === undefined
         && !SESSION_AUTHORING_CONTROL_FIELD_IDS.some((field) => Object.hasOwn(step.execution ?? {}, field));
+    const agentSummary = useSessionAuthoringEngineSummary({ values: effectiveExecution,
+        engine: step.execution?.participant ?? step.execution?.engine ?? draft.defaults.engine, workflowRoles: draft.roles,
+        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }) });
 
     return (
         <>
@@ -571,47 +572,6 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                 </SectionContentRow>
             </ItemGroup>
 
-            <ItemGroup title={t('workflows.page.sections.agentTitle')}>
-                <SectionContentRow testID={`${testIDPrefix}-agent-row`}>
-                    {/* Named once for the group, not as the meta of every inherited row (lab `editor-E1o`). */}
-                    {agentInherited ? (
-                        <Text testID={`${testIDPrefix}-agent-inherited`} style={workflowEditorStyles.metaText}>
-                            {t('workflows.page.blocks.workflowDefaults')}
-                        </Text>
-                    ) : null}
-                    <WorkflowStepInspector
-                        draft={draft}
-                        step={step}
-                        renderFieldControl={renderStepFieldControl}
-                        onChangeFields={(fields) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
-                            ? { ...current, execution: withWorkflowAuthoringEngineFields(current.execution ?? {}, fields) } : current))}
-                        onChangeEngine={(engine) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
-                            ? { ...current, execution: withWorkflowAuthoringEngine(current.execution ?? {}, engine) } : current))}
-                        onResetEngine={() => onChange(updateWorkflowBlock(draft, step.id, current => {
-                            if (current.kind !== 'step') return current;
-                            const { engine, agentTarget, modelSelection, acpSessionModeId, sessionConfigOptionOverrides, ...execution } = current.execution ?? {};
-                            return { ...current, execution };
-                        }))}
-                        onResetField={(field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined))}
-                        onChangeField={(field, value) => {
-                            let next = setWorkflowStepExecutionField(draft, step.id, field, value);
-                            if (field === 'agentTarget') {
-                                const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
-                                    runtimeDescriptorV1: effectiveExecution.runtimeDescriptorV1,
-                                    agentTarget: readSessionAuthoringAgentTargetValue(value),
-                                    facts: props.authoringFacts,
-                                });
-                                if (retired !== effectiveExecution.runtimeDescriptorV1) {
-                                    next = setWorkflowStepExecutionField(next, step.id, 'runtimeDescriptorV1', retired);
-                                }
-                            }
-                            onChange(next);
-                        }}
-                        {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
-                        testIDPrefix={testIDPrefix}
-                    />
-                </SectionContentRow>
-            </ItemGroup>
 
             <ItemGroup>
                 <SegmentedChoiceItem<RunsInChoice>
@@ -677,7 +637,78 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
             <WhenItRunsGroup draft={draft} block={step} onChange={onChange}
                 onOpenCondition={() => props.onOpenPage('condition')} testIDPrefix={testIDPrefix} />
 
+            {/* What the step is for leads (Conversation, Runs in, Review, Result, Only run when); the engine
+                and its plumbing (permissions, CLI settings, skills, auth, session type) open one level down
+                (FIN-DESIGN-REVIEW-1108 N5). */}
+            <ItemGroup>
+                <Item
+                    testID={`${testIDPrefix}-agent-row`}
+                    title={t('workflows.page.sections.agentTitle')}
+                    subtitle={agentInherited ? t('workflows.page.blocks.workflowDefaults') : agentSummary}
+                    showChevron
+                    onPress={() => props.onOpenPage('agent')}
+                />
+            </ItemGroup>
+
             <AdvancedGroup {...props} block={step} />
+        </>
+    );
+}
+
+/** Agent and model, one level down from Step options: the engine and every session field the step can set. */
+function StepAgentPage(props: WorkflowInspectorProps & Readonly<{ step: WorkflowStep }>): React.ReactElement {
+    const { draft, onChange, step, testIDPrefix } = props;
+    const renderStepFieldControl = useWorkflowStepFieldControlRenderer({
+        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
+        engineFieldTitle: null,
+        testIDPrefix: `${testIDPrefix}-control`,
+    });
+    const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
+    const agentInherited = step.execution?.engine === undefined
+        && !SESSION_AUTHORING_CONTROL_FIELD_IDS.some((field) => Object.hasOwn(step.execution ?? {}, field));
+    return (
+        <>
+            <ItemGroup>
+                <SectionContentRow testID={`${testIDPrefix}-agent-fields`}>
+                    {/* Named once for the group, not as the meta of every inherited row (lab `editor-E1o`). */}
+                    {agentInherited ? (
+                        <Text testID={`${testIDPrefix}-agent-inherited`} style={workflowEditorStyles.metaText}>
+                            {t('workflows.page.blocks.workflowDefaults')}
+                        </Text>
+                    ) : null}
+                    <WorkflowStepInspector
+                        draft={draft}
+                        step={step}
+                        renderFieldControl={renderStepFieldControl}
+                        onChangeFields={(fields) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
+                            ? { ...current, execution: withWorkflowAuthoringEngineFields(current.execution ?? {}, fields) } : current))}
+                        onChangeEngine={(engine) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
+                            ? { ...current, execution: withWorkflowAuthoringEngine(current.execution ?? {}, engine) } : current))}
+                        onResetEngine={() => onChange(updateWorkflowBlock(draft, step.id, current => {
+                            if (current.kind !== 'step') return current;
+                            const { engine, agentTarget, modelSelection, acpSessionModeId, sessionConfigOptionOverrides, ...execution } = current.execution ?? {};
+                            return { ...current, execution };
+                        }))}
+                        onResetField={(field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined))}
+                        onChangeField={(field, value) => {
+                            let next = setWorkflowStepExecutionField(draft, step.id, field, value);
+                            if (field === 'agentTarget') {
+                                const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
+                                    runtimeDescriptorV1: effectiveExecution.runtimeDescriptorV1,
+                                    agentTarget: readSessionAuthoringAgentTargetValue(value),
+                                    facts: props.authoringFacts,
+                                });
+                                if (retired !== effectiveExecution.runtimeDescriptorV1) {
+                                    next = setWorkflowStepExecutionField(next, step.id, 'runtimeDescriptorV1', retired);
+                                }
+                            }
+                            onChange(next);
+                        }}
+                        {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
+                        testIDPrefix={testIDPrefix}
+                    />
+                </SectionContentRow>
+            </ItemGroup>
         </>
     );
 }

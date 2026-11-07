@@ -1399,6 +1399,9 @@ describe('workflow editor body', () => {
         // Wide: Step options is the anchored popover beside the step, not a modal.
         expect(screen.visibleModals()).toEqual([]);
         expect(screen.findByTestId('workflow-editor-inspector-options')).not.toBeNull();
+        // What the step is for leads; the shared engine controls open one level down (FIN-DESIGN-REVIEW-1108 N5).
+        expect(screen.findByTestId('workflow-editor-inspector')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-inspector-agent-row');
         expect(screen.findByTestId('workflow-editor-inspector')).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-editor-inspector-done');
         expect(screen.findByTestId('workflow-editor-inspector-options')).toBeNull();
