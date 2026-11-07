@@ -63,7 +63,9 @@ export const ForgeCiMutationResultV1Schema = defineProtocolUnion([
 export type ForgeCiMutationResultV1 = ReturnType<typeof ForgeCiMutationResultV1Schema.parse>;
 export const ForgeCiWorkflowsListInputV1Schema = defineProtocolObject({ repository, credentialRef, cursor, validator }, closed);
 export const ForgeCiWorkflowReadInputV1Schema = defineProtocolObject({ repository, credentialRef, workflowId, validator }, closed);
-export const ForgeCiRunsListInputV1Schema = defineProtocolObject({ repository, credentialRef, workflowId: workflowId.optional(), filters: ForgeCiRunFiltersV1Schema, cursor, validator }, closed);
+/** Runs per provider page, at most the provider's own maximum; the provider default when omitted. A cursor keeps its page's size. */
+const runsPageSize = defineProtocolNumber({ integer: true, minimum: 1, maximum: 100 }).optional();
+export const ForgeCiRunsListInputV1Schema = defineProtocolObject({ repository, credentialRef, workflowId: workflowId.optional(), filters: ForgeCiRunFiltersV1Schema, pageSize: runsPageSize, cursor, validator }, closed);
 export const ForgeCiRunReadInputV1Schema = defineProtocolObject({ repository, credentialRef, runId, attempt, validator }, closed);
 export const ForgeCiJobsListInputV1Schema = defineProtocolObject({ repository, credentialRef, runId, attempt, cursor, validator }, closed);
 export const ForgeCiJobReadInputV1Schema = defineProtocolObject({ repository, credentialRef, jobId, validator }, closed);
