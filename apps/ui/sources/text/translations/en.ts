@@ -4948,6 +4948,7 @@ const enConnectedServices = {
     catalogContentUnreadable: "Happier couldn’t read the saved connected-account catalog. Refresh and try again. If this continues, ask your Home operator to check the saved account data.",
     catalogSecretUnavailable: "A saved credential needed for this change is no longer available. Select an available credential and try again.",
     catalogCancelled: "The connected-account change was cancelled. Try again when you’re ready.",
+    catalogDefaultsUnavailable: "Happier couldn’t load the default Connected Accounts. Refresh Connected Accounts, then try this action again.",
     accountSaveUnavailable:
       'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     signInLoadFailed: ({ service }: { service: string }) => `Couldn’t load ${service}’s sign-in. Try again.`,

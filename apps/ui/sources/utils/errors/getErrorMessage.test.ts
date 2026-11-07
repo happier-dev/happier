@@ -9,6 +9,11 @@ installErrorUtilityCommonModuleMocks();
 const { getErrorMessage } = await import('./getErrorMessage');
 
 describe('getErrorMessage', () => {
+    it('presents an unavailable Keep reason without its raw code', () => {
+        expect(getErrorMessage('reviewed_marks_unavailable')).toBe('hunkReview.keepUnavailable');
+        expect(getErrorMessage(new HappyError('reviewed_marks_unavailable', false, { code: 'reviewed_marks_unavailable' })))
+            .toBe('hunkReview.keepUnavailable');
+    });
     it('localizes Action refusal and pending approval without replacing a supplied refusal message', () => {
         expect(getErrorMessage(new HappyError('action_disabled', false, { code: 'action_disabled' }))).toBe('common.disabled');
         expect(getErrorMessage(new HappyError('approval_request_created', false, { code: 'approval_request_created' }))).toBe('approvals.status.open');
@@ -48,11 +53,16 @@ describe('getErrorMessage', () => {
         expect(getErrorMessage(undefined)).toBe('');
     });
 
-    it('says what a connected-account catalog failure means instead of its code', async () => {
+    it.each([
+        ['connected_account_purpose_catalog_unavailable', 'connectedServices.errors.catalogDefaultsUnavailable'],
+        ['unauthorized', 'connectedServices.errors.catalogSignInRequired'],
+        ['forbidden', 'connectedServices.errors.accountAccessUnavailable'],
+        ['settings-conflict', 'connectedServices.errors.accountConfigurationChanged'],
+        ['outcome_unknown', 'connectedServices.errors.accountStateUncertain'],
+        ['invalid-stored-content', 'connectedServices.errors.catalogContentUnreadable'],
+    ])('presents the connected-account catalog cause and recovery for %s', async (code, message) => {
         const { ConnectedAccountCatalogOperationError } = await import('@/sync/api/account/connectedAccountCatalogOperationError');
-        expect(getErrorMessage(new ConnectedAccountCatalogOperationError('connected_account_purpose_catalog_unavailable')))
-            .toBe('errors.connectedAccountsUnavailable');
-        expect(getErrorMessage(new ConnectedAccountCatalogOperationError('unauthorized'))).toBe('errors.connectedAccountsUnavailable');
+        expect(getErrorMessage(new ConnectedAccountCatalogOperationError(code))).toBe(message);
     });
 
     it('returns a daemon-unavailable message when rpc method is not available', () => {

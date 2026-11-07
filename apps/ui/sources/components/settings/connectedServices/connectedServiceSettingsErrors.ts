@@ -76,6 +76,25 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         : t('connectedServices.errors.generic');
 
     switch (code) {
+        case 'connected_account_purpose_catalog_unavailable':
+            return t('connectedServices.errors.catalogDefaultsUnavailable');
+        case 'unauthorized':
+            return t('connectedServices.errors.catalogSignInRequired');
+        case 'forbidden':
+            return t('connectedServices.errors.accountAccessUnavailable');
+        case 'unreachable':
+            return t('errors.connectedAccountsUnavailable');
+        case 'account-inconsistent':
+        case 'account-mode-mismatch':
+        case 'encryption-material-unavailable':
+            return t('connectedServices.errors.catalogEncryptionUnavailable');
+        case 'invalid-stored-content':
+            return t('connectedServices.errors.catalogContentUnreadable');
+        case 'invalid-reference':
+        case 'saved-secret-unavailable':
+            return t('connectedServices.errors.catalogSecretUnavailable');
+        case 'cancelled':
+            return t('connectedServices.errors.catalogCancelled');
         case RPC_ERROR_CODES.FORBIDDEN:
             return t('connectedServices.errors.accountSharedMachineUnavailable');
         case 'connected_account_browser_sign_in_machine_unavailable':
@@ -120,6 +139,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_launch_file_environment_purpose_unavailable':
         case 'connected_account_purpose_unavailable':
             return t('connectedServices.errors.accountServiceUnavailable');
+        case 'unsupported':
         case 'connect_credential_unsupported_format':
         case 'connect_group_runtime_fallback_unsupported':
         case 'connected_account_legacy_operation_unsupported':
@@ -135,8 +155,12 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             return t('connectedServices.errors.accountOperationUnsupported');
         case 'connected_account_configuration_required':
         case 'connected_account_configured_origins_unavailable':
-        case 'saved-secret-unavailable':
             return t('connectedServices.errors.accountConfigurationRequired');
+        case 'scope-retired':
+        case 'account-not-found':
+        case 'conflict':
+        case 'settings-conflict':
+        case 'source-version-conflict':
         case 'connected_account_configuration_changed':
         case 'connected_account_configuration_stale':
         case 'connected_account_configuration_consequence_stale':
@@ -147,6 +171,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_attempt_transaction_conflict':
         case 'connected_account_configuration_revision_unavailable':
             return t('connectedServices.errors.accountConfigurationChanged');
+        case 'outcome_unknown':
         case 'connected_account_authentication_outcome_unknown':
         case 'claude_subscription_oauth_outcome_unknown':
         case 'connected_account_settlement_outcome_unknown':
@@ -286,6 +311,11 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_attempt_transaction_storage_mode_mismatch':
         case 'connected_account_attempt_transaction_unreadable':
         case 'connected_account_revoke_unavailable':
+        case 'source-currentness-unavailable':
+        case 'source-transfer-unavailable':
+        case 'not_dispatched':
+        case 'authority-not-confirmed':
+        case 'database_transaction_conflict_exhausted':
             return t('connectedServices.errors.accountSaveUnavailable');
         case 'connect_credential_not_found':
         case 'connected_account_not_found':
@@ -333,7 +363,9 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             return t('connectedServices.errors.invalidGroup');
         case 'connected_service_request_failed':
             break;
-        default:
+        default: {
+            const catalogHttpStatus = /^connected_account_catalog_http_(\d{3})$/.exec(code ?? '')?.[1];
+            if (catalogHttpStatus) return t('connectedServices.errors.requestFailedWithStatus', { status: Number(catalogHttpStatus) });
             // The authentication owner redacts these structured probe messages.
             // Transport Error.message remains outside this display contract.
             if ((errorLike.status === 'rejected' || errorLike.status === 'unavailable')
@@ -343,6 +375,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             if (errorLike.status === 'rejected') return t('connectedServices.errors.accountAuthenticationRejected');
             if (errorLike.status === 'unavailable') return t('connectedServices.errors.accountServiceUnavailable');
             if (code) return unexplained;
+        }
     }
 
     if (typeof errorLike.status === 'number') {

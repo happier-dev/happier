@@ -11,6 +11,41 @@ import {
 } from './connectedServiceSettingsErrors';
 
 describe('connected-service settings errors', () => {
+  it.each([
+    ['unauthorized', 'catalogSignInRequired'],
+    ['forbidden', 'accountAccessUnavailable'],
+    ['unsupported', 'accountOperationUnsupported'],
+    ['unreachable', null],
+    ['scope-retired', 'accountConfigurationChanged'],
+    ['source-currentness-unavailable', 'accountSaveUnavailable'],
+    ['source-transfer-unavailable', 'accountSaveUnavailable'],
+    ['source-version-conflict', 'accountConfigurationChanged'],
+    ['authority-not-confirmed', 'accountSaveUnavailable'],
+    ['database_transaction_conflict_exhausted', 'accountSaveUnavailable'],
+    ['account-not-found', 'accountConfigurationChanged'],
+    ['account-inconsistent', 'catalogEncryptionUnavailable'],
+    ['account-mode-mismatch', 'catalogEncryptionUnavailable'],
+    ['encryption-material-unavailable', 'catalogEncryptionUnavailable'],
+    ['invalid-stored-content', 'catalogContentUnreadable'],
+    ['invalid-reference', 'catalogSecretUnavailable'],
+    ['saved-secret-unavailable', 'catalogSecretUnavailable'],
+    ['conflict', 'accountConfigurationChanged'],
+    ['settings-conflict', 'accountConfigurationChanged'],
+    ['outcome_unknown', 'accountStateUncertain'],
+    ['cancelled', 'catalogCancelled'],
+    ['not_dispatched', 'accountSaveUnavailable'],
+  ] as const)('preserves the catalog refusal and its recovery (%s)', (code, key) => {
+    const error = { code };
+    expect(resolveConnectedServiceSettingsErrorMessage(error)).toBe(key
+      ? t(`connectedServices.errors.${key}`) : t('errors.connectedAccountsUnavailable'));
+    expect(readConnectedServiceSettingsErrorDetailsCode(error)).toBe(code);
+  });
+
+  it('presents a catalog HTTP refusal with its status and recovery without exposing transport prose', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage({ code: 'connected_account_catalog_http_503', message: 'private response' }))
+      .toBe(t('connectedServices.errors.requestFailedWithStatus', { status: 503 }));
+  });
+
   it('keeps the specific safe provider code for reconnect and uncertain details', () => {
     for (const status of ['reconnectRequired', 'outcomeUnknown']) {
       const error = { status, code: 'connected_account_authentication_outcome_unknown',
@@ -74,7 +109,7 @@ describe('connected-service settings errors', () => {
 
   it('explains an unavailable saved secret without parsing it as authentication or generic failure', () => {
     expect(resolveConnectedServiceSettingsErrorMessage(new Error('saved-secret-unavailable')))
-      .toBe(t('connectedServices.errors.accountConfigurationRequired'));
+      .toBe(t('connectedServices.errors.catalogSecretUnavailable'));
   });
   it.each(['plugin_setup_unavailable', 'connected_account_configuration_unavailable'])(
     'classifies the typed unavailable preparation outcome for %s without implying a save', code => {

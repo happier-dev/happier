@@ -2,11 +2,13 @@ import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 import { t } from '@/text';
 import { HappyError } from './errors';
 import { ConnectedAccountCatalogOperationError } from '@/sync/api/account/connectedAccountCatalogOperationError';
+import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 
 export function getErrorMessage(err: unknown): string {
     if (err === null || err === undefined) return '';
 
     const message = typeof err === 'string' ? err : err instanceof Error ? err.message : null;
+    if (message === 'reviewed_marks_unavailable') return t('hunkReview.keepUnavailable');
     if (message === 'account_encryption_currentness_unavailable') {
         return t('settingsAccount.encryptionFactUnread');
     }
@@ -19,8 +21,7 @@ export function getErrorMessage(err: unknown): string {
         if (err.code === 'invalid_parameters' && err.message === err.code) return t('common.requestFailed');
     }
 
-    // Its message is a machine reason code; the person needs to know what could not be reached.
-    if (err instanceof ConnectedAccountCatalogOperationError) return t('errors.connectedAccountsUnavailable');
+    if (err instanceof ConnectedAccountCatalogOperationError) return resolveConnectedServiceSettingsErrorMessage(err);
 
     if (isRpcMethodNotAvailableError(err)) {
         return t('errors.daemonUnavailableBody');
