@@ -670,7 +670,10 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     // A failed refresh retains the prior accounting window as well as its
     // values; it cannot compare those values against a later requested range.
     const period = 'relative' in query.period ? readBoundedAccountingPeriod(snapshot?.value) ?? readPeriod : readPeriod;
-    const comparisonQuery = resolveUsageComparisonQuery(query, period);
+    // Pending accounting still presents the admitted answer. Its comparison
+    // belongs to that same answer even when optional coverage has no range.
+    const comparisonQuery = snapshot?.status === 'pending' && snapshot.value !== undefined && prior?.comparison
+      ? prior.comparison.query : resolveUsageComparisonQuery(query, period);
     const previousComparison = comparisonQuery && prior?.comparison
       && getUsageQueryKey(prior.comparison.query) === getUsageQueryKey(comparisonQuery) ? prior.comparison : undefined;
     const comparisonSnapshot = comparisonQuery ? projectPrices(retainAccountingOnReadFailure(accounting.get(getUsageQueryKey(comparisonQuery)),

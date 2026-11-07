@@ -69,7 +69,7 @@ import { resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/action
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, isMachineSetupPlanRpcChildV1, readMachineSetupPlanChildInputV1, type ManagedControllerReportV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -86,7 +86,7 @@ import { buildSessionOrganizationAssignmentSnapshotHttpRequestV1 } from '@happie
 import { SessionCreateRequestSchema } from '@/app/session/create/sessionCreateRequest';
 import { SessionMachineAccessKeyCreateBodySchema } from '@/app/accessKeys/sessionMachineAccessKeyRequest';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
-import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema,
@@ -865,6 +865,8 @@ export async function verifyCurrentExternalActionPrincipalInTx(
 export type VerifiedExternalActionExecutionRequest = Readonly<{
     /** One private acquisition admission; HTTP authentication consumes its typed result. */
     machineNpmProfileAdmission?: Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>;
+    /** The ordinary child Action's admission, consumed by the RPC router once. */
+    sessionAgentReadinessAdmission?: Extract<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>, { kind: 'admitted' }>;
     binding: ExternalActionExecutionAuthorizationBindingV1;
     effectActionId: string;
     target: ExternalActionTargetV1;
@@ -1205,6 +1207,15 @@ export function refuseExternalActionExecutionRequest(phase: ExternalActionAuthor
     return null;
 }
 
+/** Reviewed readiness spends only a child permitted by the original credential. */
+function readGrantedSessionAgentReadinessChild(binding: ExternalActionExecutionAuthorizationBindingV1,
+    child: ReviewedActionChildHttpProofV1 | undefined,
+    selectedTarget?: Readonly<{ machineId: string; installationId: string }>) {
+    const actionId = readSessionAgentReadinessChildActionV1(binding, child, selectedTarget);
+    return actionId && ('authentication' in binding || evaluateApiTokenGrantV1({ grant: binding.grant,
+        actionId, target: binding.target, targetMachineId: binding.machineId }).ok) ? actionId : null;
+}
+
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof) {
@@ -1223,6 +1234,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const createPreparationEffect = isDeploymentCreateHttpEffect(binding, effectActionId);
     const targetRetentionPurpose = readDeploymentTargetRetentionHttpPurpose(binding, effectActionId, proof);
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId);
+    const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
     const reviewedMachineSetupChild = binding.admittedMachineRole === 'manage'
         && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
         && machineSetupEffect
@@ -1250,7 +1262,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
     };
     const crossesEffectFamily = setupPreparationRead || createPreparationEffect || Boolean(targetRetentionPurpose)
-        || reviewedMachineSetupChild || linkReviewedSetupRead || reviewedDomainEffect || teardownDomainContinuation;
+        || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect || teardownDomainContinuation;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -1261,7 +1273,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         || sibling.personalUsage || sibling.publicProfile;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
-        createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild,
+        createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
         linkReviewedSetupRead, candidatePublication, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
@@ -2545,8 +2557,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     if (isPublicProfilePreparationActionIdV1(root) && root !== 'account.public_profile.preview') {
         return verified.effectActionId === root && isPublicProfilePreparedMutationHttpPurpose(root, proof);
     }
-    if ((root === 'usage.coach.dismiss' || root === 'usage.coach.snooze'
-        || root === 'settings.set' || root === 'settings.reset') && verified.effectActionId === root) {
+    if ((root === 'usage.coach.dismiss' || root === 'usage.coach.snooze') && verified.effectActionId === root) {
         if (proof.method.toUpperCase() === 'GET' && proof.body === undefined
             && ['/v1/account/encryption/currentness', '/v2/account/settings',
                 `/v1/kv/${encodeURIComponent(USAGE_COACH_SUPPRESSIONS_KV_KEY)}`].includes(proof.path)
@@ -3049,6 +3060,12 @@ export async function verifyExternalActionDomainExecutionRequest(
             isReadOnlyArtifactHttpPurpose, undefined, verified.setupReceiverMachineId)) return refuseExternalActionExecutionRequest('deployment_setup_receiver_purpose', proof);
     } else if (reviewedMachineSetupChild) {
         if (!isReviewedMachineSetupHttpPurpose(verified, proof)) return null;
+    } else if (verified.signedChildPurpose.reviewedSessionAgentReadinessChild) {
+        // These finite children need the existing requester Machine codec only.
+        // Installation permission is consumed at the install RPC admission.
+        if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
+            || !isAccountEncryptionCurrentnessHttpRead(proof)
+                && proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) return null;
     } else if (verified.createPreparationAdmission || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
         || verified.acceptedDeploymentReceipt?.read) {
         // verifyCommon already consumed the one purpose + admitted-job result.
@@ -4091,12 +4108,23 @@ export async function verifyExternalActionMachineRpcExecution(
     const isRefineInput = binding.actionId === 'scm.diffSummary.refine' && execution.effectActionId === 'session.message.send';
     const refineInputPurpose = isScmRefineInputRpcPurposeV1(execution, request);
     if (isRefineInput && !refineInputPurpose) return null;
+    const readinessChild = readGrantedSessionAgentReadinessChild(binding, execution.reviewedChild,
+        { machineId: request.method.slice(0, separator), installationId: execution.installationId });
+    const readinessPurpose = readinessChild !== null && readinessChild === execution.effectActionId
+        && resolveMachineRpcExternalActionEffectV1(request.method.slice(separator + 1), binding,
+            { machineId: request.method.slice(0, separator), installationId: execution.installationId }, execution.reviewedChild) === readinessChild;
+    if (binding.actionId === SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 && readSessionAgentReadinessRoleV1(execution.effectActionId)
+        && (!readinessPurpose || request.originalActionEnvelope && !isExternalActionAuthorizationBoundToEnvelope(binding, {
+            actionId: binding.actionId, machineId: binding.machineId, envelope: request.originalActionEnvelope }))) return null;
+    if (readinessChild && (!readinessPurpose || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
+        || request.workspaceSyncSourceRouting || request.workspaceSyncTargetRouting || request.workspaceSyncSourceWriterTargetRouting
+        || request.workspaceSyncSeedRouting || request.workspaceSyncSourceExecution)) return null;
     // Pending input has no general descendant grant, including under PAT roots.
     const pendingEvent = request.event === SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1
         || request.event === SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2;
     if (pendingEvent && binding.actionId !== 'session.message.send' && !transitionPurpose && !refineInputPurpose) return null;
     const effect = parseExternalActionEffectAction(binding, execution.effectActionId);
-    if (!effect.success || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId)
+    if (!effect.success || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId) && !readinessPurpose
         || (binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== execution.effectActionId) return null;
     if (binding.managedAdmission?.actionId === 'action.operations.get' && typeof request.params !== 'string') {
         // Encrypted input is compared at the reached daemon. Visible ordinary
@@ -4139,7 +4167,7 @@ export async function verifyExternalActionMachineRpcExecution(
             : pendingEvent
             ? request.method === request.event ? 'session.message.send' : null
             : resolveMachineRpcExternalActionEffectV1(method, binding);
-        if (!transitionPurpose && !refineInputPurpose && (binding.actionId !== execution.effectActionId
+        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
             || effectActionId !== execution.effectActionId)) return null;
@@ -4189,10 +4217,16 @@ export async function verifyExternalActionMachineRpcExecution(
     if (!principal) return null;
     const credentialAction = isTransitionRoot || refineInputPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
-    if (!credentialAction.success || !await hasCurrentExecutionMachineAdmission(binding, principal.authority, machine)
+    if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, principal.authority, machine)
         || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),
             authority: principal.authority, grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+    const readinessAdmission = readinessPurpose ? await resolveMachineAdmissionInTx(db, {
+        actorAccountId: binding.accountId, machineId: binding.machineId, rpcMethod: request.method.slice(separator + 1),
+        callerAuthority: principal.authority, executionBinding: binding,
+    }) : null;
+    if (readinessPurpose && readinessAdmission?.kind !== 'admitted') return null;
     return { binding, effectActionId: execution.effectActionId, target: execution.target, principal, effectiveAuthority: principal.authority,
+        ...(readinessAdmission?.kind === 'admitted' ? { sessionAgentReadinessAdmission: readinessAdmission } : {}),
         ...(managedGuestActivity ? { managedGuestActivity } : {}) };
 }
 

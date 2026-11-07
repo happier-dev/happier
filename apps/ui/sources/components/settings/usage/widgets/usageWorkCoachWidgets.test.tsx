@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
 import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -53,10 +54,13 @@ let actionHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let CommandWrapper: React.ComponentType<React.PropsWithChildren>;
 beforeEach(async () => {
   actionHome = await serveActionHomes({ homes: [{ key: 'work', serverUrl: 'https://usage-work-controls.test', accountId: 'work-account' }],
-    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] })
+      : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
   const server = actionHome.homes.work!;
   publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
-  await (await import('@/sync/runtime/getSyncSingleton')).getSyncSingleton().awaitBootstrapForegroundAcquisition();
+  const sync = (await import('@/sync/runtime/getSyncSingleton')).getSyncSingleton();
+  await sync.awaitBootstrapForegroundAcquisition();
+  await sync.refreshProjectAccountRows();
   CommandWrapper = await createMountedCurrentUiContextWrapper();
 });
 afterEach(async () => { standardCleanup(); await actionHome?.dispose(); actionHome = undefined; });
@@ -415,7 +419,7 @@ describe('Work and Coach widget bodies', () => {
       const workSlice = { ...slice, work: namedWork };
       const screen = await renderScreen(<UsageProjectLedgerWidget {...props} serverId={scope.serverId} slice={workSlice} id="usage_project_ledger" testID="label-ledger" />);
       await act(async () => { await owner.refresh(); });
-      expect(storage.getState().projectAccountRows?.organizations, JSON.stringify({
+      expect(storage.getState().projectAccountRows?.organizations ?? [], JSON.stringify({
         profileScope: storage.getState().profileScope, rows: storage.getState().projectAccountRows,
       })).toContainEqual(expect.objectContaining({ key: rowKey, value: { label: 'Human project' } }));
       expect(screen.getTextContent()).toContain('Human project');

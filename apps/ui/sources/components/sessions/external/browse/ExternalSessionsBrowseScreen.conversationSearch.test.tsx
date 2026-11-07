@@ -2,10 +2,11 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { DEFAULT_MEMORY_SETTINGS } from '@happier-dev/protocol/memory/memorySettings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createDeferred, createMachineFixture, flushHookEffects, PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -15,6 +16,7 @@ import type { FileFindSeedHandoff } from '@/components/appShell/panes/fileFindSe
 import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import { ExternalSessionsCandidatesListRequestSchema, ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
+import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeRequestSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 const rpc = vi.hoisted(() => vi.fn());
 const homes = createHomeGovernanceHarness();
@@ -85,7 +87,8 @@ beforeEach(async () => {
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     connection = await restoreServerAccountForTest({ serverUrl: 'https://history-index.example.test', serverIdentityId: serverId,
         accountId: 'history-account', request: homes.request });
-    const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now() });
+    const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(), storageMode: 'plain',
+        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
     const scope = { serverId, accountId: 'history-account' };
     storage.setState(state => ({ isDataReady: true, settingsVersion: 1, profile: { ...state.profile, id: scope.accountId }, profileScope: scope, settingsScope: scope,
         machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' },
@@ -102,7 +105,154 @@ afterEach(async () => { standardCleanup(); clearMachineRequestReachabilityForTes
 async function flush() { await flushHookEffects(); }
 
 describe('History unified conversation search', () => {
-    it('does not present a retained offline Machine as observed after its Home withdraws presence', async () => {
+    it('bounds Account search Machine starts, advances queued work and settles cancellation', async () => {
+        const { searchConversationsForAccount } = await import('@/sync/ops/searchConversations');
+        const { readMemorySearchSessionHydrationConcurrencyLimit } = await import('@/sync/domains/memory/hydrateMemorySearchSessionTargets');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.isCurrent()).toBe(true);
+        const limit = readMemorySearchSessionHydrationConcurrencyLimit();
+        const machines = Array.from({ length: limit + 2 }, (_, index) =>
+            createMachineFixture({ id: `capped-${index}`, activeAt: Date.now(), storageMode: 'plain',
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }));
+        const rows = machines.map(machine => createPlainMachineRowFixture({ id: machine.id, accountId: 'history-account' }));
+        homes.answer(serverId, '/v1/machines', { body: rows });
+        for (const machine of rows) homes.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine } });
+        storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+            machineListByServerId: { [serverId]: machines } });
+        const settings = machines.map(() => createDeferred<void>());
+        const starts: string[] = [];
+        rpc.mockImplementation(async call => {
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) {
+                starts.push(call.machineId);
+                await settings[machines.findIndex(machine => machine.id === call.machineId)].promise;
+                return DEFAULT_MEMORY_SETTINGS;
+            }
+            if (call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST) {
+                return ExternalSessionsCandidatesListResponseSchema.parse({ ok: true, candidates: [], contentCoverage: 'complete' });
+            }
+            throw new Error(`Unexpected capped search transport ${call.method}`);
+        });
+        const controller = new AbortController();
+        const pages: Array<Awaited<ReturnType<typeof searchConversationsForAccount>>> = [];
+        const pending = searchConversationsForAccount({ accountLifetime: lifetime!,
+            machineIds: machines.map(machine => machine.id), providers: { daemonEnabled: true, homeSessions: false },
+            source: { agentId: 'acme.archive', source: { kind: 'archive' }, sourceKey: 'archive', contentSearch: true },
+            mode: 'standard', retryUnreachableMachines: true, signal: controller.signal,
+            onProgress: page => pages.push(page),
+            query: { v: 1, query: 'own no-match phrase', mode: 'auto', scope: { type: 'global' }, corpora: ['external_transcripts'] } });
+        const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        try {
+            await vi.waitFor(() => expect(starts.length).toBeGreaterThanOrEqual(limit));
+            await flush();
+            expect(starts).toEqual(machines.slice(0, limit).map(machine => machine.id));
+            settings[0].resolve();
+            await vi.waitFor(() => expect(starts).toHaveLength(limit + 1));
+            expect(starts.at(-1)).toBe(machines[limit].id);
+            expect(pages.at(-1)?.machines).toContainEqual(expect.objectContaining({ machineId: machines[0].id, status: 'ok' }));
+            controller.abort();
+            const published = pages.length;
+            await cancelled;
+            settings.forEach(reply => reply.resolve());
+            await flush();
+            expect(starts).toHaveLength(limit + 1);
+            expect(pages).toHaveLength(published);
+        } finally {
+            controller.abort();
+            settings.forEach(reply => reply.resolve());
+            await cancelled;
+        }
+    });
+    it('gathers source and index readiness reads together without extra Machine round trips', async () => {
+        const { searchConversationsForAccount } = await import('@/sync/ops/searchConversations');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.isCurrent()).toBe(true);
+        const catalog = createDeferred<void>();
+        const methods: string[] = [];
+        rpc.mockImplementation(async call => {
+            methods.push(call.method);
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return { ...DEFAULT_MEMORY_SETTINGS, enabled: true,
+                conversationSearch: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch,
+                    indexExternal: { ...DEFAULT_MEMORY_SETTINGS.conversationSearch.indexExternal, enabled: true } } };
+            if (call.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                await catalog.promise;
+                return { protocolVersion: 1, projection };
+            }
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return {
+                v: 1, enabled: true, indexMode: 'deep', hintsIndexReady: true, deepIndexReady: true,
+                activeIndexReady: true, activeIndexSearchable: true, embeddingsEnabled: false, embeddingsMode: 'disabled',
+                embeddingsPresetId: null, embeddingsProviderKind: null, embeddingsModelId: null,
+                embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
+                tier1DbPath: null, deepDbPath: null, tier1DbBytes: null, deepDbBytes: null,
+            };
+            if (call.method === RPC_METHODS.DAEMON_MEMORY_SEARCH) return { v: 1, ok: true, hits: [] };
+            throw new Error(`Unexpected search transport ${call.method}`);
+        });
+        const pending = searchConversationsForAccount({ accountLifetime: lifetime!, machineIds: ['machine-1'],
+            providers: { daemonEnabled: true, homeSessions: false }, mode: 'indexed', retryUnreachableMachines: true,
+            query: { v: 1, query: 'own no-match phrase', mode: 'auto', scope: { type: 'global' }, corpora: ['external_transcripts'] } });
+        try {
+            await vi.waitFor(() => expect(methods).toContain(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE));
+            // A source-catalog reply is independent of index readiness. Holding
+            // that network response must not prevent the readiness RPC starting.
+            await vi.waitFor(() => expect(methods).toContain(RPC_METHODS.DAEMON_MEMORY_STATUS));
+        } finally { catalog.resolve(); await pending; }
+        const result = await pending;
+        expect(result.sources).toEqual(expect.arrayContaining([expect.objectContaining({ agentId: 'acme.archive', contentSearch: true })]));
+        expect(result.machines).toMatchObject([{ machineId: 'machine-1', status: 'partial', standardSearchEnabled: true }]);
+        expect(methods).toEqual(expect.arrayContaining([RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
+            RPC_METHODS.DAEMON_MEMORY_STATUS, RPC_METHODS.DAEMON_MEMORY_SEARCH,
+            RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE]));
+        expect(methods).toHaveLength(4);
+    });
+    it('reads conversation source declarations without transferring unrelated catalog bodies as they grow', async () => {
+        const { readConversationSearchSources } = await import('@/sync/ops/searchConversations');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        expect(lifetime?.isCurrent()).toBe(true);
+        const snapshot = (generation: number, text: string, contentSearch = true) => buildDeferredDaemonProjectionSections({
+            protocolVersion: 1, projectionDigest: String(generation).repeat(64),
+            projection: PluginProjectionV2Schema.parse({ ...projection, generation,
+                agentsById: { ...projection.agentsById, 'acme.archive': { ...projection.agentsById['acme.archive'],
+                    externalSessions: { ...projection.agentsById['acme.archive'].externalSessions, generation,
+                        sources: projection.agentsById['acme.archive'].externalSessions!.sources.map(source => ({ ...source, contentSearch })),
+                    },
+                } },
+                familiesById: { ...projection.familiesById, pluginUi: { family: 'pluginUi', entriesById: {
+                    'translations:acme.review': { id: 'translations:acme.review', pluginId: 'acme.review',
+                        occurrenceId: 'catalog-generation', contributionKind: 'translations', locales: ['en'],
+                        bundles: { en: { unrelated: text } },
+                    },
+                } } },
+            }),
+        });
+        let current = snapshot(7, 'Small unrelated translation');
+        const reads: string[] = [];
+        rpc.mockImplementation(async call => {
+            expect(call.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(call.payload);
+            if (!('sectionRead' in request) || !request.sectionRead) return current.manifest;
+            const { digest, offset, includeDigests } = request.sectionRead;
+            reads.push(digest, ...includeDigests ?? []);
+            return current.read(digest, offset, includeDigests);
+        });
+        const params = { machineId: 'machine-1', accountLifetime: lifetime! };
+        expect(await readConversationSearchSources(params)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ agentId: 'acme.archive', sourceKey: 'archive', contentSearch: true }),
+        ]));
+        const smallRequests = rpc.mock.calls.length;
+        clearDaemonMergedProjectionCacheForTests();
+        current = snapshot(8, 'Unrelated catalog translation '.repeat(20_000), false);
+        rpc.mockClear(); reads.length = 0;
+        const sources = await readConversationSearchSources(params);
+        expect(sources).toEqual(expect.arrayContaining([
+            expect.objectContaining({ agentId: 'acme.archive', sourceKey: 'archive', contentSearch: false }),
+        ]));
+        expect.soft(rpc.mock.calls).toHaveLength(smallRequests);
+        expect(reads.filter(digest => digest === current.manifest.sections['familiesById.pluginUi'])).toHaveLength(0);
+    });
+    it('retains the offline Machine verdict when its Home socket withdraws', async () => {
         rpc.mockImplementation(async call => {
             if (call.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection };
             if (call.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return DEFAULT_MEMORY_SETTINGS;
@@ -122,7 +272,7 @@ describe('History unified conversation search', () => {
         expect(readList().props.offline).toBe(true);
         const scope = { serverId, accountId: 'history-account' };
         await act(async () => withdrawMachinePresenceForScope(scope));
-        expect(readList().props.offline).toBe(false);
+        expect(readList().props.offline).toBe(true);
         await act(async () => captureMachinePresenceObservation(scope)(['machine-1']));
         expect(readList().props.offline).toBe(true);
     });
@@ -230,7 +380,7 @@ describe('History unified conversation search', () => {
             return;
         }
         refresh = true;
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }, 'authority'));
         await waitForHomeGovernance(async () => {
             await flush();
             expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toHaveLength(2);

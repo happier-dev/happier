@@ -15,6 +15,8 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 const network = await installSessionOpsNetworkBoundary();
 // Transform the real owner outside a candidate operation's timeout.
 await import('./useExternalSessionBrowseCandidates');
+// Home restoration loads the real sync runtime; collect it outside each hook's operation budget.
+await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 function requestIdFor(payload: unknown): string {
     const request = network.socketBoundaries.flatMap(item => item.socket.emitWithAck.mock.calls)
         .map(([event, raw]) => event === SOCKET_RPC_EVENTS.CALL && raw !== null && typeof raw === 'object'

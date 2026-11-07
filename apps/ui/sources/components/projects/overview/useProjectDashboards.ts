@@ -1,28 +1,30 @@
 import * as React from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import {
   buildWidgetSurfaceArtifactIdV1,
-  readWidgetSurfaceArtifactHeaderV1,
   WidgetInstanceActionOutputSchemasV1,
   type WidgetAreaLayoutSummaryV1,
   type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 import type { AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
-import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
+import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { storage, useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { widgetAreaLayoutBaseSurface } from '@/sync/domains/widgets/widgetAreaLayoutSelection';
+import { widgetAreaLayoutSurfaceKey } from '@/sync/domains/widgets/widgetAreaLayoutSurface';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type ProjectDashboardsState = Readonly<{
   status: 'loading' | 'ready' | 'offline';
@@ -87,6 +89,7 @@ export function useProjectDashboards(
 export type WidgetAreaLayoutsExecute = (
   actionId: Extract<ActionId, `widgets.area.layout.${string}`>,
   args: unknown,
+  callerContext?: ActionExecutorContext,
 ) => Promise<ActionExecuteResult>;
 
 /**
@@ -102,8 +105,8 @@ export function useWidgetAreaLayouts(
     [surface?.serverId, surface?.accountId]);
   const [frontDoor] = React.useState(() => createFrontDoorActionExecute());
   const execute = React.useCallback(
-    (actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown, context: Parameters<typeof frontDoor>[2]) =>
-      input.execute ? input.execute(actionId, args) : frontDoor(actionId, args, context),
+    (actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown, context: Parameters<typeof frontDoor>[2], confirmed?: true) =>
+      input.execute ? input.execute(actionId, args, context) : (confirmed ? frontDoor.confirmed : frontDoor)(actionId, args, context),
     [frontDoor, input.execute],
   );
   const surfaceKey = surface ? JSON.stringify([
@@ -139,27 +142,13 @@ export function useWidgetAreaLayouts(
     return () => controller.abort();
   }, [interest]);
   const approval = useActionApprovalContinuation({ scopeKey: surfaceKey ?? '', serverId: scope?.serverId ?? '', onExecuted: () => {} });
-  const baseSurface = React.useMemo(() => surface ? widgetAreaLayoutBaseSurface(surface) : null, [surface]);
-  const selectPublications = React.useMemo(() => {
-    let previousArtifacts: ReturnType<typeof storage.getState>['artifacts'] | undefined;
-    let publications: string[] = [];
-    return (store: ReturnType<typeof storage.getState>) => {
-      if (store.artifacts === previousArtifacts) return publications;
-      previousArtifacts = store.artifacts;
-      publications = baseSurface ? Object.values(store.artifacts).flatMap(artifact => {
-        if (!artifact.isDecrypted || artifact.ownerAccountId !== baseSurface.accountId || artifact.access !== 'owner') return [];
-        const header = readWidgetSurfaceArtifactHeaderV1({ artifactId: artifact.id, header: artifact.rawHeader });
-        if (!header || !sameStrictJsonValue(widgetAreaLayoutBaseSurface(header.surface), baseSurface)) return [];
-        // Header reads may republish the same document; only changed revision/access facts renew it.
-        return [JSON.stringify([artifact.id, artifact.headerVersion, artifact.bodyVersion ?? null])];
-      }).sort() : [];
-      return publications;
-    };
-  }, [baseSurface]);
-  const publications = storage(useShallow(selectPublications));
+  const publicationSurfaceKey = React.useMemo(() => surface ? widgetAreaLayoutSurfaceKey(surface) : null, [surface]);
+  const publications = storage(store => publicationSurfaceKey
+    ? store.artifactWidgetAreaLayoutPublications.bySurface.get(publicationSurfaceKey) : undefined);
 
   const run = React.useCallback(
-    async (actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown): Promise<ActionExecuteResult> => {
+    async (actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown, confirmed?: true,
+      callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> => {
       if (!scope || !isCurrent())
         return {
           ok: false as const,
@@ -167,24 +156,22 @@ export function useWidgetAreaLayouts(
           error: t('errors.operationFailed'),
         };
       const result = await execute(actionId, args, {
-        surface: 'ui',
+        ...(callerContext ?? { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }),
         serverId: scope.serverId,
         expectedAccountId: scope.accountId,
-        authority: 'present_user',
-        actionCaller: { kind: 'host' },
         signal: interest.controller.signal,
-      });
+      }, confirmed);
       return result;
     },
     [execute, interest, isCurrent, scope],
   );
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (callerContext?: ActionExecutorContext) => {
     if (!surface || !isCurrent()) return null;
     const current = ++generation.current;
     let outcome: ActionExecuteResult;
     try {
-      outcome = await run('widgets.area.layout.list', { surface });
+      outcome = await run('widgets.area.layout.list', { surface }, undefined, callerContext);
     } catch (error) {
       if (!isCurrent() || current !== generation.current || interest.controller.signal.aborted) return null;
       if (error instanceof Error && error.name === 'AbortError') return null;
@@ -224,24 +211,47 @@ export function useWidgetAreaLayouts(
     return () => { generation.current++; };
   }, [load, observation, publications, retained, surfaceKey]);
 
+  React.useEffect(() => {
+    if (!scope) return;
+    return subscribeHomeAccountChange(event => {
+      if (event.source === 'connected' && areServerProfileIdentifiersEquivalent(event.serverId, scope.serverId)) void load();
+    }, { serverIds: [scope.serverId], reconnect: 'refresh' });
+  }, [load, scope]);
+
+  const reportFailure = React.useCallback((result: ActionExecuteResult, retry?: () => void): ProjectDashboardMutation => {
+    if (isCurrent()) publishPresentationNotice({ key: 'widget-area-layout:outcome', severity: 'error',
+      message: resolveActionExecutionFailureMessage(result, t('errors.operationFailed')) ?? t('errors.operationFailed'),
+      ...(retry && !result.ok && !isWidgetAreaLayoutOutcomeUnknown(result.errorCode)
+        ? { undo: { label: t('common.retry'), run: () => { if (isCurrent()) retry(); } } } : {}) });
+    return !result.ok ? result : { ok: false, errorCode: 'invalid_action_output' };
+  }, [isCurrent]);
+
+  const select = React.useCallback(async (dashboard: Pick<WidgetAreaLayoutSummaryV1, 'surface'>, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> => {
+    let outcome: ActionExecuteResult;
+    try { outcome = await run('widgets.area.layout.select', { surface: dashboard.surface }, undefined, callerContext); }
+    catch (error) {
+      outcome = { ok: false, errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code : 'widget_area_unavailable', error: t('errors.operationFailed') };
+    }
+    if (!outcome.ok) reportFailure(outcome);
+    return outcome;
+  }, [reportFailure, run]);
+
   const mutate = React.useCallback(
     async (
       actionId: Extract<ActionId, `widgets.area.layout.${string}`>,
       args: unknown,
       /** The caller's way to repeat exactly what was asked (a rename starts again from the asked-for name). */
       retry?: () => void,
+      /** The person already confirmed this exact request on the surface (a named delete). */
+      confirmed?: true,
+      callerContext?: ActionExecutorContext,
     ): Promise<ProjectDashboardMutation> => {
-      const refusal = (result: ActionExecuteResult): ProjectDashboardMutation => {
-        if (isCurrent()) publishPresentationNotice({ key: 'widget-area-layout:outcome', severity: 'error',
-          message: resolveActionExecutionFailureMessage(result, t('errors.operationFailed')) ?? t('errors.operationFailed'),
-          ...(retry && !result.ok && !isWidgetAreaLayoutOutcomeUnknown(result.errorCode)
-            ? { undo: { label: t('common.retry'), run: () => { if (isCurrent()) retry(); } } } : {}) });
-        return !result.ok ? result : { ok: false, errorCode: 'invalid_action_output' };
-      };
+      const refusal = (result: ActionExecuteResult) => reportFailure(result, retry);
       if (!scope || !isCurrent()) return { ok: false, errorCode: 'widget_area_scope_unavailable' };
       let outcome: ActionExecuteResult;
       try {
-        outcome = await resumeActionExecutionResult({ result: await run(actionId, args), actionId, actionInput: args,
+        outcome = await resumeActionExecutionResult({ result: await run(actionId, args, confirmed, callerContext), actionId, actionInput: args,
           scope, signal: interest.controller.signal, onApprovalPending: registration => {
             if (!isCurrent()) return;
             approval.requestApproval(registration);
@@ -252,10 +262,10 @@ export function useWidgetAreaLayouts(
           ? error.code : 'widget_area_unavailable', error: t('errors.operationFailed') });
       }
       if (!isCurrent()) return { ok: false, errorCode: 'widget_area_scope_unavailable' };
-      if (!outcome.ok) { await load(); return refusal(outcome); }
+      if (!outcome.ok) { await load(callerContext); return refusal(outcome); }
       const parsed = getActionSpec(actionId).outputSchema?.safeParse(outcome.result);
       if (!parsed?.success) return refusal({ ok: false, errorCode: 'invalid_action_output', error: t('errors.operationFailed') });
-      await load();
+      await load(callerContext);
       const summary =
         actionId === 'widgets.area.layout.delete'
           ? null
@@ -266,7 +276,7 @@ export function useWidgetAreaLayouts(
         ? { ok: true, dashboard: summary.data }
         : { ok: true };
     },
-    [approval.requestApproval, interest, isCurrent, load, run, scope],
+    [approval.requestApproval, interest, isCurrent, load, reportFailure, run, scope],
   );
 
   return React.useMemo(
@@ -276,36 +286,37 @@ export function useWidgetAreaLayouts(
       approvalId: approval.approvalId,
       approvalPending: approval.approvalPending,
       reload: load,
-      select: (dashboard: Pick<WidgetAreaLayoutSummaryV1, 'surface'>) => run('widgets.area.layout.select', { surface: dashboard.surface }),
+      select,
       prepareToShare: (dashboard: WidgetAreaLayoutSummaryV1): Promise<ProjectDashboardMutation> =>
         dashboard.isPreset && dashboard.revision === null
           // The existing rename owner intentionally materializes a missing host preset through
           // its one Artifact/CAS path. Retain its exact identity, name and default contents.
           ? mutate('widgets.area.layout.rename', { surface: dashboard.surface, expectedRevision: null, name: dashboard.name })
           : Promise.resolve({ ok: true, dashboard }),
-      create: (name: string, fromSurface?: WidgetSurfaceRefV1, retry?: () => void) =>
+      create: (name: string, fromSurface?: WidgetSurfaceRefV1, retry?: () => void, callerContext?: ActionExecutorContext) =>
         surface
           ? mutate('widgets.area.layout.create', {
               surface,
               layoutId: randomUUID(),
               name,
               ...(fromSurface ? { fromSurface } : {}),
-            }, retry)
+            }, retry, undefined, callerContext)
           : Promise.resolve({
               ok: false as const,
               errorCode: 'widget_area_scope_unavailable',
             }),
-      rename: (dashboard: Pick<WidgetAreaLayoutSummaryV1, 'surface' | 'revision'>, name: string, retry?: () => void) =>
+      rename: (dashboard: Pick<WidgetAreaLayoutSummaryV1, 'surface' | 'revision'>, name: string, retry?: () => void, callerContext?: ActionExecutorContext) =>
         mutate('widgets.area.layout.rename', {
           surface: dashboard.surface,
           expectedRevision: dashboard.revision,
           name,
-        }, retry),
-      remove: (dashboard: WidgetAreaLayoutSummaryV1, retry?: () => void) =>
+        }, retry, undefined, callerContext),
+      /** `confirmed`: the person confirmed it with `confirmDashboardDelete`; otherwise the Action's own policy asks. */
+      remove: (dashboard: WidgetAreaLayoutSummaryV1, retry?: () => void, confirmed?: true) =>
         mutate('widgets.area.layout.delete', {
           surface: dashboard.surface,
           expectedRevision: dashboard.revision,
-        }, retry),
+        }, retry, confirmed),
       reorder: (
         dashboard: WidgetAreaLayoutSummaryV1,
         position: AnchoredListPositionV1,
@@ -317,6 +328,6 @@ export function useWidgetAreaLayouts(
           position,
         }, retry),
     }),
-    [approval.approvalId, approval.approvalPending, load, mutate, run, state, surface],
+    [approval.approvalId, approval.approvalPending, load, mutate, run, select, state, surface],
   );
 }

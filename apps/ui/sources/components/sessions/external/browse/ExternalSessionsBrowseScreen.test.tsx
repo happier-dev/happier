@@ -11,15 +11,18 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import {
     PluginProjectionV2Schema,
-    RPC_ERROR_CODES,
+    type PluginProjectionV2,
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
+import {
     type ExternalSessionCandidateV1,
     type ExternalSessionLinkEnsureResponse,
-    type ExternalSessionsCandidatesListResponse,
-    type PluginProjectionV2,
-} from '@happier-dev/protocol';
+    type ExternalSessionsCandidatesListResponse} from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { createCapturingLegendListMock, createDeferred, createMachineFixture, flushHookEffects, renderHook, renderScreen as renderScreenWithTestkit, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -234,38 +237,39 @@ let machinesState: Array<{
 
 async function publishMachinesState(): Promise<void> {
     const { getStorage } = await import('@/sync/domains/state/storageStore');
-    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-    const metadata = createMachineFixture().metadata;
-    if (!metadata) throw new Error('The canonical unlocked machine fixture must supply metadata');
-    const machines = machinesState.map((machine) => createMachineFixture({
-        ...machine,
-        activeAt: machine.activeAt ?? Date.now(),
-        metadata: MachineMetadataSchema.parse({ ...metadata, ...machine.metadata }),
-    }));
-    const activeServerId = getActiveServerSnapshot().serverId;
-    // These are the two Home inventories represented by the Administration fixture.
-    // Legacy locked callers without a server id still use the real active Home.
-    getStorage().setState({
-        machines: Object.fromEntries(machines.filter(machine => machine.id === 'machine-1').map(machine => [machine.id, machine])),
-        machineListByServerId: {
-            ...(activeServerId ? { [activeServerId]: machines } : {}),
-            [serverA]: machines.filter((machine) => machine.id === 'machine-1'),
-            [serverB]: machines.filter((machine) => machine.id === 'machine-2'),
-        },
-        machineListStatusByServerId: {
-            ...(activeServerId ? { [activeServerId]: 'idle' as const } : {}),
-            [serverA]: 'idle', [serverB]: 'idle',
-        },
-    });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { fetchAndApplyMachines } = await import('@/sync/engine/machines/syncMachines');
+    // Hydrate the actual served census: an unlocked display fixture alone omits
+    // the plaintext/key/access authority required by the active Home's RPC path.
+    // The inventory producer publishes ordered rows, keyed facts and presence together.
+    for (const serverIdentityId of [serverA, serverB]) {
+        const resolved = resolveServerProfileForPortableIdentity(serverIdentityId);
+        if (resolved.kind !== 'resolved') throw new Error('Expected one fixture Home for the machine census');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(resolved.profile.serverUrl, { serverId: serverIdentityId });
+        if (!credentials) throw new Error('Expected fixture Home credentials for the machine census');
+        await fetchAndApplyMachines({
+            credentials, encryption: null, machineDataKeys: new Map(), expectedAccountMode: 'plain',
+            sourceServerId: serverIdentityId, replace: true, throwOnError: true,
+            request: async (path, init) => {
+                const response = await httpHomes.request(new URL(path, resolved.profile.serverUrl).href, init);
+                if (!response) throw new Error(`Unhandled fixture machine census request: ${path}`);
+                return response;
+            },
+            applyMachines: (machines, replace) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: serverIdentityId }),
+            onListComplete: () => getStorage().getState().markMachineListSettled(serverIdentityId),
+        });
+    }
 }
 
 function machineCensusRow(machineId: string, accountId: string) {
     const row = createPlainMachineRowFixture({ id: machineId, accountId });
     const machine = machinesState.find(machine => machine.id === machineId);
-    return machine ? { ...row, active: machine.active, activeAt: machine.activeAt ?? row.activeAt,
+    // Current Home serialization publishes protocol 1; inactive rows have no legacy heartbeat grace.
+    return MachinePublishedRowV1Schema.parse(machine ? { ...row, presenceProtocolVersion: 1,
+        active: machine.active, activeAt: machine.activeAt ?? row.activeAt,
         metadata: encodePlainMachineStoredContent(MachineMetadataSchema.parse({
         ...createMachineFixture().metadata, ...machine.metadata,
-    })) } : row;
+    })) } : { ...row, presenceProtocolVersion: 1 });
 }
 
 const expoRouterMock = createExpoRouterMock({
@@ -313,7 +317,8 @@ const { module: capturedLegendList, state: legendListState } = createCapturingLe
 // is before `capturedLegendList` is initialized. Read the captured
 // implementation at render time instead, so the factory never touches the
 // binding during module collection.
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@legendapp/list/react-native')>(),
     LegendList: React.forwardRef<unknown, Record<string, unknown>>((props, ref) =>
         React.createElement(capturedLegendList.LegendList, { ...props, ref })),
 }));
@@ -343,7 +348,7 @@ const fixtureStorage = getFixtureStorage();
 const { clearMachineAdministrationTargetPreference, setMachineAdministrationTargetPreference, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } =
     await import('@/sync/domains/machines/administration/selectionPreferences');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
-const { publishMachineContributionRegistryProjectionReconnect } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+const { publishMachineContributionRegistryProjectionRefresh } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 // This fixture drives the daemon's response and genuine invalidation producer;
 // the hook, cache, catalog adapter and authority fences all remain real.
 let projectionAnswer = daemonProjectionState.current;
@@ -357,7 +362,7 @@ Object.defineProperty(daemonProjectionState, 'current', {
             for (const resume of pendingProjectionReads) resume();
             pendingProjectionReads.clear();
         }
-        if (!wasLoading || next.phase === 'loading') publishMachineContributionRegistryProjectionReconnect();
+        if (!wasLoading || next.phase === 'loading') publishMachineContributionRegistryProjectionRefresh();
     },
 });
 async function readDaemonProjectionAnswer(): Promise<unknown> {
@@ -487,11 +492,15 @@ describe('ExternalSessionsBrowseScreen', () => {
                 body: AccountProfileSchema.parse({ id: accountId, ...profileMock }),
             });
             for (const machineId of ['machine-1', 'machine-2']) httpHomes.answer(profile.id, `/v1/machines/${machineId}`, {
-                select: () => ({ body: { machine: machineCensusRow(machineId, accountId) } }),
+                select: () => machinesState.some(machine => machine.id === machineId)
+                    ? { body: { machine: machineCensusRow(machineId, accountId) } }
+                    : { status: 404, body: { error: 'not_found' } },
             });
-            httpHomes.answer(profile.id, '/v1/machines', { select: () => ({ body: [machineCensusRow(
-                key === 'other' ? 'machine-2' : 'machine-1', accountId,
-            )] }) });
+            httpHomes.answer(profile.id, '/v1/machines', { select: () => {
+                const machineId = key === 'other' ? 'machine-2' : 'machine-1';
+                return { body: machinesState.some(machine => machine.id === machineId)
+                    ? [machineCensusRow(machineId, accountId)] : [] };
+            } });
             httpHomes.answer(profile.id, 'GET /v2/account/settings', { select: () => ({
                 body: { content: { t: 'plain', v: accountSettingsState.current }, version: 1 },
             }) });
@@ -695,13 +704,14 @@ describe('ExternalSessionsBrowseScreen', () => {
         });
         const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
         const lockedHome = placement === 'foreign-home-profile' ? home.homes.other : home.homes.focused;
-        const screen = await renderScreen(<ExternalSessionsBrowseScreen
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="settings-locality" onRender={() => { commits++; }}><ExternalSessionsBrowseScreen
             {...(placement === 'unlocked' ? {} : { lockScope: {
                 serverId: lockedHome!.id, machineId: placement === 'foreign-home-profile' ? 'machine-2' : 'machine-1',
                 providerId: 'codex' as const, source: { kind: 'codexHome' as const, home: 'connectedService' as const,
                     connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' },
             } })}
-        />);
+        /></React.Profiler>);
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(candidatesListSpy).toHaveBeenCalled();
@@ -728,10 +738,17 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(autoLink?.title).toBe('externalSessions.browseAutoLinkTitle');
         expect(autoLink?.checked).toBe(false);
 
-        await act(async () => {
-            await menu.props.onSelect('auto-link');
-        });
+        await flushHookEffects();
+        const before = commits;
+        const select = menu.props.onSelect;
+        httpHomes.answer(home.homes.focused!.id, 'GET /v2/account/settings', { select: () => ({
+            body: { content: { t: 'plain', v: accountSettingsState.current }, version: 7 },
+        }) });
+        await act(async () => { fixtureStorage.getState().applySettings(fixtureStorage.getState().settings, 7); });
+        expect(commits).toBe(before);
+        await act(async () => { await select('auto-link'); });
         await vi.waitFor(() => expect(settingsPostSpy).toHaveBeenCalledTimes(1));
+        expect(settingsPostSpy.mock.calls[0]?.[0]).toMatchObject({ expectedVersion: 7 });
         expect(linkEnsureSpy).not.toHaveBeenCalled();
         expect(accountSettingsState.current.externalSessionsSettingsV1).toEqual(
             expect.objectContaining({
@@ -1789,8 +1806,8 @@ describe('ExternalSessionsBrowseScreen', () => {
         // The machine goes away while its rows stay on screen.
         await act(async () => {
             machinesState = [
-                { id: 'machine-1', active: false, activeAt: 0, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
-                { id: 'machine-2', active: false, activeAt: 0, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
+                { id: 'machine-1', active: false, activeAt: Date.now(), metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
+                { id: 'machine-2', active: false, activeAt: Date.now(), metadata: { displayName: 'Linux Box', host: 'linux.local' } },
             ];
             await publishMachinesState();
             screen.tree.update(<ExternalSessionsBrowseScreen />);

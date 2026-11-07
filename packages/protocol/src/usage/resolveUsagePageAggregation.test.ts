@@ -174,6 +174,36 @@ describe('resolveUsagePageAggregation', () => {
     expect(resolveUsagePageAccountingRequests([currentOnly], 200)).toEqual([currentOnly]);
     expect(resolveUsagePageAggregation({ queries: [currentOnly] }).results[0]).not.toHaveProperty('comparison');
   });
+  it('keeps a rolling retained accounting answer with its witnessed comparison until replacement settles', () => {
+    const nowMs = Date.parse('2026-11-07T12:00:00Z');
+    const query = normalizeUsageQuery({ period: { relative: '30days' }, includeSessionEvidence: false,
+      includeWorkEvidence: false, includeActivity: false, includeModelTimeline: false });
+    const oldComparison = resolveUsagePageAccountingRequests([query], nowMs)[1]!;
+    const initial = resolveUsagePageAggregation({ queries: [query], nowMs, accounting: [
+      { query, period: resolveUsageQueryPeriod(query, nowMs), value: accounting, status: 'available' },
+      { query: oldComparison, value: accounting, status: 'available' },
+    ] });
+    const prior = initial.results[0]!;
+    expect(prior.accounting?.coverage).toBeUndefined();
+    expect(prior.comparison?.accounting).toBeDefined();
+    const laterMs = nowMs + 1_000;
+    const newComparison = resolveUsagePageAccountingRequests([query], laterMs)[1]!;
+    expect(newComparison.period).not.toEqual(oldComparison.period);
+    const pending = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: initial, accounting: [
+      { query, period: resolveUsageQueryPeriod(query, laterMs), value: prior.accounting, status: 'pending' },
+      { query: newComparison, status: 'pending' },
+      { query: oldComparison, value: prior.comparison!.accounting, status: 'pending' },
+    ] });
+    expect(pending.results[0]!.accounting).toEqual(prior.accounting);
+    expect(pending.results[0]!.comparison?.query).toEqual(oldComparison);
+    expect(pending.results[0]!.comparison?.accounting).toEqual(prior.comparison!.accounting);
+    const settled = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: pending, accounting: [
+      { query, period: resolveUsageQueryPeriod(query, laterMs), value: accounting, status: 'available' },
+      { query: newComparison, value: accounting, status: 'available' },
+    ] });
+    expect(settled.results[0]!.comparison?.query).toEqual(newComparison);
+    expect(settled.results[0]!.comparison?.accounting).toBeDefined();
+  });
   it('preserves operation update requirements beside usable accounting in the public Usage result', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     const updateRequired = { kind: 'update_required' as const, operation: 'session.detail', component: 'server' as const,

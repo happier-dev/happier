@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { WidgetAreaLayoutSummaryV1 } from '@happier-dev/protocol/widgets';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { useWidgetAreaLayouts } from '@/components/projects/overview/useProjectDashboards';
 import { Modal } from '@/modal';
@@ -12,6 +13,7 @@ import type {
   WidgetAreaLayoutOption,
 } from './WidgetAreaLayoutBar';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 type CorePageBinding = Pick<
   ReturnType<typeof useCorePageWidgetAreaBinding>,
@@ -37,7 +39,7 @@ export function useCorePageWidgetAreaLayoutBar(
     newLayoutBody?: string;
     newLayoutConfirmText?: string;
     /** Pages with published context commands route selection through that same command. */
-    selectLayout?: (layoutId: string) => Promise<unknown>;
+    selectLayout?: (layoutId: string, callerContext?: ActionExecutorContext) => Promise<unknown>;
   }>,
 ): Readonly<{
   layouts: readonly ListedLayout[];
@@ -116,31 +118,57 @@ export function useCorePageWidgetAreaLayoutBar(
   }, [defaultId, listed, presets]);
   const pageSelect = input.selectLayout;
   // The page's published command already owns its outcome; other selections use the inventory owner.
-  const select = React.useCallback(async (layoutId: string) => {
-    if (pageSelect) return pageSelect(layoutId);
+  const select = React.useCallback(async (layoutId: string, callerContext?: ActionExecutorContext) => {
+    if (pageSelect) return pageSelect(layoutId, callerContext);
     const surface = binding.surface;
     if (!surface || surface.owner.kind !== 'corePage') return;
-    return layouts.select({ surface: { ...surface, owner: { ...surface.owner, layoutId } } });
+    return layouts.select({ surface: { ...surface, owner: { ...surface.owner, layoutId } } }, callerContext);
   }, [binding.surface, layouts.select, pageSelect]);
   const newLayoutBody = input.newLayoutBody;
   const newLayoutConfirmText = input.newLayoutConfirmText ?? t('common.create');
   const source = ready?.surface ?? binding.surface;
-  const create = React.useCallback(async () => {
+  const commandBridge = useCurrentUiContextCommandBridge();
+  const createNamedView = React.useCallback(async (callerContext?: ActionExecutorContext) => {
+    let confirmedContext = callerContext;
     const name = (
       await Modal.prompt(t('usage.board.page.newViewTitle'), newLayoutBody, {
+        commandBridge,
+        onConfirmContext: context => { confirmedContext = context; },
         placeholder: t('usage.board.page.newViewPlaceholder'),
         confirmText: newLayoutConfirmText,
       })
     )?.trim();
     if (!name || !source) return;
-    const created = await layouts.create(name, source);
+    const created = await layouts.create(name, source, undefined, confirmedContext);
     const layoutId =
       created.ok && created.dashboard?.surface.owner.kind === 'corePage'
         ? created.dashboard.surface.owner.layoutId
         : undefined;
-    if (layoutId) await select(layoutId);
-  }, [layouts, newLayoutBody, newLayoutConfirmText, source, select]);
+    if (layoutId) await select(layoutId, confirmedContext);
+  }, [commandBridge, layouts, newLayoutBody, newLayoutConfirmText, source, select]);
   const selected = options.find((option) => option.id === selectedId) ?? null;
+  const renameNamedView = React.useCallback(async (callerContext?: ActionExecutorContext) => {
+    const summary = selected?.summary;
+    if (!selected || !summary) return;
+    let confirmedContext = callerContext;
+    const name = (
+      await Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
+        commandBridge,
+        onConfirmContext: context => { confirmedContext = context; },
+        defaultValue: selected.name,
+        confirmText: t('common.save'),
+      })
+    )?.trim();
+    if (name && name !== selected.name) await layouts.rename(summary, name, undefined, confirmedContext);
+  }, [commandBridge, layouts, selected]);
+  const commands = useCurrentUiContextLocalCommands([
+    ...(ready?.canEdit ? [{ key: 'create', title: t('usage.board.page.newViewTitle'),
+      invoke: (_input: unknown, context: ActionExecutorContext) => { void createNamedView(context); return true; } }] : []),
+    ...(ready?.canEdit && selected?.summary ? [{ key: 'rename', title: t('usage.board.page.renameViewTitle'),
+      invoke: (_input: unknown, context: ActionExecutorContext) => { void renameNamedView(context); return true; } }] : []),
+  ], { unbound: 'local' });
+  const create = React.useCallback(async () => { await commands.invoke('create'); }, [commands.invoke]);
+  const rename = React.useCallback(async () => { await commands.invoke('rename'); }, [commands.invoke]);
   const menus = React.useMemo(() => {
     const buildActions = (neighbors: readonly ListedLayout[]): WidgetAreaLayoutActions | null => {
       const summary = selected?.summary;
@@ -149,15 +177,7 @@ export function useCorePageWidgetAreaLayoutBar(
       const before = neighbors[index - 1];
       const after = neighbors[index + 1];
       return {
-        rename: async () => {
-          const name = (
-            await Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
-              defaultValue: selected.name,
-              confirmText: t('common.save'),
-            })
-          )?.trim();
-          if (name && name !== selected.name) await layouts.rename(summary, name);
-        },
+        rename,
         ...(before?.summary
           ? {
               moveBefore: {
@@ -199,7 +219,7 @@ export function useCorePageWidgetAreaLayoutBar(
       actions: ready?.canEdit ? buildActions(options) : null,
       personalActions: selected?.isPreset ? null : buildActions(options.filter(option => !option.isPreset)),
     };
-  }, [defaultId, layouts, options, ready?.canEdit, selected, select]);
+  }, [defaultId, layouts, options, ready?.canEdit, rename, selected, select]);
   const onSelect = React.useCallback(
     (layoutId: string) => {
       void select(layoutId);

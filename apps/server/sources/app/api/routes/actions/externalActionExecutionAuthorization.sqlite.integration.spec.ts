@@ -97,6 +97,9 @@ import { createPresentUserSessionAccessAuthentication } from '@/app/session/acce
 import { registerAccountSettingsRoutes } from "@/app/api/routes/account/registerAccountSettingsRoutes";
 import { kvRoutes } from '@/app/api/routes/kv/kvRoutes';
 import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
+import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { USAGE_COACH_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '@/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
 import { mutateQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { registerConnectedAccountConfigurationRowsRoutes } from '@/app/account/connectedAccounts/registerConfigurationRowsRoutes';
@@ -5946,6 +5949,56 @@ describe("external Action execution authorization", () => {
             await db.machine.update({ where: { id: fixture.machine.id }, data: { revokedAt: new Date() } });
             expect(await verify('PUT', path, body)).toBeNull();
             expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).toBeNull();
+        } finally { await app.close(); }
+    });
+
+    it('keeps Coach suppression signed HTTP purpose exclusive to the dedicated Coach roots', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
+            sessionId: session.id, data: 'opaque-source-key' } });
+        const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id);
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const coachRoots = USAGE_COACH_ACTION_IDS.slice(2);
+        const settingRoots = SETTINGS_DECLARATION_ACTION_IDS_V1.slice(2, 4);
+        try {
+            for (const actionId of [...coachRoots, ...settingRoots]) {
+                const expected = coachRoots.some(root => root === actionId);
+                const input = getActionSpec(actionId).inputSchema.parse(expected
+                    ? { query: {}, evidenceKey: 'finding', ...(actionId === coachRoots[0] ? { dismissed: true } : { untilMs: 100 }) }
+                    : { anchor: 'workDepthLimit', ...(actionId === settingRoots[0] ? { value: 3 } : {}) });
+                const envelope = { ...fixture.envelope, requestId: crypto.randomUUID(), input };
+                const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+                    caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+                    sourceTurnId: 'coach-turn', callerPermissionMode: 'default', requestId: envelope.requestId,
+                    causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+                const source = { machineId: fixture.machine.id, installationId: fixture.machine.installationId! };
+                const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
+                        homeId: await getOrCreateServerIdentityId(), actionId, requestId: envelope.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
+                const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
+                        envelope, sessionActionOrigin: origin, sessionActionSource: source, installationProof } });
+                expect(issued.statusCode, `${actionId}: ${issued.body}`).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+                const verify = (method: string, path: string, body?: unknown) => verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: authorization.token, effectActionId: actionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target), method, path, body,
+                    resolveCurrentSessionMachine: async () => fixture.machine.id,
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                        effectActionId: actionId, target: authorization.binding.target, installationId: fixture.machine.installationId!,
+                        requestId: envelope.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
+                });
+                for (const path of [...(expected ? ['/v1/account/encryption/currentness', '/v2/account/settings'] : []),
+                    `/v1/kv/${encodeURIComponent(USAGE_COACH_SUPPRESSIONS_KV_KEY)}`]) {
+                    expect((await verify('GET', path)) !== null, `${actionId} ${path}`).toBe(expected);
+                }
+                const mutation = { mutations: [{ key: USAGE_COACH_SUPPRESSIONS_KV_KEY, value: null, version: -1 }] };
+                expect((await verify('POST', '/v1/kv', mutation)) !== null, actionId).toBe(expected);
+                expect(await verify('POST', '/v1/kv', { mutations: [{ ...mutation.mutations[0], key: 'workspace:another' }] })).toBeNull();
+            }
         } finally { await app.close(); }
     });
 
