@@ -1,17 +1,20 @@
 import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSchema,
     HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema,
-    type HealthCheckKindContributionV1, type HealthCheckKindV1, type HealthCheckSourceConfigV1, type JsonValue } from '@happier-dev/plugin-sdk';
-import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
+    type HealthCheckKindContributionV1, type HealthCheckKindV1 } from '@happier-dev/plugin-sdk';
 import { systemdRuntime } from './systemd.js';
 import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema } from '@happier-dev/plugin-sdk';
-import { createHealthCheckSourceInstanceIdV1, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { savedHealthActions, HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT,
     healthTransition, runHealthCheckObserver } from './healthObserver.js';
-
+import { deploymentEvents, deploymentEventActions, deploymentEventBackgroundServices } from './deploymentEvents.js';
+import { managedSetupEvents, managedSetupEventActions, managedSetupEventBackgroundServices } from './managedSetupEvents.js';
 import { mcpUpdateEvents, mcpUpdateEventActions, mcpUpdateEventBackgroundServices } from './mcpUpdateEvents.js';
+import { machinePresenceEvents, machinePresenceEventActions, machinePresenceEventBackgroundServices } from './machinePresenceEvents.js';
+import { createHealthCheckSourceInstanceIdV1, HEALTH_SETUP_OPEN_ACTION_ID, MACHINE_SERVICES_PLUGIN_ID,
+    MachineServiceHealthSetupOpenInputV1Schema } from './healthSetup.js';
 
 const healthKinds = {
     http: { title: 'HTTP', configSchema: HealthCheckHttpConfigV1ProtocolSchema.jsonSchema },
@@ -20,7 +23,6 @@ const healthKinds = {
     dns: { title: 'DNS', configSchema: HealthCheckDnsConfigV1ProtocolSchema.jsonSchema },
     heartbeat: { title: 'Heartbeat', configSchema: HealthCheckHeartbeatConfigV1ProtocolSchema.jsonSchema },
 } satisfies Record<HealthCheckKindV1, Pick<HealthCheckKindContributionV1, 'title' | 'configSchema'>>;
-
 const locales = ['en', 'de', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja'] as const;
 
 export const plugin = definePlugin({
@@ -33,10 +35,28 @@ export const plugin = definePlugin({
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...savedHealthActions, ...mcpUpdateEventActions, 'health/setup': {
+    actions: { ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+        [HEALTH_SETUP_OPEN_ACTION_ID]: {
+            title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
+            placementBindings: [],
+            execution: { target: 'client', client: { artifactId: 'health-setup', exportName: 'activate' },
+                platforms: ['web', 'ios', 'android'] },
+            inputSchema: MachineServiceHealthSetupOpenInputV1Schema,
+            resultSchema: defineProtocolObject({ status: defineProtocolUnion([
+                defineProtocolLiteral('opened'), defineProtocolLiteral('unavailable'),
+            ]) }, { policy: 'closed' }),
+        }, 'health/setup': {
         title: 'Configure saved health checks', execution: { target: 'daemon' }, scopes: ['global', 'machine'],
         surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'], dangerLevel: 'safe', readOnly: false,
         inputSchema: HealthCheckSetupInputV1ProtocolSchema,
+        inputHints: { fields: [
+            { path: 'v', title: 'Version', widget: 'number', defaultValue: 1,
+                visibleWhen: { op: 'not', predicate: { op: 'truthy', path: 'v' } } },
+            { path: 'subject', title: 'Subject', widget: 'json', required: true,
+                placeholder: '{"kind":"machineService","machineId":"…","serviceId":"…"}' },
+            { path: 'checks', title: 'Health checks', widget: 'json', required: true,
+                placeholder: '[{"checkId":"tcp","kind":{"pluginId":"happier.machine.services","localId":"tcp"},"binding":{"kind":"healthCheck"},"config":{"host":"127.0.0.1","port":8080},"periodMs":300000,"consecutiveFailuresBeforeAlerting":1}]' },
+        ] },
         resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, HealthCheckSourceConfigV1ProtocolSchema.jsonSchema),
         async run(input, context) {
             const draft = HealthCheckSetupInputV1ProtocolSchema.parse(input);
@@ -51,7 +71,7 @@ export const plugin = definePlugin({
         delivery: 'recordReceiptOnly' } },
     healthCheckKinds: Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(id => [id, { ...healthKinds[id],
         action: `health/${id}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])),
-    events: { ...mcpUpdateEvents, ...Object.fromEntries(([
+    events: { ...deploymentEvents, ...managedSetupEvents, ...mcpUpdateEvents, ...machinePresenceEvents, ...Object.fromEntries(([
         [HEALTH_STATUS_EVENT, 'healthStatus', 'Health status changed', 'A saved health check failed or recovered.'],
         [HEALTH_CHECK_FAILED_EVENT, 'healthCheckFailed', 'Health check failed', 'A saved health check entered a failed condition.'],
         [HEALTH_CHECK_RECOVERED_EVENT, 'healthCheckRecovered', 'Health check recovered', 'A failed saved health check returned to healthy.'],
@@ -65,7 +85,8 @@ export const plugin = definePlugin({
             setupActionRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/setup' },
             setupSurface: { renderer: 'health-setup' } } },
     } }])) },
-    backgroundServices: [{ declaration: { id: 'health-observer', title: 'Saved health checks', placement: 'daemon' }, runner: runHealthCheckObserver }, ...mcpUpdateEventBackgroundServices],
+    backgroundServices: [{ declaration: { id: 'health-observer', title: 'Saved health checks', placement: 'daemon' }, runner: runHealthCheckObserver },
+        ...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices, ...mcpUpdateEventBackgroundServices, ...machinePresenceEventBackgroundServices],
     hostAccess: { required: [{ id: 'health-status-storage', capability: 'storage.account',
         reason: 'Retain the last admitted health status and pending transition for enabled saved checks.', scope: { enabled: true },
     }, { id: 'systemd-process', capability: 'process',

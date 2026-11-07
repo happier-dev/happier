@@ -1,10 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve as resolvePath } from 'node:path';
+import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-services/src/manifest';
+import { HEALTH_SETUP_OPEN_ACTION_ID } from '../../../../../../packages/plugins/machine-services/src/healthSetup';
+import { buildUniversalPluginUiArtifacts } from '../../../../../../packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts';
+import { sourcePluginUiBuildOptions } from '../../../../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
 import {
     PluginContributesV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/v2';
 import {
     PluginUiArtifactsManifestEntryV2Schema,
 } from '@happier-dev/protocol/plugins/ui';
+import { DaemonPluginUiArtifactByteIdentityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -195,6 +203,111 @@ function resolve(projectionInput: PluginUiProjectionModel) {
     });
 }
 
+it('admits the Health opener only when its authored client declaration publishes the installed activation export', async () => {
+    const opener = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === HEALTH_SETUP_OPEN_ACTION_ID);
+    if (!opener || opener.execution.target !== 'client') throw new Error('Health client opener declaration missing');
+    const client = opener.execution.client;
+    const repositoryRoot = resolvePath(import.meta.dirname, '../../../../../..');
+    const projectRoot = join(repositoryRoot, 'packages/plugins/machine-services');
+    const scratch = await mkdtemp(join(tmpdir(), 'happier-health-installed-admission-'));
+    const buildOptions = await sourcePluginUiBuildOptions({ repoRoot: repositoryRoot });
+    try {
+        const buildGraph = async (includeOpener: boolean) => {
+            const name = includeOpener ? 'current' : 'before-client-declaration';
+            const manifestPath = join(scratch, `${name}.json`);
+            // Reproduce the former authoring gap through the real metadata producer,
+            // retaining the renderer and every other authored contribution.
+            await writeFile(manifestPath, JSON.stringify({ ...PLUGIN_MANIFEST,
+                contributes: { ...PLUGIN_MANIFEST.contributes, actions: PLUGIN_MANIFEST.contributes.actions
+                    .filter(entry => includeOpener || entry.id !== opener.id) },
+            }));
+            const publication = await buildUniversalPluginUiArtifacts(projectRoot, manifestPath, {
+                ...buildOptions, outputDir: join(scratch, name),
+            });
+            const graph = publication.manifest.entries.find(entry => entry.artifactId === client.artifactId);
+            if (!graph || graph.tier !== 'reactNative') throw new Error('Health installed artifact graph missing');
+            return graph;
+        };
+        const staleGraph = await buildGraph(false);
+        const currentGraph = await buildGraph(true);
+        const healthOrigin = { ...hostOrigin, executionOrigin: { ...origin,
+            materializationRef: { ...origin.materializationRef, pluginId: PLUGIN_MANIFEST.id },
+        } };
+        const healthAction = { ...opener, pluginId: PLUGIN_MANIFEST.id,
+            occurrenceId: 'health-installed-occurrence', available: true,
+            [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: healthOrigin,
+        } satisfies PluginUiProjectionModel['actionsById'][string];
+        const projectInstalledGraph = (graph: typeof currentGraph): PluginUiProjectionModel => ({
+            ...EMPTY_PLUGIN_UI_PROJECTION, generation,
+            actionsById: { [`${PLUGIN_MANIFEST.id}/${opener.id}`]: healthAction },
+            reactNativeBundlesById: { [`reactNativeBundle:${PLUGIN_MANIFEST.id}:${opener.id}`]: {
+                ...bundle(opener.id), id: `reactNativeBundle:${PLUGIN_MANIFEST.id}:${opener.id}`,
+                pluginId: PLUGIN_MANIFEST.id, artifactGraph: graph,
+                runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' },
+                    cacheIdentity: { artifactDigest: graph.digest } },
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: healthOrigin,
+            } },
+        });
+        expect(staleGraph.executable.exports).toEqual(['renderSurface']);
+        expect(currentGraph.executable.exports).toEqual(expect.arrayContaining([...staleGraph.executable.exports, client.exportName]));
+        expect(resolve(projectInstalledGraph(staleGraph))).toEqual([]);
+        const admitted = resolve(projectInstalledGraph(currentGraph));
+        expect(admitted, 'Installed Health metadata must admit its declared client activation').toHaveLength(1);
+        expect(admitted[0]?.moduleReference).toEqual({ exportName: client.exportName });
+    } finally {
+        await rm(scratch, { recursive: true, force: true });
+    }
+});
+
+it('combines admitted mounted Actions with ambient demand without duplicate rights or unrelated families', () => {
+    const current = projection();
+    const first = singleActionProjection();
+    const second = { ...current, actionsById: { [`${pluginId}/open-second`]: current.actionsById[`${pluginId}/open-second`]! } };
+    const result = resolveProjectedPluginUiClientExecutables({
+        actionProjection: { projection: first },
+        mountedActionProjections: [{ projection: first }, { projection: second }],
+        platform: 'web',
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]?.actions.map(entry => entry.id)).toEqual([firstActionId, 'open-second']);
+    expect(result[0]?.contributes.voiceProviders).toBeUndefined();
+    const stale = { ...second, actionsById: { [`${pluginId}/open-second`]: {
+        ...second.actionsById[`${pluginId}/open-second`]!,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...hostOrigin, phase: 'retainedOffline' as const, interactionEnabled: false },
+    } } };
+    expect(resolveProjectedPluginUiClientExecutables({ actionProjection: { projection: first },
+        mountedActionProjections: [{ projection: stale }], platform: 'web' })[0]?.actions.map(entry => entry.id))
+        .toEqual([firstActionId]);
+});
+
+it.each(['account', 'client'] as const)('admits a %s Action and its exact Account custody without a Machine projection', (realm) => {
+    const accountOrigin = { serverId: 'home', accountId: 'account', custodyId: 'release:1',
+        sourceCustody: PluginSourceCustodyV1Schema.parse({ kind: 'bundled_first_party',
+            packagedRuntime: { kind: 'source_declaration', packageName: '@acme/shared-actions' } }) };
+    const current = singleActionProjection();
+    const accountAction = { ...action(firstActionId), occurrenceId: accountOrigin.custodyId,
+        execution: realm === 'account'
+            ? { target: 'account' as const, account: { artifactId: target.artifactId, exportName: target.exportName } }
+            : action(firstActionId).execution,
+        hostAccountOrigin: accountOrigin, [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: undefined,
+    };
+    const accountBundle = { ...bundle(firstActionId), hostAccountOrigin: accountOrigin, [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: undefined };
+    const accountProjection = { ...current, generation: null, actionsById: { [firstActionKey]: accountAction },
+        reactNativeBundlesById: { [firstBundleKey]: accountBundle } };
+    const result = resolve(accountProjection);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ occurrenceId: 'release:1', executionOrigin: null,
+        authority: { kind: 'account', serverId: 'home', accountId: 'account', custodyId: 'release:1' } });
+    expect(result[0]?.target.realm).toBe(realm === 'account' ? 'account' : undefined);
+    expect(resolve({ ...accountProjection, reactNativeBundlesById: { [firstBundleKey]: {
+        ...accountBundle, hostAccountOrigin: { ...accountOrigin, custodyId: 'release:2' },
+    } } })).toEqual([]);
+    expect(resolve({ ...accountProjection, actionsById: { [firstActionKey]: {
+        ...accountAction, hostAccountOrigin: { ...accountOrigin,
+            sourceCustody: { kind: 'development', registeredRootId: 'machine-only-source' } },
+    } } })).toEqual([]);
+});
+
 it('activates an authentication-only Account module through its declared target and exact custody', () => {
     const hostAccountOrigin = { serverId: 'home', accountId: 'account', custodyId: 'release:authentication',
         sourceCustody: { kind: 'bundled_first_party' as const,
@@ -228,29 +341,26 @@ it('activates an authentication-only Account module through its declared target 
     } } })).toEqual([]);
 });
 
-it('admits an Account Action and its exact custody without a Machine projection', () => {
-    const accountOrigin = { serverId: 'home', accountId: 'account', custodyId: 'release:1',
+it('activates a Resource-only Account module through the same selected custody', () => {
+    const hostAccountOrigin = { serverId: 'home', accountId: 'account', custodyId: 'release:resources',
         sourceCustody: PluginSourceCustodyV1Schema.parse({ kind: 'bundled_first_party',
             packagedRuntime: { kind: 'source_declaration', packageName: '@acme/shared-actions' } }) };
-    const current = singleActionProjection();
-    const accountAction = { ...action(firstActionId), occurrenceId: accountOrigin.custodyId,
-        execution: { target: 'account' as const, account: { artifactId: target.artifactId, exportName: target.exportName } },
-        hostAccountOrigin: accountOrigin, [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: undefined,
-    };
-    const accountBundle = { ...bundle(firstActionId), hostAccountOrigin: accountOrigin, [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: undefined };
-    const accountProjection = { ...current, generation: null, actionsById: { [firstActionKey]: accountAction },
-        reactNativeBundlesById: { [firstBundleKey]: accountBundle } };
-    const result = resolve(accountProjection);
+    const resource = { id: 'status', pluginId, occurrenceId: hostAccountOrigin.custodyId,
+        source: 'dynamic' as const, scope: 'session' as const, resourceKind: 'config' as const,
+        contentType: 'application/json', execution: { target: 'account' as const,
+            account: { artifactId: target.artifactId, exportName: target.exportName } }, hostAccountOrigin };
+    const resourceBundle = { ...bundle('resources/status'), hostAccountOrigin,
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: undefined };
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: null,
+        resourcesById: { [`${pluginId}/status`]: resource },
+        reactNativeBundlesById: { [resourceBundle.id]: resourceBundle } };
+    const result = resolve(projection);
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ occurrenceId: 'release:1', executionOrigin: null,
-        authority: { kind: 'account', serverId: 'home', accountId: 'account', custodyId: 'release:1' } });
-    expect(resolve({ ...accountProjection, reactNativeBundlesById: { [firstBundleKey]: {
-        ...accountBundle, hostAccountOrigin: { ...accountOrigin, custodyId: 'release:2' },
-    } } })).toEqual([]);
-    expect(resolve({ ...accountProjection, actionsById: { [firstActionKey]: {
-        ...accountAction, hostAccountOrigin: { ...accountOrigin,
-            sourceCustody: { kind: 'development', registeredRootId: 'machine-only-source' } },
-    } } })).toEqual([]);
+    expect(result[0]).toMatchObject({ target: { realm: 'account' }, contributes: { resources: [{ id: resource.id, kind: resource.resourceKind,
+        execution: resource.execution, source: 'dynamic' }] },
+        authority: { kind: 'account', custodyId: hostAccountOrigin.custodyId } });
+    expect(resolve({ ...projection, resourcesById: { [`${pluginId}/status`]: { ...resource,
+        occurrenceId: 'retired' } } })).toEqual([]);
 });
 
 function firstAction(projectionInput: ClientActionProjectionFixture) {
@@ -636,6 +746,22 @@ describe('resolveProjectedPluginUiClientExecutables', () => {
         }) satisfies PluginUiProjectionModel;
 
         expect(resolve(mismatched)).toEqual([]);
+    });
+
+    it('parses an immutable projected bundle\'s artifact graph and cache identity once across resolutions', () => {
+        const current = singleActionProjection();
+        const graphParse = vi.spyOn(PluginUiArtifactsManifestEntryV2Schema, 'safeParse');
+        const identityParse = vi.spyOn(DaemonPluginUiArtifactByteIdentityV1Schema, 'safeParse');
+        try {
+            for (let resolution = 0; resolution < 5; resolution += 1) {
+                expect(resolve(current)).toHaveLength(1);
+            }
+            expect(graphParse.mock.calls.length).toBeLessThanOrEqual(1);
+            expect(identityParse.mock.calls.length).toBeLessThanOrEqual(1);
+        } finally {
+            graphParse.mockRestore();
+            identityParse.mockRestore();
+        }
     });
 
 });

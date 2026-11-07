@@ -10,6 +10,8 @@ import {
     defineUiSurface, usePluginHostApi, usePluginTranslation, type IconName,
 } from '@happier-dev/plugin-ui';
 
+export { activateHealthSetupClientActionsV1 as activate } from './actions/healthSetup.js';
+
 type Translate = ReturnType<typeof usePluginTranslation>;
 type Check = HealthCheckSetupInputV1['checks'][number];
 const K = 'machineServices.healthSetup';
