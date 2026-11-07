@@ -36,6 +36,8 @@ import {
     type TriageListLensV1,
     type TriageListWindowV1,
 } from './listWindow.js';
+import { retainTriageObservation, retainTriageProjectionArray, retainTriageProjectionValue } from './listWindowReconciliation.js';
+import type { InternalTaskListProjection } from '../internalTasks/listProjection.js';
 
 /**
  * The one mounted PRs & Issues window store.
@@ -87,6 +89,7 @@ export type TriageListWindowUnreadableSourceV1 = Readonly<{
 }> & Partial<TriageListInvocationErrorV1>;
 
 export type TriageListWindowSnapshotV1 = Readonly<{
+    taskProjection?: InternalTaskListProjection;
     /** The last admitted window. Retained across a failed refresh. */
     window?: TriageListWindowV1;
     freshness: 'unknown' | 'fresh' | 'stale';
@@ -236,6 +239,7 @@ export type TriageListWindowReaderV1 = (
 ) => Promise<TriageListEntriesResultV1>;
 
 type LaneState = {
+    taskProjection?: InternalTaskListProjection;
     lane: TriageListLaneV1;
     /** Last-known-good: retained verbatim when the next pass for this lane fails. */
     observations: readonly CorpusQualifiedObservationV1[];
@@ -571,7 +575,17 @@ export function createTriageListWindowStore(deps: Readonly<{
         const blocked = refreshBlock();
         const appendable = loadMore();
         const completed = completedAtMs();
+        const taskState = [...lanes.values()].find(state => state.taskProjection !== undefined);
+        const taskFailure = taskState?.lane.health.kind === 'failed' ? taskState.lane.health.failure
+            : taskState?.error === null || taskState?.error === undefined ? undefined
+                : { class: 'transient' as const, code: taskState.error.code };
+        const taskProjection = retainTriageProjectionValue(snapshot.taskProjection, taskState?.taskProjection === undefined ? undefined
+            : taskFailure === undefined ? taskState.taskProjection : { ...taskState.taskProjection, failure: taskFailure,
+                entries: taskState.taskProjection.entries.map(entry => ({ ...entry, result: { kind: 'failed' as const, links: [],
+                    lanes: entry.result.lanes?.map(lane => ({ ...lane, health: { kind: 'failed' as const, failure: taskFailure } })),
+                } })) });
         const next: TriageListWindowSnapshotV1 = Object.freeze({
+            ...(taskProjection === undefined ? {} : { taskProjection }),
             ...(window === null ? {} : { window }),
             freshness: freshness(completed),
             ...(completed === undefined ? {} : { completedAtMs: completed }),
@@ -924,48 +938,34 @@ export function createTriageListWindowStore(deps: Readonly<{
         outcome: TriageRefreshPassOutcomeV1;
     }>[]> {
         const acquisitionLens = lens;
-        const admitted = new Map<string, CorpusQualifiedObservationV1[]>();
-        const settled = new Map<string, Readonly<{
-            lane: TriageListLaneV1;
-            completedAtMs: number;
-            observations: readonly CorpusQualifiedObservationV1[];
-        }>>();
         const outcomes = new Map<string, TriageRefreshPassOutcomeV1>();
-        let remainingRowBudget = MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
-        for (const sourceInstanceId of input.sourceInstanceIds) admitted.set(sourceInstanceId, []);
-        for (let offset = 0; offset < input.sourceInstanceIds.length;) {
-            if (!isCurrent() || input.signal.aborted) {
-                for (const sourceInstanceId of input.sourceInstanceIds) {
-                    if (!outcomes.has(sourceInstanceId)) outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                }
-                return input.sourceInstanceIds.map((sourceInstanceId) => ({
-                    sourceInstanceId,
-                    outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
-                }));
-            }
-            if (remainingRowBudget === 0) break;
-            const sourceInstanceIds = input.sourceInstanceIds.slice(
-                offset,
-                offset + Math.min(MAX_TRIAGE_LIST_SOURCE_BATCH_V1, remainingRowBudget),
-            );
-            offset += sourceInstanceIds.length;
-            // Every selected Action batch contributes to ONE transport window,
-            // and every named lane needs at least one row slot. While another
-            // selected batch remains, spend exactly that first-round share; the
-            // final batch may use capacity earlier short batches returned.
-            // Giving every batch the full 56-row allowance acquired 88 rows from
-            // 33 connections and folded 32 out of sight. Naming 32 lanes with a
-            // 24-row remainder was worse: eight lanes were never asked but were
-            // reported unavailable, so no continuation could reach them.
-            const batchRowBudget = offset < input.sourceInstanceIds.length
-                ? sourceInstanceIds.length
-                : remainingRowBudget;
+        const nextPass = passes + 1;
+        // The first independently settled source publishes this pass together
+        // with its rows. Neither admission nor the last source settling is a
+        // separate relationship-read demand.
+        function publishRead(): void {
+            passes = nextPass;
+            rebuild();
+            publish();
+        }
+        // The Action is a finite JSON result, so sources sharing an invocation
+        // cannot publish independently. Spend the existing window row budget
+        // across source-local reads; a slow/refused source then owns only its
+        // own result, never the rows another source has already returned.
+        const rowShare = Math.floor(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 / input.sourceInstanceIds.length);
+        const extraRows = MAX_TRIAGE_LIST_WINDOW_ROWS_V1 % input.sourceInstanceIds.length;
+        await Promise.all(input.sourceInstanceIds.map(async (sourceInstanceId, index) => {
+            if (!isCurrent() || input.signal.aborted) return;
+            const sourceInstanceIds = [sourceInstanceId];
             const resume = activeCycleIsAppend
-                ? sourceInstanceIds.flatMap((sourceInstanceId) => {
-                    const continuation = continuations.get(sourceInstanceId);
-                    return continuation === undefined ? [] : [continuation];
-                })
+                ? [continuations.get(sourceInstanceId)].filter((entry): entry is LaneContinuation => entry !== undefined)
                 : undefined;
+            // The Action already chose this lane's native geometry. Its whole
+            // atomic page must fit the transport even when the fair share shrinks.
+            const batchRowBudget = Math.max(
+                rowShare + (index < extraRows ? 1 : 0),
+                resume?.[0]?.pageLimit ?? 0,
+            );
 
             let result: TriageListEntriesResultV1;
             try {
@@ -975,40 +975,21 @@ export function createTriageListWindowStore(deps: Readonly<{
                 );
             } catch (cause) {
                 activeCycleAggregateFailed = true;
-                for (const sourceInstanceId of sourceInstanceIds) {
-                    if (!input.signal.aborted) {
-                        recordLaneError(
-                            sourceInstanceId,
-                            errorFrom(cause),
-                            admitted.get(sourceInstanceId) ?? [],
-                        );
-                    }
-                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                }
-                continue;
+                if (!input.signal.aborted) recordLaneError(sourceInstanceId, errorFrom(cause));
+                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                publishRead();
+                return;
             }
             if (!isCurrent() || input.signal.aborted) {
-                for (const sourceInstanceId of input.sourceInstanceIds) {
-                    if (!outcomes.has(sourceInstanceId)) outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                }
-                return input.sourceInstanceIds.map((sourceInstanceId) => ({
-                    sourceInstanceId,
-                    outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
-                }));
+                return;
             }
 
-            // The Action result belongs to the complete lens identity that
-            // submitted its cursor. A lens change can occur while the provider
-            // page is awaiting; adopting that page would briefly publish the old
+            // The Action result belongs to the acquisition lens that
+            // submitted its cursor. Task scope or page geometry can change while the
+            // provider page is awaiting; adopting that page would briefly publish the old
             // frontier under the new lens before the queued replacement runs.
             if (!sameAcquisitionLens(acquisitionLens, lens)) {
-                for (const sourceInstanceId of input.sourceInstanceIds) {
-                    if (!outcomes.has(sourceInstanceId)) outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                }
-                return input.sourceInstanceIds.map((sourceInstanceId) => ({
-                    sourceInstanceId,
-                    outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
-                }));
+                return;
             }
 
             const configuredSourceChange = syncConfiguredSourceBatch(
@@ -1027,86 +1008,73 @@ export function createTriageListWindowStore(deps: Readonly<{
             if (configuredSourceChange.acquisitionChanged
                 || configuredSourceChange.availabilityChanged
                 || input.signal.aborted) {
-                for (const sourceInstanceId of input.sourceInstanceIds) {
-                    if (!outcomes.has(sourceInstanceId)) outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                }
-                return input.sourceInstanceIds.map((sourceInstanceId) => ({
-                    sourceInstanceId,
-                    outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
-                }));
+                return;
             }
 
             const nextContinuations = new Map(
                 (result.window.continuations ?? []).map((entry) => [entry.sourceInstanceId, entry]),
             );
-            remainingRowBudget = Math.max(0, remainingRowBudget - result.window.rows.length);
             // Client/store time, recorded at the exact batch boundary. The
             // Action may execute on another machine, so its assembledAtMs is not
             // comparable with this mounted store's freshness clock.
             const batchCompletedAtMs = deps.nowMs();
-            for (const sourceInstanceId of sourceInstanceIds) {
-                continuations.delete(sourceInstanceId);
-                const next = nextContinuations.get(sourceInstanceId);
-                if (next !== undefined) continuations.set(sourceInstanceId, next);
+            continuations.delete(sourceInstanceId);
+            const next = nextContinuations.get(sourceInstanceId);
+            if (next !== undefined) continuations.set(sourceInstanceId, next);
 
-                const lane = result.window.lanes.find(
-                    (candidate) => candidate.sourceInstanceId === sourceInstanceId,
-                );
-                const laneObservations = admitted.get(sourceInstanceId) ?? [];
-                laneObservations.push(...laneObservationsFromWire(result, sourceInstanceId));
-                admitted.set(sourceInstanceId, laneObservations);
-                const walkObservations = retainObservations(
-                    resume?.some((entry) => entry.sourceInstanceId === sourceInstanceId)
-                        ? lanes.get(sourceInstanceId)?.walkObservations ?? []
-                        : [],
-                    laneObservations,
-                    true,
-                );
-                if (lane === undefined) {
-                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                    continue;
-                }
-                if (lane.health.kind === 'failed') {
-                    recordLaneFailure(sourceInstanceId, lane, {
-                        code: lane.health.failure.code,
-                        message: lane.health.failure.detail ?? lane.health.failure.class,
-                    }, walkObservations);
-                    outcomes.set(sourceInstanceId, { kind: 'failed', failure: lane.health.failure });
-                    continue;
-                }
-                if (lane.health.kind === 'unavailable') {
-                    recordLaneFailure(sourceInstanceId, lane, {
-                        ...UNREADABLE_IN_THIS_PASS_V1,
-                        ...lane.health.error,
-                    }, walkObservations);
-                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                    continue;
-                }
-                settled.set(sourceInstanceId, Object.freeze({
-                    lane, completedAtMs: batchCompletedAtMs, observations: walkObservations,
-                }));
-                outcomes.set(sourceInstanceId, { kind: 'completed' });
+            const lane = result.window.lanes.find(
+                (candidate) => candidate.sourceInstanceId === sourceInstanceId,
+            );
+            const laneObservations = laneObservationsFromWire(result, sourceInstanceId);
+            const walkObservations = retainObservations(
+                resume?.some((entry) => entry.sourceInstanceId === sourceInstanceId)
+                    ? lanes.get(sourceInstanceId)?.walkObservations ?? []
+                    : [],
+                laneObservations,
+                true,
+            );
+            if (lane === undefined) {
+                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                publishRead();
+                return;
             }
-        }
-
-        for (const sourceInstanceId of input.sourceInstanceIds) {
-            const completed = settled.get(sourceInstanceId);
-            if (completed === undefined) continue;
-            const { lane } = completed;
-            const walkObservations = completed.observations;
+            if (lane.health.kind === 'failed') {
+                recordLaneFailure(sourceInstanceId, lane, {
+                    code: lane.health.failure.code,
+                    message: lane.health.failure.detail ?? lane.health.failure.class,
+                }, walkObservations, result.window.taskProjection);
+                outcomes.set(sourceInstanceId, { kind: 'failed', failure: lane.health.failure });
+                publishRead();
+                return;
+            }
+            if (lane.health.kind === 'unavailable') {
+                recordLaneFailure(sourceInstanceId, lane, {
+                    ...UNREADABLE_IN_THIS_PASS_V1,
+                    ...lane.health.error,
+                }, walkObservations, result.window.taskProjection);
+                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                publishRead();
+                return;
+            }
+            const observations = activeCycleReplacesGeneration || lane.exhausted
+                ? reconcileAdmittedObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations)
+                : retainObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations);
             lanes.set(sourceInstanceId, {
                 lane,
-                // A terminal append publishes all pages of THIS walk, not the
-                // old membership retained while the refresh was incomplete.
-                // Replacing membership makes no entity-absence or durable-state claim.
-                observations: activeCycleReplacesGeneration || lane.exhausted
-                    ? walkObservations
-                    : retainObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations),
+                // A completed walk replaces its membership; an unfinished
+                // walk retains the last known rows beside its new pages.
+                observations,
+                taskProjection: reconcileTaskProjection(sourceInstanceId, result.window.taskProjection, observations),
                 ...(continuations.has(sourceInstanceId) ? { walkObservations } : {}),
                 error: null,
-                completedAtMs: completed.completedAtMs,
+                completedAtMs: batchCompletedAtMs,
             });
-        }
+            outcomes.set(sourceInstanceId, { kind: 'completed' });
+            publishRead();
+        }));
+        // A superseded lens can discard every source result. Its admitted read
+        // still counts when the cycle publishes settlement.
+        passes = nextPass;
         return input.sourceInstanceIds.map((sourceInstanceId) => ({
             sourceInstanceId,
             outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
@@ -1139,14 +1107,38 @@ export function createTriageListWindowStore(deps: Readonly<{
         lane: TriageListLaneV1,
         laneError: TriageListWindowErrorV1,
         admitted: readonly CorpusQualifiedObservationV1[],
+        taskProjection?: InternalTaskListProjection,
     ): void {
         const previous = lanes.get(sourceInstanceId);
+        const observations = retainObservations(previous?.observations ?? [], admitted);
         lanes.set(sourceInstanceId, {
             lane,
-            observations: retainObservations(previous?.observations ?? [], admitted),
+            observations,
+            taskProjection: reconcileTaskProjection(sourceInstanceId, taskProjection, observations),
             error: laneError,
             completedAtMs: previous?.completedAtMs ?? null,
         });
+    }
+
+    /** Keep page adjuncts with the exact lane membership whose records admitted them. */
+    function reconcileTaskProjection(sourceInstanceId: string, incoming: InternalTaskListProjection | undefined,
+        observations: readonly CorpusQualifiedObservationV1[]): InternalTaskListProjection | undefined {
+        const previous = lanes.get(sourceInstanceId)?.taskProjection;
+        if (incoming === undefined) return previous;
+        const keys = new Set(observations.map(observation => triageEntryRowKey(observation.entryRef)));
+        const entries = new Map(previous?.entries.map(entry => [triageEntryRowKey(entry.entryRef), entry]));
+        for (const entry of incoming.entries) entries.set(triageEntryRowKey(entry.entryRef), entry);
+        const order = incoming.order ?? previous?.order;
+        const personalIds = new Set(observations.filter(observation => observation.entryRef.collisionScope === 'personal')
+            .map(observation => observation.entryRef.entryId));
+        return { ...incoming,
+            entries: [...entries].filter(([key]) => keys.has(key)).map(([, entry]) => entry),
+            ...(order === undefined ? {} : { order: { scope: order.scope,
+                undoneOrder: [...new Set(activeCycleIsAppend
+                    ? [...(previous?.order?.undoneOrder ?? []), ...(incoming.order?.undoneOrder ?? [])]
+                    : [...(incoming.order?.undoneOrder ?? []), ...(previous?.order?.undoneOrder ?? [])])].filter(id => personalIds.has(id)),
+            } }),
+        };
     }
 
     /**
@@ -1181,13 +1173,24 @@ export function createTriageListWindowStore(deps: Readonly<{
             // Re-inserted at the back: insertion order is what eviction reads,
             // and this pass's answers must be the last thing it would drop.
             merged.delete(key);
-            merged.set(key, earlier === undefined || !sameWalk ? observation : layerWalkAnswer(earlier, observation));
+            merged.set(key, retainTriageObservation(earlier,
+                earlier === undefined || !sameWalk ? observation : layerWalkAnswer(earlier, observation)));
         }
         const values = [...merged.values()];
         const capacity = retainedObservationCapacity();
         return Object.freeze(
             values.length <= capacity ? values : values.slice(values.length - capacity),
         );
+    }
+
+    /** A completed walk replaces membership while preserving equal answers from its prior retained lane. */
+    function reconcileAdmittedObservations(
+        retained: readonly CorpusQualifiedObservationV1[],
+        admitted: readonly CorpusQualifiedObservationV1[],
+    ): readonly CorpusQualifiedObservationV1[] {
+        const previous = new Map(retained.map(observation => [triageEntryRowKey(observation.entryRef), observation]));
+        return retainTriageProjectionArray(retained, admitted.map(observation =>
+            retainTriageObservation(previous.get(triageEntryRowKey(observation.entryRef)), observation)));
     }
 
     /**
@@ -1391,11 +1394,6 @@ export function createTriageListWindowStore(deps: Readonly<{
             }
         }
         await request.settled;
-        if (request.disposition !== 'blocked' && isCurrent()) {
-            passes += 1;
-            rebuild();
-            publish();
-        }
         if (!isCurrent()) return;
         const askedNobody = request.startedSourceInstanceIds.length === 0;
         if (

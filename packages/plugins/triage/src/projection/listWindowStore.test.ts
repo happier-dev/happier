@@ -19,12 +19,15 @@ import {
 } from '../actions/listEntries.js';
 import {
     MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
+    TriageListEntriesResultV1Schema,
     type TriageListEntriesInputV1,
 } from '../actions/listEntriesProtocol.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitCorpusCollections, selectTestkitExternalSourceInput } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitEmptyInternalTaskSource } from '../corpus/testkit/internalTaskSource.test-support.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -135,6 +138,8 @@ function createHarness(options: Readonly<{
     /** Seeded by default; a single-connection mount is its own configured set. */
     configureSourceA?: boolean;
     configureSourceB?: boolean;
+    admitInternal?: boolean;
+    wholeCatalog?: boolean;
     /** Two distinct configured accounts of one source can observe one canonical entry. */
     sameSourceForB?: boolean;
     /** Substitute only the provider scan boundary for a discriminating walk fixture. */
@@ -270,9 +275,6 @@ function createHarness(options: Readonly<{
         rowsPerSubmittedLimit: false,
         /** Entry ids the provider boundary handed to the aggregate. */
         acquiredEntryIds: [] as string[],
-        /** Advance the test clock once when the one-source tail batch starts. */
-        ageEarlierBatchesOnWidePage: false,
-        agedEarlierBatches: false,
     };
 
     const scanA: ScanFn = async (input) => {
@@ -281,10 +283,6 @@ function createHarness(options: Readonly<{
         if (state.holdSourceA !== null) await state.holdSourceA;
         if (state.rowsPerSubmittedLimit) {
             const limit = input.page.kind === 'initial' ? input.page.limit : 1;
-            if (state.ageEarlierBatchesOnWidePage && limit > 1 && !state.agedEarlierBatches) {
-                state.agedEarlierBatches = true;
-                clock.nowMs += TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS + 1;
-            }
             const sourceInstanceId = input.instance.instance.sourceInstanceId;
             const observations = Array.from({ length: limit }, (unused, index) => {
                 const entryId = `${sourceInstanceId}-${String(index).padStart(2, '0')}`;
@@ -507,12 +505,15 @@ function createHarness(options: Readonly<{
         };
     };
 
-    const admitted = options.sameSourceForB
+    const internal = createTestkitEmptyInternalTaskSource();
+    const external = options.sameSourceForB
         ? [admittedSource(SOURCE_A, scanA)]
         : admitSourceB
             ? [admittedSource(SOURCE_A, scanA), admittedSource(SOURCE_B, scanB)]
             : [admittedSource(SOURCE_A, scanA)];
-    const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
+    const admitted = [...(options.wholeCatalog && options.admitInternal !== false ? [internal.contribution] : []), ...external];
+    const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input, options) => {
+        if (operation === internal.contribution.operations.scan) return await internal.scan(operation, input, options);
         const scan = scans.get(operation as unknown as object);
         if (scan === undefined) throw new Error('No admitted scan handle for this operation.');
         return await scan(input);
@@ -558,7 +559,8 @@ function createHarness(options: Readonly<{
         }
         return result;
     };
-    const readAdmittedEntries = async (input: TriageListEntriesInputV1) => await listTriageEntries(input, {
+    const readAdmittedEntries = async (input: TriageListEntriesInputV1) => await listTriageEntries(
+        options.wholeCatalog ? input : await selectTestkitExternalSourceInput(input, collections.sourceInstances), {
         sourceInstances: collections.sourceInstances,
         readAdmittedSources: async () => admitted.filter((source) => (
             source.contributor.pluginId !== SOURCE_A.pluginId || state.sourceAContributionAvailable
@@ -2352,7 +2354,7 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
-    it('publishes one mixed Action result after every included connection settles', async () => {
+    it('publishes settled source rows while another source is still pending', async () => {
         const harness = createHarness();
         let release = (): void => {};
         harness.state.holdSourceB = new Promise<void>((resolve) => { release = resolve; });
@@ -2361,32 +2363,45 @@ describe('the mounted PRs & Issues window store', () => {
             nowMs: () => harness.clock.nowMs,
         });
 
-        /** Every window published while the cycle was still running. */
-        const published: string[][] = [];
-        const unsubscribe = store.subscribe(() => {
-            const snapshot = store.getSnapshot();
-            if (snapshot.pending === 'idle' || snapshot.window === undefined) return;
-            published.push(snapshot.window.rows.map((row) => row.entryRef.entryId));
-        });
-
         const cycle = store.refresh('view');
         try {
-            // A mixed Action has one result boundary, so it cannot publish a
-            // per-source half-result before the included connections settle.
-            for (let turn = 0; turn < 100 && published.length === 0; turn += 1) {
-                await new Promise((resolve) => { setTimeout(resolve, 0); });
-            }
-            expect(published).toEqual([]);
+            await vi.waitFor(() => expect(store.getSnapshot().window?.rows.map(row => row.entryRef.entryId))
+                .toEqual(['1']));
+            const snapshot = store.getSnapshot();
+            expect(snapshot.window?.coverage).toBe('partial');
+            expect(snapshot.window?.lanes.find(lane => lane.sourceInstanceId === INSTANCE_B)?.health.kind)
+                .toBe('unavailable');
+            expect(snapshot.unreadableSources).toBeUndefined();
+            expect(resolveTriageListShellState(snapshot)).toMatchObject({ kind: 'window', refreshing: true });
         } finally {
             release();
+            await cycle;
+            store.dispose();
         }
 
-        await cycle;
-        unsubscribe();
         expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId))
-            .toEqual(['1', '3', '2']);
+            .toEqual(['1', '3']);
         expect(store.getSnapshot().pending).toBe('idle');
-        store.dispose();
+    });
+
+    it.each(['refused', 'rateLimit'] as const)('keeps settled rows when another source is %s', async failure => {
+        const harness = createHarness();
+        if (failure === 'refused') harness.state.sourceBInvocationRejected = true;
+        else harness.state.sourceBFailure = { class: 'rateLimit', code: 'quota', retryNotBeforeMs: harness.clock.nowMs + 60_000 };
+        const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+        try {
+            await store.refresh('view');
+            const snapshot = store.getSnapshot();
+            expect(snapshot.window?.rows.map(row => row.entryRef.entryId)).toEqual(['1']);
+            expect(snapshot.pending).toBe('idle');
+            expect(snapshot.error).toBeUndefined();
+            expect(snapshot.window?.lanes.find(lane => lane.sourceInstanceId === INSTANCE_B)?.health.kind)
+                .toBe(failure === 'refused' ? 'unavailable' : 'failed');
+            expect(resolveTriageListShellState(snapshot)).toMatchObject({ kind: 'window', showReadWarning: true,
+                failure: { sources: [expect.objectContaining({ sourceInstanceId: INSTANCE_B })] } });
+        } finally {
+            store.dispose();
+        }
     });
 });
 
@@ -2473,56 +2488,28 @@ describe('appending another bounded window to one mount', () => {
         store.dispose();
     });
 
-    it('carries every active lane frontier through one mixed invocation per transport page', async () => {
+    it('resumes each active source frontier exactly once without replaying page one', async () => {
         const harness = createHarness();
         harness.state.mixedSourcesNeverFinish = true;
-        const store = createTriageListWindowStore({
-            readEntries: harness.readEntries,
-            nowMs: () => harness.clock.nowMs,
-        });
-
-        await store.refresh('view');
-        const scanInputsAfterRefresh = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
-        );
-        expect(scanInputsAfterRefresh).toHaveLength(1);
-        expect(scanInputsAfterRefresh[0]?.sources).toEqual({
-            kind: 'selected',
-            sourceInstanceIds: [INSTANCE_A, INSTANCE_B],
-        });
-
-        await store.loadMore();
-
-        // Load More resumes both still-active lanes together exactly once. It
-        // neither replays page one nor fans the frontier out into one Action per
-        // source.
-        const scanInputsAfterLoadMore = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
-        );
-        expect(scanInputsAfterLoadMore).toHaveLength(2);
-        expect(scanInputsAfterLoadMore[1]?.sources).toEqual(
-            { kind: 'selected', sourceInstanceIds: [INSTANCE_A, INSTANCE_B] },
-        );
-        expect(scanInputsAfterLoadMore[1]?.resume?.map((entry) => entry.sourceInstanceId))
-            .toEqual([INSTANCE_A, INSTANCE_B]);
-        const resumedPages = scanInputsAfterLoadMore[1]?.resume?.map(
-            (entry) => Number(entry.continuation?.token),
-        ) ?? [];
-        expect(resumedPages).toHaveLength(2);
-        expect(resumedPages.every((page) => page > 1)).toBe(true);
-
-        await store.loadMore();
-        const afterSecondAppend = harness.actionInputs.filter(
-            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
-        );
-        expect(afterSecondAppend).toHaveLength(3);
-        const secondResumedPages = afterSecondAppend[2]?.resume?.map(
-            (entry) => Number(entry.continuation?.token),
-        ) ?? [];
-        expect(secondResumedPages).toHaveLength(2);
-        expect(secondResumedPages.every((page, index) => page > (resumedPages[index] ?? 0))).toBe(true);
-
-        store.dispose();
+        const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+        const reads = () => harness.actionInputs.filter(input => input.sources.kind === 'selected'
+            && input.sources.sourceInstanceIds.length > 0);
+        try {
+            await store.refresh('view');
+            expect(reads().map(input => input.sources)).toEqual([INSTANCE_A, INSTANCE_B]
+                .map(id => ({ kind: 'selected', sourceInstanceIds: [id] })));
+            let precedingPages = [1, 1];
+            for (let append = 0; append < 2; append += 1) {
+                const before = reads().length;
+                await store.loadMore();
+                const resumed = reads().slice(before);
+                expect(resumed.map(input => input.resume?.map(entry => entry.sourceInstanceId)))
+                    .toEqual([[INSTANCE_A], [INSTANCE_B]]);
+                const pages = resumed.map(input => Number(input.resume?.[0]?.continuation?.token));
+                expect(pages.every((page, index) => page > (precedingPages[index] ?? 0))).toBe(true);
+                precedingPages = pages;
+            }
+        } finally { store.dispose(); }
     });
 
     it('restarts the mixed paging generation when a configured source appears before Load More', async () => {
@@ -2565,6 +2552,65 @@ describe('appending another bounded window to one mount', () => {
 
         store.dispose();
     });
+
+    it('reserves the returned page geometry when a deferred lane exceeds its mixed-window share', async () => {
+        const harness = createHarness({ configureSourceB: false, wholeCatalog: true, admitInternal: false,
+            scanA: async input => {
+                const page = input.page.kind === 'initial' ? 1 : Number(input.page.continuation.token.split(':')[0]);
+                const limit = input.page.kind === 'initial' ? input.page.limit : Number(input.page.continuation.token.split(':')[1]);
+                return {
+                    kind: 'page',
+                    observations: Array.from({ length: limit }, (_, index) => presentObservation({
+                        entryId: `${input.instance.instance.sourceInstanceId}-${page}-${index}`,
+                        title: 'Change', sourceUpdatedAtMs: 1_000,
+                    })),
+                    evidence: { kind: 'partial', reason: 'more-pages' },
+                    continuation: { v: 1, token: `${page + 1}:${limit}` },
+                };
+            },
+        });
+        for (let index = 0; index < 10; index += 1) {
+            harness.control.sourceInstances.seed(toCorpusStoredValue(instanceRow(
+                `geometry${index}`, SOURCE_A,
+                `${String(index + 3).padStart(8, '0')}-1111-4111-8111-111111111111`, index + 3,
+            )));
+        }
+        const inputs: TriageListEntriesInputV1[] = [];
+        const store = createTriageListWindowStore({
+            readEntries: async input => {
+                inputs.push(input);
+                if (input.sources.kind === 'selected' && input.sources.sourceInstanceIds.includes(INSTANCE_A)
+                    && input.limit < 10) {
+                    // The Action transport can defer a source before its first
+                    // provider call, returning its required geometry without a cursor.
+                    const result = await harness.readEntries({ ...input, limit: 0 });
+                    return TriageListEntriesResultV1Schema.parse({ ...result, window: {
+                        ...result.window,
+                        rows: [],
+                        coverage: 'partial',
+                        lanes: [{ sourceInstanceId: INSTANCE_A, source: SOURCE_A,
+                            health: { kind: 'partial', reason: 'more-pages' }, exhausted: false }],
+                        continuations: [{ sourceInstanceId: INSTANCE_A, pageLimit: 10 }],
+                    } });
+                }
+                return await harness.readEntries(input);
+            },
+            nowMs: () => harness.clock.nowMs,
+        });
+        try {
+            await store.refresh('view');
+            expect(store.getSnapshot().window?.rows.some(row => row.entryRef.entryId.startsWith(INSTANCE_A))).toBe(false);
+            expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+            const beforeAppend = inputs.length;
+            await store.loadMore();
+            const resumed = inputs.slice(beforeAppend).find(input => input.sources.kind === 'selected'
+                && input.sources.sourceInstanceIds.includes(INSTANCE_A));
+            expect(resumed?.limit).toBe(10);
+            expect(resumed?.resume).toEqual([{ sourceInstanceId: INSTANCE_A, pageLimit: 10 }]);
+            expect(store.getSnapshot().window?.rows.map(row => row.entryRef.entryId)).toContain(`${INSTANCE_A}-1-0`);
+        } finally { store.dispose(); }
+    });
+
 
     it('keeps paging healthy frontiers when one lane fails', async () => {
         const harness = createHarness();

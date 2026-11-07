@@ -30,6 +30,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+import { InternalTaskListProjectionSchema } from '../internalTasks/listProjection.js';
 
 /**
  * The most configured sources one `entries/list-v1` invocation carries.
@@ -495,6 +496,7 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
     configuredSourcesNextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
     window: defineProtocolObject({
         v: defineProtocolLiteral(1),
+        taskProjection: InternalTaskListProjectionSchema.optional(),
         rows: defineProtocolArray(TriageListRowV1Schema, {
             maxItems: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
         }),

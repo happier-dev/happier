@@ -2,7 +2,6 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import type { PluginAccountCollection } from '@happier-dev/plugin-sdk/collections';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
-import type { CorpusStoredValueV1 } from '../collections/handles.js';
 import {
     CORPUS_SESSION_LINKS_COLLECTION,
     CORPUS_SOURCE_INSTANCES_COLLECTION,
@@ -11,7 +10,24 @@ import {
 import {
     createInMemoryAccountCollection,
     type InMemoryAccountCollection,
-} from './inMemoryAccountCollection.test-support.js';
+} from '../collections/inMemoryAccountCollection.js';
+import type { CorpusStoredValueV1 } from '../collections/handles.js';
+import type { TriageListEntriesInputV1 } from '../../actions/listEntriesProtocol.js';
+import { readActiveConfiguredSourceRows } from '../configuration/readConfiguredSourceRows.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
+
+/** Explicit external-only scope for fixtures whose admitted inventory excludes
+ * personal tasks. Whole-catalog paging tests keep allConfigured unchanged. */
+export async function selectTestkitExternalSourceInput(
+    input: TriageListEntriesInputV1,
+    sourceInstances: CorpusCollectionsV1['sourceInstances'],
+): Promise<TriageListEntriesInputV1> {
+    if (input.sources.kind !== 'allConfigured') return input;
+    const configured = await readActiveConfiguredSourceRows(sourceInstances);
+    return { ...input, sources: { kind: 'selected', sourceInstanceIds: configured.rows
+        .filter(row => row.configured.instance.sourceInstanceId !== INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId)
+        .map(row => row.configured.instance.sourceInstanceId) } };
+}
 
 /** Account-scoped material for a test E2EE Account. Test bytes only. */
 export function testkitAccountMaterial(seed: number): AccountScopedCryptoMaterial {
